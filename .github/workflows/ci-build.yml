@@ -1,0 +1,27 @@
+name: ci-build
+
+on:
+  push:
+    branches: [ main, release/** ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  janus_server_build:
+    defaults:
+      run:
+        working-directory: janus_server
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: lint
+      run: cargo fmt --message-format human -- --check
+    - name: clippy
+      run: cargo clippy --all-targets -- -D warnings
+    - name: build
+      run: cargo build --verbose
+    - name: test
+      run: cargo test --verbose
