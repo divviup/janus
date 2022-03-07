@@ -852,27 +852,29 @@ mod tests {
         );
     }
 
-    // TODO(brandon): create "test vectors" for all test cases
-
-    fn roundtrip_encoding<T>(vals: &[T])
+    fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
     where
         T: Encode + Decode + core::fmt::Debug + Eq,
     {
-        for val in vals {
+        for (val, hex_encoding) in vals_and_encodings {
             let mut encoded_val = Vec::new();
             val.encode(&mut encoded_val);
+            let encoding = hex::decode(hex_encoding).unwrap();
+            assert_eq!(encoding, encoded_val);
             let decoded_val = T::decode(&mut Cursor::new(&encoded_val)).unwrap();
             assert_eq!(val, &decoded_val);
         }
     }
 
-    fn roundtrip_encoding_with_param<P, T>(param: &P, vals: &[T])
+    fn roundtrip_encoding_with_param<P, T>(param: &P, vals_and_encodings: &[(T, &str)])
     where
         T: ParameterizedEncode<P> + ParameterizedDecode<P> + core::fmt::Debug + Eq,
     {
-        for val in vals {
+        for (val, hex_encoding) in vals_and_encodings {
             let mut encoded_val = Vec::new();
             val.encode_with_param(param, &mut encoded_val);
+            let encoding = hex::decode(hex_encoding).unwrap();
+            assert_eq!(encoding, encoded_val);
             let decoded_val = T::decode_with_param(param, &mut Cursor::new(&encoded_val)).unwrap();
             assert_eq!(val, &decoded_val);
         }
@@ -880,134 +882,190 @@ mod tests {
 
     #[test]
     fn roundtrip_duration() {
-        roundtrip_encoding(&[Duration(u64::MIN), Duration(12345), Duration(u64::MAX)])
+        roundtrip_encoding(&[
+            (Duration(u64::MIN), "0000000000000000"),
+            (Duration(12345), "0000000000003039"),
+            (Duration(u64::MAX), "FFFFFFFFFFFFFFFF"),
+        ])
     }
 
     #[test]
     fn roundtrip_time() {
-        roundtrip_encoding(&[Time(u64::MIN), Time(12345), Time(u64::MAX)])
+        roundtrip_encoding(&[
+            (Time(u64::MIN), "0000000000000000"),
+            (Time(12345), "0000000000003039"),
+            (Time(u64::MAX), "FFFFFFFFFFFFFFFF"),
+        ])
     }
 
     #[test]
     fn roundtrip_interval() {
         roundtrip_encoding(&[
-            Interval {
-                start: Time(u64::MIN),
-                duration: Duration(u64::MAX),
-            },
-            Interval {
-                start: Time(54321),
-                duration: Duration(12345),
-            },
-            Interval {
-                start: Time(u64::MAX),
-                duration: Duration(u64::MIN),
-            },
+            (
+                Interval {
+                    start: Time(u64::MIN),
+                    duration: Duration(u64::MAX),
+                },
+                "0000000000000000FFFFFFFFFFFFFFFF",
+            ),
+            (
+                Interval {
+                    start: Time(54321),
+                    duration: Duration(12345),
+                },
+                "000000000000D4310000000000003039",
+            ),
+            (
+                Interval {
+                    start: Time(u64::MAX),
+                    duration: Duration(u64::MIN),
+                },
+                "FFFFFFFFFFFFFFFF0000000000000000",
+            ),
         ])
     }
 
     #[test]
     fn roundtrip_role() {
-        roundtrip_encoding(&[Role::Collector, Role::Client, Role::Leader, Role::Helper]);
+        roundtrip_encoding(&[
+            (Role::Collector, "00"),
+            (Role::Client, "01"),
+            (Role::Leader, "02"),
+            (Role::Helper, "03"),
+        ]);
     }
 
     #[test]
     fn roundtrip_hpke_config_id() {
         roundtrip_encoding(&[
-            HpkeConfigId(u8::MIN),
-            HpkeConfigId(10),
-            HpkeConfigId(u8::MAX),
+            (HpkeConfigId(u8::MIN), "00"),
+            (HpkeConfigId(10), "0A"),
+            (HpkeConfigId(u8::MAX), "FF"),
         ])
     }
 
     #[test]
     fn roundtrip_hpke_ciphertext() {
         roundtrip_encoding(&[
-            HpkeCiphertext {
-                config_id: HpkeConfigId(10),
-                encapsulated_context: Vec::from("0123"),
-                payload: Vec::from("4567"),
-            },
-            HpkeCiphertext {
-                config_id: HpkeConfigId(12),
-                encapsulated_context: Vec::from("01234"),
-                payload: Vec::from("567"),
-            },
+            (
+                HpkeCiphertext {
+                    config_id: HpkeConfigId(10),
+                    encapsulated_context: Vec::from("0123"),
+                    payload: Vec::from("4567"),
+                },
+                "0A000430313233000434353637",
+            ),
+            (
+                HpkeCiphertext {
+                    config_id: HpkeConfigId(12),
+                    encapsulated_context: Vec::from("01234"),
+                    payload: Vec::from("567"),
+                },
+                "0C000530313233340003353637",
+            ),
         ])
     }
 
     #[test]
     fn roundtrip_task_id() {
         roundtrip_encoding(&[
-            TaskId([u8::MIN; 32]),
-            TaskId([
-                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26, 27, 28, 29, 30, 31,
-            ]),
-            TaskId([u8::MAX; 32]),
+            (
+                TaskId([u8::MIN; 32]),
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                TaskId([
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                    22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                ]),
+                "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F",
+            ),
+            (
+                TaskId([u8::MAX; 32]),
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+            ),
         ])
     }
 
     #[test]
     fn roundtrip_hpke_kem_id() {
-        roundtrip_encoding(&[HpkeKemId::P256HkdfSha256, HpkeKemId::X25519HkdfSha256])
+        roundtrip_encoding(&[
+            (HpkeKemId::P256HkdfSha256, "0010"),
+            (HpkeKemId::X25519HkdfSha256, "0020"),
+        ])
     }
 
     #[test]
     fn roundtrip_hpke_kdf_id() {
         roundtrip_encoding(&[
-            HpkeKdfId::HkdfSha256,
-            HpkeKdfId::HkdfSha384,
-            HpkeKdfId::HkdfSha512,
+            (HpkeKdfId::HkdfSha256, "0001"),
+            (HpkeKdfId::HkdfSha384, "0002"),
+            (HpkeKdfId::HkdfSha512, "0003"),
         ])
     }
 
     #[test]
     fn roundtrip_hpke_aead_id() {
-        roundtrip_encoding(&[HpkeAeadId::Aes128Gcm, HpkeAeadId::Aes256Gcm])
+        roundtrip_encoding(&[
+            (HpkeAeadId::Aes128Gcm, "0001"),
+            (HpkeAeadId::Aes256Gcm, "0002"),
+            (HpkeAeadId::ChaCha20Poly1305, "0003"),
+        ])
     }
 
     #[test]
     fn roundtrip_hpke_public_key() {
         roundtrip_encoding(&[
-            HpkePublicKey(Vec::new()),
-            HpkePublicKey(Vec::from("0123456789abcdef")),
+            (HpkePublicKey(Vec::new()), "0000"),
+            (
+                HpkePublicKey(Vec::from("0123456789abcdef")),
+                "001030313233343536373839616263646566",
+            ),
         ])
     }
 
     #[test]
     fn roundtrip_hpke_config() {
         roundtrip_encoding(&[
-            HpkeConfig {
-                id: HpkeConfigId(12),
-                kem_id: HpkeKemId::P256HkdfSha256,
-                kdf_id: HpkeKdfId::HkdfSha512,
-                aead_id: HpkeAeadId::Aes256Gcm,
-                public_key: HpkePublicKey(Vec::new()),
-            },
-            HpkeConfig {
-                id: HpkeConfigId(23),
-                kem_id: HpkeKemId::X25519HkdfSha256,
-                kdf_id: HpkeKdfId::HkdfSha256,
-                aead_id: HpkeAeadId::ChaCha20Poly1305,
-                public_key: HpkePublicKey(Vec::from("0123456789abcdef")),
-            },
+            (
+                HpkeConfig {
+                    id: HpkeConfigId(12),
+                    kem_id: HpkeKemId::P256HkdfSha256,
+                    kdf_id: HpkeKdfId::HkdfSha512,
+                    aead_id: HpkeAeadId::Aes256Gcm,
+                    public_key: HpkePublicKey(Vec::new()),
+                },
+                "0C0010000300020000",
+            ),
+            (
+                HpkeConfig {
+                    id: HpkeConfigId(23),
+                    kem_id: HpkeKemId::X25519HkdfSha256,
+                    kdf_id: HpkeKdfId::HkdfSha256,
+                    aead_id: HpkeAeadId::ChaCha20Poly1305,
+                    public_key: HpkePublicKey(Vec::from("0123456789abcdef")),
+                },
+                "17002000010003001030313233343536373839616263646566",
+            ),
         ])
     }
 
     #[test]
     fn roundtrip_report() {
         roundtrip_encoding(&[
-            Report {
-                task_id: TaskId([u8::MIN; 32]),
-                nonce: Nonce {
-                    time: Time(12345),
-                    rand: 413,
+            (
+                Report {
+                    task_id: TaskId([u8::MIN; 32]),
+                    nonce: Nonce {
+                        time: Time(12345),
+                        rand: 413,
+                    },
+                    extensions: vec![],
+                    encrypted_input_shares: vec![],
                 },
-                extensions: vec![],
-                encrypted_input_shares: vec![],
-            },
-            Report {
+                "00000000000000000000000000000000000000000000000000000000000000000000000000003039000000000000019D00000000",
+            ),
+            (Report {
                 task_id: TaskId([u8::MAX; 32]),
                 nonce: Nonce {
                     time: Time(54321),
@@ -1029,82 +1087,106 @@ mod tests {
                         payload: Vec::from("abfd"),
                     },
                 ],
-            },
+            }, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000000000D431000000000000013A00080000000430313233001E2A000630313233343500063534333231300D000461626365000461626664"),
         ])
     }
 
     #[test]
     fn roundtrip_extension() {
         roundtrip_encoding(&[
-            Extension {
-                extension_type: ExtensionType::Tbd,
-                extension_data: Vec::new(),
-            },
-            Extension {
-                extension_type: ExtensionType::Tbd,
-                extension_data: Vec::from("0123"),
-            },
+            (
+                Extension {
+                    extension_type: ExtensionType::Tbd,
+                    extension_data: Vec::new(),
+                },
+                "00000000",
+            ),
+            (
+                Extension {
+                    extension_type: ExtensionType::Tbd,
+                    extension_data: Vec::from("0123"),
+                },
+                "0000000430313233",
+            ),
         ])
     }
 
     #[test]
     fn roundtrip_extension_type() {
-        roundtrip_encoding(&[ExtensionType::Tbd])
+        roundtrip_encoding(&[(ExtensionType::Tbd, "0000")])
     }
 
     #[test]
     fn roundtrip_transition() {
         roundtrip_encoding(&[
-            Transition {
-                nonce: Nonce {
-                    time: Time(54372),
-                    rand: 53,
+            (
+                Transition {
+                    nonce: Nonce {
+                        time: Time(54372),
+                        rand: 53,
+                    },
+                    trans_data: TransitionTypeSpecificData::Continued {
+                        payload: Vec::from("012345"),
+                    },
                 },
-                trans_data: TransitionTypeSpecificData::Continued {
-                    payload: Vec::from("012345"),
+                "000000000000D4640000000000000035000006303132333435",
+            ),
+            (
+                Transition {
+                    nonce: Nonce {
+                        time: Time(12345),
+                        rand: 413,
+                    },
+                    trans_data: TransitionTypeSpecificData::Finished,
                 },
-            },
-            Transition {
-                nonce: Nonce {
-                    time: Time(12345),
-                    rand: 413,
+                "0000000000003039000000000000019D01",
+            ),
+            (
+                Transition {
+                    nonce: Nonce {
+                        time: Time(345078),
+                        rand: 98345,
+                    },
+                    trans_data: TransitionTypeSpecificData::Failed {
+                        error: TransitionError::UnrecognizedNonce,
+                    },
                 },
-                trans_data: TransitionTypeSpecificData::Finished,
-            },
-            Transition {
-                nonce: Nonce {
-                    time: Time(345078),
-                    rand: 98345,
-                },
-                trans_data: TransitionTypeSpecificData::Failed {
-                    error: TransitionError::UnrecognizedNonce,
-                },
-            },
+                "00000000000543F600000000000180290206",
+            ),
         ])
     }
 
     #[test]
     fn roundtrip_transition_error() {
         roundtrip_encoding(&[
-            TransitionError::BatchCollected,
-            TransitionError::HpkeDecryptError,
-            TransitionError::HpkeUnknownConfigId,
-            TransitionError::ReportDropped,
-            TransitionError::ReportReplayed,
-            TransitionError::UnrecognizedNonce,
-            TransitionError::VdafPrepError,
+            (TransitionError::BatchCollected, "00"),
+            (TransitionError::HpkeDecryptError, "04"),
+            (TransitionError::HpkeUnknownConfigId, "03"),
+            (TransitionError::ReportDropped, "02"),
+            (TransitionError::ReportReplayed, "01"),
+            (TransitionError::UnrecognizedNonce, "06"),
+            (TransitionError::VdafPrepError, "05"),
         ])
     }
 
     #[test]
     fn roundtrip_aggregation_job_id() {
         roundtrip_encoding(&[
-            AggregationJobId([u8::MIN; 32]),
-            AggregationJobId([
-                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26, 27, 28, 29, 30, 31,
-            ]),
-            AggregationJobId([u8::MAX; 32]),
+            (
+                AggregationJobId([u8::MIN; 32]),
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                AggregationJobId([
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                    22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                ]),
+                "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F",
+            ),
+            (
+                AggregationJobId([u8::MAX; 32]),
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+            ),
         ])
     }
 
@@ -1113,65 +1195,71 @@ mod tests {
         roundtrip_encoding_with_param(
             &*HMAC_KEY,
             &[
-                AggregateReq::AggregateInitReq(AggregateInitReq {
-                    task_id: TaskId([u8::MAX; 32]),
-                    job_id: AggregationJobId([u8::MIN; 32]),
-                    agg_param: Vec::from("012345"),
-                    seq: vec![
-                        ReportShare {
-                            nonce: Nonce {
-                                time: Time(54321),
-                                rand: 314,
+                (
+                    AggregateReq::AggregateInitReq(AggregateInitReq {
+                        task_id: TaskId([u8::MAX; 32]),
+                        job_id: AggregationJobId([u8::MIN; 32]),
+                        agg_param: Vec::from("012345"),
+                        seq: vec![
+                            ReportShare {
+                                nonce: Nonce {
+                                    time: Time(54321),
+                                    rand: 314,
+                                },
+                                extensions: vec![Extension {
+                                    extension_type: ExtensionType::Tbd,
+                                    extension_data: Vec::from("0123"),
+                                }],
+                                encrypted_input_share: HpkeCiphertext {
+                                    config_id: HpkeConfigId(42),
+                                    encapsulated_context: Vec::from("012345"),
+                                    payload: Vec::from("543210"),
+                                },
                             },
-                            extensions: vec![Extension {
-                                extension_type: ExtensionType::Tbd,
-                                extension_data: Vec::from("0123"),
-                            }],
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(42),
-                                encapsulated_context: Vec::from("012345"),
-                                payload: Vec::from("543210"),
+                            ReportShare {
+                                nonce: Nonce {
+                                    time: Time(73542),
+                                    rand: 515,
+                                },
+                                extensions: vec![Extension {
+                                    extension_type: ExtensionType::Tbd,
+                                    extension_data: Vec::from("3210"),
+                                }],
+                                encrypted_input_share: HpkeCiphertext {
+                                    config_id: HpkeConfigId(13),
+                                    encapsulated_context: Vec::from("abce"),
+                                    payload: Vec::from("abfd"),
+                                },
                             },
-                        },
-                        ReportShare {
-                            nonce: Nonce {
-                                time: Time(73542),
-                                rand: 515,
+                        ],
+                    }),
+                    "00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000000000000000000000000000000000000000000000000000000000000000063031323334350052000000000000D431000000000000013A000800000004303132332A000630313233343500063534333231300000000000011F460000000000000203000800000004333231300D00046162636500046162666468090A61334511E10EC2F78E1575FB26E19F29CC740F02FFB6BFEF0AA280A1B7",
+                ),
+                (
+                    AggregateReq::AggregateContinueReq(AggregateContinueReq {
+                        task_id: TaskId([u8::MAX; 32]),
+                        job_id: AggregationJobId([u8::MIN; 32]),
+                        seq: vec![
+                            Transition {
+                                nonce: Nonce {
+                                    time: Time(54372),
+                                    rand: 53,
+                                },
+                                trans_data: TransitionTypeSpecificData::Continued {
+                                    payload: Vec::from("012345"),
+                                },
                             },
-                            extensions: vec![Extension {
-                                extension_type: ExtensionType::Tbd,
-                                extension_data: Vec::from("3210"),
-                            }],
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(13),
-                                encapsulated_context: Vec::from("abce"),
-                                payload: Vec::from("abfd"),
+                            Transition {
+                                nonce: Nonce {
+                                    time: Time(12345),
+                                    rand: 413,
+                                },
+                                trans_data: TransitionTypeSpecificData::Finished,
                             },
-                        },
-                    ],
-                }),
-                AggregateReq::AggregateContinueReq(AggregateContinueReq {
-                    task_id: TaskId([u8::MAX; 32]),
-                    job_id: AggregationJobId([u8::MIN; 32]),
-                    seq: vec![
-                        Transition {
-                            nonce: Nonce {
-                                time: Time(54372),
-                                rand: 53,
-                            },
-                            trans_data: TransitionTypeSpecificData::Continued {
-                                payload: Vec::from("012345"),
-                            },
-                        },
-                        Transition {
-                            nonce: Nonce {
-                                time: Time(12345),
-                                rand: 413,
-                            },
-                            trans_data: TransitionTypeSpecificData::Finished,
-                        },
-                    ],
-                }),
+                        ],
+                    }),
+                    "01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000000000000000002A000000000000D46400000000000000350000063031323334350000000000003039000000000000019D018E244B47B01EA78D8639D81F0F9377CA0D5C2F0119ACDDC17CCB1B89D042F62E",
+                ),
             ],
         )
     }
@@ -1179,13 +1267,13 @@ mod tests {
     #[test]
     fn roundtrip_aggregate_init_req() {
         roundtrip_encoding(&[
-            AggregateInitReq {
+            (AggregateInitReq {
                 task_id: TaskId([u8::MIN; 32]),
                 job_id: AggregationJobId([u8::MAX; 32]),
                 agg_param: Vec::new(),
                 seq: Vec::new(),
-            },
-            AggregateInitReq {
+            }, "0000000000000000000000000000000000000000000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000"),
+            (AggregateInitReq {
                 task_id: TaskId([u8::MAX; 32]),
                 job_id: AggregationJobId([u8::MIN; 32]),
                 agg_param: Vec::from("012345"),
@@ -1221,19 +1309,22 @@ mod tests {
                         },
                     },
                 ],
-            },
+            }, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000000000000000000000000000000000000000000000000000000000000000063031323334350052000000000000D431000000000000013A000800000004303132332A000630313233343500063534333231300000000000011F460000000000000203000800000004333231300D000461626365000461626664"),
         ])
     }
 
     #[test]
     fn roundtrip_aggregate_continue_req() {
         roundtrip_encoding(&[
-            AggregateContinueReq {
-                task_id: TaskId([u8::MIN; 32]),
-                job_id: AggregationJobId([u8::MAX; 32]),
-                seq: vec![],
-            },
-            AggregateContinueReq {
+            (
+                AggregateContinueReq {
+                    task_id: TaskId([u8::MIN; 32]),
+                    job_id: AggregationJobId([u8::MAX; 32]),
+                    seq: vec![],
+                },
+                "0000000000000000000000000000000000000000000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000",
+            ),
+            (AggregateContinueReq {
                 task_id: TaskId([u8::MAX; 32]),
                 job_id: AggregationJobId([u8::MIN; 32]),
                 seq: vec![
@@ -1254,7 +1345,7 @@ mod tests {
                         trans_data: TransitionTypeSpecificData::Finished,
                     },
                 ],
-            },
+            }, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000000000000000002A000000000000D46400000000000000350000063031323334350000000000003039000000000000019D01"),
         ])
     }
 
@@ -1263,27 +1354,33 @@ mod tests {
         roundtrip_encoding_with_param(
             &*HMAC_KEY,
             &[
-                AggregateResp { seq: vec![] },
-                AggregateResp {
-                    seq: vec![
-                        Transition {
-                            nonce: Nonce {
-                                time: Time(54372),
-                                rand: 53,
+                (
+                    AggregateResp { seq: vec![] },
+                    "00008D460A9EB8988604F0F282887BA39AA230A73AA6254E964FD9A4352E554B38E1",
+                ),
+                (
+                    AggregateResp {
+                        seq: vec![
+                            Transition {
+                                nonce: Nonce {
+                                    time: Time(54372),
+                                    rand: 53,
+                                },
+                                trans_data: TransitionTypeSpecificData::Continued {
+                                    payload: Vec::from("012345"),
+                                },
                             },
-                            trans_data: TransitionTypeSpecificData::Continued {
-                                payload: Vec::from("012345"),
+                            Transition {
+                                nonce: Nonce {
+                                    time: Time(12345),
+                                    rand: 413,
+                                },
+                                trans_data: TransitionTypeSpecificData::Finished,
                             },
-                        },
-                        Transition {
-                            nonce: Nonce {
-                                time: Time(12345),
-                                rand: 413,
-                            },
-                            trans_data: TransitionTypeSpecificData::Finished,
-                        },
-                    ],
-                },
+                        ],
+                    },
+                    "002A000000000000D46400000000000000350000063031323334350000000000003039000000000000019D013F48B7D8F0AA6E2AE5677ED356D3B18FFF5318A024A25CA0BF27CE02FB770EC3",
+                ),
             ],
         )
     }
@@ -1291,20 +1388,20 @@ mod tests {
     #[test]
     fn roundtrip_aggregate_share_req() {
         roundtrip_encoding(&[
-            AggregateShareReq {
+            (AggregateShareReq {
                 task_id: TaskId([u8::MIN; 32]),
                 batch_interval: Interval {
                     start: Time(54321),
                     duration: Duration(12345),
                 },
-            },
-            AggregateShareReq {
+            }, "0000000000000000000000000000000000000000000000000000000000000000000000000000D4310000000000003039"),
+            (AggregateShareReq {
                 task_id: TaskId([12u8; 32]),
                 batch_interval: Interval {
                     start: Time(50821),
                     duration: Duration(84354),
                 },
-            },
+            }, "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C000000000000C6850000000000014982"),
         ])
     }
 
@@ -1313,20 +1410,26 @@ mod tests {
         roundtrip_encoding_with_param(
             &*HMAC_KEY,
             &[
-                AggregateShareResp {
-                    encrypted_aggregate_share: HpkeCiphertext {
-                        config_id: HpkeConfigId(10),
-                        encapsulated_context: Vec::from("0123"),
-                        payload: Vec::from("4567"),
+                (
+                    AggregateShareResp {
+                        encrypted_aggregate_share: HpkeCiphertext {
+                            config_id: HpkeConfigId(10),
+                            encapsulated_context: Vec::from("0123"),
+                            payload: Vec::from("4567"),
+                        },
                     },
-                },
-                AggregateShareResp {
-                    encrypted_aggregate_share: HpkeCiphertext {
-                        config_id: HpkeConfigId(12),
-                        encapsulated_context: Vec::from("01234"),
-                        payload: Vec::from("567"),
+                    "0A00043031323300043435363767C9AD957825E8A20F3E85B6343A4AB186927B01B16585A6F21115730C660EC7",
+                ),
+                (
+                    AggregateShareResp {
+                        encrypted_aggregate_share: HpkeCiphertext {
+                            config_id: HpkeConfigId(12),
+                            encapsulated_context: Vec::from("01234"),
+                            payload: Vec::from("567"),
+                        },
                     },
-                },
+                    "0C000530313233340003353637DF229D520BBB475BF17CA6DECF8EF134A6868D54D5171974340A667F5129035E",
+                ),
             ],
         )
     }
@@ -1334,45 +1437,57 @@ mod tests {
     #[test]
     fn roundtrip_collect_req() {
         roundtrip_encoding(&[
-            CollectReq {
-                task_id: TaskId([u8::MIN; 32]),
-                batch_interval: Interval {
-                    start: Time(54321),
-                    duration: Duration(12345),
+            (
+                CollectReq {
+                    task_id: TaskId([u8::MIN; 32]),
+                    batch_interval: Interval {
+                        start: Time(54321),
+                        duration: Duration(12345),
+                    },
+                    agg_param: Vec::new(),
                 },
-                agg_param: Vec::new(),
-            },
-            CollectReq {
-                task_id: TaskId([13u8; 32]),
-                batch_interval: Interval {
-                    start: Time(48913),
-                    duration: Duration(44721),
+                "0000000000000000000000000000000000000000000000000000000000000000000000000000D43100000000000030390000",
+            ),
+            (
+                CollectReq {
+                    task_id: TaskId([13u8; 32]),
+                    batch_interval: Interval {
+                        start: Time(48913),
+                        duration: Duration(44721),
+                    },
+                    agg_param: Vec::from("012345"),
                 },
-                agg_param: Vec::from("012345"),
-            },
+                "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D000000000000BF11000000000000AEB10006303132333435",
+            ),
         ])
     }
 
     #[test]
     fn roundtrip_collect_resp() {
         roundtrip_encoding(&[
-            CollectResp {
-                encrypted_agg_shares: Vec::new(),
-            },
-            CollectResp {
-                encrypted_agg_shares: vec![
-                    HpkeCiphertext {
-                        config_id: HpkeConfigId(10),
-                        encapsulated_context: Vec::from("0123"),
-                        payload: Vec::from("4567"),
-                    },
-                    HpkeCiphertext {
-                        config_id: HpkeConfigId(12),
-                        encapsulated_context: Vec::from("01234"),
-                        payload: Vec::from("567"),
-                    },
-                ],
-            },
+            (
+                CollectResp {
+                    encrypted_agg_shares: Vec::new(),
+                },
+                "0000",
+            ),
+            (
+                CollectResp {
+                    encrypted_agg_shares: vec![
+                        HpkeCiphertext {
+                            config_id: HpkeConfigId(10),
+                            encapsulated_context: Vec::from("0123"),
+                            payload: Vec::from("4567"),
+                        },
+                        HpkeCiphertext {
+                            config_id: HpkeConfigId(12),
+                            encapsulated_context: Vec::from("01234"),
+                            payload: Vec::from("567"),
+                        },
+                    ],
+                },
+                "001A0A0004303132330004343536370C000530313233340003353637",
+            ),
         ])
     }
 }
