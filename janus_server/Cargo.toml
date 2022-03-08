@@ -7,6 +7,7 @@ rust-version = "1.58"
 
 [dependencies]
 anyhow = "1"
+hex = "0.4.3"
 lazy_static = "1"
 num_enum = "0.5.6"
 prio = { git = "https://github.com/abetterinternet/libprio-rs", rev = "7551ba5352794d5ff89d70f886f73cd5020d3fe9" } # TODO: use a specific version number once this is possible
