@@ -721,17 +721,37 @@ pub struct AggregateShareReq {
     pub batch_interval: Interval,
 }
 
-impl Encode for AggregateShareReq {
-    fn encode(&self, bytes: &mut Vec<u8>) {
+impl ParameterizedEncode<hmac::Key> for AggregateShareReq {
+    fn encode_with_param(&self, key: &hmac::Key, bytes: &mut Vec<u8>) {
+        assert_eq!(key.algorithm(), HMAC_SHA256);
+        let start_offset = bytes.len();
+
         self.task_id.encode(bytes);
         self.batch_interval.encode(bytes);
+
+        let end_offset = bytes.len();
+        let tag = hmac::sign(key, &bytes[start_offset..end_offset]);
+        bytes.extend_from_slice(tag.as_ref());
     }
 }
 
-impl Decode for AggregateShareReq {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+impl ParameterizedDecode<hmac::Key> for AggregateShareReq {
+    fn decode_with_param(key: &hmac::Key, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        assert_eq!(key.algorithm(), HMAC_SHA256);
+        let start_offset = bytes.position() as usize;
+
         let task_id = TaskId::decode(bytes)?;
         let batch_interval = Interval::decode(bytes)?;
+
+        let end_offset = bytes.position() as usize;
+        let mut provided_tag = [0u8; SHA256_OUTPUT_LEN];
+        bytes.read_exact(&mut provided_tag)?;
+        hmac::verify(
+            key,
+            &bytes.get_ref()[start_offset..end_offset],
+            &provided_tag,
+        )
+        .map_err(|_| CodecError::Other(anyhow!("HMAC tag verification failure").into()))?;
 
         Ok(Self {
             task_id,
@@ -1834,42 +1854,47 @@ mod tests {
 
     #[test]
     fn roundtrip_aggregate_share_req() {
-        roundtrip_encoding(&[
-            (
-                AggregateShareReq {
-                    task_id: TaskId([u8::MIN; 32]),
-                    batch_interval: Interval {
-                        start: Time(54321),
-                        duration: Duration(12345),
+        roundtrip_encoding_with_param(
+            &*HMAC_KEY,
+            &[
+                (
+                    AggregateShareReq {
+                        task_id: TaskId([u8::MIN; 32]),
+                        batch_interval: Interval {
+                            start: Time(54321),
+                            duration: Duration(12345),
+                        },
                     },
-                },
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
-                        // batch_interval
-                        "000000000000D431", // start
-                        "0000000000003039", // duration
+                        "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                        concat!(
+                            // batch_interval
+                            "000000000000D431", // start
+                            "0000000000003039", // duration
+                        ),
+                        "5E1C2B93AF97059B96993A9FD42A09F8CD8D03A97B0E437F0718550849F3BA87", // tag
                     ),
                 ),
-            ),
-            (
-                AggregateShareReq {
-                    task_id: TaskId([12u8; 32]),
-                    batch_interval: Interval {
-                        start: Time(50821),
-                        duration: Duration(84354),
+                (
+                    AggregateShareReq {
+                        task_id: TaskId([12u8; 32]),
+                        batch_interval: Interval {
+                            start: Time(50821),
+                            duration: Duration(84354),
+                        },
                     },
-                },
-                concat!(
-                    "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
                     concat!(
-                        // batch_interval
-                        "000000000000C685", // start
-                        "0000000000014982", // duration
+                        "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
+                        concat!(
+                            // batch_interval
+                            "000000000000C685", // start
+                            "0000000000014982", // duration
+                        ),
+                        "3E8A991776805EA5EB824897926A8CC7E9C58542F65E846DE63B8925107CEC7F", // tag
                     ),
                 ),
-            ),
-        ])
+            ],
+        )
     }
 
     #[test]
