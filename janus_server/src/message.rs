@@ -906,21 +906,30 @@ mod tests {
                     start: Time(u64::MIN),
                     duration: Duration(u64::MAX),
                 },
-                "0000000000000000FFFFFFFFFFFFFFFF",
+                concat!(
+                    "0000000000000000", // start
+                    "FFFFFFFFFFFFFFFF", // duration
+                ),
             ),
             (
                 Interval {
                     start: Time(54321),
                     duration: Duration(12345),
                 },
-                "000000000000D4310000000000003039",
+                concat!(
+                    "000000000000D431", // start
+                    "0000000000003039", // duration
+                ),
             ),
             (
                 Interval {
                     start: Time(u64::MAX),
                     duration: Duration(u64::MIN),
                 },
-                "FFFFFFFFFFFFFFFF0000000000000000",
+                concat!(
+                    "FFFFFFFFFFFFFFFF", // start
+                    "0000000000000000", // duration
+                ),
             ),
         ])
     }
@@ -953,7 +962,19 @@ mod tests {
                     encapsulated_context: Vec::from("0123"),
                     payload: Vec::from("4567"),
                 },
-                "0A000430313233000434353637",
+                concat!(
+                    "0A", // config_id
+                    concat!(
+                        // encapsulated_context
+                        "0004",     // length
+                        "30313233", // opaque data
+                    ),
+                    concat!(
+                        // payload
+                        "0004",     // length
+                        "34353637", // opaque data
+                    ),
+                ),
             ),
             (
                 HpkeCiphertext {
@@ -961,7 +982,19 @@ mod tests {
                     encapsulated_context: Vec::from("01234"),
                     payload: Vec::from("567"),
                 },
-                "0C000530313233340003353637",
+                concat!(
+                    "0C", // config_id
+                    concat!(
+                        // encapsulated_context
+                        "0005",       // length
+                        "3031323334", // opaque data
+                    ),
+                    concat!(
+                        // payload
+                        "0003",   // length
+                        "353637", // opaque data
+                    ),
+                ),
             ),
         ])
     }
@@ -1016,10 +1049,19 @@ mod tests {
     #[test]
     fn roundtrip_hpke_public_key() {
         roundtrip_encoding(&[
-            (HpkePublicKey(Vec::new()), "0000"),
+            (
+                HpkePublicKey(Vec::new()),
+                concat!(
+                    "0000", // length
+                    "",     // opaque data
+                ),
+            ),
             (
                 HpkePublicKey(Vec::from("0123456789abcdef")),
-                "001030313233343536373839616263646566",
+                concat!(
+                    "0010",                             // length
+                    "30313233343536373839616263646566"  // opaque data
+                ),
             ),
         ])
     }
@@ -1035,7 +1077,17 @@ mod tests {
                     aead_id: HpkeAeadId::Aes256Gcm,
                     public_key: HpkePublicKey(Vec::new()),
                 },
-                "0C0010000300020000",
+                concat!(
+                    "0C",   // id
+                    "0010", // kem_id
+                    "0003", // kdf_id
+                    "0002", // aead_id
+                    concat!(
+                        // public_key
+                        "0000", // length
+                        "",     // opaque data
+                    )
+                ),
             ),
             (
                 HpkeConfig {
@@ -1045,7 +1097,17 @@ mod tests {
                     aead_id: HpkeAeadId::ChaCha20Poly1305,
                     public_key: HpkePublicKey(Vec::from("0123456789abcdef")),
                 },
-                "17002000010003001030313233343536373839616263646566",
+                concat!(
+                    "17",   // id
+                    "0020", // kem_id
+                    "0001", // kdf_id
+                    "0003", // aead_id
+                    concat!(
+                        // public_key
+                        "0010",                             // length
+                        "30313233343536373839616263646566", // opaque data
+                    )
+                ),
             ),
         ])
     }
@@ -1063,31 +1125,97 @@ mod tests {
                     extensions: vec![],
                     encrypted_input_shares: vec![],
                 },
-                "00000000000000000000000000000000000000000000000000000000000000000000000000003039000000000000019D00000000",
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                    concat!(
+                        // nonce
+                        "0000000000003039", // time
+                        "000000000000019D", // rand
+                    ),
+                    concat!(
+                        // extensions
+                        "0000", // length
+                    ),
+                    concat!(
+                        // encrypted_input_shares
+                        "0000", // length
+                    )
+                ),
             ),
-            (Report {
-                task_id: TaskId([u8::MAX; 32]),
-                nonce: Nonce {
-                    time: Time(54321),
-                    rand: 314,
+            (
+                Report {
+                    task_id: TaskId([u8::MAX; 32]),
+                    nonce: Nonce {
+                        time: Time(54321),
+                        rand: 314,
+                    },
+                    extensions: vec![Extension {
+                        extension_type: ExtensionType::Tbd,
+                        extension_data: Vec::from("0123"),
+                    }],
+                    encrypted_input_shares: vec![
+                        HpkeCiphertext {
+                            config_id: HpkeConfigId(42),
+                            encapsulated_context: Vec::from("012345"),
+                            payload: Vec::from("543210"),
+                        },
+                        HpkeCiphertext {
+                            config_id: HpkeConfigId(13),
+                            encapsulated_context: Vec::from("abce"),
+                            payload: Vec::from("abfd"),
+                        },
+                    ],
                 },
-                extensions: vec![Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("0123"),
-                }],
-                encrypted_input_shares: vec![
-                    HpkeCiphertext {
-                        config_id: HpkeConfigId(42),
-                        encapsulated_context: Vec::from("012345"),
-                        payload: Vec::from("543210"),
-                    },
-                    HpkeCiphertext {
-                        config_id: HpkeConfigId(13),
-                        encapsulated_context: Vec::from("abce"),
-                        payload: Vec::from("abfd"),
-                    },
-                ],
-            }, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000000000D431000000000000013A00080000000430313233001E2A000630313233343500063534333231300D000461626365000461626664"),
+                concat!(
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
+                    concat!(
+                        "000000000000D431", // time
+                        "000000000000013A", // rand
+                    ),
+                    concat!(
+                        // extensions
+                        "0008", // length
+                        concat!(
+                            "0000", // extension_type
+                            concat!(
+                                // extension_data
+                                "0004",     // length
+                                "30313233", // opaque data
+                            ),
+                        )
+                    ),
+                    concat!(
+                        // encrypted_input_shares
+                        "001E", // length
+                        concat!(
+                            "2A", // config_id
+                            concat!(
+                                // encapsulated_context
+                                "0006",         // length
+                                "303132333435"  // opaque data
+                            ),
+                            concat!(
+                                // payload
+                                "0006",         // length
+                                "353433323130", // opaque data
+                            ),
+                        ),
+                        concat!(
+                            "0D", // config_id
+                            concat!(
+                                // encapsulated_context
+                                "0004",     // length
+                                "61626365", // opaque data
+                            ),
+                            concat!(
+                                // payload
+                                "0004",     // length
+                                "61626664", // opaque data
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         ])
     }
 
@@ -1099,14 +1227,28 @@ mod tests {
                     extension_type: ExtensionType::Tbd,
                     extension_data: Vec::new(),
                 },
-                "00000000",
+                concat!(
+                    "0000", // extension_type
+                    concat!(
+                        // extension_data
+                        "0000", // length
+                        "",     // opaque data
+                    ),
+                ),
             ),
             (
                 Extension {
                     extension_type: ExtensionType::Tbd,
                     extension_data: Vec::from("0123"),
                 },
-                "0000000430313233",
+                concat!(
+                    "0000", // extension_type
+                    concat!(
+                        // extension_data
+                        "0004",     // length
+                        "30313233", // opaque data
+                    ),
+                ),
             ),
         ])
     }
@@ -1129,7 +1271,19 @@ mod tests {
                         payload: Vec::from("012345"),
                     },
                 },
-                "000000000000D4640000000000000035000006303132333435",
+                concat!(
+                    concat!(
+                        // nonce
+                        "000000000000D464", // time
+                        "0000000000000035", // rand
+                    ),
+                    "00", // trans_type
+                    concat!(
+                        // payload
+                        "0006",         // length
+                        "303132333435", // opaque data
+                    ),
+                ),
             ),
             (
                 Transition {
@@ -1139,7 +1293,14 @@ mod tests {
                     },
                     trans_data: TransitionTypeSpecificData::Finished,
                 },
-                "0000000000003039000000000000019D01",
+                concat!(
+                    concat!(
+                        // nonce
+                        "0000000000003039", // time
+                        "000000000000019D", // rand
+                    ),
+                    "01", // trans_type
+                ),
             ),
             (
                 Transition {
@@ -1151,7 +1312,15 @@ mod tests {
                         error: TransitionError::UnrecognizedNonce,
                     },
                 },
-                "00000000000543F600000000000180290206",
+                concat!(
+                    concat!(
+                        // nonce
+                        "00000000000543F6", // time
+                        "0000000000018029", // rand
+                    ),
+                    "02", // trans_type
+                    "06", // trans_error
+                ),
             ),
         ])
     }
@@ -1233,7 +1402,89 @@ mod tests {
                             },
                         ],
                     }),
-                    "00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000000000000000000000000000000000000000000000000000000000000000063031323334350052000000000000D431000000000000013A000800000004303132332A000630313233343500063534333231300000000000011F460000000000000203000800000004333231300D00046162636500046162666468090A61334511E10EC2F78E1575FB26E19F29CC740F02FFB6BFEF0AA280A1B7",
+                    concat!(
+                        "00", // msg_type
+                        concat!(
+                            // agg_init_req
+                            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
+                            "0000000000000000000000000000000000000000000000000000000000000000", // job_id
+                            concat!(
+                                // agg_param
+                                "0006",         // length
+                                "303132333435", // opaque data
+                            ),
+                            concat!(
+                                // seq
+                                "0052", // length
+                                concat!(
+                                    concat!(
+                                        // nonce
+                                        "000000000000D431", // time
+                                        "000000000000013A", // rand
+                                    ),
+                                    concat!(
+                                        // extensions
+                                        "0008", // length
+                                        concat!(
+                                            "0000", // extension_type
+                                            concat!(
+                                                // extension_data
+                                                "0004",     // length
+                                                "30313233", // opaque data
+                                            ),
+                                        ),
+                                    ),
+                                    concat!(
+                                        // encrypted_input_share
+                                        "2A", // config_id
+                                        concat!(
+                                            // encapsulated_context
+                                            "0006",         // length
+                                            "303132333435", // opaque data
+                                        ),
+                                        concat!(
+                                            // payload
+                                            "0006",         // length
+                                            "353433323130", // opaque data
+                                        ),
+                                    ),
+                                ),
+                                concat!(
+                                    concat!(
+                                        // nonce
+                                        "0000000000011F46", // time
+                                        "0000000000000203", // rand
+                                    ),
+                                    concat!(
+                                        // extensions
+                                        "0008", // length
+                                        concat!(
+                                            "0000", // extension_type
+                                            concat!(
+                                                // extension_data
+                                                "0004",     // length
+                                                "33323130", // opaque data
+                                            ),
+                                        ),
+                                    ),
+                                    concat!(
+                                        "0D", // config_id
+                                        concat!(
+                                            // encapsulated_context
+                                            "0004",     // length
+                                            "61626365", // opaque data
+                                        ),
+                                        concat!(
+                                            // payload
+                                            "0004",     // length
+                                            "61626664", // opaque data
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                        "68090A61334511E10EC2F78E1575FB26E19F29CC740F02FFB6BFEF0AA280A1B7", // tag
+                    ),
                 ),
                 (
                     AggregateReq::AggregateContinueReq(AggregateContinueReq {
@@ -1258,7 +1509,40 @@ mod tests {
                             },
                         ],
                     }),
-                    "01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000000000000000002A000000000000D46400000000000000350000063031323334350000000000003039000000000000019D018E244B47B01EA78D8639D81F0F9377CA0D5C2F0119ACDDC17CCB1B89D042F62E",
+                    concat!(
+                        "01", // msg_type
+                        concat!(
+                            // agg_continue_req
+                            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
+                            "0000000000000000000000000000000000000000000000000000000000000000", // job_id
+                            concat!(
+                                // seq
+                                "002A", // length
+                                concat!(
+                                    concat!(
+                                        // nonce
+                                        "000000000000D464", // time
+                                        "0000000000000035", // rand
+                                    ),
+                                    "00", // trans_type
+                                    concat!(
+                                        // payload
+                                        "0006",         // length
+                                        "303132333435", // opaque data
+                                    ),
+                                ),
+                                concat!(
+                                    concat!(
+                                        // nonce
+                                        "0000000000003039", // time
+                                        "000000000000019D", // rand
+                                    ),
+                                    "01", // trans_type
+                                )
+                            ),
+                        ),
+                        "8E244B47B01EA78D8639D81F0F9377CA0D5C2F0119ACDDC17CCB1B89D042F62E", // tag
+                    ),
                 ),
             ],
         )
@@ -1267,49 +1551,141 @@ mod tests {
     #[test]
     fn roundtrip_aggregate_init_req() {
         roundtrip_encoding(&[
-            (AggregateInitReq {
-                task_id: TaskId([u8::MIN; 32]),
-                job_id: AggregationJobId([u8::MAX; 32]),
-                agg_param: Vec::new(),
-                seq: Vec::new(),
-            }, "0000000000000000000000000000000000000000000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000"),
-            (AggregateInitReq {
-                task_id: TaskId([u8::MAX; 32]),
-                job_id: AggregationJobId([u8::MIN; 32]),
-                agg_param: Vec::from("012345"),
-                seq: vec![
-                    ReportShare {
-                        nonce: Nonce {
-                            time: Time(54321),
-                            rand: 314,
+            (
+                AggregateInitReq {
+                    task_id: TaskId([u8::MIN; 32]),
+                    job_id: AggregationJobId([u8::MAX; 32]),
+                    agg_param: Vec::new(),
+                    seq: Vec::new(),
+                },
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
+                    concat!(
+                        // agg_param
+                        "0000", // length
+                        "",     // opaque data
+                    ),
+                    concat!(
+                        // seq
+                        "0000", // length
+                    ),
+                ),
+            ),
+            (
+                AggregateInitReq {
+                    task_id: TaskId([u8::MAX; 32]),
+                    job_id: AggregationJobId([u8::MIN; 32]),
+                    agg_param: Vec::from("012345"),
+                    seq: vec![
+                        ReportShare {
+                            nonce: Nonce {
+                                time: Time(54321),
+                                rand: 314,
+                            },
+                            extensions: vec![Extension {
+                                extension_type: ExtensionType::Tbd,
+                                extension_data: Vec::from("0123"),
+                            }],
+                            encrypted_input_share: HpkeCiphertext {
+                                config_id: HpkeConfigId(42),
+                                encapsulated_context: Vec::from("012345"),
+                                payload: Vec::from("543210"),
+                            },
                         },
-                        extensions: vec![Extension {
-                            extension_type: ExtensionType::Tbd,
-                            extension_data: Vec::from("0123"),
-                        }],
-                        encrypted_input_share: HpkeCiphertext {
-                            config_id: HpkeConfigId(42),
-                            encapsulated_context: Vec::from("012345"),
-                            payload: Vec::from("543210"),
+                        ReportShare {
+                            nonce: Nonce {
+                                time: Time(73542),
+                                rand: 515,
+                            },
+                            extensions: vec![Extension {
+                                extension_type: ExtensionType::Tbd,
+                                extension_data: Vec::from("3210"),
+                            }],
+                            encrypted_input_share: HpkeCiphertext {
+                                config_id: HpkeConfigId(13),
+                                encapsulated_context: Vec::from("abce"),
+                                payload: Vec::from("abfd"),
+                            },
                         },
-                    },
-                    ReportShare {
-                        nonce: Nonce {
-                            time: Time(73542),
-                            rand: 515,
-                        },
-                        extensions: vec![Extension {
-                            extension_type: ExtensionType::Tbd,
-                            extension_data: Vec::from("3210"),
-                        }],
-                        encrypted_input_share: HpkeCiphertext {
-                            config_id: HpkeConfigId(13),
-                            encapsulated_context: Vec::from("abce"),
-                            payload: Vec::from("abfd"),
-                        },
-                    },
-                ],
-            }, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000000000000000000000000000000000000000000000000000000000000000063031323334350052000000000000D431000000000000013A000800000004303132332A000630313233343500063534333231300000000000011F460000000000000203000800000004333231300D000461626365000461626664"),
+                    ],
+                },
+                concat!(
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
+                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
+                    concat!(
+                        // agg_param
+                        "0006",         // length
+                        "303132333435", // opaque data
+                    ),
+                    concat!(
+                        "0052", // length
+                        concat!(
+                            concat!(
+                                // nonce
+                                "000000000000D431", // time
+                                "000000000000013A", // rand
+                            ),
+                            concat!(
+                                // extensions
+                                "0008", // length
+                                "0000", // extension_type
+                                concat!(
+                                    // extension_data
+                                    "0004",     // length
+                                    "30313233", // opaque data
+                                ),
+                            ),
+                            concat!(
+                                // encrypted_input_share
+                                "2A", // config_id
+                                concat!(
+                                    // encapsulated_context
+                                    "0006",         // length
+                                    "303132333435", // opaque data
+                                ),
+                                concat!(
+                                    // payload
+                                    "0006",         // length
+                                    "353433323130", // opaque data
+                                ),
+                            ),
+                        ),
+                        concat!(
+                            concat!(
+                                // nonce
+                                "0000000000011F46", // time
+                                "0000000000000203", // rand
+                            ),
+                            concat!(
+                                // extensions
+                                "0008", // length
+                                concat!(
+                                    "0000", // extension_type
+                                    concat!(
+                                        // extension_data
+                                        "0004",     // length
+                                        "33323130", // opaque data
+                                    ),
+                                ),
+                            ),
+                            concat!(
+                                // encrypted_input_share
+                                "0D", // config_id
+                                concat!(
+                                    // encapsulated_context
+                                    "0004",     // length
+                                    "61626365", // opaque data
+                                ),
+                                concat!(
+                                    "0004",     // length
+                                    "61626664", // opaque data
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         ])
     }
 
@@ -1322,30 +1698,68 @@ mod tests {
                     job_id: AggregationJobId([u8::MAX; 32]),
                     seq: vec![],
                 },
-                "0000000000000000000000000000000000000000000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000",
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
+                    concat!(
+                        // seq
+                        "0000", // length
+                    ),
+                ),
             ),
-            (AggregateContinueReq {
-                task_id: TaskId([u8::MAX; 32]),
-                job_id: AggregationJobId([u8::MIN; 32]),
-                seq: vec![
-                    Transition {
-                        nonce: Nonce {
-                            time: Time(54372),
-                            rand: 53,
+            (
+                AggregateContinueReq {
+                    task_id: TaskId([u8::MAX; 32]),
+                    job_id: AggregationJobId([u8::MIN; 32]),
+                    seq: vec![
+                        Transition {
+                            nonce: Nonce {
+                                time: Time(54372),
+                                rand: 53,
+                            },
+                            trans_data: TransitionTypeSpecificData::Continued {
+                                payload: Vec::from("012345"),
+                            },
                         },
-                        trans_data: TransitionTypeSpecificData::Continued {
-                            payload: Vec::from("012345"),
+                        Transition {
+                            nonce: Nonce {
+                                time: Time(12345),
+                                rand: 413,
+                            },
+                            trans_data: TransitionTypeSpecificData::Finished,
                         },
-                    },
-                    Transition {
-                        nonce: Nonce {
-                            time: Time(12345),
-                            rand: 413,
-                        },
-                        trans_data: TransitionTypeSpecificData::Finished,
-                    },
-                ],
-            }, "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000000000000000002A000000000000D46400000000000000350000063031323334350000000000003039000000000000019D01"),
+                    ],
+                },
+                concat!(
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
+                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
+                    concat!(
+                        //seq
+                        "002A", // length
+                        concat!(
+                            concat!(
+                                // nonce
+                                "000000000000D464", // time
+                                "0000000000000035", // rand
+                            ),
+                            "00", // trans_type
+                            concat!(
+                                // payload
+                                "0006",         // length
+                                "303132333435", // opaque data
+                            ),
+                        ),
+                        concat!(
+                            concat!(
+                                // nonce
+                                "0000000000003039", // time
+                                "000000000000019D", // rand
+                            ),
+                            "01", // trans_type
+                        ),
+                    ),
+                ),
+            ),
         ])
     }
 
@@ -1356,7 +1770,13 @@ mod tests {
             &[
                 (
                     AggregateResp { seq: vec![] },
-                    "00008D460A9EB8988604F0F282887BA39AA230A73AA6254E964FD9A4352E554B38E1",
+                    concat!(
+                        concat!(
+                            // seq
+                            "0000", // length
+                        ),
+                        "8D460A9EB8988604F0F282887BA39AA230A73AA6254E964FD9A4352E554B38E1", // tag
+                    ),
                 ),
                 (
                     AggregateResp {
@@ -1379,7 +1799,34 @@ mod tests {
                             },
                         ],
                     },
-                    "002A000000000000D46400000000000000350000063031323334350000000000003039000000000000019D013F48B7D8F0AA6E2AE5677ED356D3B18FFF5318A024A25CA0BF27CE02FB770EC3",
+                    concat!(
+                        concat!(
+                            //seq
+                            "002A", // length
+                            concat!(
+                                concat!(
+                                    // nonce
+                                    "000000000000D464", // time
+                                    "0000000000000035", // rand
+                                ),
+                                "00", // trans_type
+                                concat!(
+                                    // payload
+                                    "0006",         // length
+                                    "303132333435", // opaque data
+                                ),
+                            ),
+                            concat!(
+                                concat!(
+                                    // nonce
+                                    "0000000000003039", // time
+                                    "000000000000019D", // rand
+                                ),
+                                "01", // trans_type
+                            ),
+                        ),
+                        "3F48B7D8F0AA6E2AE5677ED356D3B18FFF5318A024A25CA0BF27CE02FB770EC3",
+                    ),
                 ),
             ],
         )
@@ -1388,20 +1835,40 @@ mod tests {
     #[test]
     fn roundtrip_aggregate_share_req() {
         roundtrip_encoding(&[
-            (AggregateShareReq {
-                task_id: TaskId([u8::MIN; 32]),
-                batch_interval: Interval {
-                    start: Time(54321),
-                    duration: Duration(12345),
+            (
+                AggregateShareReq {
+                    task_id: TaskId([u8::MIN; 32]),
+                    batch_interval: Interval {
+                        start: Time(54321),
+                        duration: Duration(12345),
+                    },
                 },
-            }, "0000000000000000000000000000000000000000000000000000000000000000000000000000D4310000000000003039"),
-            (AggregateShareReq {
-                task_id: TaskId([12u8; 32]),
-                batch_interval: Interval {
-                    start: Time(50821),
-                    duration: Duration(84354),
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                    concat!(
+                        // batch_interval
+                        "000000000000D431", // start
+                        "0000000000003039", // duration
+                    ),
+                ),
+            ),
+            (
+                AggregateShareReq {
+                    task_id: TaskId([12u8; 32]),
+                    batch_interval: Interval {
+                        start: Time(50821),
+                        duration: Duration(84354),
+                    },
                 },
-            }, "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C000000000000C6850000000000014982"),
+                concat!(
+                    "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
+                    concat!(
+                        // batch_interval
+                        "000000000000C685", // start
+                        "0000000000014982", // duration
+                    ),
+                ),
+            ),
         ])
     }
 
@@ -1418,7 +1885,23 @@ mod tests {
                             payload: Vec::from("4567"),
                         },
                     },
-                    "0A00043031323300043435363767C9AD957825E8A20F3E85B6343A4AB186927B01B16585A6F21115730C660EC7",
+                    concat!(
+                        concat!(
+                            // encrypted_aggregate_share
+                            "0A", // config_id
+                            concat!(
+                                // encapsulated_context
+                                "0004",     // length
+                                "30313233", // opaque data
+                            ),
+                            concat!(
+                                // payload
+                                "0004",     // length
+                                "34353637", // opaque data
+                            ),
+                        ),
+                        "67C9AD957825E8A20F3E85B6343A4AB186927B01B16585A6F21115730C660EC7", // tag
+                    ),
                 ),
                 (
                     AggregateShareResp {
@@ -1428,7 +1911,22 @@ mod tests {
                             payload: Vec::from("567"),
                         },
                     },
-                    "0C000530313233340003353637DF229D520BBB475BF17CA6DECF8EF134A6868D54D5171974340A667F5129035E",
+                    concat!(
+                        concat!(
+                            // encrypted_aggregate_share
+                            "0C", // config_id
+                            concat!(
+                                // encapsulated_context
+                                "0005",       // length
+                                "3031323334", // opaque data
+                            ),
+                            concat!(
+                                "0003",   // length
+                                "353637", // opaque data
+                            ),
+                        ),
+                        "DF229D520BBB475BF17CA6DECF8EF134A6868D54D5171974340A667F5129035E", // tag
+                    ),
                 ),
             ],
         )
@@ -1446,7 +1944,19 @@ mod tests {
                     },
                     agg_param: Vec::new(),
                 },
-                "0000000000000000000000000000000000000000000000000000000000000000000000000000D43100000000000030390000",
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id,
+                    concat!(
+                        // batch_interval
+                        "000000000000D431", // start
+                        "0000000000003039", // duration
+                    ),
+                    concat!(
+                        // agg_param
+                        "0000", // length
+                        "",     // opaque data
+                    ),
+                ),
             ),
             (
                 CollectReq {
@@ -1457,7 +1967,19 @@ mod tests {
                     },
                     agg_param: Vec::from("012345"),
                 },
-                "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D000000000000BF11000000000000AEB10006303132333435",
+                concat!(
+                    "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D", // task_id
+                    concat!(
+                        // batch_interval
+                        "000000000000BF11", // start
+                        "000000000000AEB1", // duration
+                    ),
+                    concat!(
+                        // agg_param
+                        "0006",         // length
+                        "303132333435", // opaque data
+                    ),
+                ),
             ),
         ])
     }
@@ -1469,7 +1991,10 @@ mod tests {
                 CollectResp {
                     encrypted_agg_shares: Vec::new(),
                 },
-                "0000",
+                concat!(concat!(
+                    // encrypted_agg_shares
+                    "0000", // length
+                )),
             ),
             (
                 CollectResp {
@@ -1486,7 +2011,36 @@ mod tests {
                         },
                     ],
                 },
-                "001A0A0004303132330004343536370C000530313233340003353637",
+                concat!(concat!(
+                    // encrypted_agg_shares
+                    "001A", // length
+                    concat!(
+                        "0A", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0004",     // length
+                            "30313233", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "0004",     // length
+                            "34353637", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        "0C", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0005",       // length
+                            "3031323334", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "0003",   // length
+                            "353637", // opaque data
+                        ),
+                    )
+                ),),
             ),
         ])
     }
