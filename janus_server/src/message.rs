@@ -529,7 +529,7 @@ impl Decode for TransitionError {
     }
 }
 
-/// PPM protocol message representing an identifier for a PPM task.
+/// PPM protocol message representing an identifier for an aggregation job.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregationJobId(pub [u8; 32]);
 
