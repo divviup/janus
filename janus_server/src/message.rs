@@ -719,6 +719,8 @@ impl ParameterizedDecode<hmac::Key> for AggregateResp {
 pub struct AggregateShareReq {
     pub task_id: TaskId,
     pub batch_interval: Interval,
+    pub report_count: u64,
+    pub checksum: [u8; 32],
 }
 
 impl ParameterizedEncode<hmac::Key> for AggregateShareReq {
@@ -728,6 +730,8 @@ impl ParameterizedEncode<hmac::Key> for AggregateShareReq {
 
         self.task_id.encode(bytes);
         self.batch_interval.encode(bytes);
+        self.report_count.encode(bytes);
+        bytes.extend_from_slice(&self.checksum);
 
         let end_offset = bytes.len();
         let tag = hmac::sign(key, &bytes[start_offset..end_offset]);
@@ -742,6 +746,9 @@ impl ParameterizedDecode<hmac::Key> for AggregateShareReq {
 
         let task_id = TaskId::decode(bytes)?;
         let batch_interval = Interval::decode(bytes)?;
+        let report_count = u64::decode(bytes)?;
+        let mut checksum = [0u8; 32];
+        bytes.read_exact(&mut checksum)?;
 
         let end_offset = bytes.position() as usize;
         let mut provided_tag = [0u8; SHA256_OUTPUT_LEN];
@@ -756,6 +763,8 @@ impl ParameterizedDecode<hmac::Key> for AggregateShareReq {
         Ok(Self {
             task_id,
             batch_interval,
+            report_count,
+            checksum,
         })
     }
 }
@@ -1864,6 +1873,8 @@ mod tests {
                             start: Time(54321),
                             duration: Duration(12345),
                         },
+                        report_count: 439,
+                        checksum: [u8::MIN; 32],
                     },
                     concat!(
                         "0000000000000000000000000000000000000000000000000000000000000000", // task_id
@@ -1872,7 +1883,9 @@ mod tests {
                             "000000000000D431", // start
                             "0000000000003039", // duration
                         ),
-                        "5E1C2B93AF97059B96993A9FD42A09F8CD8D03A97B0E437F0718550849F3BA87", // tag
+                        "00000000000001B7", // report_count
+                        "0000000000000000000000000000000000000000000000000000000000000000", // checksum
+                        "B19A8933DA450A49737E56643B83F3DEF530CBAF3FCD9E3E2BF09C6D8AF373A6", // tag
                     ),
                 ),
                 (
@@ -1882,6 +1895,8 @@ mod tests {
                             start: Time(50821),
                             duration: Duration(84354),
                         },
+                        report_count: 8725,
+                        checksum: [u8::MAX; 32],
                     },
                     concat!(
                         "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
@@ -1890,7 +1905,9 @@ mod tests {
                             "000000000000C685", // start
                             "0000000000014982", // duration
                         ),
-                        "3E8A991776805EA5EB824897926A8CC7E9C58542F65E846DE63B8925107CEC7F", // tag
+                        "0000000000002215", // report_count
+                        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // checksum
+                        "4ADD294CF991CEB12CDE2DC5F98EAE56BC1C3D8941D3FC4C46F053AE7D3BC3CA", // tag
                     ),
                 ),
             ],
