@@ -188,6 +188,26 @@ impl Decode for TaskId {
     }
 }
 
+impl TaskId {
+    /// Get a reference to the task ID as a byte slice
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Generate a random [`TaskId`]
+    #[cfg(test)]
+    pub(crate) fn random() -> Self {
+        use rand::{thread_rng, Rng};
+
+        let mut rng = thread_rng();
+
+        let mut task_id = [0u8; 32];
+        rng.fill(&mut task_id);
+
+        TaskId(task_id)
+    }
+}
+
 /// PPM protocol message representing an HPKE key encapsulation mechanism.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u16)]
