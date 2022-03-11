@@ -89,8 +89,6 @@ CREATE TABLE batch_aggregations(
     checksum              BYTEA NOT NULL,      -- the (possibly-incremental) checksum
 
     PRIMARY KEY(task_id, batch_interval_start)
-
-    -- TODO(brandon): decide how to count collection attempts: in this table? via collect_jobs inspection? somehow else?
 );
 
 -- A collection request from the Collector.
@@ -103,12 +101,14 @@ CREATE TABLE collect_jobs(
 
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
+CREATE INDEX collect_jobs_batch_interval_index ON collect_jobs(task_id, batch_interval_start, batch_interval_end);
 
 -- An encrypted aggregate share computed for a specific collection job.
 CREATE TABLE collect_job_encrypted_aggregate_shares(
     collect_job_id             UUID,             -- the ID of the collect job this encrypted aggregate share is associated with
-    ord                        BIGINT NOT NULL,  -- the order of the aggregator associated with this encrypted_aggregate_share
+    ord                        BIGINT NOT NULL,  -- the order of the aggregator associated with this encrypted_aggregate_share; 0 is leader, 1 or larger is helper
     encrypted_aggregate_share  BYTEA NOT NULL,   -- the encrypted aggregate share (an encoded HpkeCiphertext message)
 
+    CONSTRAINT fk_collect_job_id FOREIGN KEY(collect_job_id) REFERENCES collect_jobs(id),
     PRIMARY KEY(collect_job_id, ord)
-)
+);
