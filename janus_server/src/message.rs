@@ -171,7 +171,7 @@ impl Decode for HpkeCiphertext {
 }
 
 /// PPM protocol message representing an identifier for a PPM task.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskId(pub [u8; 32]);
 
 impl Encode for TaskId {
@@ -195,8 +195,7 @@ impl TaskId {
     }
 
     /// Generate a random [`TaskId`]
-    #[cfg(test)]
-    pub(crate) fn random() -> Self {
+    pub fn random() -> Self {
         use rand::{thread_rng, Rng};
 
         let mut rng = thread_rng();

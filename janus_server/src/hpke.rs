@@ -21,7 +21,7 @@ enum Error {
 
 /// Labels incorporated into HPKE application info string
 #[derive(Clone, Copy, Debug)]
-enum Label {
+pub(crate) enum Label {
     InputShare,
     AggregateShare,
 }
@@ -85,12 +85,13 @@ impl HpkeApplicationInfo {
 //
 // This type only exists separately from Sender so that we can have a type that
 // doesn't "leak" the generic type parameters into the caller.
-struct HpkeSender {
-    task_id: TaskId,
-    recipient_config: HpkeConfig,
-    label: Label,
-    sender_role: Role,
-    recipient_role: Role,
+#[derive(Clone, Debug)]
+pub struct HpkeSender {
+    pub(crate) task_id: TaskId,
+    pub recipient_config: HpkeConfig,
+    pub(crate) label: Label,
+    pub(crate) sender_role: Role,
+    pub(crate) recipient_role: Role,
 }
 
 impl HpkeSender {
@@ -110,7 +111,7 @@ impl HpkeSender {
                 seal::<AesGcm256, HkdfSha256, DhP256HkdfSha256>(
                     &self.recipient_config,
                     HpkeApplicationInfo::new(
-                        self.task_id.clone(),
+                        self.task_id,
                         self.label,
                         self.sender_role,
                         self.recipient_role,
@@ -123,7 +124,7 @@ impl HpkeSender {
                 seal::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>(
                     &self.recipient_config,
                     HpkeApplicationInfo::new(
-                        self.task_id.clone(),
+                        self.task_id,
                         self.label,
                         self.sender_role,
                         self.recipient_role,
@@ -174,9 +175,10 @@ fn seal<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
 //
 // This type only exists separately from Recipient so that we can have a type
 // that doesn't "leak" the generic type parameters into the caller.
-struct HpkeRecipient {
+#[derive(Clone, Debug)]
+pub(crate) struct HpkeRecipient {
     task_id: TaskId,
-    config: HpkeConfig,
+    pub(crate) config: HpkeConfig,
     label: Label,
     sender_role: Role,
     recipient_role: Role,
@@ -187,13 +189,15 @@ impl HpkeRecipient {
     /// Generate a new X25519HkdfSha256 keypair and construct an HPKE recipient
     /// using the private key, with KEM = X25519HkdfSha256, KDF = HkdfSha512 and
     /// AEAD = ChaCha20Poly1305, and the specified label, and roles.
-    #[cfg(test)]
-    fn generate(label: Label, sender_role: Role, recipient_role: Role) -> Self {
+    pub(crate) fn generate(
+        task_id: TaskId,
+        label: Label,
+        sender_role: Role,
+        recipient_role: Role,
+    ) -> Self {
         use crate::message::{HpkeConfigId, HpkePublicKey};
 
         let mut rng = thread_rng();
-
-        let task_id = TaskId::random();
 
         let (private_key, public_key) = X25519HkdfSha256::gen_keypair(&mut rng);
 
@@ -226,7 +230,7 @@ impl HpkeRecipient {
             (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes256Gcm) => {
                 open::<AesGcm256, HkdfSha256, DhP256HkdfSha256>(
                     HpkeApplicationInfo::new(
-                        self.task_id.clone(),
+                        self.task_id,
                         self.label,
                         self.sender_role,
                         self.recipient_role,
@@ -239,7 +243,7 @@ impl HpkeRecipient {
             (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::ChaCha20Poly1305) => {
                 open::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>(
                     HpkeApplicationInfo::new(
-                        self.task_id.clone(),
+                        self.task_id,
                         self.label,
                         self.sender_role,
                         self.recipient_role,
@@ -290,15 +294,16 @@ mod tests {
 
     #[test]
     fn exchange_message() {
+        let task_id = TaskId::random();
         // Sender and receiver must agree on AAD for each message
         let associated_data = b"message associated data";
-
         let message = b"a message that is secret";
 
-        let recipient = HpkeRecipient::generate(Label::InputShare, Role::Client, Role::Leader);
+        let recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
 
         let sender = HpkeSender {
-            task_id: recipient.task_id.clone(),
+            task_id: recipient.task_id,
             recipient_config: recipient.config.clone(),
             label: Label::InputShare,
             sender_role: Role::Client,
@@ -313,15 +318,16 @@ mod tests {
 
     #[test]
     fn wrong_private_key() {
+        let task_id = TaskId::random();
         // Sender and receiver must agree on AAD for each message
         let associated_data = b"message associated data";
-
         let message = b"a message that is secret";
 
-        let recipient = HpkeRecipient::generate(Label::InputShare, Role::Client, Role::Leader);
+        let recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
 
         let sender = HpkeSender {
-            task_id: recipient.task_id.clone(),
+            task_id: recipient.task_id,
             recipient_config: recipient.config,
             label: Label::InputShare,
             sender_role: Role::Client,
@@ -332,7 +338,7 @@ mod tests {
 
         // Attempt to decrypt with different private key
         let wrong_recipient =
-            HpkeRecipient::generate(Label::InputShare, Role::Client, Role::Leader);
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
 
         wrong_recipient
             .open(&ciphertext, associated_data)
@@ -341,15 +347,16 @@ mod tests {
 
     #[test]
     fn wrong_application_info() {
+        let task_id = TaskId::random();
         // Sender and receiver must agree on AAD for each message
         let associated_data = b"message associated data";
-
         let message = b"a message that is secret";
 
-        let recipient = HpkeRecipient::generate(Label::InputShare, Role::Client, Role::Leader);
+        let recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
 
         let sender = HpkeSender {
-            task_id: recipient.task_id.clone(),
+            task_id: recipient.task_id,
             recipient_config: recipient.config.clone(),
             label: Label::AggregateShare,
             sender_role: Role::Client,
@@ -362,12 +369,14 @@ mod tests {
 
     #[test]
     fn wrong_associated_data() {
+        let task_id = TaskId::random();
         let message = b"a message that is secret";
 
-        let recipient = HpkeRecipient::generate(Label::InputShare, Role::Client, Role::Leader);
+        let recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
 
         let sender = HpkeSender {
-            task_id: recipient.task_id.clone(),
+            task_id: recipient.task_id,
             recipient_config: recipient.config.clone(),
             label: Label::InputShare,
             sender_role: Role::Client,
