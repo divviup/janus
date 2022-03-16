@@ -1,6 +1,7 @@
 //! PPM protocol message definitions with serialization/deserialization support.
 
 use anyhow::anyhow;
+use chrono::naive::NaiveDateTime;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
     decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode,
@@ -10,7 +11,10 @@ use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
 };
-use std::io::{Cursor, Read};
+use std::{
+    fmt::Display,
+    io::{Cursor, Read},
+};
 
 // TODO(brandon): retrieve HPKE identifier values from HPKE library once one is decided upon
 
@@ -33,6 +37,23 @@ impl Decode for Duration {
 /// PPM protocol message representing an instant in time with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Time(pub u64);
+
+impl Time {
+    pub(crate) fn as_naive_date_time(&self) -> NaiveDateTime {
+        NaiveDateTime::from_timestamp(self.0 as i64, 0)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_naive_date_time(time: NaiveDateTime) -> Self {
+        Self(time.timestamp() as u64)
+    }
+}
+
+impl Display for Time {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl Encode for Time {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -73,12 +94,18 @@ impl Decode for Interval {
 }
 
 /// PPM protocol message representing a nonce uniquely identifying a client report.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Nonce {
     /// The time at which the report was generated.
     pub time: Time,
     /// A randomly generated value.
     pub rand: u64,
+}
+
+impl Display for Nonce {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.time, self.rand)
+    }
 }
 
 impl Encode for Nonce {
@@ -107,6 +134,12 @@ pub enum Role {
     Helper = 3,
 }
 
+impl Role {
+    pub(crate) fn is_aggregator(&self) -> bool {
+        matches!(self, Role::Leader | Role::Helper)
+    }
+}
+
 impl Encode for Role {
     fn encode(&self, bytes: &mut Vec<u8>) {
         (*self as u8).encode(bytes);
@@ -124,6 +157,12 @@ impl Decode for Role {
 /// PPM protocol message representing an identifier for an HPKE config.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct HpkeConfigId(pub u8);
+
+impl Display for HpkeConfigId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl Encode for HpkeConfigId {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -345,6 +384,18 @@ pub struct Report {
     pub nonce: Nonce,
     pub extensions: Vec<Extension>,
     pub encrypted_input_shares: Vec<HpkeCiphertext>,
+}
+
+impl Report {
+    /// Construct the HPKE associated data for sealing or opening this report,
+    /// per §4.3.2 and 4.4.2.2 of draft-gpew-priv-ppm
+    pub(crate) fn associated_data(nonce: Nonce, extensions: &[Extension]) -> Vec<u8> {
+        let mut associated_data = vec![];
+        nonce.encode(&mut associated_data);
+        encode_u16_items(&mut associated_data, &(), extensions);
+
+        associated_data
+    }
 }
 
 impl Encode for Report {
