@@ -211,7 +211,7 @@ mod tests {
     use testcontainers::{clients, images::postgres::Postgres, Container, Docker};
     use tokio_postgres::NoTls;
 
-    const SCHEMA: &'static str = include_str!("../../db/schema.sql");
+    const SCHEMA: &str = include_str!("../../db/schema.sql");
 
     /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database which
     /// has the Janus schema applied but is otherwise empty.
