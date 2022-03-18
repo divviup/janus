@@ -1,6 +1,11 @@
 //! PPM protocol message definitions with serialization/deserialization support.
 
 use anyhow::anyhow;
+use hpke::{
+    aead::{self, Aead},
+    kdf::{self, Kdf},
+    kem, Kem,
+};
 use num_enum::TryFromPrimitive;
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use rand::{thread_rng, Rng};
@@ -12,8 +17,6 @@ use std::{
     io::{self, Cursor, ErrorKind, Read},
     marker::PhantomData,
 };
-
-// TODO(brandon): retrieve HPKE identifier values from HPKE library once one is decided upon
 
 /// AuthenticatedEncoder can encode messages into the "authenticated envelope" format used by
 /// authenticated PPM messages. The encoding format is the encoding format of the underlying
@@ -288,9 +291,9 @@ impl TaskId {
 #[repr(u16)]
 pub enum HpkeKemId {
     /// NIST P-256 keys and HKDF-SHA256.
-    P256HkdfSha256 = 0x0010,
+    P256HkdfSha256 = kem::DhP256HkdfSha256::KEM_ID,
     /// X25519 keys and HKDF-SHA256.
-    X25519HkdfSha256 = 0x0020,
+    X25519HkdfSha256 = kem::X25519HkdfSha256::KEM_ID,
 }
 
 impl Encode for HpkeKemId {
@@ -312,11 +315,11 @@ impl Decode for HpkeKemId {
 #[repr(u16)]
 pub enum HpkeKdfId {
     /// HMAC Key Derivation Function SHA256.
-    HkdfSha256 = 0x0001,
+    HkdfSha256 = kdf::HkdfSha256::KDF_ID,
     /// HMAC Key Derivation Function SHA384.
-    HkdfSha384 = 0x0002,
+    HkdfSha384 = kdf::HkdfSha384::KDF_ID,
     /// HMAC Key Derivation Function SHA512.
-    HkdfSha512 = 0x0003,
+    HkdfSha512 = kdf::HkdfSha512::KDF_ID,
 }
 
 impl Encode for HpkeKdfId {
@@ -338,11 +341,11 @@ impl Decode for HpkeKdfId {
 #[repr(u16)]
 pub enum HpkeAeadId {
     /// AES-128-GCM.
-    Aes128Gcm = 0x0001,
+    Aes128Gcm = aead::AesGcm128::AEAD_ID,
     /// AES-256-GCM.
-    Aes256Gcm = 0x0002,
+    Aes256Gcm = aead::AesGcm256::AEAD_ID,
     /// ChaCha20Poly1305.
-    ChaCha20Poly1305 = 0x0003,
+    ChaCha20Poly1305 = aead::ChaCha20Poly1305::AEAD_ID,
 }
 
 impl Encode for HpkeAeadId {
