@@ -20,9 +20,9 @@ use std::{
     marker::PhantomData,
 };
 
-/// AuthenticatedEncoder can encode messages into the "authenticated envelope" format used by
-/// authenticated PPM messages. The encoding format is the encoding format of the underlying
-/// message, followed by a 32-byte authentication tag.
+/// AuthenticatedEncoder can encode messages into the format used by authenticated PPM messages. The
+/// encoding format is the encoding format of the underlying message, followed by a 32-byte
+/// authentication tag.
 pub struct AuthenticatedEncoder<M: Encode> {
     msg: M,
 }
@@ -135,7 +135,7 @@ fn authenticated_decode<M: Decode>(key: &hmac::Key, buf: &[u8]) -> Result<M, Cod
 
 /// PPM protocol message representing a duration with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Duration(pub u64);
+pub struct Duration(pub(crate) u64);
 
 impl Encode for Duration {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -151,7 +151,7 @@ impl Decode for Duration {
 
 /// PPM protocol message representing an instant in time with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Time(pub u64);
+pub struct Time(pub(crate) u64);
 
 impl Time {
     pub(crate) fn as_naive_date_time(&self) -> NaiveDateTime {
@@ -186,9 +186,9 @@ impl Decode for Time {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Interval {
     /// The start of the interval.
-    pub start: Time,
+    pub(crate) start: Time,
     /// The length of the interval.
-    pub duration: Duration,
+    pub(crate) duration: Duration,
 }
 
 impl Encode for Interval {
@@ -211,9 +211,9 @@ impl Decode for Interval {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Nonce {
     /// The time at which the report was generated.
-    pub time: Time,
+    pub(crate) time: Time,
     /// A randomly generated value.
-    pub rand: u64,
+    pub(crate) rand: u64,
 }
 
 impl Display for Nonce {
@@ -270,7 +270,7 @@ impl Decode for Role {
 
 /// PPM protocol message representing an identifier for an HPKE config.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct HpkeConfigId(pub u8);
+pub struct HpkeConfigId(pub(crate) u8);
 
 impl Display for HpkeConfigId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -294,11 +294,11 @@ impl Decode for HpkeConfigId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HpkeCiphertext {
     /// An identifier of the HPKE configuration used to seal the message.
-    pub config_id: HpkeConfigId,
+    pub(crate) config_id: HpkeConfigId,
     /// An encasulated HPKE context.
-    pub encapsulated_context: Vec<u8>,
+    pub(crate) encapsulated_context: Vec<u8>,
     /// An HPKE ciphertext.
-    pub payload: Vec<u8>,
+    pub(crate) payload: Vec<u8>,
 }
 
 impl Encode for HpkeCiphertext {
@@ -325,7 +325,7 @@ impl Decode for HpkeCiphertext {
 
 /// PPM protocol message representing an identifier for a PPM task.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TaskId(pub [u8; Self::ENCODED_LEN]);
+pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
 
 impl TaskId {
     /// ENCODED_LEN is the length of a task ID in bytes when encoded.
@@ -353,7 +353,8 @@ impl TaskId {
     }
 
     /// Generate a random [`TaskId`]
-    pub fn random() -> Self {
+    #[cfg(test)]
+    pub(crate) fn random() -> Self {
         let mut task_id = [0u8; Self::ENCODED_LEN];
         thread_rng().fill(&mut task_id);
         TaskId(task_id)
@@ -438,7 +439,7 @@ impl Decode for HpkeAeadId {
 
 /// PPM protocol message representing an HPKE public key.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HpkePublicKey(pub Vec<u8>);
+pub struct HpkePublicKey(pub(crate) Vec<u8>);
 
 impl Encode for HpkePublicKey {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -456,11 +457,11 @@ impl Decode for HpkePublicKey {
 /// PPM protocol message representing an HPKE config.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HpkeConfig {
-    pub id: HpkeConfigId,
-    pub kem_id: HpkeKemId,
-    pub kdf_id: HpkeKdfId,
-    pub aead_id: HpkeAeadId,
-    pub public_key: HpkePublicKey,
+    pub(crate) id: HpkeConfigId,
+    pub(crate) kem_id: HpkeKemId,
+    pub(crate) kdf_id: HpkeKdfId,
+    pub(crate) aead_id: HpkeAeadId,
+    pub(crate) public_key: HpkePublicKey,
 }
 
 impl Encode for HpkeConfig {
@@ -494,10 +495,10 @@ impl Decode for HpkeConfig {
 /// PPM protocol message representing a client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
-    pub task_id: TaskId,
-    pub nonce: Nonce,
-    pub extensions: Vec<Extension>,
-    pub encrypted_input_shares: Vec<HpkeCiphertext>,
+    pub(crate) task_id: TaskId,
+    pub(crate) nonce: Nonce,
+    pub(crate) extensions: Vec<Extension>,
+    pub(crate) encrypted_input_shares: Vec<HpkeCiphertext>,
 }
 
 impl Report {
@@ -540,8 +541,8 @@ impl Decode for Report {
 /// PPM protocol message representing an arbitrary extension included in a client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Extension {
-    pub extension_type: ExtensionType,
-    pub extension_data: Vec<u8>,
+    pub(crate) extension_type: ExtensionType,
+    pub(crate) extension_data: Vec<u8>,
 }
 
 impl Encode for Extension {
@@ -588,9 +589,9 @@ impl Decode for ExtensionType {
 /// PPM protocol message representing one aggregator's share of a single client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportShare {
-    pub nonce: Nonce,
-    pub extensions: Vec<Extension>,
-    pub encrypted_input_share: HpkeCiphertext,
+    pub(crate) nonce: Nonce,
+    pub(crate) extensions: Vec<Extension>,
+    pub(crate) encrypted_input_share: HpkeCiphertext,
 }
 
 impl Encode for ReportShare {
@@ -618,8 +619,8 @@ impl Decode for ReportShare {
 /// PPM protocol message representing a transition in the state machine of a VDAF.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transition {
-    pub nonce: Nonce,
-    pub trans_data: TransitionTypeSpecificData,
+    pub(crate) nonce: Nonce,
+    pub(crate) trans_data: TransitionTypeSpecificData,
 }
 
 impl Encode for Transition {
@@ -715,7 +716,7 @@ impl Decode for TransitionError {
 
 /// PPM protocol message representing an identifier for an aggregation job.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregationJobId(pub [u8; 32]);
+pub struct AggregationJobId(pub(crate) [u8; 32]);
 
 impl Encode for AggregationJobId {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -734,9 +735,9 @@ impl Decode for AggregationJobId {
 /// PPM protocol message representing an aggregation request from the leader to a helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateReq {
-    pub task_id: TaskId,
-    pub job_id: AggregationJobId,
-    pub body: AggregateReqBody,
+    pub(crate) task_id: TaskId,
+    pub(crate) job_id: AggregationJobId,
+    pub(crate) body: AggregateReqBody,
 }
 
 impl Encode for AggregateReq {
@@ -806,7 +807,7 @@ pub enum AggregateReqBody {
 /// or continue aggregation of a sequence of client reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateResp {
-    pub seq: Vec<Transition>,
+    pub(crate) seq: Vec<Transition>,
 }
 
 impl Encode for AggregateResp {
@@ -826,10 +827,10 @@ impl Decode for AggregateResp {
 /// encrypted aggregate of its share of data for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateShareReq {
-    pub task_id: TaskId,
-    pub batch_interval: Interval,
-    pub report_count: u64,
-    pub checksum: [u8; 32],
+    pub(crate) task_id: TaskId,
+    pub(crate) batch_interval: Interval,
+    pub(crate) report_count: u64,
+    pub(crate) checksum: [u8; 32],
 }
 
 impl Encode for AggregateShareReq {
@@ -862,7 +863,7 @@ impl Decode for AggregateShareReq {
 /// encrypted aggregate of its share of data for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateShareResp {
-    pub encrypted_aggregate_share: HpkeCiphertext,
+    pub(crate) encrypted_aggregate_share: HpkeCiphertext,
 }
 
 impl Encode for AggregateShareResp {
@@ -885,9 +886,9 @@ impl Decode for AggregateShareResp {
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectReq {
-    pub task_id: TaskId,
-    pub batch_interval: Interval,
-    pub agg_param: Vec<u8>,
+    pub(crate) task_id: TaskId,
+    pub(crate) batch_interval: Interval,
+    pub(crate) agg_param: Vec<u8>,
 }
 
 impl Encode for CollectReq {
@@ -916,7 +917,7 @@ impl Decode for CollectReq {
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectResp {
-    pub encrypted_agg_shares: Vec<HpkeCiphertext>,
+    pub(crate) encrypted_agg_shares: Vec<HpkeCiphertext>,
 }
 
 impl Encode for CollectResp {
