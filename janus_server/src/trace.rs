@@ -26,3 +26,15 @@ pub fn install_subscriber() -> Result<(), Error> {
 
     Ok(tracing::subscriber::set_global_default(subscriber)?)
 }
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use std::sync::Once;
+
+    /// install_trace_subscriber installs a tracing subscriber suitable for tests. It should be
+    /// called at the beginning of any test that requires a tracing subscriber.
+    pub(crate) fn install_trace_subscriber() {
+        static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
+        INSTALL_TRACE_SUBSCRIBER.call_once(|| super::install_subscriber().unwrap());
+    }
+}

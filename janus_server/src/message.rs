@@ -1,7 +1,7 @@
 //! PPM protocol message definitions with serialization/deserialization support.
 
 use anyhow::anyhow;
-use chrono::naive::NaiveDateTime;
+use chrono::NaiveDateTime;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
     decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode,
@@ -43,7 +43,6 @@ impl Time {
         NaiveDateTime::from_timestamp(self.0 as i64, 0)
     }
 
-    #[cfg(test)]
     pub(crate) fn from_naive_date_time(time: NaiveDateTime) -> Self {
         Self(time.timestamp() as u64)
     }
@@ -426,8 +425,8 @@ impl Decode for Report {
 /// PPM protocol message representing an arbitrary extension included in a client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Extension {
-    extension_type: ExtensionType,
-    extension_data: Vec<u8>,
+    pub extension_type: ExtensionType,
+    pub extension_data: Vec<u8>,
 }
 
 impl Encode for Extension {
