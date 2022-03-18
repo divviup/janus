@@ -31,9 +31,10 @@ pub fn install_subscriber() -> Result<(), Error> {
 pub(crate) mod test_util {
     use std::sync::Once;
 
-    static INSTALL_SUBSCRIBER_ONCE: Once = Once::new();
-
+    /// install_trace_subscriber installs a tracing subscriber suitable for tests. It should be
+    /// called at the beginning of any test that requires a tracing subscriber.
     pub(crate) fn install_trace_subscriber() {
-        INSTALL_SUBSCRIBER_ONCE.call_once(|| super::install_subscriber().unwrap());
+        static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
+        INSTALL_TRACE_SUBSCRIBER.call_once(|| super::install_subscriber().unwrap());
     }
 }

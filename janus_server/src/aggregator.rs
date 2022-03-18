@@ -239,20 +239,17 @@ mod tests {
         hpke::{HpkeSender, Label},
         message::{HpkeConfig, TaskId, Time},
         time::tests::MockClock,
-        trace::install_subscriber,
+        trace::test_util::install_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use hyper::body::to_bytes;
     use prio::codec::Decode;
-    use std::{io::Cursor, sync::Once};
+    use std::io::Cursor;
     use warp::reply::Reply;
-
-    // Install a trace subscriber once for all tests
-    static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
 
     #[test]
     fn invalid_role() {
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| install_subscriber().unwrap());
+        install_trace_subscriber();
 
         let hpke_recipient = HpkeRecipient::generate(
             TaskId::random(),
@@ -276,7 +273,7 @@ mod tests {
 
     #[test]
     fn invalid_clock_skew() {
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| install_subscriber().unwrap());
+        install_trace_subscriber();
 
         let hpke_recipient = HpkeRecipient::generate(
             TaskId::random(),
@@ -298,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn hpke_config() {
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| install_subscriber().unwrap());
+        install_trace_subscriber();
 
         let task_id = TaskId::random();
 
@@ -391,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_filter() {
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| install_subscriber().unwrap());
+        install_trace_subscriber();
 
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
@@ -418,7 +415,7 @@ mod tests {
     // Helper should not expose /upload endpoint
     #[tokio::test]
     async fn upload_filter_helper() {
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| install_subscriber().unwrap());
+        install_trace_subscriber();
 
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
@@ -453,7 +450,7 @@ mod tests {
 
     #[test]
     fn upload() {
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| install_subscriber().unwrap());
+        install_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, report) = setup_upload_test(skew);
@@ -478,7 +475,7 @@ mod tests {
 
     #[test]
     fn upload_wrong_number_of_encrypted_shares() {
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| install_subscriber().unwrap());
+        install_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, mut report) = setup_upload_test(skew);
@@ -493,7 +490,7 @@ mod tests {
 
     #[test]
     fn upload_wrong_hpke_config_id() {
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| install_subscriber().unwrap());
+        install_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, mut report) = setup_upload_test(skew);
@@ -537,7 +534,7 @@ mod tests {
 
     #[test]
     fn report_in_the_future() {
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| install_subscriber().unwrap());
+        install_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, mut report) = setup_upload_test(skew);
