@@ -9,7 +9,6 @@ rust-version = "1.58"
 anyhow = "1"
 bytes = "1.1.0"
 chrono = "0.4"
-deadpool-postgres = "0.10.1"
 hex = "0.4.3"
 hpke = { version = "0.8.0", features = ["default", "std"] }
 http = "0.2.6"

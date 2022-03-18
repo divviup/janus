@@ -3,19 +3,23 @@
 use crate::message::{Extension, HpkeCiphertext, Nonce, Report, TaskId, Time};
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode};
 use std::{future::Future, io::Cursor, pin::Pin};
+use tokio::sync::Mutex;
 use tokio_postgres::{error::SqlState, IsolationLevel, Row};
+
+// TODO(brandon): connection pooling (currently all concurrent transactions in a single Datastore are serialized)
+// TODO(brandon): prepare DB statements
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
 pub struct Datastore {
-    pool: deadpool_postgres::Pool,
+    db: Mutex<tokio_postgres::Client>,
 }
 
 impl Datastore {
     /// new creates a new Datastore using the given Client for backing storage. It is assumed that
     /// the Client is connected to a database with a compatible version of the Janus database schema.
-    pub fn new(pool: deadpool_postgres::Pool) -> Datastore {
-        Self { pool }
+    pub fn new(db: tokio_postgres::Client) -> Datastore {
+        Self { db: Mutex::new(db) }
     }
 
     /// run_tx runs a transaction, whose body is determined by the given function. The transaction
@@ -46,9 +50,9 @@ impl Datastore {
         for<'a> F: Fn(&'a Transaction) -> Pin<Box<dyn Future<Output = Result<T, Error>> + 'a>>,
     {
         // Open transaction.
-        let mut client = self.pool.get().await.unwrap(); // XXX: don't unwrap (need to figure out error handling)
+        let mut guard = self.db.lock().await;
         let tx = Transaction {
-            tx: client
+            tx: guard
                 .build_transaction()
                 .isolation_level(IsolationLevel::Serializable)
                 .start()
@@ -66,7 +70,7 @@ impl Datastore {
 
 /// Transaction represents an ongoing datastore transaction.
 pub struct Transaction<'a> {
-    tx: deadpool_postgres::Transaction<'a>,
+    tx: tokio_postgres::Transaction<'a>,
 }
 
 impl Transaction<'_> {
@@ -74,30 +78,28 @@ impl Transaction<'_> {
 
     #[cfg(test)]
     async fn put_task(&self, task_id: TaskId) -> Result<(), Error> {
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "INSERT INTO tasks (id, ord, aggregator_endpoints, vdaf, vdaf_verify_param,
-                max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config)
-                VALUES ($1, 0, '{}', 'PRIO3', '', 0, 0, INTERVAL '0', '')",
-            )
-            .await?;
         self.tx
-            .execute(&stmt, &[/* task_id */ &&task_id.0[..]])
+            .execute(
+                "INSERT INTO tasks (id, ord, aggregator_endpoints, vdaf, vdaf_verify_param,
+            max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config) VALUES
+            ($1, 0, '{}', 'PRIO3', '', 0, 0, INTERVAL '0', '')",
+                &[/* task_id */ &&task_id.0[..]],
+            )
             .await?;
         Ok(())
     }
 
     /// get_client_report retrieves a client report by ID.
     pub async fn get_client_report(&self, id: i64) -> Result<Report, Error> {
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "SELECT task_id, nonce_time, nonce_rand, extensions, input_shares
-                FROM client_reports WHERE id = $1",
-            )
-            .await?;
-        let row = single_row(self.tx.query(&stmt, &[&id]).await?)?;
+        let row = single_row(
+            self.tx
+                .query(
+                    "SELECT task_id, nonce_time, nonce_rand, extensions, input_shares
+            FROM client_reports WHERE id = $1",
+                    &[&id],
+                )
+                .await?,
+        )?;
 
         let task_id = TaskId::get_decoded(row.get("task_id"))?;
 
@@ -138,23 +140,17 @@ impl Transaction<'_> {
             &report.encrypted_input_shares,
         );
 
-        let stmt = self.tx.prepare_cached(
+        let row = self.tx.query_one(
             "INSERT INTO client_reports (task_id, nonce_time, nonce_rand, extensions, input_shares)
-            VALUES ($1, $2, $3, $4, $5) RETURNING (id)"
+            VALUES ($1, $2, $3, $4, $5) RETURNING (id)",
+            &[
+                /* task_id */      &&report.task_id.0[..],
+                /* nonce_time */   &nonce_time,
+                /* nonce_rand */   &nonce_rand,
+                /* extensions */   &encoded_extensions,
+                /* input_shares */ &encoded_input_shares,
+            ]
         ).await?;
-        let row = self
-            .tx
-            .query_one(
-                &stmt,
-                &[
-                    /* task_id */ &&report.task_id.0[..],
-                    /* nonce_time */ &nonce_time,
-                    /* nonce_rand */ &nonce_rand,
-                    /* extensions */ &encoded_extensions,
-                    /* input_shares */ &encoded_input_shares,
-                ],
-            )
-            .await?;
         Ok(row.get("id"))
     }
 }
@@ -205,12 +201,15 @@ impl Error {
 }
 
 #[cfg(test)]
-pub(crate) mod test_util {
+mod tests {
+    // TODO(brandon): use podman instead of docker for container management once testcontainers supports this
+
     use super::*;
-    use deadpool_postgres::{Manager, Pool};
-    use std::str::{self, FromStr};
-    use testcontainers::{images::postgres::Postgres, Container, Docker};
-    use tokio_postgres::{Config, NoTls};
+    use crate::message::{ExtensionType, HpkeConfigId};
+    use crate::trace::test_util::install_trace_subscriber;
+    use std::str;
+    use testcontainers::{clients, images::postgres::Postgres, Container, Docker};
+    use tokio_postgres::NoTls;
 
     const SCHEMA: &str = include_str!("../../db/schema.sql");
 
@@ -224,32 +223,22 @@ pub(crate) mod test_util {
         // Start an instance of Postgres running in a container.
         let db_container = container_client.run(Postgres::default().with_version(14));
 
-        // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
+        // Connect to our new instance of Postgres, retrieve a client, and start servicing the
+        // connection.
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
         let connection_string = format!(
             "postgres://postgres:postgres@localhost:{}/postgres",
             db_container.get_host_port(POSTGRES_DEFAULT_PORT).unwrap()
         );
-        let cfg = Config::from_str(&connection_string).unwrap();
-        let conn_mgr = Manager::new(cfg, NoTls);
-        let pool = Pool::builder(conn_mgr).build().unwrap();
+        let (postgres_client, conn) = tokio_postgres::connect(&connection_string, NoTls)
+            .await
+            .unwrap();
+        tokio::spawn(async move { conn.await.unwrap() });
 
-        // Connect to the database & run our schema.
-        let client = pool.get().await.unwrap();
-        client.batch_execute(SCHEMA).await.unwrap();
-        (Datastore::new(pool), db_container)
+        // Run our schema on the new database.
+        postgres_client.batch_execute(SCHEMA).await.unwrap();
+        (Datastore::new(postgres_client), db_container)
     }
-}
-
-#[cfg(test)]
-mod tests {
-    // TODO(brandon): use podman instead of docker for container management once testcontainers supports this
-
-    use super::*;
-    use crate::datastore::test_util::ephemeral_datastore;
-    use crate::message::{ExtensionType, HpkeConfigId};
-    use crate::trace::test_util::install_trace_subscriber;
-    use testcontainers::clients;
 
     #[tokio::test]
     async fn roundtrip_report() {
