@@ -29,7 +29,7 @@ CREATE TABLE client_reports(
     nonce_time    TIMESTAMP NOT NULL,  -- timestamp from nonce
     nonce_rand    BIGINT NOT NULL,     -- random value from nonce
     extensions    BYTEA NOT NULL,      -- encoded sequence of Extension messages
-    input_shares  BYTEA[] NOT NULL,    -- array of encoded HpkeCiphertext messages
+    input_shares  BYTEA NOT NULL,      -- encoded sequence of HpkeCiphertext messages
 
     CONSTRAINT unique_task_id_and_nonce UNIQUE(task_id, nonce_time, nonce_rand),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
