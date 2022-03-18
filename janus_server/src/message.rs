@@ -20,8 +20,7 @@ use std::{
 
 /// AuthenticatedEncoder can encode messages into the "authenticated envelope" format used by
 /// authenticated PPM messages. The encoding format is the encoding format of the underlying
-/// message, followed by a 32-byte authentication tag. The (unchecked) requirement on the underlying
-/// message encoding format is that the task ID is encoded into the first 32 bytes.
+/// message, followed by a 32-byte authentication tag.
 pub struct AuthenticatedEncoder<M: Encode> {
     msg: M,
 }
@@ -43,26 +42,26 @@ impl<M: Encode> AuthenticatedEncoder<M> {
     }
 }
 
-/// AuthenticatedDecoder can decode messages from the "authenticated envelope" format used by
-/// authenticated PPM messages. This format places the task ID as the first 32 bytes, the
+/// AuthenticatedRequestDecoder can decode messages in the "authenticated request" format used by
+/// authenticated PPM request messages. This format places the task ID as the first 32 bytes, the
 /// authentication tag as the last 32 bytes, and all interior bytes as opaque message data. The
 /// included message is decoded from a concatenation of the task ID & the opaque interior message
 /// bytes. (This means that the task ID is aliased as both a field interpreted by the envelope, as
 /// well as part of the opaque message bytes to be decoded; this allows us to save having to
 /// specify the task ID twice.)
-pub struct AuthenticatedDecoder<M: Decode> {
-    bytes: Vec<u8>,
+pub struct AuthenticatedRequestDecoder<M: Decode> {
+    buf: Vec<u8>,
     _msg_type: PhantomData<M>,
 }
 
-impl<M: Decode> AuthenticatedDecoder<M> {
-    /// MIN_BUFFER_SIZE defines the minimum size of a decodable buffer.
+impl<M: Decode> AuthenticatedRequestDecoder<M> {
+    /// MIN_BUFFER_SIZE defines the minimum size of a decodable buffer for a request.
     pub const MIN_BUFFER_SIZE: usize = TaskId::ENCODED_LEN + SHA256_OUTPUT_LEN;
 
-    /// new creates a new AuthenticatedDecoder which will attempt to decode the given bytes.
+    /// new creates a new AuthenticatedRequestDecoder which will attempt to decode the given bytes.
     /// If the given buffer is not at least MIN_BUFFER_SIZE bytes large, an error will be returned.
-    pub fn new(bytes: Vec<u8>) -> Result<AuthenticatedDecoder<M>, CodecError> {
-        if bytes.len() < Self::MIN_BUFFER_SIZE {
+    pub fn new(buf: Vec<u8>) -> Result<AuthenticatedRequestDecoder<M>, CodecError> {
+        if buf.len() < Self::MIN_BUFFER_SIZE {
             return Err(CodecError::Io(io::Error::new(
                 ErrorKind::InvalidData,
                 "buffer too small",
@@ -70,27 +69,66 @@ impl<M: Decode> AuthenticatedDecoder<M> {
         }
 
         Ok(Self {
-            bytes,
+            buf,
             _msg_type: PhantomData,
         })
     }
 
-    /// task_id retrieves the (unauthenticated) task ID from the encoded bytes. This method should
-    /// be used to determine the appropriate key to use for authentication, which is determined by
-    /// the task ID.
+    /// task_id retrieves the unauthenticated task ID associated with this message. This task ID
+    /// should be used only to determine the appropriate key to use to authenticate & decode the
+    /// message.
     pub fn task_id(&self) -> TaskId {
+        // Retrieve task_id from the buffer bytes.
         let mut buf = [0u8; TaskId::ENCODED_LEN];
-        buf.copy_from_slice(&self.bytes[..TaskId::ENCODED_LEN]);
+        buf.copy_from_slice(&self.buf[..TaskId::ENCODED_LEN]);
         TaskId(buf)
     }
 
     /// decode authenticates & decodes the message using the given key.
     pub fn decode(&self, key: &hmac::Key) -> Result<M, CodecError> {
-        let (data, tag) = self.bytes.split_at(self.bytes.len() - SHA256_OUTPUT_LEN);
-        hmac::verify(key, data, tag)
-            .map_err(|_| CodecError::Other(anyhow!("auth tag verification failure").into()))?;
-        M::get_decoded(data)
+        authenticated_decode(key, &self.buf)
     }
+}
+
+/// AuthenticatedResponseDecoder can decode messages in the "authenticated response" format used by
+/// authenticated PPM response messages. This format places the authentication tag as the last 32
+/// bytes, and all prior bytes as opaque message data.
+pub struct AuthenticatedResponseDecoder<M: Decode> {
+    buf: Vec<u8>,
+    _msg_type: PhantomData<M>,
+}
+
+impl<M: Decode> AuthenticatedResponseDecoder<M> {
+    // MIN_BUFFER_SIZE defines the minimum size of a decodable buffer for a response.
+    pub const MIN_BUFFER_SIZE: usize = SHA256_OUTPUT_LEN;
+
+    /// new creates a new AuthenticatedResponseDecoder which will attempt to decode the given bytes.
+    /// If the given buffer is not at least MIN_BUFFER_SIZE bytes large, an error will be returned.
+    pub fn new(buf: Vec<u8>) -> Result<AuthenticatedResponseDecoder<M>, CodecError> {
+        if buf.len() < Self::MIN_BUFFER_SIZE {
+            return Err(CodecError::Io(io::Error::new(
+                ErrorKind::InvalidData,
+                "buffer too small",
+            )));
+        }
+
+        Ok(Self {
+            buf,
+            _msg_type: PhantomData,
+        })
+    }
+
+    /// decode authenticates & decodes the message using the given key.
+    pub fn decode(&self, key: &hmac::Key) -> Result<M, CodecError> {
+        authenticated_decode(key, &self.buf)
+    }
+}
+
+fn authenticated_decode<M: Decode>(key: &hmac::Key, buf: &[u8]) -> Result<M, CodecError> {
+    let (msg_bytes, tag) = buf.split_at(buf.len() - SHA256_OUTPUT_LEN);
+    hmac::verify(key, msg_bytes, tag)
+        .map_err(|_| CodecError::Other(anyhow!("auth tag verification failure").into()))?;
+    M::get_decoded(msg_bytes)
 }
 
 /// PPM protocol message representing a duration with a resolution of seconds.
@@ -880,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_authenticated_encoding() {
+    fn roundtrip_authenticated_request_encoding() {
         let msg = AggregateReq {
             task_id: TaskId([
                 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
@@ -933,14 +971,14 @@ mod tests {
         assert_eq!(want_encoded_msg, got_encoded_msg);
         assert_eq!(want_tag.as_ref(), got_tag);
 
-        let decoder = AuthenticatedDecoder::new(encoded_bytes).unwrap();
+        let decoder = AuthenticatedRequestDecoder::new(encoded_bytes).unwrap();
         assert_eq!(msg.task_id, decoder.task_id());
         let got_msg = decoder.decode(&*HMAC_KEY).unwrap();
         assert_eq!(msg, got_msg);
     }
 
     #[test]
-    fn authenticated_encoding_bad_tag() {
+    fn authenticated_request_bad_tag() {
         let msg = AggregateReq {
             task_id: TaskId([u8::MIN; 32]),
             job_id: AggregationJobId([u8::MAX; 32]),
@@ -950,7 +988,7 @@ mod tests {
         let mut encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
 
         // Verify we can decode the unmodified bytes back to the original message.
-        let got_msg = AuthenticatedDecoder::new(encoded_bytes.clone())
+        let got_msg = AuthenticatedRequestDecoder::new(encoded_bytes.clone())
             .unwrap()
             .decode(&*HMAC_KEY)
             .unwrap();
@@ -960,7 +998,67 @@ mod tests {
         let ln = encoded_bytes.len();
         encoded_bytes[ln - 1] ^= 0xFF;
         let rslt: Result<AggregateReq, CodecError> =
-            AuthenticatedDecoder::new(encoded_bytes.clone())
+            AuthenticatedRequestDecoder::new(encoded_bytes.clone())
+                .unwrap()
+                .decode(&*HMAC_KEY);
+        assert_matches!(rslt, Err(_));
+    }
+
+    #[test]
+    fn roundtrip_authenticated_response_encoding() {
+        let msg = AggregateResp {
+            seq: vec![
+                Transition {
+                    nonce: Nonce {
+                        time: Time(54372),
+                        rand: 53,
+                    },
+                    trans_data: TransitionTypeSpecificData::Continued {
+                        payload: Vec::from("012345"),
+                    },
+                },
+                Transition {
+                    nonce: Nonce {
+                        time: Time(12345),
+                        rand: 413,
+                    },
+                    trans_data: TransitionTypeSpecificData::Finished,
+                },
+            ],
+        };
+
+        let want_encoded_msg = msg.get_encoded();
+        let want_tag = hmac::sign(&*HMAC_KEY, &want_encoded_msg);
+
+        let encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
+        let (got_encoded_msg, got_tag) =
+            encoded_bytes.split_at(encoded_bytes.len() - SHA256_OUTPUT_LEN);
+        assert_eq!(want_encoded_msg, got_encoded_msg);
+        assert_eq!(want_tag.as_ref(), got_tag);
+
+        let decoder = AuthenticatedResponseDecoder::new(encoded_bytes).unwrap();
+        let got_msg = decoder.decode(&*HMAC_KEY).unwrap();
+        assert_eq!(msg, got_msg);
+    }
+
+    #[test]
+    fn authenticated_response_bad_tag() {
+        let msg = AggregateResp { seq: Vec::new() };
+
+        let mut encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
+
+        // Verify we can decode the unmodified bytes back to the original message.
+        let got_msg = AuthenticatedResponseDecoder::new(encoded_bytes.clone())
+            .unwrap()
+            .decode(&*HMAC_KEY)
+            .unwrap();
+        assert_eq!(msg, got_msg);
+
+        // Verify that modifying the bytes causes decoding to fail.
+        let ln = encoded_bytes.len();
+        encoded_bytes[ln - 1] ^= 0xFF;
+        let rslt: Result<AggregateReq, CodecError> =
+            AuthenticatedResponseDecoder::new(encoded_bytes.clone())
                 .unwrap()
                 .decode(&*HMAC_KEY);
         assert_matches!(rslt, Err(_));
