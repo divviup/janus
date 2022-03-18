@@ -353,8 +353,7 @@ impl TaskId {
     }
 
     /// Generate a random [`TaskId`]
-    #[cfg(test)]
-    pub(crate) fn random() -> Self {
+    pub fn random() -> Self {
         let mut task_id = [0u8; Self::ENCODED_LEN];
         thread_rng().fill(&mut task_id);
         TaskId(task_id)
