@@ -1,5 +1,11 @@
+use chrono::Duration;
 use janus_server::{
-    aggregator::aggregator_server, client::Client, message::TaskId, trace::install_subscriber,
+    aggregator::aggregator_server,
+    client::Client,
+    hpke::{HpkeRecipient, Label},
+    message::{Role, TaskId},
+    time::RealClock,
+    trace::install_subscriber,
 };
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use url::Url;
@@ -18,16 +24,29 @@ async fn create_client() {
 
     let task_id = TaskId::random();
 
+    let leader_hpke_recipient =
+        HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
     let (leader_address, leader_server) = aggregator_server(
-        task_id,
+        RealClock::default(),
+        Duration::minutes(10),
+        Role::Leader,
+        leader_hpke_recipient,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-    );
+    )
+    .unwrap();
     let leader_handle = tokio::spawn(leader_server);
 
+    let helper_hpke_recipient =
+        HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+
     let (helper_address, helper_server) = aggregator_server(
-        task_id,
+        RealClock::default(),
+        Duration::minutes(10),
+        Role::Helper,
+        helper_hpke_recipient,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-    );
+    )
+    .unwrap();
     let helper_handle = tokio::spawn(helper_server);
 
     let http_client = Client::default_http_client().unwrap();
