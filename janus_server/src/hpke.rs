@@ -10,7 +10,7 @@ use hpke::{
 use rand::thread_rng;
 
 #[derive(Debug, thiserror::Error)]
-enum Error {
+pub(crate) enum Error {
     /// Wrapper around errors from crate hpke. See [`hpke::HpkeError`] for more
     /// details on possible variants.
     #[error("HPKE error")]
@@ -21,7 +21,7 @@ enum Error {
 
 /// Labels incorporated into HPKE application info string
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Label {
+pub enum Label {
     InputShare,
     AggregateShare,
 }
@@ -100,7 +100,11 @@ impl HpkeSender {
     /// In PPM, an HPKE context can only be used once (we have no means of
     /// ensuring that sender and recipient "increment" nonces in lockstep), so
     /// this method creates a new HPKE context on each call.
-    fn seal(&self, plaintext: &[u8], associated_data: &[u8]) -> Result<HpkeCiphertext, Error> {
+    pub(crate) fn seal(
+        &self,
+        plaintext: &[u8],
+        associated_data: &[u8],
+    ) -> Result<HpkeCiphertext, Error> {
         // We must manually dispatch to each possible specialization of seal
         match (
             self.recipient_config.kem_id,
@@ -176,7 +180,7 @@ fn seal<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
 // This type only exists separately from Recipient so that we can have a type
 // that doesn't "leak" the generic type parameters into the caller.
 #[derive(Clone, Debug)]
-pub(crate) struct HpkeRecipient {
+pub struct HpkeRecipient {
     task_id: TaskId,
     pub(crate) config: HpkeConfig,
     label: Label,
@@ -189,7 +193,7 @@ impl HpkeRecipient {
     /// Generate a new X25519HkdfSha256 keypair and construct an HPKE recipient
     /// using the private key, with KEM = X25519HkdfSha256, KDF = HkdfSha512 and
     /// AEAD = ChaCha20Poly1305, and the specified label, and roles.
-    pub(crate) fn generate(
+    pub fn generate(
         task_id: TaskId,
         label: Label,
         sender_role: Role,
@@ -224,7 +228,11 @@ impl HpkeRecipient {
     /// In PPM, an HPKE context can only be used once (we have no means of
     /// ensuring that sender and recipient "increment" nonces in lockstep), so
     /// this method creates a new HPKE context on each call.
-    fn open(&self, ciphertext: &HpkeCiphertext, associated_data: &[u8]) -> Result<Vec<u8>, Error> {
+    pub(crate) fn open(
+        &self,
+        ciphertext: &HpkeCiphertext,
+        associated_data: &[u8],
+    ) -> Result<Vec<u8>, Error> {
         // We must manually dispatch to each possible specialization of open
         match (self.config.kem_id, self.config.kdf_id, self.config.aead_id) {
             (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes256Gcm) => {
