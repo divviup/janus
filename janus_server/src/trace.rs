@@ -26,3 +26,14 @@ pub fn install_subscriber() -> Result<(), Error> {
 
     Ok(tracing::subscriber::set_global_default(subscriber)?)
 }
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use std::sync::Once;
+
+    static INSTALL_SUBSCRIBER_ONCE: Once = Once::new();
+
+    pub(crate) fn install_trace_subscriber() {
+        INSTALL_SUBSCRIBER_ONCE.call_once(|| super::install_subscriber().unwrap());
+    }
+}

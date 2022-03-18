@@ -1,9 +1,10 @@
-use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode};
-use tokio_postgres::{error::SqlState, IsolationLevel, Row};
+//! Janus datastore (durable storage) implementation.
 
 use crate::message::{Extension, HpkeCiphertext, Nonce, Report, TaskId, Time};
+use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode};
 use std::{future::Future, io::Cursor, pin::Pin};
 use tokio::sync::Mutex;
+use tokio_postgres::{error::SqlState, IsolationLevel, Row};
 
 // TODO(brandon): connection pooling (currently all concurrent transactions in a single Datastore are serialized)
 // TODO(brandon): prepare DB statements
@@ -59,7 +60,6 @@ impl Datastore {
         };
 
         // Run user-provided function with the transaction.
-        // TODO(brandon): can we box/pin the return value, rather than requiring `f` to return a pre-boxed/pinned future?
         let rslt = f(&tx).await?;
 
         // Commit.
@@ -170,7 +170,7 @@ pub enum Error {
     #[error("DB error: {0}")]
     Db(#[from] tokio_postgres::Error),
     /// An entity requested from the datastore was not found.
-    #[error("not found in database")]
+    #[error("not found in datastore")]
     NotFound,
     /// A query that was expected to return at most one row unexpectedly returned more than one row.
     #[error("multiple rows returned where only one row expected")]
@@ -187,7 +187,7 @@ pub enum Error {
 impl Error {
     // is_serialization_failure determines if a given error corresponds to a Postgres
     // "serialization" failure, which requires the entire transaction to be aborted & retried from
-    // the beginning per https://www.postgresql.org/docs/9.5/transaction-iso.html.
+    // the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
     fn is_serialization_failure(&self) -> bool {
         match self {
             // T_R_SERIALIZATION_FAILURE (40001) is documented as the error code which is always used
@@ -204,26 +204,20 @@ impl Error {
 mod tests {
     // TODO(brandon): use podman instead of docker for container management once testcontainers supports this
 
-    use crate::message::{ExtensionType, HpkeConfigId};
-
     use super::*;
-    use lazy_static::lazy_static;
+    use crate::message::{ExtensionType, HpkeConfigId};
+    use crate::trace::test_util::install_trace_subscriber;
     use std::str;
     use testcontainers::{clients, images::postgres::Postgres, Container, Docker};
     use tokio_postgres::NoTls;
 
-    lazy_static! {
-        static ref SCHEMA: &'static str = {
-            let schema_bytes = include_bytes!("../../db/schema.sql");
-            str::from_utf8(schema_bytes).unwrap()
-        };
-    }
+    const SCHEMA: &'static str = include_str!("../../db/schema.sql");
 
-    /// ephemeral_db creates a new Datastore instance backed by an ephemeral database which has the
-    /// Janus schema applied but is otherwise empty.
+    /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database which
+    /// has the Janus schema applied but is otherwise empty.
     ///
     /// Dropping the second return value causes the database to be shut down & cleaned up.
-    pub(crate) async fn ephemeral_db<D: Docker>(
+    pub(crate) async fn ephemeral_datastore<D: Docker>(
         container_client: &D,
     ) -> (Datastore, Container<'_, D, Postgres>) {
         // Start an instance of Postgres running in a container.
@@ -242,14 +236,15 @@ mod tests {
         tokio::spawn(async move { conn.await.unwrap() });
 
         // Run our schema on the new database.
-        postgres_client.batch_execute(*SCHEMA).await.unwrap();
+        postgres_client.batch_execute(SCHEMA).await.unwrap();
         (Datastore::new(postgres_client), db_container)
     }
 
     #[tokio::test]
     async fn roundtrip_report() {
+        install_trace_subscriber();
         let docker = clients::Cli::default();
-        let (ds, _db_container) = ephemeral_db(&docker).await;
+        let (ds, _db_container) = ephemeral_datastore(&docker).await;
 
         let task_id = TaskId([
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
@@ -306,8 +301,9 @@ mod tests {
 
     #[tokio::test]
     async fn report_not_found() {
+        install_trace_subscriber();
         let docker = clients::Cli::default();
-        let (ds, _db_container) = ephemeral_db(&docker).await;
+        let (ds, _db_container) = ephemeral_datastore(&docker).await;
 
         let rslt = ds
             .run_tx(|tx| Box::pin(async move { tx.get_client_report(12345).await }))
