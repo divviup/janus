@@ -852,6 +852,18 @@ impl Decode for CollectResp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert_matches::assert_matches;
+    use lazy_static::lazy_static;
+
+    lazy_static! {
+        static ref HMAC_KEY: hmac::Key = hmac::Key::new(
+            HMAC_SHA256,
+            &[
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                23, 24, 25, 26, 27, 28, 29, 30, 31,
+            ],
+        );
+    }
 
     fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
     where
@@ -869,14 +881,6 @@ mod tests {
 
     #[test]
     fn roundtrip_authenticated_encoding() {
-        let key = hmac::Key::new(
-            HMAC_SHA256,
-            &[
-                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26, 27, 28, 29, 30, 31,
-            ],
-        );
-
         let msg = AggregateReq {
             task_id: TaskId([
                 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
@@ -921,9 +925,9 @@ mod tests {
         };
 
         let want_encoded_msg = msg.get_encoded();
-        let want_tag = hmac::sign(&key, &want_encoded_msg);
+        let want_tag = hmac::sign(&*HMAC_KEY, &want_encoded_msg);
 
-        let encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&key);
+        let encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
         let (got_encoded_msg, got_tag) =
             encoded_bytes.split_at(encoded_bytes.len() - SHA256_OUTPUT_LEN);
         assert_eq!(want_encoded_msg, got_encoded_msg);
@@ -931,8 +935,35 @@ mod tests {
 
         let decoder = AuthenticatedDecoder::new(encoded_bytes).unwrap();
         assert_eq!(msg.task_id, decoder.task_id());
-        let got_msg = decoder.decode(&key).unwrap();
+        let got_msg = decoder.decode(&*HMAC_KEY).unwrap();
         assert_eq!(msg, got_msg);
+    }
+
+    #[test]
+    fn authenticated_encoding_bad_tag() {
+        let msg = AggregateReq {
+            task_id: TaskId([u8::MIN; 32]),
+            job_id: AggregationJobId([u8::MAX; 32]),
+            body: AggregateReqBody::AggregateContinueReq { seq: Vec::new() },
+        };
+
+        let mut encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
+
+        // Verify we can decode the unmodified bytes back to the original message.
+        let got_msg = AuthenticatedDecoder::new(encoded_bytes.clone())
+            .unwrap()
+            .decode(&*HMAC_KEY)
+            .unwrap();
+        assert_eq!(msg, got_msg);
+
+        // Verify that modifying the bytes causes decoding to fail.
+        let ln = encoded_bytes.len();
+        encoded_bytes[ln - 1] ^= 0xFF;
+        let rslt: Result<AggregateReq, CodecError> =
+            AuthenticatedDecoder::new(encoded_bytes.clone())
+                .unwrap()
+                .decode(&*HMAC_KEY);
+        assert_matches!(rslt, Err(_));
     }
 
     #[test]
