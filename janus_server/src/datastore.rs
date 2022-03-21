@@ -5,6 +5,8 @@ use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode};
 use std::{future::Future, io::Cursor, pin::Pin};
 use tokio_postgres::{error::SqlState, IsolationLevel, Row};
 
+// TODO(brandon): retry network-related & other transient failures once we know what they look like
+
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
 pub struct Datastore {
