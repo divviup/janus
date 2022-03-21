@@ -2,25 +2,140 @@
 
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
-use num_enum::TryFromPrimitive;
-use prio::codec::{
-    decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode,
-    ParameterizedEncode,
+use hpke::{
+    aead::{self, Aead},
+    kdf::{self, Kdf},
+    kem, Kem,
 };
+use num_enum::TryFromPrimitive;
+use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
+use rand::{thread_rng, Rng};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
 };
 use std::{
     fmt::Display,
-    io::{Cursor, Read},
+    io::{self, Cursor, ErrorKind, Read},
+    marker::PhantomData,
 };
 
-// TODO(brandon): retrieve HPKE identifier values from HPKE library once one is decided upon
+/// AuthenticatedEncoder can encode messages into the format used by authenticated PPM messages. The
+/// encoding format is the encoding format of the underlying message, followed by a 32-byte
+/// authentication tag.
+pub struct AuthenticatedEncoder<M: Encode> {
+    msg: M,
+}
+
+impl<M: Encode> AuthenticatedEncoder<M> {
+    /// new creates a new AuthenticatedEncoder which will encode the given message.
+    pub fn new(msg: M) -> AuthenticatedEncoder<M> {
+        Self { msg }
+    }
+
+    /// encode encodes the message using the given key.
+    pub fn encode(&self, key: &hmac::Key) -> Vec<u8> {
+        assert_eq!(key.algorithm(), HMAC_SHA256);
+        let mut buf = Vec::new();
+        self.msg.encode(&mut buf);
+        let tag = hmac::sign(key, &buf);
+        buf.extend_from_slice(tag.as_ref());
+        buf
+    }
+}
+
+/// AuthenticatedRequestDecoder can decode messages in the "authenticated request" format used by
+/// authenticated PPM request messages. This format places the task ID as the first 32 bytes, the
+/// authentication tag as the last 32 bytes, and all interior bytes as opaque message data. The
+/// included message is decoded from a concatenation of the task ID & the opaque interior message
+/// bytes. (This means that the task ID is aliased as both a field interpreted by the envelope, as
+/// well as part of the opaque message bytes to be decoded; this allows us to save having to
+/// specify the task ID twice.)
+pub struct AuthenticatedRequestDecoder<M: Decode> {
+    buf: Vec<u8>,
+    _msg_type: PhantomData<M>,
+}
+
+impl<M: Decode> AuthenticatedRequestDecoder<M> {
+    /// MIN_BUFFER_SIZE defines the minimum size of a decodable buffer for a request.
+    pub const MIN_BUFFER_SIZE: usize = TaskId::ENCODED_LEN + SHA256_OUTPUT_LEN;
+
+    /// new creates a new AuthenticatedRequestDecoder which will attempt to decode the given bytes.
+    /// If the given buffer is not at least MIN_BUFFER_SIZE bytes large, an error will be returned.
+    pub fn new(buf: Vec<u8>) -> Result<AuthenticatedRequestDecoder<M>, CodecError> {
+        if buf.len() < Self::MIN_BUFFER_SIZE {
+            return Err(CodecError::Io(io::Error::new(
+                ErrorKind::InvalidData,
+                "buffer too small",
+            )));
+        }
+
+        Ok(Self {
+            buf,
+            _msg_type: PhantomData,
+        })
+    }
+
+    /// task_id retrieves the unauthenticated task ID associated with this message. This task ID
+    /// should be used only to determine the appropriate key to use to authenticate & decode the
+    /// message.
+    pub fn task_id(&self) -> TaskId {
+        // Retrieve task_id from the buffer bytes.
+        let mut buf = [0u8; TaskId::ENCODED_LEN];
+        buf.copy_from_slice(&self.buf[..TaskId::ENCODED_LEN]);
+        TaskId(buf)
+    }
+
+    /// decode authenticates & decodes the message using the given key.
+    pub fn decode(&self, key: &hmac::Key) -> Result<M, CodecError> {
+        authenticated_decode(key, &self.buf)
+    }
+}
+
+/// AuthenticatedResponseDecoder can decode messages in the "authenticated response" format used by
+/// authenticated PPM response messages. This format places the authentication tag as the last 32
+/// bytes, and all prior bytes as opaque message data.
+pub struct AuthenticatedResponseDecoder<M: Decode> {
+    buf: Vec<u8>,
+    _msg_type: PhantomData<M>,
+}
+
+impl<M: Decode> AuthenticatedResponseDecoder<M> {
+    // MIN_BUFFER_SIZE defines the minimum size of a decodable buffer for a response.
+    pub const MIN_BUFFER_SIZE: usize = SHA256_OUTPUT_LEN;
+
+    /// new creates a new AuthenticatedResponseDecoder which will attempt to decode the given bytes.
+    /// If the given buffer is not at least MIN_BUFFER_SIZE bytes large, an error will be returned.
+    pub fn new(buf: Vec<u8>) -> Result<AuthenticatedResponseDecoder<M>, CodecError> {
+        if buf.len() < Self::MIN_BUFFER_SIZE {
+            return Err(CodecError::Io(io::Error::new(
+                ErrorKind::InvalidData,
+                "buffer too small",
+            )));
+        }
+
+        Ok(Self {
+            buf,
+            _msg_type: PhantomData,
+        })
+    }
+
+    /// decode authenticates & decodes the message using the given key.
+    pub fn decode(&self, key: &hmac::Key) -> Result<M, CodecError> {
+        authenticated_decode(key, &self.buf)
+    }
+}
+
+fn authenticated_decode<M: Decode>(key: &hmac::Key, buf: &[u8]) -> Result<M, CodecError> {
+    let (msg_bytes, tag) = buf.split_at(buf.len() - SHA256_OUTPUT_LEN);
+    hmac::verify(key, msg_bytes, tag)
+        .map_err(|_| CodecError::Other(anyhow!("auth tag verification failure").into()))?;
+    M::get_decoded(msg_bytes)
+}
 
 /// PPM protocol message representing a duration with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Duration(pub u64);
+pub struct Duration(pub(crate) u64);
 
 impl Encode for Duration {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -36,7 +151,7 @@ impl Decode for Duration {
 
 /// PPM protocol message representing an instant in time with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Time(pub u64);
+pub struct Time(pub(crate) u64);
 
 impl Time {
     pub(crate) fn as_naive_date_time(&self) -> NaiveDateTime {
@@ -71,9 +186,9 @@ impl Decode for Time {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Interval {
     /// The start of the interval.
-    pub start: Time,
+    pub(crate) start: Time,
     /// The length of the interval.
-    pub duration: Duration,
+    pub(crate) duration: Duration,
 }
 
 impl Encode for Interval {
@@ -96,9 +211,9 @@ impl Decode for Interval {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Nonce {
     /// The time at which the report was generated.
-    pub time: Time,
+    pub(crate) time: Time,
     /// A randomly generated value.
-    pub rand: u64,
+    pub(crate) rand: u64,
 }
 
 impl Display for Nonce {
@@ -155,7 +270,7 @@ impl Decode for Role {
 
 /// PPM protocol message representing an identifier for an HPKE config.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct HpkeConfigId(pub u8);
+pub struct HpkeConfigId(pub(crate) u8);
 
 impl Display for HpkeConfigId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -179,11 +294,11 @@ impl Decode for HpkeConfigId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HpkeCiphertext {
     /// An identifier of the HPKE configuration used to seal the message.
-    pub config_id: HpkeConfigId,
+    pub(crate) config_id: HpkeConfigId,
     /// An encasulated HPKE context.
-    pub encapsulated_context: Vec<u8>,
+    pub(crate) encapsulated_context: Vec<u8>,
     /// An HPKE ciphertext.
-    pub payload: Vec<u8>,
+    pub(crate) payload: Vec<u8>,
 }
 
 impl Encode for HpkeCiphertext {
@@ -210,7 +325,12 @@ impl Decode for HpkeCiphertext {
 
 /// PPM protocol message representing an identifier for a PPM task.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TaskId(pub [u8; 32]);
+pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
+
+impl TaskId {
+    /// ENCODED_LEN is the length of a task ID in bytes when encoded.
+    const ENCODED_LEN: usize = 32;
+}
 
 impl Encode for TaskId {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -220,7 +340,7 @@ impl Encode for TaskId {
 
 impl Decode for TaskId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let mut decoded = [0u8; 32];
+        let mut decoded = [0u8; Self::ENCODED_LEN];
         bytes.read_exact(&mut decoded)?;
         Ok(Self(decoded))
     }
@@ -234,13 +354,8 @@ impl TaskId {
 
     /// Generate a random [`TaskId`]
     pub fn random() -> Self {
-        use rand::{thread_rng, Rng};
-
-        let mut rng = thread_rng();
-
-        let mut task_id = [0u8; 32];
-        rng.fill(&mut task_id);
-
+        let mut task_id = [0u8; Self::ENCODED_LEN];
+        thread_rng().fill(&mut task_id);
         TaskId(task_id)
     }
 }
@@ -250,9 +365,9 @@ impl TaskId {
 #[repr(u16)]
 pub enum HpkeKemId {
     /// NIST P-256 keys and HKDF-SHA256.
-    P256HkdfSha256 = 0x0010,
+    P256HkdfSha256 = kem::DhP256HkdfSha256::KEM_ID,
     /// X25519 keys and HKDF-SHA256.
-    X25519HkdfSha256 = 0x0020,
+    X25519HkdfSha256 = kem::X25519HkdfSha256::KEM_ID,
 }
 
 impl Encode for HpkeKemId {
@@ -274,11 +389,11 @@ impl Decode for HpkeKemId {
 #[repr(u16)]
 pub enum HpkeKdfId {
     /// HMAC Key Derivation Function SHA256.
-    HkdfSha256 = 0x0001,
+    HkdfSha256 = kdf::HkdfSha256::KDF_ID,
     /// HMAC Key Derivation Function SHA384.
-    HkdfSha384 = 0x0002,
+    HkdfSha384 = kdf::HkdfSha384::KDF_ID,
     /// HMAC Key Derivation Function SHA512.
-    HkdfSha512 = 0x0003,
+    HkdfSha512 = kdf::HkdfSha512::KDF_ID,
 }
 
 impl Encode for HpkeKdfId {
@@ -300,11 +415,11 @@ impl Decode for HpkeKdfId {
 #[repr(u16)]
 pub enum HpkeAeadId {
     /// AES-128-GCM.
-    Aes128Gcm = 0x0001,
+    Aes128Gcm = aead::AesGcm128::AEAD_ID,
     /// AES-256-GCM.
-    Aes256Gcm = 0x0002,
+    Aes256Gcm = aead::AesGcm256::AEAD_ID,
     /// ChaCha20Poly1305.
-    ChaCha20Poly1305 = 0x0003,
+    ChaCha20Poly1305 = aead::ChaCha20Poly1305::AEAD_ID,
 }
 
 impl Encode for HpkeAeadId {
@@ -323,7 +438,7 @@ impl Decode for HpkeAeadId {
 
 /// PPM protocol message representing an HPKE public key.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HpkePublicKey(pub Vec<u8>);
+pub struct HpkePublicKey(pub(crate) Vec<u8>);
 
 impl Encode for HpkePublicKey {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -341,11 +456,11 @@ impl Decode for HpkePublicKey {
 /// PPM protocol message representing an HPKE config.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HpkeConfig {
-    pub id: HpkeConfigId,
-    pub kem_id: HpkeKemId,
-    pub kdf_id: HpkeKdfId,
-    pub aead_id: HpkeAeadId,
-    pub public_key: HpkePublicKey,
+    pub(crate) id: HpkeConfigId,
+    pub(crate) kem_id: HpkeKemId,
+    pub(crate) kdf_id: HpkeKdfId,
+    pub(crate) aead_id: HpkeAeadId,
+    pub(crate) public_key: HpkePublicKey,
 }
 
 impl Encode for HpkeConfig {
@@ -379,10 +494,10 @@ impl Decode for HpkeConfig {
 /// PPM protocol message representing a client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
-    pub task_id: TaskId,
-    pub nonce: Nonce,
-    pub extensions: Vec<Extension>,
-    pub encrypted_input_shares: Vec<HpkeCiphertext>,
+    pub(crate) task_id: TaskId,
+    pub(crate) nonce: Nonce,
+    pub(crate) extensions: Vec<Extension>,
+    pub(crate) encrypted_input_shares: Vec<HpkeCiphertext>,
 }
 
 impl Report {
@@ -425,8 +540,8 @@ impl Decode for Report {
 /// PPM protocol message representing an arbitrary extension included in a client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Extension {
-    pub extension_type: ExtensionType,
-    pub extension_data: Vec<u8>,
+    pub(crate) extension_type: ExtensionType,
+    pub(crate) extension_data: Vec<u8>,
 }
 
 impl Encode for Extension {
@@ -473,9 +588,9 @@ impl Decode for ExtensionType {
 /// PPM protocol message representing one aggregator's share of a single client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportShare {
-    pub nonce: Nonce,
-    pub extensions: Vec<Extension>,
-    pub encrypted_input_share: HpkeCiphertext,
+    pub(crate) nonce: Nonce,
+    pub(crate) extensions: Vec<Extension>,
+    pub(crate) encrypted_input_share: HpkeCiphertext,
 }
 
 impl Encode for ReportShare {
@@ -503,8 +618,8 @@ impl Decode for ReportShare {
 /// PPM protocol message representing a transition in the state machine of a VDAF.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transition {
-    pub nonce: Nonce,
-    pub trans_data: TransitionTypeSpecificData,
+    pub(crate) nonce: Nonce,
+    pub(crate) trans_data: TransitionTypeSpecificData,
 }
 
 impl Encode for Transition {
@@ -600,7 +715,7 @@ impl Decode for TransitionError {
 
 /// PPM protocol message representing an identifier for an aggregation job.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregationJobId(pub [u8; 32]);
+pub struct AggregationJobId(pub(crate) [u8; 32]);
 
 impl Encode for AggregationJobId {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -618,166 +733,91 @@ impl Decode for AggregationJobId {
 
 /// PPM protocol message representing an aggregation request from the leader to a helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AggregateReq {
-    AggregateInitReq(AggregateInitReq),
-    AggregateContinueReq(AggregateContinueReq),
+pub struct AggregateReq {
+    pub(crate) task_id: TaskId,
+    pub(crate) job_id: AggregationJobId,
+    pub(crate) body: AggregateReqBody,
 }
 
-impl ParameterizedEncode<hmac::Key> for AggregateReq {
-    fn encode_with_param(&self, key: &hmac::Key, bytes: &mut Vec<u8>) {
-        assert_eq!(key.algorithm(), HMAC_SHA256);
-        let start_offset = bytes.len();
+impl Encode for AggregateReq {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.task_id.encode(bytes);
+        self.job_id.encode(bytes);
 
-        match self {
-            Self::AggregateInitReq(req) => {
+        match &self.body {
+            AggregateReqBody::AggregateInitReq { agg_param, seq } => {
                 0u8.encode(bytes);
-                req.encode(bytes);
+                encode_u16_items(bytes, &(), agg_param);
+                encode_u16_items(bytes, &(), seq);
             }
-            Self::AggregateContinueReq(req) => {
+            AggregateReqBody::AggregateContinueReq { seq } => {
                 1u8.encode(bytes);
-                req.encode(bytes);
+                encode_u16_items(bytes, &(), seq);
             }
         }
-
-        let end_offset = bytes.len();
-        let tag = hmac::sign(key, &bytes[start_offset..end_offset]);
-        bytes.extend_from_slice(tag.as_ref());
     }
 }
 
-impl ParameterizedDecode<hmac::Key> for AggregateReq {
-    fn decode_with_param(key: &hmac::Key, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        assert_eq!(key.algorithm(), HMAC_SHA256);
-        let start_offset = bytes.position() as usize;
+impl Decode for AggregateReq {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let task_id = TaskId::decode(bytes)?;
+        let job_id = AggregationJobId::decode(bytes)?;
 
-        let val = u8::decode(bytes)?;
-        let req = match val {
-            0 => Self::AggregateInitReq(AggregateInitReq::decode(bytes)?),
-            1 => Self::AggregateContinueReq(AggregateContinueReq::decode(bytes)?),
+        let msg_type = u8::decode(bytes)?;
+        let body = match msg_type {
+            0 => {
+                let agg_param = decode_u16_items(&(), bytes)?;
+                let seq = decode_u16_items(&(), bytes)?;
+                AggregateReqBody::AggregateInitReq { agg_param, seq }
+            }
+            1 => {
+                let seq = decode_u16_items(&(), bytes)?;
+                AggregateReqBody::AggregateContinueReq { seq }
+            }
             _ => {
                 return Err(CodecError::Other(
-                    anyhow!("unexpected AggregateReqType value {}", val).into(),
+                    anyhow!("unexpected AggregateReqType message type {}", msg_type).into(),
                 ))
             }
         };
 
-        let end_offset = bytes.position() as usize;
-        let mut provided_tag = [0u8; SHA256_OUTPUT_LEN];
-        bytes.read_exact(&mut provided_tag)?;
-        hmac::verify(
-            key,
-            &bytes.get_ref()[start_offset..end_offset],
-            &provided_tag,
-        )
-        .map_err(|_| CodecError::Other(anyhow!("HMAC tag verification failure").into()))?;
-
-        Ok(req)
-    }
-}
-
-/// PPM protocol message representing a request to initiate aggregation of a sequence of client
-/// reports.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateInitReq {
-    pub task_id: TaskId,
-    pub job_id: AggregationJobId,
-    pub agg_param: Vec<u8>,
-    pub seq: Vec<ReportShare>,
-}
-
-impl Encode for AggregateInitReq {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
-        self.job_id.encode(bytes);
-        encode_u16_items(bytes, &(), &self.agg_param);
-        encode_u16_items(bytes, &(), &self.seq);
-    }
-}
-
-impl Decode for AggregateInitReq {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
-        let job_id = AggregationJobId::decode(bytes)?;
-        let agg_param = decode_u16_items(&(), bytes)?;
-        let seq = decode_u16_items(&(), bytes)?;
-
-        Ok(Self {
+        Ok(AggregateReq {
             task_id,
             job_id,
-            agg_param,
-            seq,
+            body,
         })
     }
 }
 
-/// PPM protocol message representing a request to continue aggregation of a sequence of client
-/// reports.
+/// PPM protocol (sub-)message indicating the "body" of an AggregateReq message, i.e. an
+/// AggregateInitReq or AggregateContinueReq.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateContinueReq {
-    pub task_id: TaskId,
-    pub job_id: AggregationJobId,
-    pub seq: Vec<Transition>,
-}
-
-impl Encode for AggregateContinueReq {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
-        self.job_id.encode(bytes);
-        encode_u16_items(bytes, &(), &self.seq);
-    }
-}
-
-impl Decode for AggregateContinueReq {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
-        let job_id = AggregationJobId::decode(bytes)?;
-        let seq = decode_u16_items(&(), bytes)?;
-
-        Ok(Self {
-            task_id,
-            job_id,
-            seq,
-        })
-    }
+pub enum AggregateReqBody {
+    AggregateInitReq {
+        agg_param: Vec<u8>,
+        seq: Vec<ReportShare>,
+    },
+    AggregateContinueReq {
+        seq: Vec<Transition>,
+    },
 }
 
 /// PPM protocol message representing a helper's response to a request from the leader to initiate
 /// or continue aggregation of a sequence of client reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateResp {
-    pub seq: Vec<Transition>,
+    pub(crate) seq: Vec<Transition>,
 }
 
-impl ParameterizedEncode<hmac::Key> for AggregateResp {
-    fn encode_with_param(&self, key: &hmac::Key, bytes: &mut Vec<u8>) {
-        assert_eq!(key.algorithm(), HMAC_SHA256);
-        let start_offset = bytes.len();
-
+impl Encode for AggregateResp {
+    fn encode(&self, bytes: &mut Vec<u8>) {
         encode_u16_items(bytes, &(), &self.seq);
-
-        let end_offset = bytes.len();
-        let tag = hmac::sign(key, &bytes[start_offset..end_offset]);
-        bytes.extend_from_slice(tag.as_ref());
     }
 }
 
-impl ParameterizedDecode<hmac::Key> for AggregateResp {
-    fn decode_with_param(key: &hmac::Key, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        assert_eq!(key.algorithm(), HMAC_SHA256);
-        let start_offset = bytes.position() as usize;
-
+impl Decode for AggregateResp {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let seq = decode_u16_items(&(), bytes)?;
-
-        let end_offset = bytes.position() as usize;
-        let mut provided_tag = [0u8; SHA256_OUTPUT_LEN];
-        bytes.read_exact(&mut provided_tag)?;
-        hmac::verify(
-            key,
-            &bytes.get_ref()[start_offset..end_offset],
-            &provided_tag,
-        )
-        .map_err(|_| CodecError::Other(anyhow!("HMAC tag verification failure").into()))?;
-
         Ok(Self { seq })
     }
 }
@@ -786,48 +826,28 @@ impl ParameterizedDecode<hmac::Key> for AggregateResp {
 /// encrypted aggregate of its share of data for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateShareReq {
-    pub task_id: TaskId,
-    pub batch_interval: Interval,
-    pub report_count: u64,
-    pub checksum: [u8; 32],
+    pub(crate) task_id: TaskId,
+    pub(crate) batch_interval: Interval,
+    pub(crate) report_count: u64,
+    pub(crate) checksum: [u8; 32],
 }
 
-impl ParameterizedEncode<hmac::Key> for AggregateShareReq {
-    fn encode_with_param(&self, key: &hmac::Key, bytes: &mut Vec<u8>) {
-        assert_eq!(key.algorithm(), HMAC_SHA256);
-        let start_offset = bytes.len();
-
+impl Encode for AggregateShareReq {
+    fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.batch_interval.encode(bytes);
         self.report_count.encode(bytes);
         bytes.extend_from_slice(&self.checksum);
-
-        let end_offset = bytes.len();
-        let tag = hmac::sign(key, &bytes[start_offset..end_offset]);
-        bytes.extend_from_slice(tag.as_ref());
     }
 }
 
-impl ParameterizedDecode<hmac::Key> for AggregateShareReq {
-    fn decode_with_param(key: &hmac::Key, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        assert_eq!(key.algorithm(), HMAC_SHA256);
-        let start_offset = bytes.position() as usize;
-
+impl Decode for AggregateShareReq {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let batch_interval = Interval::decode(bytes)?;
         let report_count = u64::decode(bytes)?;
         let mut checksum = [0u8; 32];
         bytes.read_exact(&mut checksum)?;
-
-        let end_offset = bytes.position() as usize;
-        let mut provided_tag = [0u8; SHA256_OUTPUT_LEN];
-        bytes.read_exact(&mut provided_tag)?;
-        hmac::verify(
-            key,
-            &bytes.get_ref()[start_offset..end_offset],
-            &provided_tag,
-        )
-        .map_err(|_| CodecError::Other(anyhow!("HMAC tag verification failure").into()))?;
 
         Ok(Self {
             task_id,
@@ -842,38 +862,18 @@ impl ParameterizedDecode<hmac::Key> for AggregateShareReq {
 /// encrypted aggregate of its share of data for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateShareResp {
-    pub encrypted_aggregate_share: HpkeCiphertext,
+    pub(crate) encrypted_aggregate_share: HpkeCiphertext,
 }
 
-impl ParameterizedEncode<hmac::Key> for AggregateShareResp {
-    fn encode_with_param(&self, key: &hmac::Key, bytes: &mut Vec<u8>) {
-        assert_eq!(key.algorithm(), HMAC_SHA256);
-        let start_offset = bytes.len();
-
+impl Encode for AggregateShareResp {
+    fn encode(&self, bytes: &mut Vec<u8>) {
         self.encrypted_aggregate_share.encode(bytes);
-
-        let end_offset = bytes.len();
-        let tag = hmac::sign(key, &bytes[start_offset..end_offset]);
-        bytes.extend_from_slice(tag.as_ref());
     }
 }
 
-impl ParameterizedDecode<hmac::Key> for AggregateShareResp {
-    fn decode_with_param(key: &hmac::Key, bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        assert_eq!(key.algorithm(), HMAC_SHA256);
-        let start_offset = bytes.position() as usize;
-
+impl Decode for AggregateShareResp {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let encrypted_aggregate_share = HpkeCiphertext::decode(bytes)?;
-
-        let end_offset = bytes.position() as usize;
-        let mut provided_tag = [0u8; SHA256_OUTPUT_LEN];
-        bytes.read_exact(&mut provided_tag)?;
-        hmac::verify(
-            key,
-            &bytes.get_ref()[start_offset..end_offset],
-            &provided_tag,
-        )
-        .map_err(|_| CodecError::Other(anyhow!("HMAC tag verification failure").into()))?;
 
         Ok(Self {
             encrypted_aggregate_share,
@@ -885,9 +885,9 @@ impl ParameterizedDecode<hmac::Key> for AggregateShareResp {
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectReq {
-    pub task_id: TaskId,
-    pub batch_interval: Interval,
-    pub agg_param: Vec<u8>,
+    pub(crate) task_id: TaskId,
+    pub(crate) batch_interval: Interval,
+    pub(crate) agg_param: Vec<u8>,
 }
 
 impl Encode for CollectReq {
@@ -916,7 +916,7 @@ impl Decode for CollectReq {
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectResp {
-    pub encrypted_agg_shares: Vec<HpkeCiphertext>,
+    pub(crate) encrypted_agg_shares: Vec<HpkeCiphertext>,
 }
 
 impl Encode for CollectResp {
@@ -938,6 +938,7 @@ impl Decode for CollectResp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assert_matches::assert_matches;
     use lazy_static::lazy_static;
 
     lazy_static! {
@@ -964,18 +965,151 @@ mod tests {
         }
     }
 
-    fn roundtrip_encoding_with_param<P, T>(param: &P, vals_and_encodings: &[(T, &str)])
-    where
-        T: ParameterizedEncode<P> + ParameterizedDecode<P> + core::fmt::Debug + Eq,
-    {
-        for (val, hex_encoding) in vals_and_encodings {
-            let mut encoded_val = Vec::new();
-            val.encode_with_param(param, &mut encoded_val);
-            let encoding = hex::decode(hex_encoding).unwrap();
-            assert_eq!(encoding, encoded_val);
-            let decoded_val = T::decode_with_param(param, &mut Cursor::new(&encoded_val)).unwrap();
-            assert_eq!(val, &decoded_val);
-        }
+    #[test]
+    fn roundtrip_authenticated_request_encoding() {
+        let msg = AggregateReq {
+            task_id: TaskId([
+                31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
+                10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+            ]),
+            job_id: AggregationJobId([u8::MIN; 32]),
+            body: AggregateReqBody::AggregateInitReq {
+                agg_param: Vec::from("012345"),
+                seq: vec![
+                    ReportShare {
+                        nonce: Nonce {
+                            time: Time(54321),
+                            rand: 314,
+                        },
+                        extensions: vec![Extension {
+                            extension_type: ExtensionType::Tbd,
+                            extension_data: Vec::from("0123"),
+                        }],
+                        encrypted_input_share: HpkeCiphertext {
+                            config_id: HpkeConfigId(42),
+                            encapsulated_context: Vec::from("012345"),
+                            payload: Vec::from("543210"),
+                        },
+                    },
+                    ReportShare {
+                        nonce: Nonce {
+                            time: Time(73542),
+                            rand: 515,
+                        },
+                        extensions: vec![Extension {
+                            extension_type: ExtensionType::Tbd,
+                            extension_data: Vec::from("3210"),
+                        }],
+                        encrypted_input_share: HpkeCiphertext {
+                            config_id: HpkeConfigId(13),
+                            encapsulated_context: Vec::from("abce"),
+                            payload: Vec::from("abfd"),
+                        },
+                    },
+                ],
+            },
+        };
+
+        let want_encoded_msg = msg.get_encoded();
+        let want_tag = hmac::sign(&*HMAC_KEY, &want_encoded_msg);
+
+        let encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
+        let (got_encoded_msg, got_tag) =
+            encoded_bytes.split_at(encoded_bytes.len() - SHA256_OUTPUT_LEN);
+        assert_eq!(want_encoded_msg, got_encoded_msg);
+        assert_eq!(want_tag.as_ref(), got_tag);
+
+        let decoder = AuthenticatedRequestDecoder::new(encoded_bytes).unwrap();
+        assert_eq!(msg.task_id, decoder.task_id());
+        let got_msg = decoder.decode(&*HMAC_KEY).unwrap();
+        assert_eq!(msg, got_msg);
+    }
+
+    #[test]
+    fn authenticated_request_bad_tag() {
+        let msg = AggregateReq {
+            task_id: TaskId([u8::MIN; 32]),
+            job_id: AggregationJobId([u8::MAX; 32]),
+            body: AggregateReqBody::AggregateContinueReq { seq: Vec::new() },
+        };
+
+        let mut encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
+
+        // Verify we can decode the unmodified bytes back to the original message.
+        let got_msg = AuthenticatedRequestDecoder::new(encoded_bytes.clone())
+            .unwrap()
+            .decode(&*HMAC_KEY)
+            .unwrap();
+        assert_eq!(msg, got_msg);
+
+        // Verify that modifying the bytes causes decoding to fail.
+        let ln = encoded_bytes.len();
+        encoded_bytes[ln - 1] ^= 0xFF;
+        let rslt: Result<AggregateReq, CodecError> =
+            AuthenticatedRequestDecoder::new(encoded_bytes.clone())
+                .unwrap()
+                .decode(&*HMAC_KEY);
+        assert_matches!(rslt, Err(_));
+    }
+
+    #[test]
+    fn roundtrip_authenticated_response_encoding() {
+        let msg = AggregateResp {
+            seq: vec![
+                Transition {
+                    nonce: Nonce {
+                        time: Time(54372),
+                        rand: 53,
+                    },
+                    trans_data: TransitionTypeSpecificData::Continued {
+                        payload: Vec::from("012345"),
+                    },
+                },
+                Transition {
+                    nonce: Nonce {
+                        time: Time(12345),
+                        rand: 413,
+                    },
+                    trans_data: TransitionTypeSpecificData::Finished,
+                },
+            ],
+        };
+
+        let want_encoded_msg = msg.get_encoded();
+        let want_tag = hmac::sign(&*HMAC_KEY, &want_encoded_msg);
+
+        let encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
+        let (got_encoded_msg, got_tag) =
+            encoded_bytes.split_at(encoded_bytes.len() - SHA256_OUTPUT_LEN);
+        assert_eq!(want_encoded_msg, got_encoded_msg);
+        assert_eq!(want_tag.as_ref(), got_tag);
+
+        let decoder = AuthenticatedResponseDecoder::new(encoded_bytes).unwrap();
+        let got_msg = decoder.decode(&*HMAC_KEY).unwrap();
+        assert_eq!(msg, got_msg);
+    }
+
+    #[test]
+    fn authenticated_response_bad_tag() {
+        let msg = AggregateResp { seq: Vec::new() };
+
+        let mut encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
+
+        // Verify we can decode the unmodified bytes back to the original message.
+        let got_msg = AuthenticatedResponseDecoder::new(encoded_bytes.clone())
+            .unwrap()
+            .decode(&*HMAC_KEY)
+            .unwrap();
+        assert_eq!(msg, got_msg);
+
+        // Verify that modifying the bytes causes decoding to fail.
+        let ln = encoded_bytes.len();
+        encoded_bytes[ln - 1] ^= 0xFF;
+        let rslt: Result<AggregateReq, CodecError> =
+            AuthenticatedResponseDecoder::new(encoded_bytes.clone())
+                .unwrap()
+                .decode(&*HMAC_KEY);
+        assert_matches!(rslt, Err(_));
     }
 
     #[test]
@@ -1459,13 +1593,12 @@ mod tests {
 
     #[test]
     fn roundtrip_aggregate_req() {
-        roundtrip_encoding_with_param(
-            &*HMAC_KEY,
-            &[
-                (
-                    AggregateReq::AggregateInitReq(AggregateInitReq {
-                        task_id: TaskId([u8::MAX; 32]),
-                        job_id: AggregationJobId([u8::MIN; 32]),
+        roundtrip_encoding(&[
+            (
+                AggregateReq {
+                    task_id: TaskId([u8::MAX; 32]),
+                    job_id: AggregationJobId([u8::MIN; 32]),
+                    body: AggregateReqBody::AggregateInitReq {
                         agg_param: Vec::from("012345"),
                         seq: vec![
                             ReportShare {
@@ -1499,385 +1632,96 @@ mod tests {
                                 },
                             },
                         ],
-                    }),
+                    },
+                },
+                concat!(
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
+                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
+                    "00",                                                               // msg_type
                     concat!(
-                        "00", // msg_type
+                        // agg_init_req
                         concat!(
-                            // agg_init_req
-                            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
-                            "0000000000000000000000000000000000000000000000000000000000000000", // job_id
-                            concat!(
-                                // agg_param
-                                "0006",         // length
-                                "303132333435", // opaque data
-                            ),
-                            concat!(
-                                // seq
-                                "0052", // length
-                                concat!(
-                                    concat!(
-                                        // nonce
-                                        "000000000000D431", // time
-                                        "000000000000013A", // rand
-                                    ),
-                                    concat!(
-                                        // extensions
-                                        "0008", // length
-                                        concat!(
-                                            "0000", // extension_type
-                                            concat!(
-                                                // extension_data
-                                                "0004",     // length
-                                                "30313233", // opaque data
-                                            ),
-                                        ),
-                                    ),
-                                    concat!(
-                                        // encrypted_input_share
-                                        "2A", // config_id
-                                        concat!(
-                                            // encapsulated_context
-                                            "0006",         // length
-                                            "303132333435", // opaque data
-                                        ),
-                                        concat!(
-                                            // payload
-                                            "0006",         // length
-                                            "353433323130", // opaque data
-                                        ),
-                                    ),
-                                ),
-                                concat!(
-                                    concat!(
-                                        // nonce
-                                        "0000000000011F46", // time
-                                        "0000000000000203", // rand
-                                    ),
-                                    concat!(
-                                        // extensions
-                                        "0008", // length
-                                        concat!(
-                                            "0000", // extension_type
-                                            concat!(
-                                                // extension_data
-                                                "0004",     // length
-                                                "33323130", // opaque data
-                                            ),
-                                        ),
-                                    ),
-                                    concat!(
-                                        "0D", // config_id
-                                        concat!(
-                                            // encapsulated_context
-                                            "0004",     // length
-                                            "61626365", // opaque data
-                                        ),
-                                        concat!(
-                                            // payload
-                                            "0004",     // length
-                                            "61626664", // opaque data
-                                        ),
-                                    ),
-                                ),
-                            ),
+                            // agg_param
+                            "0006",         // length
+                            "303132333435", // opaque data
                         ),
-                        "68090A61334511E10EC2F78E1575FB26E19F29CC740F02FFB6BFEF0AA280A1B7", // tag
-                    ),
-                ),
-                (
-                    AggregateReq::AggregateContinueReq(AggregateContinueReq {
-                        task_id: TaskId([u8::MAX; 32]),
-                        job_id: AggregationJobId([u8::MIN; 32]),
-                        seq: vec![
-                            Transition {
-                                nonce: Nonce {
-                                    time: Time(54372),
-                                    rand: 53,
-                                },
-                                trans_data: TransitionTypeSpecificData::Continued {
-                                    payload: Vec::from("012345"),
-                                },
-                            },
-                            Transition {
-                                nonce: Nonce {
-                                    time: Time(12345),
-                                    rand: 413,
-                                },
-                                trans_data: TransitionTypeSpecificData::Finished,
-                            },
-                        ],
-                    }),
-                    concat!(
-                        "01", // msg_type
                         concat!(
-                            // agg_continue_req
-                            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
-                            "0000000000000000000000000000000000000000000000000000000000000000", // job_id
+                            // seq
+                            "0052", // length
                             concat!(
-                                // seq
-                                "002A", // length
                                 concat!(
+                                    // nonce
+                                    "000000000000D431", // time
+                                    "000000000000013A", // rand
+                                ),
+                                concat!(
+                                    // extensions
+                                    "0008", // length
                                     concat!(
-                                        // nonce
-                                        "000000000000D464", // time
-                                        "0000000000000035", // rand
+                                        "0000", // extension_type
+                                        concat!(
+                                            // extension_data
+                                            "0004",     // length
+                                            "30313233", // opaque data
+                                        ),
                                     ),
-                                    "00", // trans_type
+                                ),
+                                concat!(
+                                    // encrypted_input_share
+                                    "2A", // config_id
                                     concat!(
-                                        // payload
+                                        // encapsulated_context
                                         "0006",         // length
                                         "303132333435", // opaque data
                                     ),
-                                ),
-                                concat!(
                                     concat!(
-                                        // nonce
-                                        "0000000000003039", // time
-                                        "000000000000019D", // rand
+                                        // payload
+                                        "0006",         // length
+                                        "353433323130", // opaque data
                                     ),
-                                    "01", // trans_type
-                                )
-                            ),
-                        ),
-                        "8E244B47B01EA78D8639D81F0F9377CA0D5C2F0119ACDDC17CCB1B89D042F62E", // tag
-                    ),
-                ),
-            ],
-        )
-    }
-
-    #[test]
-    fn roundtrip_aggregate_init_req() {
-        roundtrip_encoding(&[
-            (
-                AggregateInitReq {
-                    task_id: TaskId([u8::MIN; 32]),
-                    job_id: AggregationJobId([u8::MAX; 32]),
-                    agg_param: Vec::new(),
-                    seq: Vec::new(),
-                },
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
-                    concat!(
-                        // agg_param
-                        "0000", // length
-                        "",     // opaque data
-                    ),
-                    concat!(
-                        // seq
-                        "0000", // length
-                    ),
-                ),
-            ),
-            (
-                AggregateInitReq {
-                    task_id: TaskId([u8::MAX; 32]),
-                    job_id: AggregationJobId([u8::MIN; 32]),
-                    agg_param: Vec::from("012345"),
-                    seq: vec![
-                        ReportShare {
-                            nonce: Nonce {
-                                time: Time(54321),
-                                rand: 314,
-                            },
-                            extensions: vec![Extension {
-                                extension_type: ExtensionType::Tbd,
-                                extension_data: Vec::from("0123"),
-                            }],
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(42),
-                                encapsulated_context: Vec::from("012345"),
-                                payload: Vec::from("543210"),
-                            },
-                        },
-                        ReportShare {
-                            nonce: Nonce {
-                                time: Time(73542),
-                                rand: 515,
-                            },
-                            extensions: vec![Extension {
-                                extension_type: ExtensionType::Tbd,
-                                extension_data: Vec::from("3210"),
-                            }],
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(13),
-                                encapsulated_context: Vec::from("abce"),
-                                payload: Vec::from("abfd"),
-                            },
-                        },
-                    ],
-                },
-                concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
-                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
-                    concat!(
-                        // agg_param
-                        "0006",         // length
-                        "303132333435", // opaque data
-                    ),
-                    concat!(
-                        "0052", // length
-                        concat!(
-                            concat!(
-                                // nonce
-                                "000000000000D431", // time
-                                "000000000000013A", // rand
-                            ),
-                            concat!(
-                                // extensions
-                                "0008", // length
-                                "0000", // extension_type
-                                concat!(
-                                    // extension_data
-                                    "0004",     // length
-                                    "30313233", // opaque data
                                 ),
                             ),
                             concat!(
-                                // encrypted_input_share
-                                "2A", // config_id
                                 concat!(
-                                    // encapsulated_context
-                                    "0006",         // length
-                                    "303132333435", // opaque data
+                                    // nonce
+                                    "0000000000011F46", // time
+                                    "0000000000000203", // rand
                                 ),
                                 concat!(
-                                    // payload
-                                    "0006",         // length
-                                    "353433323130", // opaque data
-                                ),
-                            ),
-                        ),
-                        concat!(
-                            concat!(
-                                // nonce
-                                "0000000000011F46", // time
-                                "0000000000000203", // rand
-                            ),
-                            concat!(
-                                // extensions
-                                "0008", // length
-                                concat!(
-                                    "0000", // extension_type
+                                    // extensions
+                                    "0008", // length
                                     concat!(
-                                        // extension_data
+                                        "0000", // extension_type
+                                        concat!(
+                                            // extension_data
+                                            "0004",     // length
+                                            "33323130", // opaque data
+                                        ),
+                                    ),
+                                ),
+                                concat!(
+                                    "0D", // config_id
+                                    concat!(
+                                        // encapsulated_context
                                         "0004",     // length
-                                        "33323130", // opaque data
+                                        "61626365", // opaque data
+                                    ),
+                                    concat!(
+                                        // payload
+                                        "0004",     // length
+                                        "61626664", // opaque data
                                     ),
                                 ),
                             ),
-                            concat!(
-                                // encrypted_input_share
-                                "0D", // config_id
-                                concat!(
-                                    // encapsulated_context
-                                    "0004",     // length
-                                    "61626365", // opaque data
-                                ),
-                                concat!(
-                                    "0004",     // length
-                                    "61626664", // opaque data
-                                ),
-                            ),
                         ),
                     ),
                 ),
             ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_aggregate_continue_req() {
-        roundtrip_encoding(&[
             (
-                AggregateContinueReq {
+                AggregateReq {
                     task_id: TaskId([u8::MIN; 32]),
                     job_id: AggregationJobId([u8::MAX; 32]),
-                    seq: vec![],
-                },
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
-                    concat!(
-                        // seq
-                        "0000", // length
-                    ),
-                ),
-            ),
-            (
-                AggregateContinueReq {
-                    task_id: TaskId([u8::MAX; 32]),
-                    job_id: AggregationJobId([u8::MIN; 32]),
-                    seq: vec![
-                        Transition {
-                            nonce: Nonce {
-                                time: Time(54372),
-                                rand: 53,
-                            },
-                            trans_data: TransitionTypeSpecificData::Continued {
-                                payload: Vec::from("012345"),
-                            },
-                        },
-                        Transition {
-                            nonce: Nonce {
-                                time: Time(12345),
-                                rand: 413,
-                            },
-                            trans_data: TransitionTypeSpecificData::Finished,
-                        },
-                    ],
-                },
-                concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
-                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
-                    concat!(
-                        //seq
-                        "002A", // length
-                        concat!(
-                            concat!(
-                                // nonce
-                                "000000000000D464", // time
-                                "0000000000000035", // rand
-                            ),
-                            "00", // trans_type
-                            concat!(
-                                // payload
-                                "0006",         // length
-                                "303132333435", // opaque data
-                            ),
-                        ),
-                        concat!(
-                            concat!(
-                                // nonce
-                                "0000000000003039", // time
-                                "000000000000019D", // rand
-                            ),
-                            "01", // trans_type
-                        ),
-                    ),
-                ),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_aggregate_resp() {
-        roundtrip_encoding_with_param(
-            &*HMAC_KEY,
-            &[
-                (
-                    AggregateResp { seq: vec![] },
-                    concat!(
-                        concat!(
-                            // seq
-                            "0000", // length
-                        ),
-                        "8D460A9EB8988604F0F282887BA39AA230A73AA6254E964FD9A4352E554B38E1", // tag
-                    ),
-                ),
-                (
-                    AggregateResp {
+                    body: AggregateReqBody::AggregateContinueReq {
                         seq: vec![
                             Transition {
                                 nonce: Nonce {
@@ -1897,9 +1741,15 @@ mod tests {
                             },
                         ],
                     },
+                },
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
+                    "01",                                                               // msg_type
                     concat!(
+                        // agg_continue_req
                         concat!(
-                            //seq
+                            // seq
                             "002A", // length
                             concat!(
                                 concat!(
@@ -1921,126 +1771,171 @@ mod tests {
                                     "000000000000019D", // rand
                                 ),
                                 "01", // trans_type
-                            ),
+                            )
                         ),
-                        "3F48B7D8F0AA6E2AE5677ED356D3B18FFF5318A024A25CA0BF27CE02FB770EC3",
                     ),
                 ),
-            ],
-        )
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_aggregate_resp() {
+        roundtrip_encoding(&[
+            (
+                AggregateResp { seq: vec![] },
+                concat!(concat!(
+                    // seq
+                    "0000", // length
+                ),),
+            ),
+            (
+                AggregateResp {
+                    seq: vec![
+                        Transition {
+                            nonce: Nonce {
+                                time: Time(54372),
+                                rand: 53,
+                            },
+                            trans_data: TransitionTypeSpecificData::Continued {
+                                payload: Vec::from("012345"),
+                            },
+                        },
+                        Transition {
+                            nonce: Nonce {
+                                time: Time(12345),
+                                rand: 413,
+                            },
+                            trans_data: TransitionTypeSpecificData::Finished,
+                        },
+                    ],
+                },
+                concat!(concat!(
+                    //seq
+                    "002A", // length
+                    concat!(
+                        concat!(
+                            // nonce
+                            "000000000000D464", // time
+                            "0000000000000035", // rand
+                        ),
+                        "00", // trans_type
+                        concat!(
+                            // payload
+                            "0006",         // length
+                            "303132333435", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        concat!(
+                            // nonce
+                            "0000000000003039", // time
+                            "000000000000019D", // rand
+                        ),
+                        "01", // trans_type
+                    ),
+                )),
+            ),
+        ])
     }
 
     #[test]
     fn roundtrip_aggregate_share_req() {
-        roundtrip_encoding_with_param(
-            &*HMAC_KEY,
-            &[
-                (
-                    AggregateShareReq {
-                        task_id: TaskId([u8::MIN; 32]),
-                        batch_interval: Interval {
-                            start: Time(54321),
-                            duration: Duration(12345),
-                        },
-                        report_count: 439,
-                        checksum: [u8::MIN; 32],
+        roundtrip_encoding(&[
+            (
+                AggregateShareReq {
+                    task_id: TaskId([u8::MIN; 32]),
+                    batch_interval: Interval {
+                        start: Time(54321),
+                        duration: Duration(12345),
                     },
+                    report_count: 439,
+                    checksum: [u8::MIN; 32],
+                },
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
-                        "0000000000000000000000000000000000000000000000000000000000000000", // task_id
-                        concat!(
-                            // batch_interval
-                            "000000000000D431", // start
-                            "0000000000003039", // duration
-                        ),
-                        "00000000000001B7", // report_count
-                        "0000000000000000000000000000000000000000000000000000000000000000", // checksum
-                        "B19A8933DA450A49737E56643B83F3DEF530CBAF3FCD9E3E2BF09C6D8AF373A6", // tag
+                        // batch_interval
+                        "000000000000D431", // start
+                        "0000000000003039", // duration
                     ),
+                    "00000000000001B7", // report_count
+                    "0000000000000000000000000000000000000000000000000000000000000000", // checksum
                 ),
-                (
-                    AggregateShareReq {
-                        task_id: TaskId([12u8; 32]),
-                        batch_interval: Interval {
-                            start: Time(50821),
-                            duration: Duration(84354),
-                        },
-                        report_count: 8725,
-                        checksum: [u8::MAX; 32],
+            ),
+            (
+                AggregateShareReq {
+                    task_id: TaskId([12u8; 32]),
+                    batch_interval: Interval {
+                        start: Time(50821),
+                        duration: Duration(84354),
                     },
+                    report_count: 8725,
+                    checksum: [u8::MAX; 32],
+                },
+                concat!(
+                    "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
                     concat!(
-                        "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
-                        concat!(
-                            // batch_interval
-                            "000000000000C685", // start
-                            "0000000000014982", // duration
-                        ),
-                        "0000000000002215", // report_count
-                        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // checksum
-                        "4ADD294CF991CEB12CDE2DC5F98EAE56BC1C3D8941D3FC4C46F053AE7D3BC3CA", // tag
+                        // batch_interval
+                        "000000000000C685", // start
+                        "0000000000014982", // duration
                     ),
+                    "0000000000002215", // report_count
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // checksum
                 ),
-            ],
-        )
+            ),
+        ])
     }
 
     #[test]
     fn roundtrip_aggregate_share_resp() {
-        roundtrip_encoding_with_param(
-            &*HMAC_KEY,
-            &[
-                (
-                    AggregateShareResp {
-                        encrypted_aggregate_share: HpkeCiphertext {
-                            config_id: HpkeConfigId(10),
-                            encapsulated_context: Vec::from("0123"),
-                            payload: Vec::from("4567"),
-                        },
+        roundtrip_encoding(&[
+            (
+                AggregateShareResp {
+                    encrypted_aggregate_share: HpkeCiphertext {
+                        config_id: HpkeConfigId(10),
+                        encapsulated_context: Vec::from("0123"),
+                        payload: Vec::from("4567"),
                     },
+                },
+                concat!(concat!(
+                    // encrypted_aggregate_share
+                    "0A", // config_id
                     concat!(
-                        concat!(
-                            // encrypted_aggregate_share
-                            "0A", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0004",     // length
-                                "30313233", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "0004",     // length
-                                "34353637", // opaque data
-                            ),
-                        ),
-                        "67C9AD957825E8A20F3E85B6343A4AB186927B01B16585A6F21115730C660EC7", // tag
+                        // encapsulated_context
+                        "0004",     // length
+                        "30313233", // opaque data
                     ),
-                ),
-                (
-                    AggregateShareResp {
-                        encrypted_aggregate_share: HpkeCiphertext {
-                            config_id: HpkeConfigId(12),
-                            encapsulated_context: Vec::from("01234"),
-                            payload: Vec::from("567"),
-                        },
+                    concat!(
+                        // payload
+                        "0004",     // length
+                        "34353637", // opaque data
+                    ),
+                )),
+            ),
+            (
+                AggregateShareResp {
+                    encrypted_aggregate_share: HpkeCiphertext {
+                        config_id: HpkeConfigId(12),
+                        encapsulated_context: Vec::from("01234"),
+                        payload: Vec::from("567"),
                     },
+                },
+                concat!(concat!(
+                    // encrypted_aggregate_share
+                    "0C", // config_id
                     concat!(
-                        concat!(
-                            // encrypted_aggregate_share
-                            "0C", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0005",       // length
-                                "3031323334", // opaque data
-                            ),
-                            concat!(
-                                "0003",   // length
-                                "353637", // opaque data
-                            ),
-                        ),
-                        "DF229D520BBB475BF17CA6DECF8EF134A6868D54D5171974340A667F5129035E", // tag
+                        // encapsulated_context
+                        "0005",       // length
+                        "3031323334", // opaque data
                     ),
-                ),
-            ],
-        )
+                    concat!(
+                        "0003",   // length
+                        "353637", // opaque data
+                    ),
+                )),
+            ),
+        ])
     }
 
     #[test]
@@ -2151,7 +2046,7 @@ mod tests {
                             "353637", // opaque data
                         ),
                     )
-                ),),
+                )),
             ),
         ])
     }
