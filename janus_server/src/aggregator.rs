@@ -58,9 +58,6 @@ impl From<datastore::Error> for Error {
     }
 }
 
-// This impl allows use of [`Error`] in [`warp::reject::Rejection`]
-impl warp::reject::Reject for Error {}
-
 /// A PPM aggregator
 #[derive(Clone, derivative::Derivative)]
 #[derivative(Debug)]
@@ -194,10 +191,17 @@ fn with_cloned_value<T: Clone + Sync + Send>(
 }
 
 fn with_decoded_message<T: Decode + Send + Sync>(
-) -> impl Filter<Extract = (T,), Error = Rejection> + Clone {
-    warp::body::bytes().and_then(|body: Bytes| async move {
-        T::get_decoded(&body).map_err(|e| warp::reject::custom(Error::from(e)))
-    })
+) -> impl Filter<Extract = (Result<T, Error>,), Error = Rejection> + Clone {
+    warp::body::bytes().map(|body: Bytes| T::get_decoded(&body).map_err(Error::from))
+}
+
+/// Helper function to transform errors into a problem details JSON object. (See RFC 7807) This is
+/// meant to be used in a warp `map` filter.
+fn handle_error(result: Result<impl Reply, Error>) -> impl Reply {
+    match result {
+        Ok(reply) => reply.into_response(),
+        Err(_error) => warp::reply::json(&serde_json::json!({})).into_response(),
+    }
 }
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
@@ -230,20 +234,22 @@ fn aggregator_filter<C: 'static + Clock>(
     let upload_endpoint = warp::path("upload")
         .and(warp::post())
         .and(with_cloned_value(aggregator))
-        .and(with_decoded_message())
-        .and_then(|aggregator: Aggregator<C>, report: Report| async move {
+        .and_then(|aggregator: Aggregator<C>| async {
             // Only the leader supports upload
             if aggregator.role != Role::Leader {
                 return Err(warp::reject::not_found());
             }
-
-            aggregator
-                .handle_upload(&report)
-                .await
-                .map_err(warp::reject::custom)?;
-
-            Ok(reply::with_status(warp::reply(), StatusCode::OK)) as Result<_, Rejection>
+            Ok(aggregator)
         })
+        .and(with_decoded_message())
+        .then(
+            |aggregator: Aggregator<C>, report_res: Result<Report, Error>| async move {
+                aggregator.handle_upload(&report_res?).await?;
+
+                Ok(warp::reply()) as Result<_, Error>
+            },
+        )
+        .map(handle_error)
         .with(trace::named("upload"));
 
     Ok(hpke_config_endpoint.or(upload_endpoint).boxed())
