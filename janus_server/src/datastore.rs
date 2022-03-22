@@ -254,9 +254,8 @@ impl Error {
     }
 }
 
-// debug_assertions allows this module to be used in integration tests.
-// XXX: if the debug_assertions strategy doesn't make it through code review, move things back to dev-dependencies
-#[cfg(any(test, debug_assertions))]
+// This is public to allow use in integration tests.
+#[doc(hidden)]
 pub mod test_util {
     use super::*;
     use deadpool_postgres::{Manager, Pool};

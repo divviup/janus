@@ -37,8 +37,25 @@ pub enum Error {
     // rejecting future reports
     #[error("report from the future: {0}")]
     ReportFromTheFuture(Nonce),
+    /// An error from the datastore.
     #[error("datastore error: {0}")]
-    Datastore(#[from] datastore::Error),
+    Datastore(datastore::Error),
+}
+
+// This From implementation ensures that we don't end up with e.g.
+// Error::Datastore(datastore::Error::User(Error::...)) by automatically unwrapping to the internal
+// aggregator error if converting a datastore::Error::User that contains an Error. Other
+// datastore::Error values are wrapped in Error::Datastore unchanged.
+impl From<datastore::Error> for Error {
+    fn from(err: datastore::Error) -> Self {
+        match err {
+            datastore::Error::User(err) => match err.downcast::<Error>() {
+                Ok(err) => *err,
+                Err(err) => Error::Datastore(datastore::Error::User(err)),
+            },
+            _ => Error::Datastore(err),
+        }
+    }
 }
 
 // This impl allows use of [`Error`] in [`warp::reject::Rejection`]
@@ -48,8 +65,8 @@ impl warp::reject::Reject for Error {}
 #[derive(Clone, derivative::Derivative)]
 #[derivative(Debug)]
 pub struct Aggregator<C> {
+    /// The datastore used for durable storage.
     #[derivative(Debug = "ignore")]
-    /// The datstore used for durable storage.
     datastore: Arc<Datastore>,
     /// The clock to use to sample time.
     clock: C,
@@ -163,19 +180,8 @@ impl<C: Clock> Aggregator<C> {
                     Ok(())
                 })
             })
-            .await
-            .map_err(downcast_to_aggregator_error)?;
+            .await?;
         Ok(())
-    }
-}
-
-fn downcast_to_aggregator_error(err: datastore::Error) -> Error {
-    match err {
-        datastore::Error::User(err) => match err.downcast::<Error>() {
-            Ok(err) => *err,
-            Err(err) => Error::Datastore(datastore::Error::User(err)),
-        },
-        _ => Error::Datastore(err),
     }
 }
 
