@@ -2,12 +2,16 @@ use chrono::Duration;
 use janus_server::{
     aggregator::aggregator_server,
     client::Client,
+    datastore::test_util::ephemeral_datastore,
     hpke::{HpkeRecipient, Label},
     message::{Role, TaskId},
     time::RealClock,
     trace::install_subscriber,
 };
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 use url::Url;
 
 fn endpoint_from_socket_addr(addr: &SocketAddr) -> Url {
@@ -24,9 +28,11 @@ async fn create_client() {
 
     let task_id = TaskId::random();
 
+    let (leader_datastore, _leader_db_handle) = ephemeral_datastore().await;
     let leader_hpke_recipient =
         HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
     let (leader_address, leader_server) = aggregator_server(
+        Arc::new(leader_datastore),
         RealClock::default(),
         Duration::minutes(10),
         Role::Leader,
@@ -36,10 +42,11 @@ async fn create_client() {
     .unwrap();
     let leader_handle = tokio::spawn(leader_server);
 
+    let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
     let helper_hpke_recipient =
         HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
-
     let (helper_address, helper_server) = aggregator_server(
+        Arc::new(helper_datastore),
         RealClock::default(),
         Duration::minutes(10),
         Role::Helper,
