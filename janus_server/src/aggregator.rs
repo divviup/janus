@@ -367,13 +367,8 @@ mod tests {
 
         let bytes = to_bytes(response.into_body()).await.unwrap();
         let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
-        let sender = HpkeSender {
-            task_id,
-            recipient_config: hpke_config,
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
+        assert_eq!(hpke_config, hpke_recipient.config);
+        let sender = HpkeSender::from_recipient(&hpke_recipient);
 
         let message = b"this is a message";
         let associated_data = b"some associated data";
@@ -409,22 +404,10 @@ mod tests {
         let associated_data = Report::associated_data(nonce, &extensions);
         let message = b"this is a message";
 
-        let leader_sender = HpkeSender {
-            task_id,
-            recipient_config: hpke_recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
+        let leader_sender = HpkeSender::from_recipient(&hpke_recipient);
         let leader_ciphertext = leader_sender.seal(message, &associated_data).unwrap();
 
-        let helper_sender = HpkeSender {
-            task_id,
-            recipient_config: hpke_recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Helper,
-        };
+        let helper_sender = HpkeSender::from_recipient(&hpke_recipient);
         let helper_ciphertext = helper_sender.seal(message, &associated_data).unwrap();
 
         let report = Report {
@@ -586,22 +569,10 @@ mod tests {
         let associated_data = Report::associated_data(report.nonce, &report.extensions);
         let message = b"this is a message";
 
-        let leader_sender = HpkeSender {
-            task_id: report.task_id,
-            recipient_config: hpke_recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
+        let leader_sender = HpkeSender::from_recipient(hpke_recipient);
         let leader_ciphertext = leader_sender.seal(message, &associated_data).unwrap();
 
-        let helper_sender = HpkeSender {
-            task_id: report.task_id,
-            recipient_config: hpke_recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Helper,
-        };
+        let helper_sender = HpkeSender::from_recipient(hpke_recipient);
         let helper_ciphertext = helper_sender.seal(message, &associated_data).unwrap();
 
         Report {

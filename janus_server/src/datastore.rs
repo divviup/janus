@@ -76,7 +76,8 @@ pub struct Transaction<'a> {
 impl Transaction<'_> {
     // TODO(brandon): implement basic getters/putters for all types
 
-    #[cfg(test)]
+    // This is pub to be used in integration tests
+    #[doc(hidden)]
     pub async fn put_task(&self, task_id: TaskId) -> Result<(), Error> {
         let stmt = self
             .tx
