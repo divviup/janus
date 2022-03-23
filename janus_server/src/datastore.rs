@@ -1,6 +1,9 @@
 //! Janus datastore (durable storage) implementation.
 
-use crate::message::{Extension, HpkeCiphertext, Nonce, Report, TaskId, Time};
+use crate::{
+    message::{Extension, HpkeCiphertext, Nonce, Report, TaskId, Time},
+    task::TaskParameters,
+};
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use std::{future::Future, io::Cursor, pin::Pin};
 use tokio_postgres::{error::SqlState, IsolationLevel, Row};
@@ -78,7 +81,8 @@ impl Transaction<'_> {
 
     // This is pub to be used in integration tests
     #[doc(hidden)]
-    pub async fn put_task(&self, task_id: TaskId) -> Result<(), Error> {
+    pub async fn put_task(&self, task: &TaskParameters) -> Result<(), Error> {
+        // TODO: interpolate values from `task` into prepared statement
         let stmt = self
             .tx
             .prepare_cached(
@@ -88,7 +92,7 @@ impl Transaction<'_> {
             )
             .await?;
         self.tx
-            .execute(&stmt, &[/* task_id */ &&task_id.0[..]])
+            .execute(&stmt, &[/* task_id */ &&task.id.0[..]])
             .await?;
         Ok(())
     }
@@ -351,7 +355,8 @@ mod tests {
             .run_tx(|tx| {
                 let report = report.clone();
                 Box::pin(async move {
-                    tx.put_task(task_id).await?;
+                    tx.put_task(&TaskParameters::new_dummy(task_id, vec![]))
+                        .await?;
                     tx.put_client_report(&report).await
                 })
             })
@@ -421,7 +426,8 @@ mod tests {
         ds.run_tx(|tx| {
             let report = report.clone();
             Box::pin(async move {
-                tx.put_task(task_id).await?;
+                tx.put_task(&TaskParameters::new_dummy(task_id, vec![]))
+                    .await?;
                 tx.put_client_report(&report).await
             })
         })

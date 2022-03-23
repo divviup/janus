@@ -273,6 +273,7 @@ mod tests {
         datastore::test_util::{ephemeral_datastore, DbHandle},
         hpke::{HpkeSender, Label},
         message::{HpkeConfig, TaskId, Time},
+        task::TaskParameters,
         time::tests::MockClock,
         trace::test_util::install_trace_subscriber,
     };
@@ -280,6 +281,7 @@ mod tests {
     use hyper::body::to_bytes;
     use prio::codec::Decode;
     use std::io::Cursor;
+    use url::Url;
     use warp::reply::Reply;
 
     #[tokio::test]
@@ -387,14 +389,20 @@ mod tests {
         let task_id = TaskId::random();
 
         datastore
-            .run_tx(|tx| Box::pin(async move { tx.put_task(task_id).await }))
+            .run_tx(|tx| {
+                let fake_url = Url::parse("localhost:8080").unwrap();
+
+                let task_parameters =
+                    TaskParameters::new_dummy(task_id, vec![fake_url.clone(), fake_url]);
+                Box::pin(async move { tx.put_task(&task_parameters).await })
+            })
             .await
             .unwrap();
 
-        let report_time = clock.now() - skew;
-
         let hpke_recipient =
             HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+
+        let report_time = clock.now() - skew;
 
         let nonce = Nonce {
             time: Time(report_time.timestamp() as u64),

@@ -249,8 +249,21 @@ pub enum Role {
 }
 
 impl Role {
+    /// True if this [`Role`] is one of the aggregators.
     pub(crate) fn is_aggregator(&self) -> bool {
         matches!(self, Role::Leader | Role::Helper)
+    }
+
+    /// If this [`Role`] is one of the aggregators, returns the index at which
+    /// that aggregator's message or data can be found in various lists, or
+    /// `None` if the role is not an aggregator.
+    pub(crate) fn index(&self) -> Option<usize> {
+        match self {
+            // draft-gpew-priv-ppm §4.2: the leader's endpoint MUST be the first
+            Role::Leader => Some(0),
+            Role::Helper => Some(1),
+            _ => None,
+        }
     }
 }
 
