@@ -2,7 +2,8 @@
 
 use crate::{
     hpke::{HpkeSender, Label},
-    message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId, Time},
+    message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, Time},
+    task::TaskParameters,
     time::Clock,
 };
 use http::StatusCode;
@@ -11,7 +12,6 @@ use prio::{
     vdaf::Client as VdafClient,
 };
 use std::io::Cursor;
-use url::Url;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -27,6 +27,8 @@ pub enum Error {
     Vdaf(#[from] prio::vdaf::VdafError),
     #[error("HPKE error: {0}")]
     Hpke(#[from] crate::hpke::Error),
+    #[error("invalid task parameters: {0}")]
+    TaskParameters(#[from] crate::task::Error),
 }
 
 static CLIENT_USER_AGENT: &str = concat!(
@@ -38,12 +40,12 @@ static CLIENT_USER_AGENT: &str = concat!(
 );
 
 pub async fn aggregator_hpke_sender(
+    task_parameters: &TaskParameters,
+    aggregator_role: Role,
     http_client: &reqwest::Client,
-    task_id: TaskId,
-    aggregator_endpoint: Url,
 ) -> Result<HpkeSender, Error> {
     let hpke_config_response = http_client
-        .get(aggregator_endpoint.join("hpke_config")?)
+        .get(task_parameters.hpke_config_endpoint(aggregator_role)?)
         .send()
         .await?;
     let status = hpke_config_response.status();
@@ -56,7 +58,7 @@ pub async fn aggregator_hpke_sender(
     ))?;
 
     Ok(HpkeSender::new(
-        task_id,
+        task_parameters.id,
         hpke_config,
         Label::InputShare,
         Role::Client,
@@ -74,10 +76,9 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 /// A PPM client.
 #[derive(Debug)]
 pub struct Client<V, P, C> {
-    task_id: TaskId,
+    task_parameters: TaskParameters,
     vdaf_client: V,
     vdaf_public_parameter: P,
-    leader_url: Url,
     clock: C,
     http_client: reqwest::Client,
     leader_report_sender: HpkeSender,
@@ -86,20 +87,18 @@ pub struct Client<V, P, C> {
 
 impl<V: VdafClient, C: Clock> Client<V, V::PublicParam, C> {
     pub fn new(
-        task_id: TaskId,
+        task_parameters: TaskParameters,
         vdaf_client: V,
         vdaf_public_parameter: V::PublicParam,
-        leader_url: Url,
         clock: C,
         http_client: &reqwest::Client,
         leader_report_sender: HpkeSender,
         helper_report_sender: HpkeSender,
     ) -> Self {
         Self {
-            task_id,
+            task_parameters,
             vdaf_client,
             vdaf_public_parameter,
-            leader_url,
             clock,
             http_client: http_client.clone(),
             leader_report_sender,
@@ -143,7 +142,7 @@ impl<V: VdafClient, C: Clock> Client<V, V::PublicParam, C> {
                 .collect::<Result<_, Error>>()?;
 
         let report = Report {
-            task_id: self.task_id,
+            task_id: self.task_parameters.id,
             nonce,
             extensions,
             encrypted_input_shares,
@@ -151,7 +150,7 @@ impl<V: VdafClient, C: Clock> Client<V, V::PublicParam, C> {
 
         let upload_response = self
             .http_client
-            .post(self.leader_url.join("upload")?)
+            .post(self.task_parameters.upload_endpoint()?)
             .body(report.get_encoded())
             .send()
             .await?;
@@ -169,17 +168,20 @@ impl<V: VdafClient, C: Clock> Client<V, V::PublicParam, C> {
 mod tests {
     use super::*;
     use crate::{
-        hpke::HpkeRecipient, time::tests::MockClock, trace::test_util::install_trace_subscriber,
+        hpke::HpkeRecipient, message::TaskId, time::tests::MockClock,
+        trace::test_util::install_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use mockito::mock;
     use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Sum};
+    use url::Url;
 
     fn setup_client<V: VdafClient>(
         vdaf_client: V,
         public_parameter: V::PublicParam,
     ) -> Client<V, V::PublicParam, MockClock> {
         let task_id = TaskId::random();
+
         let clock = MockClock::default();
         let leader_hpke_recipient =
             HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
@@ -188,11 +190,15 @@ mod tests {
             HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
         let helper_hpke_sender = HpkeSender::from_recipient(&helper_hpke_recipient);
 
+        let server_url = Url::parse(&mockito::server_url()).unwrap();
+
+        let task_parameters =
+            TaskParameters::new_dummy(task_id, vec![server_url.clone(), server_url]);
+
         Client::new(
-            task_id,
+            task_parameters,
             vdaf_client,
             public_parameter,
-            Url::parse(&mockito::server_url()).unwrap(),
             clock,
             &default_http_client().unwrap(),
             leader_hpke_sender,

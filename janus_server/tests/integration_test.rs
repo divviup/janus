@@ -5,6 +5,7 @@ use janus_server::{
     datastore::test_util::{ephemeral_datastore, DbHandle},
     hpke::{HpkeRecipient, Label},
     message::{Role, TaskId},
+    task::TaskParameters,
     time::RealClock,
     trace::install_subscriber,
 };
@@ -38,16 +39,12 @@ async fn setup_test() -> TestCase {
     let task_id = TaskId::random();
 
     let (leader_datastore, _leader_db_handle) = ephemeral_datastore().await;
-
-    leader_datastore
-        .run_tx(|tx| Box::pin(async move { tx.put_task(task_id).await }))
-        .await
-        .unwrap();
+    let leader_datastore = Arc::new(leader_datastore);
 
     let leader_hpke_recipient =
         HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
     let (leader_address, leader_server) = aggregator_server(
-        Arc::new(leader_datastore),
+        leader_datastore.clone(),
         RealClock::default(),
         Duration::minutes(10),
         Role::Leader,
@@ -56,7 +53,6 @@ async fn setup_test() -> TestCase {
     )
     .unwrap();
     let leader_task_handle = tokio::spawn(leader_server);
-    let leader_url = endpoint_from_socket_addr(&leader_address);
 
     let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
     let helper_hpke_recipient =
@@ -72,27 +68,39 @@ async fn setup_test() -> TestCase {
     .unwrap();
     let helper_task_handle = tokio::spawn(helper_server);
 
+    let task_parameters = TaskParameters::new_dummy(
+        task_id,
+        vec![
+            endpoint_from_socket_addr(&leader_address),
+            endpoint_from_socket_addr(&helper_address),
+        ],
+    );
+
+    leader_datastore
+        .run_tx(|tx| {
+            let task_parameters = task_parameters.clone();
+            Box::pin(async move { tx.put_task(&task_parameters).await })
+        })
+        .await
+        .unwrap();
+
     let http_client = client::default_http_client().unwrap();
     let leader_report_sender =
-        client::aggregator_hpke_sender(&http_client, task_id, leader_url.clone())
+        client::aggregator_hpke_sender(&task_parameters, Role::Leader, &http_client)
             .await
             .unwrap();
 
-    let helper_report_sender = client::aggregator_hpke_sender(
-        &http_client,
-        task_id,
-        endpoint_from_socket_addr(&helper_address),
-    )
-    .await
-    .unwrap();
+    let helper_report_sender =
+        client::aggregator_hpke_sender(&task_parameters, Role::Helper, &http_client)
+            .await
+            .unwrap();
 
     let vdaf = Prio3Aes128Count::new(2).unwrap();
 
     let client = Client::new(
-        task_id,
+        task_parameters,
         vdaf,
-        (), // no public parameter for prio3 or poplar1
-        leader_url.clone(),
+        (), // no public parameter for prio3
         RealClock::default(),
         &http_client,
         leader_report_sender,
