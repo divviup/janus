@@ -59,18 +59,16 @@ impl Debug for Options {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Options")
             .field("config_file", &self.config_file)
+            .field("role", &self.role)
             .finish()
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    install_subscriber().context("failed to install tracing subscriber")?;
-
     // The configuration file path and any secret values are provided through
     // command line options or environment variables.
     let options = Options::from_args();
-    info!(?options, "starting aggregator");
 
     // The bulk of configuration options are in the config file.
     let config_file = File::open(&options.config_file)
@@ -79,7 +77,9 @@ async fn main() -> Result<()> {
     let config: AggregatorConfig = serde_yaml::from_reader(&config_file)
         .with_context(|| format!("failed to parse config file: {:?}", options.config_file))?;
 
-    info!(?config, "configuration");
+    install_subscriber(&config.logging_config).context("failed to install tracing subscriber")?;
+
+    info!(?options, ?config, "starting aggregator");
 
     let database_config = tokio_postgres::Config::from_str(config.database.url.as_str())
         .with_context(|| {
