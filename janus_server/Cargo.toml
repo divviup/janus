@@ -16,7 +16,8 @@ hpke = { version = "0.8.0", features = ["default", "std"] }
 http = "0.2.6"
 lazy_static = "1"
 num_enum = "0.5.6"
-prio = "0.7.0"
+postgres-types = { version = "0.2.2", features = ["derive"] }
+prio = { path = "/home/bran/src/libprio-rs" }  # XXX(brandon): BEFORE COMMIT, switch back to committed libprio-rs version [once https://github.com/divviup/libprio-rs/pull/202 lands]
 rand = "0.8"
 reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"

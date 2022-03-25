@@ -8,6 +8,7 @@ use hpke::{
     kem, Kem,
 };
 use num_enum::TryFromPrimitive;
+use postgres_types::{FromSql, ToSql};
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use rand::{thread_rng, Rng};
 use ring::{
@@ -327,11 +328,6 @@ impl Decode for HpkeCiphertext {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
 
-impl TaskId {
-    /// ENCODED_LEN is the length of a task ID in bytes when encoded.
-    const ENCODED_LEN: usize = 32;
-}
-
 impl Encode for TaskId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.0)
@@ -347,6 +343,9 @@ impl Decode for TaskId {
 }
 
 impl TaskId {
+    /// ENCODED_LEN is the length of a task ID in bytes when encoded.
+    const ENCODED_LEN: usize = 32;
+
     /// Get a reference to the task ID as a byte slice
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0
@@ -354,9 +353,9 @@ impl TaskId {
 
     /// Generate a random [`TaskId`]
     pub fn random() -> Self {
-        let mut task_id = [0u8; Self::ENCODED_LEN];
-        thread_rng().fill(&mut task_id);
-        TaskId(task_id)
+        let mut buf = [0u8; Self::ENCODED_LEN];
+        thread_rng().fill(&mut buf);
+        Self(buf)
     }
 }
 
@@ -686,7 +685,7 @@ impl Decode for TransitionTypeSpecificData {
 }
 
 /// PPM protocol message representing an error while transitioning a VDAF's state machine.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, ToSql, FromSql)]
 #[repr(u8)]
 pub enum TransitionError {
     BatchCollected = 0,
@@ -714,8 +713,8 @@ impl Decode for TransitionError {
 }
 
 /// PPM protocol message representing an identifier for an aggregation job.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregationJobId(pub(crate) [u8; 32]);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AggregationJobId(pub(crate) [u8; Self::ENCODED_LEN]);
 
 impl Encode for AggregationJobId {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -728,6 +727,18 @@ impl Decode for AggregationJobId {
         let mut decoded = [0u8; 32];
         bytes.read_exact(&mut decoded)?;
         Ok(Self(decoded))
+    }
+}
+
+impl AggregationJobId {
+    /// ENCODED_LEN is the length of an aggregation job ID in bytes when encoded.
+    const ENCODED_LEN: usize = 32;
+
+    /// Generate a random [`AggregationJobId`]
+    pub fn random() -> Self {
+        let mut buf = [0u8; Self::ENCODED_LEN];
+        thread_rng().fill(&mut buf);
+        Self(buf)
     }
 }
 
