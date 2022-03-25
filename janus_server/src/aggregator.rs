@@ -645,6 +645,8 @@ where
         })
         .with(trace::named("hpke_config"));
 
+    // TODO(brandon): add a `recover` handler to all filters, and map errors to non-500 result
+    // codes. [https://docs.rs/warp/0.3.2/warp/reject/index.html]
     let upload_endpoint = warp::path("upload")
         .and(warp::post())
         .and(with_cloned_value(aggregator.clone()))
