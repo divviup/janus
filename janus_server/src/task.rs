@@ -21,7 +21,7 @@ pub enum Error {
 /// [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-patton-cfrg-vdaf/
-#[derive(Debug, Clone, ToSql, FromSql)]
+#[derive(Debug, Clone, PartialEq, Eq, ToSql, FromSql)]
 #[postgres(name = "vdaf_identifier")]
 pub enum Vdaf {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
@@ -47,7 +47,7 @@ pub struct TaskParameters {
     /// entry is the leader's.
     pub(crate) aggregator_endpoints: Vec<Url>,
     /// The VDAF this task executes.
-    _vdaf: Vdaf,
+    pub(crate) vdaf: Vdaf,
     /// Secret verification parameter shared by the aggregators.
     _vdaf_verify_parameter: Vec<u8>,
     /// The maximum number of times a given batch may be collected.
@@ -79,7 +79,7 @@ impl TaskParameters {
         Self {
             id,
             aggregator_endpoints,
-            _vdaf: vdaf,
+            vdaf,
             _vdaf_verify_parameter: vdaf_verify_parameter,
             _max_batch_lifetime: max_batch_lifetime,
             _min_batch_size: min_batch_size,
@@ -96,7 +96,7 @@ impl TaskParameters {
         Self {
             id: task_id,
             aggregator_endpoints,
-            _vdaf: Vdaf::Prio3Aes128Count,
+            vdaf: Vdaf::Prio3Aes128Count,
             _vdaf_verify_parameter: vec![],
             _max_batch_lifetime: 0,
             _min_batch_size: 0,

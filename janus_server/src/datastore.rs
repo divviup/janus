@@ -95,8 +95,8 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    &&task.id.0[..],         // id
-                    &Vdaf::Prio3Aes128Count, // vdaf
+                    &&task.id.0[..], // id
+                    &task.vdaf,      // vdaf
                 ],
             )
             .await?;
@@ -216,6 +216,19 @@ impl Transaction<'_> {
             .await?;
         Ok(row.get("id"))
     }
+
+    /// This is a test-only method that is used to test round-tripping of values.
+    /// TODO: remove this once the tasks table is finalized, and there's a method to retrieve an
+    /// entire `TaskParameters` from the database.
+    #[allow(unused)]
+    async fn get_task_vdaf_by_id(&self, task_id: &TaskId) -> Result<Vdaf, Error> {
+        let stmt = self
+            .tx
+            .prepare_cached("SELECT vdaf FROM tasks WHERE id=$1")
+            .await?;
+        let row = single_row(self.tx.query(&stmt, &[&&task_id.0[..]]).await?)?;
+        Ok(row.get("vdaf"))
+    }
 }
 
 fn single_row(rows: Vec<Row>) -> Result<Row, Error> {
@@ -315,7 +328,8 @@ pub mod test_util {
 mod tests {
     use super::*;
     use crate::datastore::test_util::ephemeral_datastore;
-    use crate::message::{ExtensionType, HpkeConfigId};
+    use crate::hpke::{HpkeRecipient, Label};
+    use crate::message::{Duration, ExtensionType, HpkeConfigId, Role};
     use crate::trace::test_util::install_trace_subscriber;
 
     #[tokio::test]
@@ -477,5 +491,70 @@ mod tests {
             .await;
 
         assert_matches::assert_matches!(rslt, Err(Error::NotFound));
+    }
+
+    #[tokio::test]
+    async fn roundtrip_task() {
+        let (ds, _db_handle) = ephemeral_datastore().await;
+
+        let task_ids = [
+            TaskId([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1,
+            ]),
+            TaskId([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 2,
+            ]),
+            TaskId([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 3,
+            ]),
+            TaskId([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 4,
+            ]),
+        ];
+        let vdafs = [
+            Vdaf::Prio3Aes128Count,
+            Vdaf::Prio3Aes128Sum,
+            Vdaf::Prio3Aes128Histogram,
+            Vdaf::Poplar1,
+        ];
+
+        for (task_id, vdaf) in task_ids.into_iter().zip(vdafs.into_iter()) {
+            let task_params = TaskParameters::new(
+                task_id,
+                vec![
+                    "https://example.com/".parse().unwrap(),
+                    "https://example.net/".parse().unwrap(),
+                ],
+                vdaf.clone(),
+                vec![],
+                0,
+                0,
+                Duration(0),
+                &HpkeRecipient::generate(
+                    task_id,
+                    Label::AggregateShare,
+                    Role::Leader,
+                    Role::Collector,
+                )
+                .config,
+            );
+
+            ds.run_tx(|tx| {
+                let task_params = task_params.clone();
+                Box::pin(async move { tx.put_task(&task_params).await })
+            })
+            .await
+            .unwrap();
+
+            let retrieved_vdaf = ds
+                .run_tx(|tx| Box::pin(async move { tx.get_task_vdaf_by_id(&task_id).await }))
+                .await
+                .unwrap();
+            assert_eq!(vdaf, retrieved_vdaf);
+        }
     }
 }
