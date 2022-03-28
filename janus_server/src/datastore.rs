@@ -479,7 +479,7 @@ pub mod models {
     use prio::vdaf;
 
     // We have to manually implement [Partial]Eq for a number of types because the dervied
-    // implementations don't play nice with generic fields, even if those fields are constrainted to
+    // implementations don't play nice with generic fields, even if those fields are constrained to
     // themselves implement [Partial]Eq.
 
     /// AggregationJob represents an aggregation job from the PPM specification.

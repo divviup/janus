@@ -288,10 +288,10 @@ where
                 )
                 .map_err(|err| {
                     warn!(
-                        task_id = ?task_id,
+                        ?task_id,
                         nonce = ?report_share.nonce,
-                        "Couldn't decrypt report share: {0}",
-                        err
+                        ?err,
+                        "Couldn't decrypt report share"
                     );
                     TransitionError::HpkeDecryptError
                 });
@@ -303,7 +303,7 @@ where
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(&self.verify_param, &plaintext).map_err(
                     |err| {
-                        warn!(task_id = ?task_id, nonce = ?report_share.nonce, "Couldn't decode input share from report share: {0}", err);
+                        warn!(?task_id, nonce = ?report_share.nonce, ?err, "Couldn't decode input share from report share");
                         TransitionError::VdafPrepError
                     },
                 )
@@ -321,7 +321,7 @@ where
                         &input_share,
                     )
                     .map_err(|err| {
-                        warn!(task_id = ?task_id, nonce = ?report_share.nonce, "Couldn't prepare_init report share: {0}", err);
+                        warn!(?task_id, nonce = ?report_share.nonce, ?err, "Couldn't prepare_init report share");
                         TransitionError::VdafPrepError
                     })
             });
@@ -349,7 +349,7 @@ where
                 }
 
                 Ok(PrepareTransition::Fail(err)) => {
-                    warn!(task_id = ?task_id, nonce = ?report_share.nonce, "Couldn't prepare_step report share: {0}", err);
+                    warn!(?task_id, nonce = ?report_share.nonce, ?err, "Couldn't prepare_step report share");
                     ReportShareData {
                         report_share,
                         trans_data: TransitionTypeSpecificData::Failed {
@@ -374,8 +374,7 @@ where
             (false, true) => AggregationJobState::Finished,
             (true, true) => {
                 return Err(Error::Internal(
-                    "VDAF took an inconsistent number of rounds to reached Finish state"
-                        .to_string(),
+                    "VDAF took an inconsistent number of rounds to reach Finish state".to_string(),
                 ))
             }
         };
