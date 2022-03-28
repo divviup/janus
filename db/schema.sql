@@ -3,7 +3,9 @@ CREATE EXTENSION pgcrypto; -- for gen_random_uuid()
 
 -- Identifies a particular VDAF.
 CREATE TYPE VDAF_IDENTIFIER AS ENUM(
-    'PRIO3',
+    'PRIO3_AES128_COUNT',
+    'PRIO3_AES128_SUM',
+    'PRIO3_AES128_HISTOGRAM',
     'POPLAR1'
 );
 
