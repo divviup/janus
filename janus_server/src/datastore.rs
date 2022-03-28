@@ -2,7 +2,7 @@
 
 use crate::{
     message::{Extension, HpkeCiphertext, Nonce, Report, TaskId, Time},
-    task::{TaskParameters, Vdaf},
+    task::TaskParameters,
 };
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use std::{future::Future, io::Cursor, pin::Pin};
@@ -220,8 +220,8 @@ impl Transaction<'_> {
     /// This is a test-only method that is used to test round-tripping of values.
     /// TODO: remove this once the tasks table is finalized, and there's a method to retrieve an
     /// entire `TaskParameters` from the database.
-    #[allow(unused)]
-    async fn get_task_vdaf_by_id(&self, task_id: &TaskId) -> Result<Vdaf, Error> {
+    #[cfg(test)]
+    async fn get_task_vdaf_by_id(&self, task_id: &TaskId) -> Result<crate::task::Vdaf, Error> {
         let stmt = self
             .tx
             .prepare_cached("SELECT vdaf FROM tasks WHERE id=$1")
@@ -330,6 +330,7 @@ mod tests {
     use crate::datastore::test_util::ephemeral_datastore;
     use crate::hpke::{HpkeRecipient, Label};
     use crate::message::{Duration, ExtensionType, HpkeConfigId, Role};
+    use crate::task::Vdaf;
     use crate::trace::test_util::install_trace_subscriber;
 
     #[tokio::test]
