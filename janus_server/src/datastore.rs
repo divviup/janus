@@ -2,7 +2,7 @@
 
 use crate::{
     message::{Extension, HpkeCiphertext, Nonce, Report, TaskId, Time},
-    task::TaskParameters,
+    task::{TaskParameters, Vdaf},
 };
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use std::{future::Future, io::Cursor, pin::Pin};
@@ -88,11 +88,17 @@ impl Transaction<'_> {
             .prepare_cached(
                 "INSERT INTO tasks (id, ord, aggregator_endpoints, vdaf, vdaf_verify_param,
                 max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config)
-                VALUES ($1, 0, '{}', 'PRIO3', '', 0, 0, INTERVAL '0', '')",
+                VALUES ($1, 0, '{}', $2, '', 0, 0, INTERVAL '0', '')",
             )
             .await?;
         self.tx
-            .execute(&stmt, &[/* task_id */ &&task.id.0[..]])
+            .execute(
+                &stmt,
+                &[
+                    &&task.id.0[..],         // id
+                    &Vdaf::Prio3Aes128Count, // vdaf
+                ],
+            )
             .await?;
         Ok(())
     }

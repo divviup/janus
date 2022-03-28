@@ -4,6 +4,7 @@ use crate::{
     hpke::{HpkeRecipient, Label},
     message::{Duration, HpkeConfig, Role, TaskId},
 };
+use postgres_types::{FromSql, ToSql};
 use url::Url;
 
 /// Errors that methods and functions in this module may return.
@@ -20,15 +21,20 @@ pub enum Error {
 /// [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-patton-cfrg-vdaf/
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ToSql, FromSql)]
+#[postgres(name = "vdaf_identifier")]
 pub enum Vdaf {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
+    #[postgres(name = "PRIO3_AES128_COUNT")]
     Prio3Aes128Count,
     /// A `prio3` sum using the AES 128 pseudorandom generator.
+    #[postgres(name = "PRIO3_AES128_SUM")]
     Prio3Aes128Sum,
     /// A `prio3` histogram using the AES 128 pseudorandom generator.
+    #[postgres(name = "PRIO3_AES128_HISTOGRAM")]
     Prio3Aes128Histogram,
     /// The `poplar1` VDAF. Support for this VDAF is experimental.
+    #[postgres(name = "POPLAR1")]
     Poplar1,
 }
 
