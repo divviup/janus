@@ -625,6 +625,7 @@ mod tests {
         datastore::test_util::{ephemeral_datastore, DbHandle},
         hpke::{HpkeSender, Label},
         message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
+        task::TaskParameters,
         time::tests::MockClock,
         trace::test_util::install_trace_subscriber,
     };
@@ -638,6 +639,7 @@ mod tests {
     use rand::{thread_rng, Rng};
     use ring::{hmac::HMAC_SHA256, rand::SystemRandom};
     use std::io::Cursor;
+    use url::Url;
     use warp::reply::Reply;
 
     fn generate_hmac_key() -> hmac::Key {
@@ -744,13 +746,8 @@ mod tests {
 
         let bytes = to_bytes(response.into_body()).await.unwrap();
         let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
-        let sender = HpkeSender {
-            task_id,
-            recipient_config: hpke_config,
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
+        assert_eq!(hpke_config, hpke_recipient.config);
+        let sender = HpkeSender::from_recipient(&hpke_recipient);
 
         let message = b"this is a message";
         let associated_data = b"some associated data";
@@ -769,14 +766,20 @@ mod tests {
         let task_id = TaskId::random();
 
         datastore
-            .run_tx(|tx| Box::pin(async move { tx.put_task(task_id).await }))
+            .run_tx(|tx| {
+                let fake_url = Url::parse("localhost:8080").unwrap();
+
+                let task_parameters =
+                    TaskParameters::new_dummy(task_id, vec![fake_url.clone(), fake_url]);
+                Box::pin(async move { tx.put_task(&task_parameters).await })
+            })
             .await
             .unwrap();
 
-        let report_time = clock.now() - skew;
-
         let hpke_recipient =
             HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+
+        let report_time = clock.now() - skew;
 
         let nonce = Nonce {
             time: Time(report_time.timestamp() as u64),
@@ -786,22 +789,10 @@ mod tests {
         let associated_data = Report::associated_data(nonce, &extensions);
         let message = b"this is a message";
 
-        let leader_sender = HpkeSender {
-            task_id,
-            recipient_config: hpke_recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
+        let leader_sender = HpkeSender::from_recipient(&hpke_recipient);
         let leader_ciphertext = leader_sender.seal(message, &associated_data).unwrap();
 
-        let helper_sender = HpkeSender {
-            task_id,
-            recipient_config: hpke_recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Helper,
-        };
+        let helper_sender = HpkeSender::from_recipient(&hpke_recipient);
         let helper_ciphertext = helper_sender.seal(message, &associated_data).unwrap();
 
         let report = Report {
@@ -983,22 +974,10 @@ mod tests {
         let associated_data = Report::associated_data(report.nonce, &report.extensions);
         let message = b"this is a message";
 
-        let leader_sender = HpkeSender {
-            task_id: report.task_id,
-            recipient_config: hpke_recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
+        let leader_sender = HpkeSender::from_recipient(hpke_recipient);
         let leader_ciphertext = leader_sender.seal(message, &associated_data).unwrap();
 
-        let helper_sender = HpkeSender {
-            task_id: report.task_id,
-            recipient_config: hpke_recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Helper,
-        };
+        let helper_sender = HpkeSender::from_recipient(hpke_recipient);
         let helper_ciphertext = helper_sender.seal(message, &associated_data).unwrap();
 
         Report {
@@ -1159,7 +1138,12 @@ mod tests {
         let hmac_key = generate_hmac_key();
 
         datastore
-            .run_tx(|tx| Box::pin(async move { tx.put_task(task_id).await }))
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
+                        .await
+                })
+            })
             .await
             .unwrap();
 
@@ -1389,13 +1373,13 @@ mod tests {
         plaintext: &[u8],
         associated_data: &[u8],
     ) -> ReportShare {
-        let helper_sender = HpkeSender {
+        let helper_sender = HpkeSender::new(
             task_id,
-            recipient_config: cfg.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Helper,
-        };
+            cfg.clone(),
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+        );
         let encrypted_input_share = helper_sender.seal(plaintext, associated_data).unwrap();
         ReportShare {
             nonce,

@@ -33,3 +33,4 @@ warp = { version = "^0.3", features = ["tls"] }
 [dev-dependencies]
 assert_matches = "1"
 hyper = "0.14.17"
+mockito = "0.31.0"

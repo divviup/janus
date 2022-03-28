@@ -1,10 +1,11 @@
 use chrono::Duration;
 use janus_server::{
     aggregator::aggregator_server,
-    client::Client,
-    datastore::test_util::ephemeral_datastore,
+    client::{self, Client},
+    datastore::test_util::{ephemeral_datastore, DbHandle},
     hpke::{HpkeRecipient, Label},
     message::{Role, TaskId},
+    task::TaskParameters,
     time::RealClock,
     trace::install_subscriber,
 };
@@ -17,6 +18,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
+use tokio::task::JoinHandle;
 use url::Url;
 
 fn endpoint_from_socket_addr(addr: &SocketAddr) -> Url {
@@ -27,8 +29,15 @@ fn endpoint_from_socket_addr(addr: &SocketAddr) -> Url {
     endpoint
 }
 
-#[tokio::test]
-async fn create_client() {
+struct TestCase {
+    client: Client<Prio3Aes128Count, (), RealClock>,
+    _leader_db_handle: DbHandle,
+    _helper_db_handle: DbHandle,
+    leader_task_handle: JoinHandle<()>,
+    helper_task_handle: JoinHandle<()>,
+}
+
+async fn setup_test() -> TestCase {
     install_subscriber().unwrap();
 
     let task_id = TaskId::random();
@@ -42,11 +51,13 @@ async fn create_client() {
     let agg_auth_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap();
 
     let (leader_datastore, _leader_db_handle) = ephemeral_datastore().await;
+    let leader_datastore = Arc::new(leader_datastore);
+
     let leader_hpke_recipient =
         HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
     let (leader_address, leader_server) = aggregator_server(
         vdaf.clone(),
-        Arc::new(leader_datastore),
+        leader_datastore.clone(),
         RealClock::default(),
         Duration::minutes(10),
         Role::Leader,
@@ -56,7 +67,7 @@ async fn create_client() {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
-    let leader_handle = tokio::spawn(leader_server);
+    let leader_task_handle = tokio::spawn(leader_server);
 
     let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
     let helper_hpke_recipient =
@@ -73,30 +84,77 @@ async fn create_client() {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
-    let helper_handle = tokio::spawn(helper_server);
+    let helper_task_handle = tokio::spawn(helper_server);
 
-    let http_client = Client::default_http_client().unwrap();
-    let leader_report_sender = Client::aggregator_hpke_sender(
-        &http_client,
+    let task_parameters = TaskParameters::new_dummy(
         task_id,
-        endpoint_from_socket_addr(&leader_address),
-    )
-    .await
-    .unwrap();
+        vec![
+            endpoint_from_socket_addr(&leader_address),
+            endpoint_from_socket_addr(&helper_address),
+        ],
+    );
 
-    let helper_report_sender = Client::aggregator_hpke_sender(
+    leader_datastore
+        .run_tx(|tx| {
+            let task_parameters = task_parameters.clone();
+            Box::pin(async move { tx.put_task(&task_parameters).await })
+        })
+        .await
+        .unwrap();
+
+    let http_client = client::default_http_client().unwrap();
+    let leader_report_sender =
+        client::aggregator_hpke_sender(&task_parameters, Role::Leader, &http_client)
+            .await
+            .unwrap();
+
+    let helper_report_sender =
+        client::aggregator_hpke_sender(&task_parameters, Role::Helper, &http_client)
+            .await
+            .unwrap();
+
+    let vdaf = Prio3Aes128Count::new(2).unwrap();
+
+    let client = Client::new(
+        task_parameters,
+        vdaf,
+        (), // no public parameter for prio3
+        RealClock::default(),
         &http_client,
-        task_id,
-        endpoint_from_socket_addr(&helper_address),
-    )
-    .await
-    .unwrap();
+        leader_report_sender,
+        helper_report_sender,
+    );
 
-    let _client = Client::new(&http_client, leader_report_sender, helper_report_sender);
+    TestCase {
+        client,
+        _leader_db_handle,
+        _helper_db_handle,
+        leader_task_handle,
+        helper_task_handle,
+    }
+}
 
-    leader_handle.abort();
-    helper_handle.abort();
+async fn teardown_test(test_case: TestCase) {
+    test_case.leader_task_handle.abort();
+    test_case.helper_task_handle.abort();
 
-    leader_handle.await.unwrap_err().is_cancelled();
-    helper_handle.await.unwrap_err().is_cancelled();
+    test_case
+        .leader_task_handle
+        .await
+        .unwrap_err()
+        .is_cancelled();
+    test_case
+        .helper_task_handle
+        .await
+        .unwrap_err()
+        .is_cancelled();
+}
+
+#[tokio::test]
+async fn upload() {
+    let test_case = setup_test().await;
+
+    test_case.client.upload(&1).await.unwrap();
+
+    teardown_test(test_case).await
 }

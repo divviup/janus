@@ -1,7 +1,10 @@
 //! Janus datastore (durable storage) implementation.
 
-use crate::message::{
-    AggregationJobId, Extension, HpkeCiphertext, Nonce, Report, ReportShare, TaskId, Time,
+use crate::{
+    message::{
+        AggregationJobId, Extension, HpkeCiphertext, Nonce, Report, ReportShare, TaskId, Time,
+    },
+    task::TaskParameters,
 };
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -85,8 +88,10 @@ pub struct Transaction<'a> {
 impl Transaction<'_> {
     // TODO(brandon): implement basic getters/putters for all types
 
-    #[cfg(test)]
-    pub async fn put_task(&self, task_id: TaskId) -> Result<(), Error> {
+    // This is pub to be used in integration tests
+    #[doc(hidden)]
+    pub async fn put_task(&self, task: &TaskParameters) -> Result<(), Error> {
+        // TODO: interpolate values from `task` into prepared statement
         let stmt = self
             .tx
             .prepare_cached(
@@ -96,7 +101,7 @@ impl Transaction<'_> {
             )
             .await?;
         self.tx
-            .execute(&stmt, &[/* task_id */ &&task_id.0[..]])
+            .execute(&stmt, &[/* task_id */ &&task.id.0[..]])
             .await?;
         Ok(())
     }
@@ -710,7 +715,8 @@ mod tests {
             .run_tx(|tx| {
                 let report = report.clone();
                 Box::pin(async move {
-                    tx.put_task(report.task_id).await?;
+                    tx.put_task(&TaskParameters::new_dummy(report.task_id, vec![]))
+                        .await?;
                     tx.put_client_report(&report).await
                 })
             })
@@ -775,7 +781,8 @@ mod tests {
         ds.run_tx(|tx| {
             let report = report.clone();
             Box::pin(async move {
-                tx.put_task(report.task_id).await?;
+                tx.put_task(&TaskParameters::new_dummy(report.task_id, vec![]))
+                    .await?;
                 tx.put_client_report(&report).await
             })
         })
@@ -850,7 +857,8 @@ mod tests {
             .run_tx(|tx| {
                 let report_share = report_share.clone();
                 Box::pin(async move {
-                    tx.put_task(task_id).await?;
+                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
+                        .await?;
                     tx.put_report_share(task_id, &report_share).await
                 })
             })
@@ -914,7 +922,11 @@ mod tests {
         ds.run_tx(|tx| {
             let aggregation_job = aggregation_job.clone();
             Box::pin(async move {
-                tx.put_task(aggregation_job.task_id).await?;
+                tx.put_task(&TaskParameters::new_dummy(
+                    aggregation_job.task_id,
+                    Vec::new(),
+                ))
+                .await?;
                 tx.put_aggregation_job(&aggregation_job).await
             })
         })
@@ -959,7 +971,8 @@ mod tests {
                 .run_tx(|tx| {
                     let state = state.clone();
                     Box::pin(async move {
-                        tx.put_task(task_id).await?;
+                        tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
+                            .await?;
                         let aggregation_job_id = tx
                             .put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
                                 aggregation_job_id,

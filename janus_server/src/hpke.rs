@@ -10,7 +10,7 @@ use hpke::{
 use rand::thread_rng;
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum Error {
+pub enum Error {
     /// Wrapper around errors from crate hpke. See [`hpke::HpkeError`] for more
     /// details on possible variants.
     #[error("HPKE error")]
@@ -87,14 +87,44 @@ impl HpkeApplicationInfo {
 // doesn't "leak" the generic type parameters into the caller.
 #[derive(Clone, Debug)]
 pub struct HpkeSender {
-    pub(crate) task_id: TaskId,
-    pub recipient_config: HpkeConfig,
-    pub(crate) label: Label,
-    pub(crate) sender_role: Role,
-    pub(crate) recipient_role: Role,
+    task_id: TaskId,
+    recipient_config: HpkeConfig,
+    label: Label,
+    sender_role: Role,
+    recipient_role: Role,
 }
 
 impl HpkeSender {
+    /// Create an [`HpkeSender`] with the provided parameters.
+    pub fn new(
+        task_id: TaskId,
+        recipient_config: HpkeConfig,
+        label: Label,
+        sender_role: Role,
+        recipient_role: Role,
+    ) -> Self {
+        Self {
+            task_id,
+            recipient_config,
+            label,
+            sender_role,
+            recipient_role,
+        }
+    }
+
+    /// Create an [`HpkeSender`] configured to encrypt messages to the provided
+    /// [`HpkeRecipient`].
+    #[cfg(test)]
+    pub(crate) fn from_recipient(recipient: &HpkeRecipient) -> Self {
+        Self {
+            task_id: recipient.task_id,
+            recipient_config: recipient.config.clone(),
+            label: recipient.label,
+            sender_role: recipient.sender_role,
+            recipient_role: recipient.recipient_role,
+        }
+    }
+
     /// Encrypt `plaintext` and return the HPKE ciphertext.
     ///
     /// In PPM, an HPKE context can only be used once (we have no means of
