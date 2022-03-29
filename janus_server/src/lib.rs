@@ -2,6 +2,7 @@
 
 pub mod aggregator;
 pub mod client;
+pub mod config;
 pub mod datastore;
 pub mod hpke;
 pub mod message;

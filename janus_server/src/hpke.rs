@@ -8,6 +8,7 @@ use hpke::{
     setup_receiver, setup_sender, Deserializable, HpkeError, Kem, OpModeR, OpModeS, Serializable,
 };
 use rand::thread_rng;
+use std::str::FromStr;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -55,6 +56,14 @@ impl AsRef<[u8]> for HpkePrivateKey {
 impl From<Vec<u8>> for HpkePrivateKey {
     fn from(v: Vec<u8>) -> Self {
         Self::new(v)
+    }
+}
+
+impl FromStr for HpkePrivateKey {
+    type Err = hex::FromHexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(HpkePrivateKey(hex::decode(s)?))
     }
 }
 
@@ -220,6 +229,25 @@ pub struct HpkeRecipient {
 }
 
 impl HpkeRecipient {
+    /// Create an HPKE recipient from the provided parameters.
+    pub fn new(
+        task_id: TaskId,
+        hpke_config: &HpkeConfig,
+        label: Label,
+        sender_role: Role,
+        recipient_role: Role,
+        serialized_private_key: &HpkePrivateKey,
+    ) -> Self {
+        Self {
+            task_id,
+            config: hpke_config.clone(),
+            label,
+            sender_role,
+            recipient_role,
+            recipient_private_key: serialized_private_key.clone(),
+        }
+    }
+
     /// Generate a new X25519HkdfSha256 keypair and construct an HPKE recipient
     /// using the private key, with KEM = X25519HkdfSha256, KDF = HkdfSha512 and
     /// AEAD = ChaCha20Poly1305, and the specified label, and roles.
