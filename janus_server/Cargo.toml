@@ -21,13 +21,16 @@ prio = "0.7.0"
 rand = "0.8"
 reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
+serde = { version = "1.0.136", features = ["derive"] }
+serde_yaml = "0.8.23"
+structopt = "0.3.26"
 testcontainers = "0.12.0"
 thiserror = "1.0"
 tokio = { version = "^1.9", features = ["full"] }
 tokio-postgres = { version = "0.7.5", features = ["with-chrono-0_4"] }
 tracing = "0.1.32"
 tracing-subscriber = { version = "0.3.9", features = ["std", "env-filter"] }
-url = "2.2.2"
+url = { version = "2.2.2", features = ["serde"] }
 warp = { version = "^0.3", features = ["tls"] }
 
 [dev-dependencies]

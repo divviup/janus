@@ -14,10 +14,12 @@ use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
 };
+use serde::{Deserialize, Serialize};
 use std::{
-    fmt::Display,
+    fmt::{Debug, Display, Formatter},
     io::{self, Cursor, ErrorKind, Read},
     marker::PhantomData,
+    str::FromStr,
 };
 
 /// AuthenticatedEncoder can encode messages into the format used by authenticated PPM messages. The
@@ -134,7 +136,7 @@ fn authenticated_decode<M: Decode>(key: &hmac::Key, buf: &[u8]) -> Result<M, Cod
 }
 
 /// PPM protocol message representing a duration with a resolution of seconds.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Duration(pub(crate) u64);
 
 impl Encode for Duration {
@@ -239,7 +241,7 @@ impl Decode for Nonce {
 }
 
 /// PPM protocol message representing the different roles that participants can adopt.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Role {
     Collector = 0,
@@ -265,6 +267,33 @@ impl Role {
             _ => None,
         }
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Collector => "collector",
+            Self::Client => "client",
+            Self::Leader => "leader",
+            Self::Helper => "helper",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown role {0}")]
+pub struct RoleParseError(String);
+
+impl FromStr for Role {
+    type Err = RoleParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "collector" => Ok(Self::Collector),
+            "client" => Ok(Self::Client),
+            "leader" => Ok(Self::Leader),
+            "helper" => Ok(Self::Helper),
+            _ => Err(RoleParseError(s.to_owned())),
+        }
+    }
 }
 
 impl Encode for Role {
@@ -282,7 +311,7 @@ impl Decode for Role {
 }
 
 /// PPM protocol message representing an identifier for an HPKE config.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkeConfigId(pub(crate) u8);
 
 impl Display for HpkeConfigId {
@@ -337,12 +366,13 @@ impl Decode for HpkeCiphertext {
 }
 
 /// PPM protocol message representing an identifier for a PPM task.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
 
-impl TaskId {
-    /// ENCODED_LEN is the length of a task ID in bytes when encoded.
-    const ENCODED_LEN: usize = 32;
+impl Debug for TaskId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
 }
 
 impl Encode for TaskId {
@@ -360,6 +390,9 @@ impl Decode for TaskId {
 }
 
 impl TaskId {
+    /// ENCODED_LEN is the length of a task ID in bytes when encoded.
+    const ENCODED_LEN: usize = 32;
+
     /// Get a reference to the task ID as a byte slice
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0
@@ -374,7 +407,7 @@ impl TaskId {
 }
 
 /// PPM protocol message representing an HPKE key encapsulation mechanism.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum HpkeKemId {
     /// NIST P-256 keys and HKDF-SHA256.
@@ -398,7 +431,7 @@ impl Decode for HpkeKemId {
 }
 
 /// PPM protocol message representing an HPKE key derivation function.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum HpkeKdfId {
     /// HMAC Key Derivation Function SHA256.
@@ -424,7 +457,7 @@ impl Decode for HpkeKdfId {
 }
 
 /// PPM protocol message representing an HPKE AEAD.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum HpkeAeadId {
     /// AES-128-GCM.
@@ -450,7 +483,7 @@ impl Decode for HpkeAeadId {
 }
 
 /// PPM protocol message representing an HPKE public key.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkePublicKey(pub(crate) Vec<u8>);
 
 impl Encode for HpkePublicKey {
@@ -466,8 +499,14 @@ impl Decode for HpkePublicKey {
     }
 }
 
+impl Debug for HpkePublicKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
+
 /// PPM protocol message representing an HPKE config.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkeConfig {
     pub(crate) id: HpkeConfigId,
     pub(crate) kem_id: HpkeKemId,
