@@ -2,7 +2,7 @@
 
 use crate::{
     hpke::{HpkeSender, Label},
-    message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, Time},
+    message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId, Time},
     task::TaskParameters,
     time::Clock,
 };
@@ -12,9 +12,12 @@ use prio::{
     vdaf,
 };
 use std::io::Cursor;
+use url::Url;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Invalid parameter {0}")]
+    InvalidParameter(&'static str),
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
     #[error("Codec error: {0}")]
@@ -39,13 +42,55 @@ static CLIENT_USER_AGENT: &str = concat!(
     "client"
 );
 
+/// The PPM client's view of task parameters.
+#[derive(Clone, Debug)]
+pub struct ClientParameters {
+    /// Unique identifier for the task
+    task_id: TaskId,
+    /// URLs relative to which aggregator API endpoints are found. The first
+    /// entry is the leader's.
+    aggregator_endpoints: Vec<Url>,
+}
+
+impl ClientParameters {
+    /// Extract the client's view of task parameters
+    pub fn from_task_parameters(task_parameters: &TaskParameters) -> Self {
+        Self {
+            task_id: task_parameters.id,
+            aggregator_endpoints: task_parameters.aggregator_endpoints.clone(),
+        }
+    }
+
+    /// The URL relative to which the API endpoints for the aggregator may be
+    /// found, if the role is an aggregator, or an error otherwise.
+    fn aggregator_endpoint(&self, role: Role) -> Result<&Url, Error> {
+        Ok(&self.aggregator_endpoints[role
+            .index()
+            .ok_or(Error::InvalidParameter("role is not an aggregator"))?])
+    }
+
+    /// URL from which the HPKE configuration for the server filling `role` may
+    /// be fetched per draft-gpew-priv-ppm §4.3.1
+    fn hpke_config_endpoint(&self, role: Role) -> Result<Url, Error> {
+        Ok(self.aggregator_endpoint(role)?.join("hpke_config")?)
+    }
+
+    /// URL to which reports may be uploaded by clients per draft-gpew-priv-ppm
+    /// §4.3.2
+    fn upload_endpoint(&self) -> Result<Url, Error> {
+        Ok(self.aggregator_endpoint(Role::Leader)?.join("upload")?)
+    }
+}
+
+/// Fetches HPKE configuration from the specified aggregator using the
+/// aggregator endpoints in the provided [`ClientParameters`].
 pub async fn aggregator_hpke_sender(
-    task_parameters: &TaskParameters,
+    client_parameters: &ClientParameters,
     aggregator_role: Role,
     http_client: &reqwest::Client,
 ) -> Result<HpkeSender, Error> {
     let hpke_config_response = http_client
-        .get(task_parameters.hpke_config_endpoint(aggregator_role)?)
+        .get(client_parameters.hpke_config_endpoint(aggregator_role)?)
         .send()
         .await?;
     let status = hpke_config_response.status();
@@ -58,7 +103,7 @@ pub async fn aggregator_hpke_sender(
     ))?;
 
     Ok(HpkeSender::new(
-        task_parameters.id,
+        client_parameters.task_id,
         hpke_config,
         Label::InputShare,
         Role::Client,
@@ -79,7 +124,7 @@ pub struct Client<V: vdaf::Client, C>
 where
     for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
-    task_parameters: TaskParameters,
+    parameters: ClientParameters,
     vdaf_client: V,
     vdaf_public_parameter: V::PublicParam,
     clock: C,
@@ -93,7 +138,7 @@ where
     for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
     pub fn new(
-        task_parameters: TaskParameters,
+        parameters: ClientParameters,
         vdaf_client: V,
         vdaf_public_parameter: V::PublicParam,
         clock: C,
@@ -105,7 +150,7 @@ where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
         Self {
-            task_parameters,
+            parameters,
             vdaf_client,
             vdaf_public_parameter,
             clock,
@@ -151,7 +196,7 @@ where
                 .collect::<Result<_, Error>>()?;
 
         let report = Report {
-            task_id: self.task_parameters.id,
+            task_id: self.parameters.task_id,
             nonce,
             extensions,
             encrypted_input_shares,
@@ -159,7 +204,7 @@ where
 
         let upload_response = self
             .http_client
-            .post(self.task_parameters.upload_endpoint()?)
+            .post(self.parameters.upload_endpoint()?)
             .body(report.get_encoded())
             .send()
             .await?;
@@ -204,11 +249,13 @@ mod tests {
 
         let server_url = Url::parse(&mockito::server_url()).unwrap();
 
-        let task_parameters =
-            TaskParameters::new_dummy(task_id, vec![server_url.clone(), server_url]);
+        let client_parameters = ClientParameters {
+            task_id,
+            aggregator_endpoints: vec![server_url.clone(), server_url],
+        };
 
         Client::new(
-            task_parameters,
+            client_parameters,
             vdaf_client,
             public_parameter,
             clock,

@@ -9,19 +9,30 @@ CREATE TYPE VDAF_IDENTIFIER AS ENUM(
     'POPLAR1'
 );
 
+-- Identifies which aggregator role is being played for this task.
+CREATE TYPE AGGREGATOR_ROLE AS ENUM(
+    'LEADER',
+    'HELPER'
+);
+
 -- Corresponds to a PPM task, containing static data associated with the task.
 CREATE TABLE tasks(
     id                     BYTEA PRIMARY KEY,         -- 32-byte TaskID as defined by the PPM specification
-    ord                    BIGINT NOT NULL,           -- the order of this aggregator for this task; 0 is leader, 1 or larger is helper
+    aggregator_role        AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator for this task
     aggregator_endpoints   TEXT[] NOT NULL,           -- aggregator HTTPS endpoints, leader first
     vdaf                   VDAF_IDENTIFIER NOT NULL,  -- the VDAF in use for this task
     vdaf_verify_param      BYTEA NOT NULL,            -- the VDAF verify parameter (opaque VDAF message)
     max_batch_lifetime     BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
-    min_batch_duration     INTERVAL NOT NULL,         -- the duration of a single batch interval
-    collector_hpke_config  BYTEA NOT NULL             -- the HPKE config of the helper (encoded HpkeConfig message)
+    min_batch_duration     BIGINT NOT NULL,           -- the minimum duration in seconds of a single batch interval
+    collector_hpke_config  BYTEA NOT NULL,            -- the HPKE config of the collector (encoded HpkeConfig message)
+    agg_auth_key           BYTEA NOT NULL,            -- HMAC key used by this aggregator to authenticate messages to/from the other aggregator
+    hpke_config            BYTEA NOT NULL,            -- the HPKE config of this aggregator (encoded HpkeConfig message)
+    hpke_private_key       BYTEA NOT NULL             -- private key corresponding to hpke_config (hpke::HpkePrivateKey)
 
-    -- TODO(brandon): include agg_auth_key if we decide it shouldn't go in a secret store
+    -- TODO(timg): move vdaf_verify_param, agg_auth_key, hpke_config, hpke_private_key to new
+    -- tables with many:1 relationships to tasks to allow for rotation of secrets
+    -- TODO(timg): vdaf_verify_params, agg_auth_key and hpke_private_key should be encrypted
 );
 
 -- Individual reports received from clients.
@@ -29,7 +40,7 @@ CREATE TABLE client_reports(
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id       BYTEA NOT NULL,      -- task ID the report is associated with
     nonce_time    TIMESTAMP NOT NULL,  -- timestamp from nonce
-    nonce_rand    BIGINT NOT NULL,     -- random value from nonce
+    nonce_rand    BYTEA NOT NULL,      -- random value from nonce
     extensions    BYTEA,               -- encoded sequence of Extension messages (populated for leader only)
     input_shares  BYTEA,               -- encoded sequence of HpkeCiphertext messages (populated for leader only)
 

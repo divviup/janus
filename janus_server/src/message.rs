@@ -155,6 +155,12 @@ fn authenticated_decode<M: Decode>(
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Duration(pub(crate) u64);
 
+impl Duration {
+    pub fn from_seconds(seconds: u64) -> Self {
+        Self(seconds)
+    }
+}
+
 impl Encode for Duration {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.0.encode(bytes);
