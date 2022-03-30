@@ -17,6 +17,7 @@ use crate::{
 };
 use bytes::Bytes;
 use chrono::Duration;
+use futures::future;
 use http::{header::CACHE_CONTROL, StatusCode};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -126,7 +127,9 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
     A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
+    for<'a> <A::OutputShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+    A::VerifyParam: Send + Sync,
 {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports
     /// received by this aggregator.
@@ -442,11 +445,25 @@ where
 
     async fn handle_aggregate_continue(
         &self,
-        _task_id: TaskId,
-        _job_id: AggregationJobId,
-        _transitions: Vec<Transition>,
+        task_id: TaskId,
+        job_id: AggregationJobId,
+        transitions: Vec<Transition>,
     ) -> Result<AggregateResp, Error> {
-        todo!() // TODO(brandon): implement
+        let verify_param = Arc::new(self.verify_param.clone());
+        self.datastore.run_tx(|tx| {
+            let verify_param = verify_param.clone();
+            Box::pin(async move {
+                let (aggregation_job, report_aggregations) = future::try_join(
+                    tx.get_aggregation_job_by_aggregation_job_id::<A>(job_id),
+                    tx.get_report_aggregations_by_aggregation_job_id::<A>(&verify_param, job_id),
+                )
+                .await?;
+
+                Ok(()) // XXX
+            })
+        });
+
+        todo!()
     }
 }
 

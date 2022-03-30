@@ -160,6 +160,7 @@ impl Transaction<'_> {
         })
     }
 
+    // XXX: documentation
     pub async fn get_client_report_by_task_id_and_nonce(
         &self,
         task_id: TaskId,
@@ -329,6 +330,7 @@ impl Transaction<'_> {
         Ok(row.get("id"))
     }
 
+    // XXX: documentation
     pub async fn get_report_aggregation<A: vdaf::Aggregator>(
         &self,
         verify_param: &A::VerifyParam,
@@ -347,68 +349,41 @@ impl Transaction<'_> {
                 FROM report_aggregations WHERE id = $1",
             )
             .await?;
-        let row = single_row(self.tx.query(&stmt, &[&id]).await?)?;
+        self.tx
+            .query(&stmt, &[&id])
+            .await
+            .map_err(Error::from)
+            .and_then(single_row)
+            .and_then(|row| report_aggregation_from_row(verify_param, row))
+    }
 
-        let aggregation_job_id: i64 = row.get("aggregation_job_id");
-        let client_report_id: i64 = row.get("client_report_id");
-        let ord: i64 = row.get("ord");
-        let state: ReportAggregationStateCode = row.get("state");
-        let vdaf_message_bytes: Option<Vec<u8>> = row.get("vdaf_message");
-        let error_code: Option<i64> = row.get("error_code");
-
-        let error_code = match error_code {
-            Some(c) => {
-                let c: u8 = c.try_into().map_err(|err| {
-                    Error::DbState(format!("couldn't convert error_code value: {0}", err))
-                })?;
-                Some(c.try_into().map_err(|err| {
-                    Error::DbState(format!("couldn't convert error_code value: {0}", err))
-                })?)
-            }
-            None => None,
-        };
-
-        let agg_state = match state {
-            ReportAggregationStateCode::Start => ReportAggregationState::Start(),
-            ReportAggregationStateCode::Waiting => {
-                ReportAggregationState::Waiting(A::PrepareStep::get_decoded_with_param(
-                    verify_param,
-                    &vdaf_message_bytes.ok_or_else(|| {
-                        Error::DbState(
-                            "report aggregation in state WAITING but vdaf_message is NULL"
-                                .to_string(),
-                        )
-                    })?,
-                )?)
-            }
-            ReportAggregationStateCode::Finished => ReportAggregationState::Finished(
-                A::OutputShare::try_from(&vdaf_message_bytes.ok_or_else(|| {
-                    Error::DbState(
-                        "report aggregation in state FINISHED but vdaf_message is NULL".to_string(),
-                    )
-                })?)
-                .map_err(|err| {
-                    Error::DecodeError(CodecError::Other(
-                        format!("couldn't decode output share: {}", err).into(),
-                    ))
-                })?,
-            ),
-            ReportAggregationStateCode::Failed => {
-                ReportAggregationState::Failed(error_code.ok_or_else(|| {
-                    Error::DbState(
-                        "report aggregation in state FAILED but error_code is NULL".to_string(),
-                    )
-                })?)
-            }
-            ReportAggregationStateCode::Invalid => ReportAggregationState::Invalid(),
-        };
-
-        Ok(ReportAggregation {
-            aggregation_job_id,
-            client_report_id,
-            ord,
-            state: agg_state,
-        })
+    // XXX: documentation
+    // XXX: tests
+    pub async fn get_report_aggregations_by_aggregation_job_id<A: vdaf::Aggregator>(
+        &self,
+        verify_param: &A::VerifyParam,
+        aggregation_job_id: AggregationJobId,
+    ) -> Result<Vec<ReportAggregation<A>>, Error>
+    where
+        A::PrepareStep: ParameterizedDecode<A::VerifyParam>,
+        A::OutputShare: for<'a> TryFrom<&'a [u8]>,
+        for<'a> <A::OutputShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT aggregation_job_id, client_report_id, ord, state, vdaf_message, error_code
+                FROM report_aggregations WHERE id IN (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1)
+                ORDER BY ord",
+            )
+            .await?;
+        self.tx
+            .query(&stmt, &[&&aggregation_job_id.0[..]])
+            .await?
+            .into_iter()
+            .map(|row| report_aggregation_from_row(verify_param, row))
+            .collect()
     }
 
     /// put_report_aggregation stores aggregation data for a single report.
@@ -459,6 +434,77 @@ fn single_row(rows: Vec<Row>) -> Result<Row, Error> {
         1 => Ok(rows.into_iter().next().unwrap()),
         _ => Err(Error::TooManyRows),
     }
+}
+
+fn report_aggregation_from_row<A: vdaf::Aggregator>(
+    verify_param: &A::VerifyParam,
+    row: Row,
+) -> Result<ReportAggregation<A>, Error>
+where
+    A::PrepareStep: ParameterizedDecode<A::VerifyParam>,
+    A::OutputShare: for<'a> TryFrom<&'a [u8]>,
+    for<'a> <A::OutputShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
+    let aggregation_job_id: i64 = row.get("aggregation_job_id");
+    let client_report_id: i64 = row.get("client_report_id");
+    let ord: i64 = row.get("ord");
+    let state: ReportAggregationStateCode = row.get("state");
+    let vdaf_message_bytes: Option<Vec<u8>> = row.get("vdaf_message");
+    let error_code: Option<i64> = row.get("error_code");
+
+    let error_code = match error_code {
+        Some(c) => {
+            let c: u8 = c.try_into().map_err(|err| {
+                Error::DbState(format!("couldn't convert error_code value: {0}", err))
+            })?;
+            Some(c.try_into().map_err(|err| {
+                Error::DbState(format!("couldn't convert error_code value: {0}", err))
+            })?)
+        }
+        None => None,
+    };
+
+    let agg_state = match state {
+        ReportAggregationStateCode::Start => ReportAggregationState::Start(),
+        ReportAggregationStateCode::Waiting => {
+            ReportAggregationState::Waiting(A::PrepareStep::get_decoded_with_param(
+                verify_param,
+                &vdaf_message_bytes.ok_or_else(|| {
+                    Error::DbState(
+                        "report aggregation in state WAITING but vdaf_message is NULL".to_string(),
+                    )
+                })?,
+            )?)
+        }
+        ReportAggregationStateCode::Finished => ReportAggregationState::Finished(
+            A::OutputShare::try_from(&vdaf_message_bytes.ok_or_else(|| {
+                Error::DbState(
+                    "report aggregation in state FINISHED but vdaf_message is NULL".to_string(),
+                )
+            })?)
+            .map_err(|err| {
+                Error::DecodeError(CodecError::Other(
+                    format!("couldn't decode output share: {}", err).into(),
+                ))
+            })?,
+        ),
+        ReportAggregationStateCode::Failed => {
+            ReportAggregationState::Failed(error_code.ok_or_else(|| {
+                Error::DbState(
+                    "report aggregation in state FAILED but error_code is NULL".to_string(),
+                )
+            })?)
+        }
+        ReportAggregationStateCode::Invalid => ReportAggregationState::Invalid(),
+    };
+
+    Ok(ReportAggregation {
+        aggregation_job_id,
+        client_report_id,
+        ord,
+        state: agg_state,
+    })
 }
 
 /// Error represents a datastore-level error.
