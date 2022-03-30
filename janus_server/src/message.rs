@@ -12,6 +12,7 @@ use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode
 use rand::{thread_rng, Rng};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
+    error::Unspecified,
     hmac::{self, HMAC_SHA256},
 };
 use serde::{Deserialize, Serialize};
@@ -89,9 +90,20 @@ impl<M: Decode> AuthenticatedRequestDecoder<M> {
     }
 
     /// decode authenticates & decodes the message using the given key.
-    pub fn decode(&self, key: &hmac::Key) -> Result<M, CodecError> {
+    pub fn decode(&self, key: &hmac::Key) -> Result<M, AuthenticatedDecodeError> {
         authenticated_decode(key, &self.buf)
     }
+}
+
+/// Errors that may occur when decoding an authenticated PPM structure. This may indicate that
+/// either the authentication tag was invalid or that there was a parsing error reading the
+/// envelope or the message contained within.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthenticatedDecodeError {
+    #[error(transparent)]
+    Codec(#[from] CodecError),
+    #[error("invalid HMAC tag")]
+    InvalidHmac,
 }
 
 /// AuthenticatedResponseDecoder can decode messages in the "authenticated response" format used by
@@ -123,16 +135,19 @@ impl<M: Decode> AuthenticatedResponseDecoder<M> {
     }
 
     /// decode authenticates & decodes the message using the given key.
-    pub fn decode(&self, key: &hmac::Key) -> Result<M, CodecError> {
+    pub fn decode(&self, key: &hmac::Key) -> Result<M, AuthenticatedDecodeError> {
         authenticated_decode(key, &self.buf)
     }
 }
 
-fn authenticated_decode<M: Decode>(key: &hmac::Key, buf: &[u8]) -> Result<M, CodecError> {
+fn authenticated_decode<M: Decode>(
+    key: &hmac::Key,
+    buf: &[u8],
+) -> Result<M, AuthenticatedDecodeError> {
     let (msg_bytes, tag) = buf.split_at(buf.len() - SHA256_OUTPUT_LEN);
     hmac::verify(key, msg_bytes, tag)
-        .map_err(|_| CodecError::Other(anyhow!("auth tag verification failure").into()))?;
-    M::get_decoded(msg_bytes)
+        .map_err(|_: Unspecified| AuthenticatedDecodeError::InvalidHmac)?;
+    M::get_decoded(msg_bytes).map_err(AuthenticatedDecodeError::from)
 }
 
 /// PPM protocol message representing a duration with a resolution of seconds.
@@ -1097,11 +1112,11 @@ mod tests {
         // Verify that modifying the bytes causes decoding to fail.
         let ln = encoded_bytes.len();
         encoded_bytes[ln - 1] ^= 0xFF;
-        let rslt: Result<AggregateReq, CodecError> =
+        let rslt: Result<AggregateReq, AuthenticatedDecodeError> =
             AuthenticatedRequestDecoder::new(encoded_bytes.clone())
                 .unwrap()
                 .decode(&*HMAC_KEY);
-        assert_matches!(rslt, Err(_));
+        assert_matches!(rslt, Err(AuthenticatedDecodeError::InvalidHmac));
     }
 
     #[test]
@@ -1157,11 +1172,11 @@ mod tests {
         // Verify that modifying the bytes causes decoding to fail.
         let ln = encoded_bytes.len();
         encoded_bytes[ln - 1] ^= 0xFF;
-        let rslt: Result<AggregateReq, CodecError> =
+        let rslt: Result<AggregateReq, AuthenticatedDecodeError> =
             AuthenticatedResponseDecoder::new(encoded_bytes.clone())
                 .unwrap()
                 .decode(&*HMAC_KEY);
-        assert_matches!(rslt, Err(_));
+        assert_matches!(rslt, Err(AuthenticatedDecodeError::InvalidHmac));
     }
 
     #[test]
