@@ -12,11 +12,6 @@ use janus_server::{
     trace::install_trace_subscriber,
 };
 use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf};
-use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf};
-use ring::{
-    hmac::{self, HMAC_SHA256},
-    rand::SystemRandom,
-};
 use ring::{
     hmac::{self, HMAC_SHA256},
     rand::SystemRandom,

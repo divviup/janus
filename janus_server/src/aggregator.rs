@@ -17,6 +17,7 @@ use crate::{
 };
 use bytes::Bytes;
 use chrono::Duration;
+use futures::future;
 use http::{header::CACHE_CONTROL, StatusCode};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -127,6 +128,7 @@ where
     A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
     A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
     for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+    A::VerifyParam: Send + Sync,
 {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports
     /// received by this aggregator.
@@ -442,11 +444,51 @@ where
 
     async fn handle_aggregate_continue(
         &self,
-        _task_id: TaskId,
-        _job_id: AggregationJobId,
-        _transitions: Vec<Transition>,
+        task_id: TaskId,
+        job_id: AggregationJobId,
+        transitions: Vec<Transition>,
     ) -> Result<AggregateResp, Error> {
-        todo!() // TODO(brandon): implement
+        // TODO(brandon): verify that `task_id` is consistent with the task `job_id` refers to?
+        let verify_param = Arc::new(self.verify_param.clone());
+        let transitions = Arc::new(transitions);
+
+        let foo = self // XXX: rename or drop variable
+            .datastore
+            .run_tx(|tx| {
+                let verify_param = verify_param.clone();
+                let transitions = transitions.clone();
+                Box::pin(async move {
+                    // Read existing state.
+                    let (aggregation_job, report_aggregations) = future::try_join(
+                        tx.get_aggregation_job_by_aggregation_job_id::<A>(job_id),
+                        tx.get_report_aggregations_by_aggregation_job_id::<A>(
+                            &verify_param,
+                            job_id,
+                        ),
+                    )
+                    .await?;
+
+                    // Handle each transition in the request.
+                    let mut report_aggregations = report_aggregations.into_iter();
+                    for transition in transitions.iter() {
+                        // Match current transition to existing report aggregation.
+                        let report_aggregation = loop {
+                            let report_agg = report_aggregations.next().ok_or_else(|| {
+                                datastore::Error::User(Box::new(Error::UnrecognizedMessage(
+                                    "missing or out-of-order transitions",
+                                    task_id,
+                                )))
+                            })?;
+                        };
+                        if report_aggregation.job_
+                    }
+
+                    Ok(()) // XXX
+                })
+            })
+            .await?;
+
+        todo!()
     }
 }
 
