@@ -107,7 +107,6 @@ async fn main() -> Result<()> {
         options.role,
         hpke_recipient,
         config.listen_address,
-        config.https_endpoint,
     )
     .context("failed to create aggregator server")?;
     info!(?task_id, ?bound_address, "running aggregator");

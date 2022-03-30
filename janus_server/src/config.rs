@@ -25,7 +25,6 @@ pub struct DbConfig {
 /// listen_address: "0.0.0.0:8080"
 /// database:
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
-/// https_endpoint: "https://example.com/ppm_aggregator"
 /// "#;
 ///
 /// let _decoded: AggregatorConfig = serde_yaml::from_str(yaml_config).unwrap();
@@ -39,8 +38,6 @@ pub struct AggregatorConfig {
     pub listen_address: SocketAddr,
     /// The aggregator's database configuration.
     pub database: DbConfig,
-    /// The aggregator's public HTTPS endpoint, which will be advertised in error responses.
-    pub https_endpoint: Url,
 }
 
 #[cfg(test)]
@@ -67,7 +64,6 @@ mod tests {
         let aggregator_config = AggregatorConfig {
             listen_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
             database: generate_db_config(),
-            https_endpoint: "https://example.com/ppm_aggregator".parse().unwrap(),
         };
 
         let encoded = serde_yaml::to_string(&aggregator_config).unwrap();

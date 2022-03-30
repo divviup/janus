@@ -11,7 +11,6 @@ use http::{header::CACHE_CONTROL, StatusCode};
 use prio::codec::{Decode, Encode};
 use std::{convert::Infallible, future::Future, net::SocketAddr, ops::Sub, sync::Arc};
 use tracing::warn;
-use url::Url;
 use warp::{
     filters::BoxedFilter,
     reply::{self, Response},
@@ -87,8 +86,6 @@ pub struct Aggregator<C> {
     // TODO: Aggregators should have multiple generations of HPKE config
     // available to decrypt tardy reports
     report_recipient: HpkeRecipient,
-    /// The aggregator's own HTTPS endpoint, to be advertised in error responses.
-    endpoint: Url,
 }
 
 impl<C: Clock> Aggregator<C> {
@@ -100,7 +97,6 @@ impl<C: Clock> Aggregator<C> {
         tolerable_clock_skew: Duration,
         role: Role,
         report_recipient: HpkeRecipient,
-        endpoint: Url,
     ) -> Result<Self, Error> {
         if tolerable_clock_skew < Duration::zero() {
             return Err(Error::InvalidConfiguration(
@@ -114,7 +110,6 @@ impl<C: Clock> Aggregator<C> {
             tolerable_clock_skew,
             role,
             report_recipient,
-            endpoint,
         })
     }
 
@@ -202,15 +197,6 @@ impl<C: Clock> Aggregator<C> {
     }
 }
 
-impl<C> Aggregator<C> {
-    /// Returns the HTTPS URL of this aggregator's own endpoint.
-    fn own_endpoint(&self) -> &Url {
-        // TODO (issue abetterinternet/ppm-specification#209): This may no longer be needed if the
-        // requirements for the "instance" problem details member change.
-        &self.endpoint
-    }
-}
-
 /// Injects a clone of the provided value into the warp filter, making it
 /// available to the filter's map() or and_then() handler.
 fn with_cloned_value<T: Clone + Sync + Send>(
@@ -269,15 +255,12 @@ impl PpmProblemType {
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
 /// Construct an error response in accordance with §3.1.
-/// TODO (PR abetterinternet/ppm-specification#208): base64-encoding the TaskID has not yet been
-/// adopted in the specification, and may change.
-/// TODO (issue abetterinternet/ppm-specification#209): The handling of the instance, title,
-/// detail, and taskid fields are subject to change.
-fn build_problem_details_response(
-    error_type: PpmProblemType,
-    task_id: TaskId,
-    endpoint: &Url,
-) -> Response {
+//
+// TODO (PR abetterinternet/ppm-specification#208): base64-encoding the TaskID has not yet been
+// adopted in the specification, and may change.
+// TODO (issue abetterinternet/ppm-specification#209): The handling of the instance, title,
+// detail, and taskid fields are subject to change.
+fn build_problem_details_response(error_type: PpmProblemType, task_id: TaskId) -> Response {
     // So far, 400 Bad Request seems to be the appropriate choice for each defined problem type.
     let status = StatusCode::BAD_REQUEST;
     warp::reply::with_status(
@@ -287,7 +270,11 @@ fn build_problem_details_response(
                 "title": error_type.description(),
                 "status": status.as_u16(),
                 "detail": error_type.description(),
-                "instance": endpoint.as_str(),
+                // The base URI is either "[leader]/upload", "[aggregator]/aggregate",
+                // "[helper]/aggregate_share", or "[leader]/collect". Relative URLs are allowed in
+                // the instance member, thus ".." will always refer to the aggregator's endpoint,
+                // as required by §3.1.
+                "instance": "..",
                 "taskid": base64::encode(task_id.as_bytes()),
             })),
             http::header::CONTENT_TYPE,
@@ -300,47 +287,34 @@ fn build_problem_details_response(
 
 /// Produces a closure that will transform applicable errors into a problem details JSON object.
 /// (See RFC 7807) The returned closure is meant to be used in a warp `map` filter.
-fn error_handler<R>(
-    aggregator_endpoint: &Url,
-) -> impl Fn(Result<R, Error>) -> warp::reply::Response + Clone
+fn error_handler<R>() -> impl Fn(Result<R, Error>) -> warp::reply::Response + Clone
 where
     R: Reply,
 {
-    let aggregator_endpoint = aggregator_endpoint.clone();
     move |result| match result {
         Ok(reply) => reply.into_response(),
         Err(Error::InvalidConfiguration(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
-        Err(Error::StaleReport(_, task_id)) => build_problem_details_response(
-            PpmProblemType::StaleReport,
-            task_id,
-            &aggregator_endpoint,
-        ),
-        Err(Error::UnrecognizedMessage(_, task_id)) => build_problem_details_response(
-            PpmProblemType::UnrecognizedMessage,
-            task_id,
-            &aggregator_endpoint,
-        ),
-        Err(Error::UnrecognizedTask(task_id)) => build_problem_details_response(
-            PpmProblemType::UnrecognizedTask,
-            task_id,
-            &aggregator_endpoint,
-        ),
-        Err(Error::OutdatedHpkeConfig(_, task_id)) => build_problem_details_response(
-            PpmProblemType::OutdatedConfig,
-            task_id,
-            &aggregator_endpoint,
-        ),
+        Err(Error::StaleReport(_, task_id)) => {
+            build_problem_details_response(PpmProblemType::StaleReport, task_id)
+        }
+        Err(Error::UnrecognizedMessage(_, task_id)) => {
+            build_problem_details_response(PpmProblemType::UnrecognizedMessage, task_id)
+        }
+        Err(Error::UnrecognizedTask(task_id)) => {
+            build_problem_details_response(PpmProblemType::UnrecognizedTask, task_id)
+        }
+        Err(Error::OutdatedHpkeConfig(_, task_id)) => {
+            build_problem_details_response(PpmProblemType::OutdatedConfig, task_id)
+        }
         Err(Error::ReportFromTheFuture(_, _)) => {
             // TODO: build a problem details document once an error type is defined for reports
             // with timestamps too far in the future.
             StatusCode::BAD_REQUEST.into_response()
         }
-        Err(Error::InvalidHmac(task_id)) => build_problem_details_response(
-            PpmProblemType::InvalidHmac,
-            task_id,
-            &aggregator_endpoint,
-        ),
+        Err(Error::InvalidHmac(task_id)) => {
+            build_problem_details_response(PpmProblemType::InvalidHmac, task_id)
+        }
         Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -352,7 +326,6 @@ fn aggregator_filter<C: 'static + Clock>(
     tolerable_clock_skew: Duration,
     role: Role,
     hpke_recipient: HpkeRecipient,
-    endpoint: Url,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
     if !role.is_aggregator() {
         return Err(Error::InvalidConfiguration("role is not an aggregator"));
@@ -360,16 +333,9 @@ fn aggregator_filter<C: 'static + Clock>(
 
     let hpke_config_encoded = hpke_recipient.config.get_encoded();
 
-    let aggregator = Aggregator::new(
-        datastore,
-        clock,
-        tolerable_clock_skew,
-        role,
-        hpke_recipient,
-        endpoint,
-    )?;
+    let aggregator = Aggregator::new(datastore, clock, tolerable_clock_skew, role, hpke_recipient)?;
 
-    let error_handler_fn = error_handler(aggregator.own_endpoint());
+    let error_handler_fn = error_handler();
 
     let hpke_config_endpoint = warp::path("hpke_config")
         .and(warp::get())
@@ -417,16 +383,8 @@ pub fn aggregator_server<C: 'static + Clock>(
     role: Role,
     hpke_recipient: HpkeRecipient,
     listen_address: SocketAddr,
-    endpoint: Url,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error> {
-    let routes = aggregator_filter(
-        datastore,
-        clock,
-        tolerable_clock_skew,
-        role,
-        hpke_recipient,
-        endpoint,
-    )?;
+    let routes = aggregator_filter(datastore, clock, tolerable_clock_skew, role, hpke_recipient)?;
 
     Ok(warp::serve(routes).bind_ephemeral(listen_address))
 }
@@ -471,7 +429,6 @@ mod tests {
                     Duration::minutes(10),
                     invalid_role,
                     hpke_recipient.clone(),
-                    "https://example.com/ppm_aggregator".parse().unwrap(),
                 ),
                 Err(Error::InvalidConfiguration(_))
             );
@@ -497,7 +454,6 @@ mod tests {
                 Duration::minutes(-10),
                 Role::Leader,
                 hpke_recipient,
-                "https://example.com/ppm_aggregator".parse().unwrap(),
             ),
             Err(Error::InvalidConfiguration(_))
         );
@@ -522,7 +478,6 @@ mod tests {
                     Duration::minutes(10),
                     Role::Leader,
                     hpke_recipient.clone(),
-                    "https://example.com/ppm_aggregator".parse().unwrap(),
                 )
                 .unwrap(),
             )
@@ -628,7 +583,6 @@ mod tests {
             skew,
             Role::Leader,
             report_recipient,
-            "https://example.com/ppm_aggregator".parse().unwrap(),
         )
         .unwrap();
 
@@ -655,7 +609,7 @@ mod tests {
                 "type": "urn:ietf:params:ppm:error:staleReport",
                 "title": "Report could not be processed because it arrived too late.",
                 "detail": "Report could not be processed because it arrived too late.",
-                "instance": "https://example.com/ppm_aggregator",
+                "instance": "..",
                 "taskid": base64::encode(report.task_id.as_bytes()),
             })
         );
@@ -687,7 +641,7 @@ mod tests {
                 "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
-                "instance": "https://example.com/ppm_aggregator",
+                "instance": "..",
                 "taskid": base64::encode(report.task_id.as_bytes()),
             })
         );
@@ -720,7 +674,7 @@ mod tests {
                 "type": "urn:ietf:params:ppm:error:outdatedConfig",
                 "title": "The message was generated using an outdated configuration.",
                 "detail": "The message was generated using an outdated configuration.",
-                "instance": "https://example.com/ppm_aggregator",
+                "instance": "..",
                 "taskid": base64::encode(report.task_id.as_bytes()),
             })
         );
@@ -766,7 +720,6 @@ mod tests {
             skew,
             Role::Helper,
             report_recipient,
-            "https://example.com/ppm_aggregator".parse().unwrap(),
         )
         .unwrap();
 
@@ -800,7 +753,6 @@ mod tests {
             skew,
             Role::Leader,
             report_recipient,
-            "https://example.com/ppm_aggregator".parse().unwrap(),
         )
         .unwrap();
 
