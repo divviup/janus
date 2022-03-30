@@ -7,7 +7,7 @@ use janus_server::{
     message::{Role, TaskId},
     task::TaskParameters,
     time::RealClock,
-    trace::install_subscriber,
+    trace::{install_subscriber, TraceConfiguration},
 };
 use prio::vdaf::prio3::Prio3Aes128Count;
 use std::{
@@ -34,7 +34,11 @@ struct TestCase {
 }
 
 async fn setup_test() -> TestCase {
-    install_subscriber().unwrap();
+    install_subscriber(&TraceConfiguration {
+        use_test_writer: true,
+        ..Default::default()
+    })
+    .unwrap();
 
     let task_id = TaskId::random();
 
