@@ -28,25 +28,25 @@ pub enum Error {
     #[error("message decoding failed: {0}")]
     MessageDecode(#[from] prio::codec::CodecError),
     /// Corresponds to `staleReport`, §3.1
-    #[error("stale report: {0}")]
+    #[error("stale report: {0} {1:?}")]
     StaleReport(Nonce, TaskId),
     /// Corresponds to `unrecognizedMessage`, §3.1
-    #[error("unrecognized message: {0}")]
+    #[error("unrecognized message: {0} {1:?}")]
     UnrecognizedMessage(&'static str, TaskId),
     /// Corresponds to `unrecognizedTask`, §3.1
-    #[error("unrecognized task")]
+    #[error("unrecognized task: {0:?}")]
     UnrecognizedTask(TaskId),
     /// Corresponds to `outdatedHpkeConfig`, §3.1
-    #[error("outdated HPKE config: {0}")]
+    #[error("outdated HPKE config: {0} {1:?}")]
     OutdatedHpkeConfig(HpkeConfigId, TaskId),
     /// A report was rejected becuase the timestamp is too far in the future,
     /// §4.3.4.
     // TODO(timg): define an error type in §3.1 and clarify language on
     // rejecting future reports
-    #[error("report from the future: {0}")]
+    #[error("report from the future: {0} {1:?}")]
     ReportFromTheFuture(Nonce, TaskId),
     /// Corresponds to `invalidHmac`, §3.1
-    #[error("invalid HMAC tag")]
+    #[error("invalid HMAC tag: {0:?}")]
     InvalidHmac(TaskId),
     /// An error from the datastore.
     #[error("datastore error: {0}")]
