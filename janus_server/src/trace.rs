@@ -3,7 +3,11 @@
 use atty::{self, Stream};
 use serde::{Deserialize, Serialize};
 use tracing_log::LogTracer;
-use tracing_subscriber::{fmt::Layer, layer::SubscriberExt, EnvFilter, Registry};
+use tracing_subscriber::{
+    filter::{FilterExt, Targets},
+    layer::SubscriberExt,
+    EnvFilter, Layer, Registry,
+};
 
 /// Errors from initializing trace subscriber.
 #[derive(Debug, thiserror::Error)]
@@ -27,10 +31,15 @@ pub struct TraceConfiguration {
     /// [`tracing_subscriber::fmt::format::Pretty`].
     #[serde(default)]
     pub force_json_output: bool,
+    /// If true, a tokio-console tracing subscriber is configured to monitor
+    /// the async runtime, and listen for TCP connections. (Requires building
+    /// with RUSTFLAGS="--cfg tokio_unstable")
+    #[serde(default)]
+    pub tokio_console: bool,
 }
 
 /// Create a base tracing layer with configuration used in all subscribers
-fn base_layer<S>() -> Layer<S> {
+fn base_layer<S>() -> tracing_subscriber::fmt::Layer<S> {
     tracing_subscriber::fmt::layer()
         .with_thread_ids(true)
         .with_level(true)
@@ -47,19 +56,73 @@ pub fn install_subscriber(config: &TraceConfiguration) -> Result<(), Error> {
     // structures
     let output_json = atty::isnt(Stream::Stdout) || config.force_json_output;
 
+    // Filters to prevent verbose runtime-related events from being printed to stdout.
+    // Unfortunately, we need to construct three separate per-layer filters for the different
+    // stdout layers, because their Not types vary depending on their location in the subscriber
+    // stack.
+    let inverted_tokio_console_filter_1 = Targets::new()
+        .with_target("tokio", tracing::Level::TRACE)
+        .with_target("runtime", tracing::Level::TRACE)
+        .not();
+    let inverted_tokio_console_filter_2 = Targets::new()
+        .with_target("tokio", tracing::Level::TRACE)
+        .with_target("runtime", tracing::Level::TRACE)
+        .not();
+    let inverted_tokio_console_filter_3 = Targets::new()
+        .with_target("tokio", tracing::Level::TRACE)
+        .with_target("runtime", tracing::Level::TRACE)
+        .not();
+
     let (pretty_layer, json_layer, test_layer) = match (output_json, config.use_test_writer) {
-        (true, false) => (None, Some(base_layer().json()), None),
-        (false, false) => (Some(base_layer().pretty()), None, None),
-        (_, true) => (None, None, Some(base_layer().pretty().with_test_writer())),
+        (true, false) => (
+            None,
+            Some(
+                base_layer()
+                    .json()
+                    .with_filter(inverted_tokio_console_filter_1),
+            ),
+            None,
+        ),
+        (false, false) => (
+            Some(
+                base_layer()
+                    .pretty()
+                    .with_filter(inverted_tokio_console_filter_2),
+            ),
+            None,
+            None,
+        ),
+        (_, true) => (
+            None,
+            None,
+            Some(
+                base_layer()
+                    .pretty()
+                    .with_test_writer()
+                    .with_filter(inverted_tokio_console_filter_3),
+            ),
+        ),
+    };
+
+    // Configure filters with RUST_LOG env var. Format discussed at
+    // https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
+    let mut global_filter = EnvFilter::from_default_env();
+
+    let console_layer = match &config.tokio_console {
+        true => {
+            global_filter = global_filter.add_directive("tokio=trace".parse().unwrap());
+            global_filter = global_filter.add_directive("runtime=trace".parse().unwrap());
+            Some(console_subscriber::spawn())
+        }
+        false => None,
     };
 
     let subscriber = Registry::default()
         .with(pretty_layer)
         .with(test_layer)
         .with(json_layer)
-        // Configure filters with RUST_LOG env var. Format discussed at
-        // https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
-        .with(EnvFilter::from_default_env());
+        .with(console_layer)
+        .with(global_filter);
 
     tracing::subscriber::set_global_default(subscriber)?;
 
