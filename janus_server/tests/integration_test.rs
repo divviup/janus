@@ -50,6 +50,7 @@ async fn setup_test() -> TestCase {
         Role::Leader,
         leader_hpke_recipient,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+        "https://example.com/ppm_aggregator".parse().unwrap(),
     )
     .unwrap();
     let leader_task_handle = tokio::spawn(leader_server);
@@ -64,6 +65,7 @@ async fn setup_test() -> TestCase {
         Role::Helper,
         helper_hpke_recipient,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+        "https://example.net/ppm_aggregator".parse().unwrap(),
     )
     .unwrap();
     let helper_task_handle = tokio::spawn(helper_server);

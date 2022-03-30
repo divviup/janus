@@ -87,6 +87,8 @@ pub struct Aggregator<C> {
     // TODO: Aggregators should have multiple generations of HPKE config
     // available to decrypt tardy reports
     report_recipient: HpkeRecipient,
+    /// The aggregator's own HTTPS endpoint, to be advertised in error responses.
+    endpoint: Url,
 }
 
 impl<C: Clock> Aggregator<C> {
@@ -98,6 +100,7 @@ impl<C: Clock> Aggregator<C> {
         tolerable_clock_skew: Duration,
         role: Role,
         report_recipient: HpkeRecipient,
+        endpoint: Url,
     ) -> Result<Self, Error> {
         if tolerable_clock_skew < Duration::zero() {
             return Err(Error::InvalidConfiguration(
@@ -111,6 +114,7 @@ impl<C: Clock> Aggregator<C> {
             tolerable_clock_skew,
             role,
             report_recipient,
+            endpoint,
         })
     }
 
@@ -200,11 +204,10 @@ impl<C: Clock> Aggregator<C> {
 
 impl<C> Aggregator<C> {
     /// Returns the HTTPS URL of this aggregator's own endpoint.
-    fn own_endpoint(&self) -> Url {
-        // TODO (issue #20): determine this URL endpoint from configuration
+    fn own_endpoint(&self) -> &Url {
         // TODO (issue abetterinternet/ppm-specification#209): This may no longer be needed if the
         // requirements for the "instance" problem details member change.
-        Url::parse("https://example.com/ppm_aggregator").unwrap()
+        &self.endpoint
     }
 }
 
@@ -298,11 +301,12 @@ fn build_problem_details_response(
 /// Produces a closure that will transform applicable errors into a problem details JSON object.
 /// (See RFC 7807) The returned closure is meant to be used in a warp `map` filter.
 fn error_handler<R>(
-    aggregator_endpoint: Url,
+    aggregator_endpoint: &Url,
 ) -> impl Fn(Result<R, Error>) -> warp::reply::Response + Clone
 where
     R: Reply,
 {
+    let aggregator_endpoint = aggregator_endpoint.clone();
     move |result| match result {
         Ok(reply) => reply.into_response(),
         Err(Error::InvalidConfiguration(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -348,6 +352,7 @@ fn aggregator_filter<C: 'static + Clock>(
     tolerable_clock_skew: Duration,
     role: Role,
     hpke_recipient: HpkeRecipient,
+    endpoint: Url,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
     if !role.is_aggregator() {
         return Err(Error::InvalidConfiguration("role is not an aggregator"));
@@ -355,7 +360,14 @@ fn aggregator_filter<C: 'static + Clock>(
 
     let hpke_config_encoded = hpke_recipient.config.get_encoded();
 
-    let aggregator = Aggregator::new(datastore, clock, tolerable_clock_skew, role, hpke_recipient)?;
+    let aggregator = Aggregator::new(
+        datastore,
+        clock,
+        tolerable_clock_skew,
+        role,
+        hpke_recipient,
+        endpoint,
+    )?;
 
     let error_handler_fn = error_handler(aggregator.own_endpoint());
 
@@ -405,8 +417,16 @@ pub fn aggregator_server<C: 'static + Clock>(
     role: Role,
     hpke_recipient: HpkeRecipient,
     listen_address: SocketAddr,
+    endpoint: Url,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error> {
-    let routes = aggregator_filter(datastore, clock, tolerable_clock_skew, role, hpke_recipient)?;
+    let routes = aggregator_filter(
+        datastore,
+        clock,
+        tolerable_clock_skew,
+        role,
+        hpke_recipient,
+        endpoint,
+    )?;
 
     Ok(warp::serve(routes).bind_ephemeral(listen_address))
 }
@@ -451,6 +471,7 @@ mod tests {
                     Duration::minutes(10),
                     invalid_role,
                     hpke_recipient.clone(),
+                    "https://example.com/ppm_aggregator".parse().unwrap(),
                 ),
                 Err(Error::InvalidConfiguration(_))
             );
@@ -475,7 +496,8 @@ mod tests {
                 MockClock::default(),
                 Duration::minutes(-10),
                 Role::Leader,
-                hpke_recipient
+                hpke_recipient,
+                "https://example.com/ppm_aggregator".parse().unwrap(),
             ),
             Err(Error::InvalidConfiguration(_))
         );
@@ -500,6 +522,7 @@ mod tests {
                     Duration::minutes(10),
                     Role::Leader,
                     hpke_recipient.clone(),
+                    "https://example.com/ppm_aggregator".parse().unwrap(),
                 )
                 .unwrap(),
             )
@@ -605,6 +628,7 @@ mod tests {
             skew,
             Role::Leader,
             report_recipient,
+            "https://example.com/ppm_aggregator".parse().unwrap(),
         )
         .unwrap();
 
@@ -742,6 +766,7 @@ mod tests {
             skew,
             Role::Helper,
             report_recipient,
+            "https://example.com/ppm_aggregator".parse().unwrap(),
         )
         .unwrap();
 
@@ -775,6 +800,7 @@ mod tests {
             skew,
             Role::Leader,
             report_recipient,
+            "https://example.com/ppm_aggregator".parse().unwrap(),
         )
         .unwrap();
 
