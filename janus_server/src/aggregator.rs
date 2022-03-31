@@ -398,7 +398,7 @@ mod tests {
         message::{HpkeConfig, TaskId, Time},
         task::TaskParameters,
         time::tests::MockClock,
-        trace::test_util::install_trace_subscriber,
+        trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use http::Method;
@@ -410,7 +410,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_role() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let datastore = Arc::new(datastore);
@@ -437,7 +437,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_clock_skew() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let hpke_recipient = HpkeRecipient::generate(
@@ -461,7 +461,7 @@ mod tests {
 
     #[tokio::test]
     async fn hpke_config() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let (datastore, _db_handle) = ephemeral_datastore().await;
@@ -570,7 +570,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_filter() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
@@ -706,7 +706,7 @@ mod tests {
     // Helper should not expose /upload endpoint
     #[tokio::test]
     async fn upload_filter_helper() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
@@ -761,7 +761,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, report, datastore, _db_handle) = setup_upload_test(skew).await;
@@ -789,7 +789,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_wrong_number_of_encrypted_shares() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, mut report, _, _db_handle) = setup_upload_test(skew).await;
@@ -804,7 +804,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_wrong_hpke_config_id() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, mut report, _, _db_handle) = setup_upload_test(skew).await;
@@ -837,7 +837,7 @@ mod tests {
 
     #[tokio::test]
     async fn report_in_the_future() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, mut report, datastore, _db_handle) = setup_upload_test(skew).await;

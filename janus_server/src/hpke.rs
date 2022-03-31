@@ -357,9 +357,11 @@ fn open<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trace::test_util::install_test_trace_subscriber;
 
     #[test]
     fn exchange_message() {
+        install_test_trace_subscriber();
         let task_id = TaskId::random();
         // Sender and receiver must agree on AAD for each message
         let associated_data = b"message associated data";
@@ -384,6 +386,7 @@ mod tests {
 
     #[test]
     fn wrong_private_key() {
+        install_test_trace_subscriber();
         let task_id = TaskId::random();
         // Sender and receiver must agree on AAD for each message
         let associated_data = b"message associated data";
@@ -413,6 +416,7 @@ mod tests {
 
     #[test]
     fn wrong_application_info() {
+        install_test_trace_subscriber();
         let task_id = TaskId::random();
         // Sender and receiver must agree on AAD for each message
         let associated_data = b"message associated data";
@@ -435,6 +439,7 @@ mod tests {
 
     #[test]
     fn wrong_associated_data() {
+        install_test_trace_subscriber();
         let task_id = TaskId::random();
         let message = b"a message that is secret";
 

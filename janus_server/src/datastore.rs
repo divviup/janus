@@ -331,11 +331,11 @@ mod tests {
     use crate::hpke::{HpkeRecipient, Label};
     use crate::message::{Duration, ExtensionType, HpkeConfigId, Role};
     use crate::task::Vdaf;
-    use crate::trace::test_util::install_trace_subscriber;
+    use crate::trace::test_util::install_test_trace_subscriber;
 
     #[tokio::test]
     async fn roundtrip_report() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let task_id = TaskId([
@@ -394,7 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn report_not_found() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let rslt = ds
@@ -406,7 +406,7 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_report_by_task_id_and_nonce() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let task_id = TaskId([
@@ -470,7 +470,7 @@ mod tests {
 
     #[tokio::test]
     async fn report_not_found_by_task_id_and_nonce() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let task_id = TaskId([
@@ -496,6 +496,7 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_task() {
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let task_ids = [
