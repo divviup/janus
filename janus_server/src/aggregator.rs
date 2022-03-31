@@ -9,9 +9,9 @@ use crate::{
     message::{
         AggregateReq,
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
-        AggregateResp, AggregationJobId, AuthenticatedEncoder, AuthenticatedRequestDecoder,
-        HpkeConfigId, Nonce, Report, ReportShare, Role, TaskId, Transition, TransitionError,
-        TransitionTypeSpecificData,
+        AggregateResp, AggregationJobId, AuthenticatedDecodeError, AuthenticatedEncoder,
+        AuthenticatedRequestDecoder, HpkeConfigId, Nonce, Report, ReportShare, Role, TaskId,
+        Transition, TransitionError, TransitionTypeSpecificData,
     },
     time::Clock,
 };
@@ -28,7 +28,11 @@ use std::{
     sync::Arc,
 };
 use tracing::warn;
-use warp::{filters::BoxedFilter, reply, trace, Filter, Rejection, Reply};
+use warp::{
+    filters::BoxedFilter,
+    reply::{self, Response},
+    trace, Filter, Rejection, Reply,
+};
 
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
@@ -40,20 +44,26 @@ pub enum Error {
     #[error("message decoding failed: {0}")]
     MessageDecode(#[from] prio::codec::CodecError),
     /// Corresponds to `staleReport`, §3.1
-    #[error("stale report: {0}")]
-    StaleReport(Nonce),
+    #[error("stale report: {0} {1:?}")]
+    StaleReport(Nonce, TaskId),
     /// Corresponds to `unrecognizedMessage`, §3.1
-    #[error("unrecognized message: {0}")]
-    UnrecognizedMessage(&'static str),
+    #[error("unrecognized message: {0} {1:?}")]
+    UnrecognizedMessage(&'static str, TaskId),
+    /// Corresponds to `unrecognizedTask`, §3.1
+    #[error("unrecognized task: {0:?}")]
+    UnrecognizedTask(TaskId),
     /// Corresponds to `outdatedHpkeConfig`, §3.1
-    #[error("outdated HPKE config: {0}")]
-    OutdatedHpkeConfig(HpkeConfigId),
+    #[error("outdated HPKE config: {0} {1:?}")]
+    OutdatedHpkeConfig(HpkeConfigId, TaskId),
     /// A report was rejected becuase the timestamp is too far in the future,
     /// §4.3.4.
     // TODO(timg): define an error type in §3.1 and clarify language on
     // rejecting future reports
-    #[error("report from the future: {0}")]
-    ReportFromTheFuture(Nonce),
+    #[error("report from the future: {0} {1:?}")]
+    ReportFromTheFuture(Nonce, TaskId),
+    /// Corresponds to `invalidHmac`, §3.1
+    #[error("invalid HMAC tag: {0:?}")]
+    InvalidHmac(TaskId),
     /// An error from the datastore.
     #[error("datastore error: {0}")]
     Datastore(datastore::Error),
@@ -78,9 +88,6 @@ impl From<datastore::Error> for Error {
         }
     }
 }
-
-// This impl allows use of [`Error`] in [`warp::reject::Rejection`]
-impl warp::reject::Reject for Error {}
 
 /// A PPM aggregator.
 // TODO: refactor Aggregator to be non-task-specific (look up task-specific data based on task ID)
@@ -162,6 +169,7 @@ where
             );
             return Err(Error::UnrecognizedMessage(
                 "unexpected number of encrypted shares in report",
+                report.task_id,
             ));
         }
         let leader_report = &report.encrypted_input_shares[0];
@@ -172,7 +180,10 @@ where
                 config_id = ?leader_report.config_id,
                 "unknown HPKE config ID"
             );
-            return Err(Error::OutdatedHpkeConfig(leader_report.config_id));
+            return Err(Error::OutdatedHpkeConfig(
+                leader_report.config_id,
+                report.task_id,
+            ));
         }
 
         let now = self.clock.now();
@@ -180,7 +191,7 @@ where
         // §4.2.4: reject reports from too far in the future
         if report.nonce.time.as_naive_date_time().sub(now) > self.tolerable_clock_skew {
             warn!(?report.task_id, ?report.nonce, "report timestamp exceeds tolerable clock skew");
-            return Err(Error::ReportFromTheFuture(report.nonce));
+            return Err(Error::ReportFromTheFuture(report.nonce, report.task_id));
         }
 
         // Check that we can decrypt the report. This isn't required by the spec
@@ -206,8 +217,9 @@ where
                     {
                         Ok(_) => {
                             warn!(?report.task_id, ?report.nonce, "report replayed");
+                            // TODO (issue #34): change this error type.
                             return Err(datastore::Error::User(
-                                Error::StaleReport(report.nonce).into(),
+                                Error::StaleReport(report.nonce, report.task_id).into(),
                             ));
                         }
 
@@ -260,6 +272,7 @@ where
             if !seen_nonces.insert(share.nonce) {
                 return Err(Error::UnrecognizedMessage(
                     "aggregate request contains duplicate nonce",
+                    task_id,
                 ));
             }
         }
@@ -446,18 +459,14 @@ where
     warp::any().map(move || value.clone())
 }
 
-fn with_decoded_body<T>() -> impl Filter<Extract = (T,), Error = Rejection> + Clone
-where
-    T: Decode + Send + Sync,
-{
-    warp::body::bytes().and_then(|body: Bytes| async move {
-        T::get_decoded(&body).map_err(|e| warp::reject::custom(Error::from(e)))
-    })
+fn with_decoded_body<T: Decode + Send + Sync>(
+) -> impl Filter<Extract = (Result<T, Error>,), Error = Rejection> + Clone {
+    warp::body::bytes().map(|body: Bytes| T::get_decoded(&body).map_err(Error::from))
 }
 
 fn with_authenticated_body<T, KeyFn>(
     key_fn: KeyFn,
-) -> impl Filter<Extract = ((hmac::Key, T),), Error = Rejection> + Clone
+) -> impl Filter<Extract = (Result<(hmac::Key, T), Error>,), Error = Rejection> + Clone
 where
     T: Decode + Send + Sync,
     KeyFn: Fn(&TaskId) -> Pin<Box<dyn Future<Output = Result<hmac::Key, Error>> + Send + Sync>>
@@ -465,21 +474,128 @@ where
         + Send
         + Sync,
 {
-    warp::body::bytes().and_then(move |body: Bytes| {
+    warp::body::bytes().then(move |body: Bytes| {
         let key_fn = key_fn.clone();
         async move {
             // TODO(brandon): avoid copying the body here (make AuthenticatedRequestDecoder operate on Bytes or &[u8] or AsRef<[u8]>, most likely)
             let decoder: AuthenticatedRequestDecoder<T> =
-                AuthenticatedRequestDecoder::new(Vec::from(body.as_ref()))
-                    .map_err(|err| warp::reject::custom(Error::from(err)))?;
+                AuthenticatedRequestDecoder::new(Vec::from(body.as_ref())).map_err(Error::from)?;
             let task_id = decoder.task_id();
-            let key = key_fn(&task_id).await.map_err(warp::reject::custom)?;
-            let decoded_body: T = decoder
-                .decode(&key)
-                .map_err(|err| warp::reject::custom(Error::from(err)))?;
-            Ok((key, decoded_body)) as Result<_, Rejection>
+            let key = key_fn(&task_id).await?;
+            let decoded_body: T = decoder.decode(&key).map_err(|err| match err {
+                AuthenticatedDecodeError::InvalidHmac => Error::InvalidHmac(task_id),
+                AuthenticatedDecodeError::Codec(err) => Error::MessageDecode(err),
+            })?;
+            Ok((key, decoded_body))
         }
     })
+}
+
+/// Representation of the different problem types defined in Table 1 in §3.1.
+enum PpmProblemType {
+    UnrecognizedMessage,
+    UnrecognizedTask,
+    OutdatedConfig,
+    StaleReport,
+    InvalidHmac,
+}
+
+impl PpmProblemType {
+    /// Returns the problem type URI for a particular kind of error.
+    fn type_uri(&self) -> &'static str {
+        match self {
+            PpmProblemType::UnrecognizedMessage => "urn:ietf:params:ppm:error:unrecognizedMessage",
+            PpmProblemType::UnrecognizedTask => "urn:ietf:params:ppm:error:unrecognizedTask",
+            PpmProblemType::OutdatedConfig => "urn:ietf:params:ppm:error:outdatedConfig",
+            PpmProblemType::StaleReport => "urn:ietf:params:ppm:error:staleReport",
+            PpmProblemType::InvalidHmac => "urn:ietf:params:ppm:error:invalidHmac",
+        }
+    }
+
+    /// Returns a human-readable summary of a problem type.
+    fn description(&self) -> &'static str {
+        match self {
+            PpmProblemType::UnrecognizedMessage => {
+                "The message type for a response was incorrect or the payload was malformed."
+            }
+            PpmProblemType::UnrecognizedTask => {
+                "An endpoint received a message with an unknown task ID."
+            }
+            PpmProblemType::OutdatedConfig => {
+                "The message was generated using an outdated configuration."
+            }
+            PpmProblemType::StaleReport => {
+                "Report could not be processed because it arrived too late."
+            }
+            PpmProblemType::InvalidHmac => "The aggregate message's HMAC was not valid.",
+        }
+    }
+}
+
+/// The media type for problem details formatted as a JSON document, per RFC 7807.
+static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
+
+/// Construct an error response in accordance with §3.1.
+//
+// TODO (PR abetterinternet/ppm-specification#208): base64-encoding the TaskID has not yet been
+// adopted in the specification, and may change.
+// TODO (issue abetterinternet/ppm-specification#209): The handling of the instance, title,
+// detail, and taskid fields are subject to change.
+fn build_problem_details_response(error_type: PpmProblemType, task_id: TaskId) -> Response {
+    // So far, 400 Bad Request seems to be the appropriate choice for each defined problem type.
+    let status = StatusCode::BAD_REQUEST;
+    warp::reply::with_status(
+        warp::reply::with_header(
+            warp::reply::json(&serde_json::json!({
+                "type": error_type.type_uri(),
+                "title": error_type.description(),
+                "status": status.as_u16(),
+                "detail": error_type.description(),
+                // The base URI is either "[leader]/upload", "[aggregator]/aggregate",
+                // "[helper]/aggregate_share", or "[leader]/collect". Relative URLs are allowed in
+                // the instance member, thus ".." will always refer to the aggregator's endpoint,
+                // as required by §3.1.
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })),
+            http::header::CONTENT_TYPE,
+            PROBLEM_DETAILS_JSON_MEDIA_TYPE,
+        ),
+        status,
+    )
+    .into_response()
+}
+
+/// Produces a closure that will transform applicable errors into a problem details JSON object.
+/// (See RFC 7807) The returned closure is meant to be used in a warp `map` filter.
+fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Response + Clone {
+    move |result| match result {
+        Ok(reply) => reply.into_response(),
+        Err(Error::InvalidConfiguration(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
+        Err(Error::StaleReport(_, task_id)) => {
+            build_problem_details_response(PpmProblemType::StaleReport, task_id)
+        }
+        Err(Error::UnrecognizedMessage(_, task_id)) => {
+            build_problem_details_response(PpmProblemType::UnrecognizedMessage, task_id)
+        }
+        Err(Error::UnrecognizedTask(task_id)) => {
+            build_problem_details_response(PpmProblemType::UnrecognizedTask, task_id)
+        }
+        Err(Error::OutdatedHpkeConfig(_, task_id)) => {
+            build_problem_details_response(PpmProblemType::OutdatedConfig, task_id)
+        }
+        Err(Error::ReportFromTheFuture(_, _)) => {
+            // TODO: build a problem details document once an error type is defined for reports
+            // with timestamps too far in the future.
+            StatusCode::BAD_REQUEST.into_response()
+        }
+        Err(Error::InvalidHmac(task_id)) => {
+            build_problem_details_response(PpmProblemType::InvalidHmac, task_id)
+        }
+        Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
@@ -534,46 +650,47 @@ where
     let upload_endpoint = warp::path("upload")
         .and(warp::post())
         .and(with_cloned_value(aggregator.clone()))
+        .and_then(|aggregator: Arc<Aggregator<A, C>>| async {
+            // Only the leader supports upload
+            if aggregator.role != Role::Leader {
+                return Err(warp::reject::not_found());
+            }
+            Ok(aggregator)
+        })
         .and(with_decoded_body())
-        .and_then(
-            |aggregator: Arc<Aggregator<A, C>>, report: Report| async move {
-                // Only the leader supports /upload.
-                if aggregator.role != Role::Leader {
-                    return Err(warp::reject::not_found());
-                }
-
-                aggregator
-                    .handle_upload(&report)
-                    .await
-                    .map_err(warp::reject::custom)?;
-
-                Ok(reply::with_status(warp::reply(), StatusCode::OK)) as Result<_, Rejection>
+        .then(
+            |aggregator: Arc<Aggregator<A, C>>, report_res: Result<Report, Error>| async move {
+                aggregator.handle_upload(&report_res?).await?;
+                Ok(StatusCode::OK)
             },
         )
+        .map(error_handler())
         .with(trace::named("upload"));
 
     let aggregate_endpoint = warp::path("aggregate")
         .and(warp::post())
         .and(with_cloned_value(aggregator.clone()))
+        .and_then(|aggregator: Arc<Aggregator<A, C>>| async {
+            // Only the helper supports /aggregate.
+            if aggregator.role != Role::Helper {
+                return Err(warp::reject::not_found());
+            }
+            Ok(aggregator)
+        })
         .and(with_authenticated_body(move |_task_id| {
             let aggregator = aggregator.clone();
             Box::pin(async move { Ok(aggregator.agg_auth_key.clone()) })
         }))
-        .and_then(
-            |aggregator: Arc<Aggregator<A, C>>, (key, req): (hmac::Key, AggregateReq)| async move {
-                // Only the helper supports /aggregate.
-                if aggregator.role != Role::Helper {
-                    return Err(warp::reject::not_found());
-                }
-
-                let resp = aggregator
-                    .handle_aggregate(req)
-                    .await
-                    .map_err(warp::reject::custom)?;
+        .then(
+            |aggregator: Arc<Aggregator<A, C>>,
+             req_rslt: Result<(hmac::Key, AggregateReq), Error>| async move {
+                let (key, req) = req_rslt?;
+                let resp = aggregator.handle_aggregate(req).await?;
                 let resp_bytes = AuthenticatedEncoder::new(resp).encode(&key);
                 Ok(reply::with_status(resp_bytes, StatusCode::OK))
             },
         )
+        .map(error_handler())
         .with(trace::named("aggregate"));
 
     Ok(hpke_config_endpoint
@@ -632,9 +749,9 @@ mod tests {
         trace::test_util::install_trace_subscriber,
     };
     use assert_matches::assert_matches;
-    use hyper::body::{self, to_bytes};
+    use http::Method;
     use prio::{
-        codec::{CodecError, Decode},
+        codec::Decode,
         vdaf::prio3::Prio3Aes128Count,
         vdaf::{prio3::Prio3Aes128Sum, Vdaf},
     };
@@ -746,7 +863,7 @@ mod tests {
             "max-age=86400"
         );
 
-        let bytes = to_bytes(response.into_body()).await.unwrap();
+        let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
         assert_eq!(hpke_config, hpke_recipient.config);
         let sender = HpkeSender::from_recipient(&hpke_recipient);
@@ -807,6 +924,22 @@ mod tests {
         (hpke_recipient, report)
     }
 
+    /// Convenience method to handle interaction with `warp::test` for typical PPM requests.
+    async fn drive_filter(
+        method: Method,
+        path: &str,
+        body: &[u8],
+        filter: &BoxedFilter<(impl Reply + 'static,)>,
+    ) -> Result<Response, Rejection> {
+        warp::test::request()
+            .method(method.as_str())
+            .path(path)
+            .body(body)
+            .filter(filter)
+            .await
+            .map(|reply| reply.into_response())
+    }
+
     #[tokio::test]
     async fn upload_filter() {
         install_trace_subscriber();
@@ -830,20 +963,124 @@ mod tests {
         )
         .unwrap();
 
-        let response = warp::test::request()
-            .method("POST")
-            .path("/upload")
-            .body(report.get_encoded())
-            .filter(&filter)
+        let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
-            .unwrap()
-            .into_response();
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(to_bytes(response.into_body()).await.unwrap().is_empty())
+        assert!(hyper::body::to_bytes(response.into_body())
+            .await
+            .unwrap()
+            .is_empty());
 
-        // TODO: add tests for error conditions verifying we get expected problem
-        // document
+        // should reject duplicate reports with the staleReport type.
+        // TODO (issue #34): change this error type.
+        let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
+            .await
+            .unwrap();
+        let (part, body) = response.into_parts();
+        assert!(!part.status.is_success());
+        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": 400,
+                "type": "urn:ietf:params:ppm:error:staleReport",
+                "title": "Report could not be processed because it arrived too late.",
+                "detail": "Report could not be processed because it arrived too late.",
+                "instance": "..",
+                "taskid": base64::encode(report.task_id.as_bytes()),
+            })
+        );
+        assert_eq!(
+            problem_details
+                .as_object()
+                .unwrap()
+                .get("status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            part.status.as_u16() as u64
+        );
+
+        // should reject a report with only one share with the unrecognizedMessage type.
+        let mut bad_report = report.clone();
+        bad_report.encrypted_input_shares.truncate(1);
+        let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
+            .await
+            .unwrap();
+        let (part, body) = response.into_parts();
+        assert!(!part.status.is_success());
+        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": 400,
+                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "The message type for a response was incorrect or the payload was malformed.",
+                "instance": "..",
+                "taskid": base64::encode(report.task_id.as_bytes()),
+            })
+        );
+        assert_eq!(
+            problem_details
+                .as_object()
+                .unwrap()
+                .get("status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            part.status.as_u16() as u64
+        );
+
+        // should reject a report using the wrong HPKE config for the leader, and reply with
+        // the error type outdatedConfig.
+        let mut bad_report = report.clone();
+        bad_report.encrypted_input_shares[0].config_id = HpkeConfigId(101);
+        let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
+            .await
+            .unwrap();
+        let (part, body) = response.into_parts();
+        assert!(!part.status.is_success());
+        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": 400,
+                "type": "urn:ietf:params:ppm:error:outdatedConfig",
+                "title": "The message was generated using an outdated configuration.",
+                "detail": "The message was generated using an outdated configuration.",
+                "instance": "..",
+                "taskid": base64::encode(report.task_id.as_bytes()),
+            })
+        );
+        assert_eq!(
+            problem_details
+                .as_object()
+                .unwrap()
+                .get("status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            part.status.as_u16() as u64
+        );
+
+        // reports from the future should be rejected.
+        let mut bad_report = report.clone();
+        bad_report.nonce.time = Time::from_naive_date_time(
+            MockClock::default().now() + Duration::minutes(10) + Duration::seconds(1),
+        );
+        let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
+            .await
+            .unwrap();
+        assert!(!response.status().is_success());
+        // TODO: update this test once an error type has been defined, and validate the problem
+        // details.
+        assert_eq!(response.status().as_u16(), 400);
     }
 
     // Helper should not expose /upload endpoint
@@ -937,8 +1174,10 @@ mod tests {
             .unwrap();
         assert_eq!(report, got_report);
 
-        // should reject duplicate reports
-        assert_matches!(aggregator.handle_upload(&report).await, Err(Error::StaleReport(stale_nonce)) => {
+        // should reject duplicate reports.
+        // TODO (issue #34): change this error type.
+        assert_matches!(aggregator.handle_upload(&report).await, Err(Error::StaleReport(stale_nonce, task_id)) => {
+            assert_eq!(task_id, report.task_id);
             assert_eq!(report.nonce, stale_nonce);
         });
     }
@@ -954,7 +1193,7 @@ mod tests {
 
         assert_matches!(
             aggregator.handle_upload(&report).await,
-            Err(Error::UnrecognizedMessage(_))
+            Err(Error::UnrecognizedMessage(_, _))
         );
     }
 
@@ -967,7 +1206,8 @@ mod tests {
 
         report.encrypted_input_shares[0].config_id = HpkeConfigId(101);
 
-        assert_matches!(aggregator.handle_upload(&report).await, Err(Error::OutdatedHpkeConfig(config_id)) => {
+        assert_matches!(aggregator.handle_upload(&report).await, Err(Error::OutdatedHpkeConfig(config_id, task_id)) => {
+            assert_eq!(task_id, report.task_id);
             assert_eq!(config_id, HpkeConfigId(101));
         });
     }
@@ -1017,7 +1257,8 @@ mod tests {
         report.nonce.time =
             Time::from_naive_date_time(aggregator.clock.now() + skew + Duration::seconds(1));
         let report = reencrypt_report(report, &aggregator.report_recipient);
-        assert_matches!(aggregator.handle_upload(&report).await, Err(Error::ReportFromTheFuture(nonce)) => {
+        assert_matches!(aggregator.handle_upload(&report).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
+            assert_eq!(task_id, report.task_id);
             assert_eq!(report.nonce, nonce);
         });
     }
@@ -1107,21 +1348,31 @@ mod tests {
         )
         .unwrap();
 
-        let result = warp::test::request()
+        let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
             .body(AuthenticatedEncoder::new(request).encode(&generate_hmac_key()))
             .filter(&filter)
-            .await;
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
 
-        if let Err(rejection) = result {
-            assert_matches!(
-                rejection.find::<Error>(),
-                Some(Error::MessageDecode(CodecError::Other(_)))
-            );
-        } else {
-            panic!("Should get rejection");
-        }
+        let want_status = 400;
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": want_status,
+                "type": "urn:ietf:params:ppm:error:invalidHmac",
+                "title": "The aggregate message's HMAC was not valid.",
+                "detail": "The aggregate message's HMAC was not valid.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+        assert_eq!(want_status, parts.status.as_u16());
     }
 
     #[tokio::test]
@@ -1225,7 +1476,7 @@ mod tests {
             .await
             .unwrap()
             .into_response();
-        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp: AggregateResp =
             AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
                 .unwrap()
@@ -1319,21 +1570,31 @@ mod tests {
         )
         .unwrap();
 
-        let result = warp::test::request()
+        let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
             .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
             .filter(&filter)
-            .await;
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
 
-        if let Err(rejection) = result {
-            assert_matches!(
-                rejection.find::<Error>(),
-                Some(Error::UnrecognizedMessage(_))
-            );
-        } else {
-            panic!("Should get rejection");
-        }
+        let want_status = 400;
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": want_status,
+                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "The message type for a response was incorrect or the payload was malformed.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+        assert_eq!(want_status, parts.status.as_u16());
     }
 
     fn generate_nonce<C: Clock>(clock: &C) -> Nonce {

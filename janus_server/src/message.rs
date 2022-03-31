@@ -13,12 +13,15 @@ use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode
 use rand::{thread_rng, Rng};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
+    error::Unspecified,
     hmac::{self, HMAC_SHA256},
 };
+use serde::{Deserialize, Serialize};
 use std::{
-    fmt::Display,
+    fmt::{Debug, Display, Formatter},
     io::{self, Cursor, ErrorKind, Read},
     marker::PhantomData,
+    str::FromStr,
 };
 
 /// AuthenticatedEncoder can encode messages into the format used by authenticated PPM messages. The
@@ -88,9 +91,20 @@ impl<M: Decode> AuthenticatedRequestDecoder<M> {
     }
 
     /// decode authenticates & decodes the message using the given key.
-    pub fn decode(&self, key: &hmac::Key) -> Result<M, CodecError> {
+    pub fn decode(&self, key: &hmac::Key) -> Result<M, AuthenticatedDecodeError> {
         authenticated_decode(key, &self.buf)
     }
+}
+
+/// Errors that may occur when decoding an authenticated PPM structure. This may indicate that
+/// either the authentication tag was invalid or that there was a parsing error reading the
+/// envelope or the message contained within.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthenticatedDecodeError {
+    #[error(transparent)]
+    Codec(#[from] CodecError),
+    #[error("invalid HMAC tag")]
+    InvalidHmac,
 }
 
 /// AuthenticatedResponseDecoder can decode messages in the "authenticated response" format used by
@@ -122,20 +136,23 @@ impl<M: Decode> AuthenticatedResponseDecoder<M> {
     }
 
     /// decode authenticates & decodes the message using the given key.
-    pub fn decode(&self, key: &hmac::Key) -> Result<M, CodecError> {
+    pub fn decode(&self, key: &hmac::Key) -> Result<M, AuthenticatedDecodeError> {
         authenticated_decode(key, &self.buf)
     }
 }
 
-fn authenticated_decode<M: Decode>(key: &hmac::Key, buf: &[u8]) -> Result<M, CodecError> {
+fn authenticated_decode<M: Decode>(
+    key: &hmac::Key,
+    buf: &[u8],
+) -> Result<M, AuthenticatedDecodeError> {
     let (msg_bytes, tag) = buf.split_at(buf.len() - SHA256_OUTPUT_LEN);
     hmac::verify(key, msg_bytes, tag)
-        .map_err(|_| CodecError::Other(anyhow!("auth tag verification failure").into()))?;
-    M::get_decoded(msg_bytes)
+        .map_err(|_: Unspecified| AuthenticatedDecodeError::InvalidHmac)?;
+    M::get_decoded(msg_bytes).map_err(AuthenticatedDecodeError::from)
 }
 
 /// PPM protocol message representing a duration with a resolution of seconds.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Duration(pub(crate) u64);
 
 impl Encode for Duration {
@@ -240,7 +257,7 @@ impl Decode for Nonce {
 }
 
 /// PPM protocol message representing the different roles that participants can adopt.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Role {
     Collector = 0,
@@ -266,6 +283,33 @@ impl Role {
             _ => None,
         }
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Collector => "collector",
+            Self::Client => "client",
+            Self::Leader => "leader",
+            Self::Helper => "helper",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown role {0}")]
+pub struct RoleParseError(String);
+
+impl FromStr for Role {
+    type Err = RoleParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "collector" => Ok(Self::Collector),
+            "client" => Ok(Self::Client),
+            "leader" => Ok(Self::Leader),
+            "helper" => Ok(Self::Helper),
+            _ => Err(RoleParseError(s.to_owned())),
+        }
+    }
 }
 
 impl Encode for Role {
@@ -283,7 +327,7 @@ impl Decode for Role {
 }
 
 /// PPM protocol message representing an identifier for an HPKE config.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkeConfigId(pub(crate) u8);
 
 impl Display for HpkeConfigId {
@@ -338,8 +382,14 @@ impl Decode for HpkeCiphertext {
 }
 
 /// PPM protocol message representing an identifier for a PPM task.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
+
+impl Debug for TaskId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
+}
 
 impl Encode for TaskId {
     fn encode(&self, bytes: &mut Vec<u8>) {
@@ -373,7 +423,7 @@ impl TaskId {
 }
 
 /// PPM protocol message representing an HPKE key encapsulation mechanism.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum HpkeKemId {
     /// NIST P-256 keys and HKDF-SHA256.
@@ -397,7 +447,7 @@ impl Decode for HpkeKemId {
 }
 
 /// PPM protocol message representing an HPKE key derivation function.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum HpkeKdfId {
     /// HMAC Key Derivation Function SHA256.
@@ -423,7 +473,7 @@ impl Decode for HpkeKdfId {
 }
 
 /// PPM protocol message representing an HPKE AEAD.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum HpkeAeadId {
     /// AES-128-GCM.
@@ -449,7 +499,7 @@ impl Decode for HpkeAeadId {
 }
 
 /// PPM protocol message representing an HPKE public key.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkePublicKey(pub(crate) Vec<u8>);
 
 impl Encode for HpkePublicKey {
@@ -465,8 +515,14 @@ impl Decode for HpkePublicKey {
     }
 }
 
+impl Debug for HpkePublicKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
+
 /// PPM protocol message representing an HPKE config.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkeConfig {
     pub(crate) id: HpkeConfigId,
     pub(crate) kem_id: HpkeKemId,
@@ -1069,11 +1125,11 @@ mod tests {
         // Verify that modifying the bytes causes decoding to fail.
         let ln = encoded_bytes.len();
         encoded_bytes[ln - 1] ^= 0xFF;
-        let rslt: Result<AggregateReq, CodecError> =
+        let rslt: Result<AggregateReq, AuthenticatedDecodeError> =
             AuthenticatedRequestDecoder::new(encoded_bytes.clone())
                 .unwrap()
                 .decode(&*HMAC_KEY);
-        assert_matches!(rslt, Err(_));
+        assert_matches!(rslt, Err(AuthenticatedDecodeError::InvalidHmac));
     }
 
     #[test]
@@ -1129,11 +1185,11 @@ mod tests {
         // Verify that modifying the bytes causes decoding to fail.
         let ln = encoded_bytes.len();
         encoded_bytes[ln - 1] ^= 0xFF;
-        let rslt: Result<AggregateReq, CodecError> =
+        let rslt: Result<AggregateReq, AuthenticatedDecodeError> =
             AuthenticatedResponseDecoder::new(encoded_bytes.clone())
                 .unwrap()
                 .decode(&*HMAC_KEY);
-        assert_matches!(rslt, Err(_));
+        assert_matches!(rslt, Err(AuthenticatedDecodeError::InvalidHmac));
     }
 
     #[test]
