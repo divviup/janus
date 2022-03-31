@@ -48,6 +48,16 @@ fn base_layer<S>() -> tracing_subscriber::fmt::Layer<S> {
         .with_line_number(true)
 }
 
+/// Filter factory to create per-layer filters for stdout layers. The returned
+/// filter will prevent verbose runtime-related events from being printed to
+/// stdout.
+fn runtime_tracing_filter<S>() -> tracing_subscriber::filter::combinator::Not<Targets, S> {
+    Targets::new()
+        .with_target("tokio", tracing::Level::TRACE)
+        .with_target("runtime", tracing::Level::TRACE)
+        .not()
+}
+
 /// Configures and installs a tracing subscriber, to capture events logged with
 /// [`tracing::info`] and the like. Captured events are written to stdout, with
 /// formatting affected by the provided [`TraceConfiguration`].
@@ -56,39 +66,14 @@ pub fn install_subscriber(config: &TraceConfiguration) -> Result<(), Error> {
     // structures
     let output_json = atty::isnt(Stream::Stdout) || config.force_json_output;
 
-    // Filters to prevent verbose runtime-related events from being printed to stdout.
-    // Unfortunately, we need to construct three separate per-layer filters for the different
-    // stdout layers, because their Not types vary depending on their location in the subscriber
-    // stack.
-    let inverted_tokio_console_filter_1 = Targets::new()
-        .with_target("tokio", tracing::Level::TRACE)
-        .with_target("runtime", tracing::Level::TRACE)
-        .not();
-    let inverted_tokio_console_filter_2 = Targets::new()
-        .with_target("tokio", tracing::Level::TRACE)
-        .with_target("runtime", tracing::Level::TRACE)
-        .not();
-    let inverted_tokio_console_filter_3 = Targets::new()
-        .with_target("tokio", tracing::Level::TRACE)
-        .with_target("runtime", tracing::Level::TRACE)
-        .not();
-
     let (pretty_layer, json_layer, test_layer) = match (output_json, config.use_test_writer) {
         (true, false) => (
             None,
-            Some(
-                base_layer()
-                    .json()
-                    .with_filter(inverted_tokio_console_filter_1),
-            ),
+            Some(base_layer().json().with_filter(runtime_tracing_filter())),
             None,
         ),
         (false, false) => (
-            Some(
-                base_layer()
-                    .pretty()
-                    .with_filter(inverted_tokio_console_filter_2),
-            ),
+            Some(base_layer().pretty().with_filter(runtime_tracing_filter())),
             None,
             None,
         ),
@@ -99,7 +84,7 @@ pub fn install_subscriber(config: &TraceConfiguration) -> Result<(), Error> {
                 base_layer()
                     .pretty()
                     .with_test_writer()
-                    .with_filter(inverted_tokio_console_filter_3),
+                    .with_filter(runtime_tracing_filter()),
             ),
         ),
     };
