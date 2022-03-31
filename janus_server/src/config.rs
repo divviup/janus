@@ -1,5 +1,6 @@
-//! Configuration for various Janus actors
+//! Configuration for various Janus actors.
 
+use crate::trace::TraceConfiguration;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use url::Url;
@@ -25,6 +26,8 @@ pub struct DbConfig {
 /// listen_address: "0.0.0.0:8080"
 /// database:
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
+/// logging_config: # logging_config is optional
+///   force_json_output: true
 /// "#;
 ///
 /// let _decoded: AggregatorConfig = serde_yaml::from_str(yaml_config).unwrap();
@@ -38,6 +41,9 @@ pub struct AggregatorConfig {
     pub listen_address: SocketAddr,
     /// The aggregator's database configuration.
     pub database: DbConfig,
+    /// Logging configuration
+    #[serde(default)]
+    pub logging_config: TraceConfiguration,
 }
 
 #[cfg(test)]
@@ -64,6 +70,7 @@ mod tests {
         let aggregator_config = AggregatorConfig {
             listen_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
             database: generate_db_config(),
+            logging_config: TraceConfiguration::default(),
         };
 
         let encoded = serde_yaml::to_string(&aggregator_config).unwrap();
