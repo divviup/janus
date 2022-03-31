@@ -2,6 +2,7 @@
 
 use atty::{self, Stream};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use tracing_log::LogTracer;
 use tracing_subscriber::{
     filter::{FilterExt, Targets},
@@ -31,11 +32,26 @@ pub struct TraceConfiguration {
     /// [`tracing_subscriber::fmt::format::Pretty`].
     #[serde(default)]
     pub force_json_output: bool,
+    /// Configuration for tokio-console monitoring and debugging support.
+    /// (optional)
+    #[serde(default)]
+    pub tokio_console_config: TokioConsoleConfiguration,
+}
+
+/// Configuration related to tokio-console.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokioConsoleConfiguration {
     /// If true, a tokio-console tracing subscriber is configured to monitor
     /// the async runtime, and listen for TCP connections. (Requires building
     /// with RUSTFLAGS="--cfg tokio_unstable")
     #[serde(default)]
-    pub tokio_console: bool,
+    pub enabled: bool,
+    /// Specifies an alternate address and port for the subscriber's gRPC
+    /// server to listen on. If this is not present, it will use the value of
+    /// the environment variable TOKIO_CONSOLE_BIND, or, failing that, a
+    /// default of 127.0.0.1:6669.
+    #[serde(default)]
+    pub listen_address: Option<SocketAddr>,
 }
 
 /// Create a base tracing layer with configuration used in all subscribers
@@ -93,11 +109,18 @@ pub fn install_subscriber(config: &TraceConfiguration) -> Result<(), Error> {
     // https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
     let mut global_filter = EnvFilter::from_default_env();
 
-    let console_layer = match &config.tokio_console {
+    let console_layer = match &config.tokio_console_config.enabled {
         true => {
             global_filter = global_filter.add_directive("tokio=trace".parse().unwrap());
             global_filter = global_filter.add_directive("runtime=trace".parse().unwrap());
-            Some(console_subscriber::spawn())
+
+            let mut builder = console_subscriber::ConsoleLayer::builder();
+            builder = builder.with_default_env();
+            if let Some(listen_address) = &config.tokio_console_config.listen_address {
+                builder = builder.server_addr(*listen_address);
+            }
+            let layer = builder.spawn();
+            Some(layer)
         }
         false => None,
     };
