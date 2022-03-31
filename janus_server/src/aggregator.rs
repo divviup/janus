@@ -86,7 +86,10 @@ impl warp::reject::Reject for Error {}
 // TODO: refactor Aggregator to be non-task-specific (look up task-specific data based on task ID)
 #[derive(Clone, derivative::Derivative)]
 #[derivative(Debug)]
-pub struct Aggregator<A: vdaf::Aggregator, C: Clock> {
+pub struct Aggregator<A: vdaf::Aggregator, C: Clock>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+{
     /// The VDAF in use.
     vdaf: A,
     /// The datastore used for durable storage.
@@ -112,9 +115,11 @@ pub struct Aggregator<A: vdaf::Aggregator, C: Clock> {
 impl<A: vdaf::Aggregator, C: Clock> Aggregator<A, C>
 where
     A: 'static,
-    A::AggregationParam: Send + Sync + PartialEq + Eq,
-    A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam> + PartialEq + Eq,
-    A::OutputShare: Send + Sync + Encode + Decode + PartialEq + Eq,
+    A::AggregationParam: Send + Sync,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
+    A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
+    for<'a> &'a A::OutputShare: Into<Vec<u8>>,
 {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports
     /// received by this aggregator.
@@ -264,9 +269,7 @@ where
         // TODO(brandon): reject reports in batches that have completed an aggregate-share request with `batch-collected`.
         struct ReportShareData<A: vdaf::Aggregator>
         where
-            A::AggregationParam: PartialEq + Eq,
-            A::PrepareStep: Encode + PartialEq + Eq,
-            A::OutputShare: Encode + PartialEq + Eq,
+            for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         {
             report_share: ReportShare,
             trans_data: TransitionTypeSpecificData,
@@ -289,8 +292,8 @@ where
                 .map_err(|err| {
                     warn!(
                         ?task_id,
-                        nonce = ?report_share.nonce,
-                        ?err,
+                        nonce = %report_share.nonce,
+                        %err,
                         "Couldn't decrypt report share"
                     );
                     TransitionError::HpkeDecryptError
@@ -303,7 +306,7 @@ where
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(&self.verify_param, &plaintext).map_err(
                     |err| {
-                        warn!(?task_id, nonce = ?report_share.nonce, ?err, "Couldn't decode input share from report share");
+                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode input share from report share");
                         TransitionError::VdafPrepError
                     },
                 )
@@ -321,7 +324,7 @@ where
                         &input_share,
                     )
                     .map_err(|err| {
-                        warn!(?task_id, nonce = ?report_share.nonce, ?err, "Couldn't prepare_init report share");
+                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_init report share");
                         TransitionError::VdafPrepError
                     })
             });
@@ -349,7 +352,7 @@ where
                 }
 
                 Ok(PrepareTransition::Fail(err)) => {
-                    warn!(?task_id, nonce = ?report_share.nonce, ?err, "Couldn't prepare_step report share");
+                    warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_step report share");
                     ReportShareData {
                         report_share,
                         trans_data: TransitionTypeSpecificData::Failed {
@@ -380,7 +383,7 @@ where
         };
         let aggregation_job = Arc::new(AggregationJob::<A> {
             aggregation_job_id: job_id,
-            task_id: task_id,
+            task_id,
             aggregation_param: agg_param,
             state: aggregation_job_state,
         });
@@ -399,8 +402,8 @@ where
                             .put_report_share(task_id, &share_data.report_share)
                             .await?;
                         tx.put_report_aggregation(&ReportAggregation::<A> {
-                            aggregation_job_id: aggregation_job_id,
-                            client_report_id: client_report_id,
+                            aggregation_job_id,
+                            client_report_id,
                             ord: ord as i64,
                             state: share_data.agg_state.clone(),
                         })
@@ -470,9 +473,7 @@ where
                 AuthenticatedRequestDecoder::new(Vec::from(body.as_ref()))
                     .map_err(|err| warp::reject::custom(Error::from(err)))?;
             let task_id = decoder.task_id();
-            let key = key_fn(&task_id)
-                .await
-                .map_err(|err| warp::reject::custom(err))?;
+            let key = key_fn(&task_id).await.map_err(warp::reject::custom)?;
             let decoded_body: T = decoder
                 .decode(&key)
                 .map_err(|err| warp::reject::custom(Error::from(err)))?;
@@ -494,10 +495,12 @@ fn aggregator_filter<A, C>(
 ) -> Result<BoxedFilter<(impl Reply,)>, Error>
 where
     A: 'static + vdaf::Aggregator + Send + Sync,
-    A::AggregationParam: Send + Sync + PartialEq + Eq,
+    A::AggregationParam: Send + Sync,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::VerifyParam: Send + Sync,
-    A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam> + PartialEq + Eq,
-    A::OutputShare: Send + Sync + Encode + Decode + PartialEq + Eq,
+    A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
+    A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
+    for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     C: 'static + Clock,
 {
     if !role.is_aggregator() {
@@ -528,8 +531,6 @@ where
         })
         .with(trace::named("hpke_config"));
 
-    // TODO(brandon): add a `recover` handler to all filters, and map errors to non-500 result
-    // codes. [https://docs.rs/warp/0.3.2/warp/reject/index.html]
     let upload_endpoint = warp::path("upload")
         .and(warp::post())
         .and(with_cloned_value(aggregator.clone()))
@@ -598,10 +599,12 @@ pub fn aggregator_server<A, C>(
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error>
 where
     A: 'static + vdaf::Aggregator + Send + Sync,
-    A::AggregationParam: Send + Sync + PartialEq + Eq,
+    A::AggregationParam: Send + Sync,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::VerifyParam: Send + Sync,
-    A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam> + PartialEq + Eq,
-    A::OutputShare: Send + Sync + Encode + Decode + PartialEq + Eq,
+    A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
+    A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
+    for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     C: 'static + Clock,
 {
     Ok(warp::serve(aggregator_filter(
@@ -1084,7 +1087,7 @@ mod tests {
             HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
 
         let request = AggregateReq {
-            task_id: task_id,
+            task_id,
             job_id: AggregationJobId::random(),
             body: AggregateInitReq {
                 agg_param: Vec::new(),
@@ -1187,7 +1190,7 @@ mod tests {
         );
 
         let request = AggregateReq {
-            task_id: task_id,
+            task_id,
             job_id: AggregationJobId::random(),
             body: AggregateInitReq {
                 agg_param: Vec::new(),
@@ -1296,7 +1299,7 @@ mod tests {
         };
 
         let request = AggregateReq {
-            task_id: task_id,
+            task_id,
             job_id: AggregationJobId::random(),
             body: AggregateInitReq {
                 agg_param: Vec::new(),
@@ -1344,7 +1347,10 @@ mod tests {
         vdaf: &V,
         public_param: &V::PublicParam,
         measurement: &V::Measurement,
-    ) -> V::InputShare {
+    ) -> V::InputShare
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
         assert_eq!(vdaf.num_aggregators(), 2);
         vdaf.shard(public_param, measurement).unwrap().remove(1)
     }
@@ -1354,7 +1360,10 @@ mod tests {
         nonce: Nonce,
         cfg: &HpkeConfig,
         input_share: &V::InputShare,
-    ) -> ReportShare {
+    ) -> ReportShare
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
         let associated_data = Report::associated_data(nonce, &[]);
         generate_helper_report_share_for_plaintext(
             task_id,

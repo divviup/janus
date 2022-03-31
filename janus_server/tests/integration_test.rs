@@ -30,7 +30,7 @@ fn endpoint_from_socket_addr(addr: &SocketAddr) -> Url {
 }
 
 struct TestCase {
-    client: Client<Prio3Aes128Count, (), RealClock>,
+    client: Client<Prio3Aes128Count, RealClock>,
     _leader_db_handle: DbHandle,
     _helper_db_handle: DbHandle,
     leader_task_handle: JoinHandle<()>,
@@ -43,8 +43,7 @@ async fn setup_test() -> TestCase {
     let task_id = TaskId::random();
 
     let vdaf = Prio3Aes128Count::new(2).unwrap();
-    let mut verify_params = vdaf.setup().unwrap().1;
-    let mut verify_params_iter = verify_params.drain(..);
+    let mut verify_params_iter = vdaf.setup().unwrap().1.into_iter();
     let leader_verify_param = verify_params_iter.next().unwrap();
     let helper_verify_param = verify_params_iter.next().unwrap();
 

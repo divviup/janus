@@ -258,7 +258,10 @@ impl Transaction<'_> {
     pub async fn get_aggregation_job_by_aggregation_job_id<A: vdaf::Aggregator>(
         &self,
         aggregation_job_id: AggregationJobId,
-    ) -> Result<AggregationJob<A>, Error> {
+    ) -> Result<AggregationJob<A>, Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         let stmt = self
             .tx
             .prepare_cached(
@@ -284,7 +287,10 @@ impl Transaction<'_> {
     pub async fn put_aggregation_job<A: vdaf::Aggregator>(
         &self,
         aggregation_job: &AggregationJob<A>,
-    ) -> Result<i64, Error> {
+    ) -> Result<i64, Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         let stmt = self.tx.prepare_cached(
             "INSERT INTO aggregation_jobs (aggregation_job_id, task_id, aggregation_param, state)
             VALUES ($1, $2, $3, $4) RETURNING (id)"
@@ -310,8 +316,10 @@ impl Transaction<'_> {
         id: i64,
     ) -> Result<ReportAggregation<A>, Error>
     where
-        A::PrepareStep: Encode + ParameterizedDecode<A::VerifyParam> + PartialEq + Eq,
-        A::OutputShare: Encode + Decode + PartialEq + Eq,
+        A::PrepareStep: ParameterizedDecode<A::VerifyParam>,
+        A::OutputShare: for<'a> TryFrom<&'a [u8]>,
+        for<'a> <A::OutputShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
             .tx
@@ -355,11 +363,16 @@ impl Transaction<'_> {
                 )?)
             }
             ReportAggregationStateCode::Finished => ReportAggregationState::Finished(
-                A::OutputShare::get_decoded(&vdaf_message_bytes.ok_or_else(|| {
+                A::OutputShare::try_from(&vdaf_message_bytes.ok_or_else(|| {
                     Error::DbState(
                         "report aggregation in state FINISHED but vdaf_message is NULL".to_string(),
                     )
-                })?)?,
+                })?)
+                .map_err(|err| {
+                    Error::DecodeError(CodecError::Other(
+                        format!("couldn't decode output share: {}", err).into(),
+                    ))
+                })?,
             ),
             ReportAggregationStateCode::Failed => {
                 ReportAggregationState::Failed(error_code.ok_or_else(|| {
@@ -385,16 +398,15 @@ impl Transaction<'_> {
         report_aggregation: &ReportAggregation<A>,
     ) -> Result<i64, Error>
     where
-        A::PrepareStep: Encode + ParameterizedDecode<A::VerifyParam> + PartialEq + Eq,
-        A::OutputShare: Encode + Decode + PartialEq + Eq,
+        A::PrepareStep: Encode,
+        for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let state_code = report_aggregation.state.state_code();
         let (vdaf_message, error_code) = match &report_aggregation.state {
             ReportAggregationState::Start() => (None, None),
             ReportAggregationState::Waiting(prep_step) => (Some(prep_step.get_encoded()), None),
-            ReportAggregationState::Finished(output_share) => {
-                (Some(output_share.get_encoded()), None)
-            }
+            ReportAggregationState::Finished(output_share) => (Some(output_share.into()), None),
             ReportAggregationState::Failed(trans_err) => (None, Some(*trans_err)),
             ReportAggregationState::Invalid() => (None, None),
         };
@@ -484,7 +496,10 @@ pub mod models {
 
     /// AggregationJob represents an aggregation job from the PPM specification.
     #[derive(Clone, Debug)]
-    pub struct AggregationJob<A: vdaf::Aggregator> {
+    pub struct AggregationJob<A: vdaf::Aggregator>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         pub(crate) aggregation_job_id: AggregationJobId,
         pub(crate) task_id: TaskId,
         pub(crate) aggregation_param: A::AggregationParam,
@@ -494,6 +509,7 @@ pub mod models {
     impl<A: vdaf::Aggregator> PartialEq for AggregationJob<A>
     where
         A::AggregationParam: PartialEq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             self.aggregation_job_id == other.aggregation_job_id
@@ -503,7 +519,12 @@ pub mod models {
         }
     }
 
-    impl<A: vdaf::Aggregator> Eq for AggregationJob<A> where A::AggregationParam: Eq {}
+    impl<A: vdaf::Aggregator> Eq for AggregationJob<A>
+    where
+        A::AggregationParam: Eq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+    }
 
     /// AggregationJobState represents the state of an aggregation job. It corresponds to the
     /// AGGREGATION_JOB_STATE enum in the schema.
@@ -518,7 +539,10 @@ pub mod models {
 
     /// ReportAggregation represents a the state of a single client report's ongoing aggregation.
     #[derive(Debug)]
-    pub struct ReportAggregation<A: vdaf::Aggregator> {
+    pub struct ReportAggregation<A: vdaf::Aggregator>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         pub(crate) aggregation_job_id: i64,
         pub(crate) client_report_id: i64,
         pub(crate) ord: i64,
@@ -529,6 +553,7 @@ pub mod models {
     where
         A::PrepareStep: PartialEq,
         A::OutputShare: PartialEq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             self.aggregation_job_id == other.aggregation_job_id
@@ -542,13 +567,17 @@ pub mod models {
     where
         A::PrepareStep: Eq,
         A::OutputShare: Eq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
     }
 
     /// ReportAggregationState represents the state of a single report aggregation. It corresponds
     /// to the REPORT_AGGREGATION_STATE enum in the schema, along with the state-specific data.
     #[derive(Clone, Debug)]
-    pub enum ReportAggregationState<A: vdaf::Aggregator> {
+    pub enum ReportAggregationState<A: vdaf::Aggregator>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         Start(),
         Waiting(A::PrepareStep),
         Finished(A::OutputShare),
@@ -556,7 +585,10 @@ pub mod models {
         Invalid(),
     }
 
-    impl<A: vdaf::Aggregator> ReportAggregationState<A> {
+    impl<A: vdaf::Aggregator> ReportAggregationState<A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         pub(super) fn state_code(&self) -> ReportAggregationStateCode {
             match self {
                 ReportAggregationState::Start() => ReportAggregationStateCode::Start,
@@ -591,6 +623,7 @@ pub mod models {
     where
         A::PrepareStep: PartialEq,
         A::OutputShare: PartialEq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             match (self, other) {
@@ -612,6 +645,7 @@ pub mod models {
     where
         A::PrepareStep: Eq,
         A::OutputShare: Eq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
     }
 }
@@ -1042,7 +1076,10 @@ mod tests {
         vdaf: A,
         agg_param: A::AggregationParam,
         measurement: A::Measurement,
-    ) -> (A::VerifyParam, A::PrepareStep, A::OutputShare) {
+    ) -> (A::VerifyParam, A::PrepareStep, A::OutputShare)
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         let (public_param, mut verify_params) = vdaf.setup().unwrap();
 
         let input_shares = vdaf.shard(&public_param, &measurement).unwrap();
