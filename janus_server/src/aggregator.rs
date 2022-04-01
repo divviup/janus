@@ -738,9 +738,186 @@ where
 }
 
 #[cfg(test)]
+pub(crate) mod test_util {
+    pub mod fake {
+        use prio::vdaf::{self, Aggregatable, PrepareTransition, VdafError};
+        use std::convert::Infallible;
+        use std::fmt::Debug;
+        use std::sync::Arc;
+
+        #[derive(Clone)]
+        pub struct Vdaf {
+            prep_init_fn: Arc<dyn Fn() -> Result<(), VdafError> + 'static + Send + Sync>,
+            prep_step_fn:
+                Arc<dyn Fn() -> PrepareTransition<(), (), OutputShare> + 'static + Send + Sync>,
+        }
+
+        impl Debug for Vdaf {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_struct("Vdaf")
+                    .field("prep_init_result", &"[omitted]")
+                    .field("prep_step_result", &"[omitted]")
+                    .finish()
+            }
+        }
+
+        impl Vdaf {
+            pub fn new() -> Self {
+                Vdaf {
+                    prep_init_fn: Arc::new(|| -> Result<(), VdafError> { Ok(()) }),
+                    prep_step_fn: Arc::new(|| -> PrepareTransition<(), (), OutputShare> {
+                        PrepareTransition::Finish(OutputShare())
+                    }),
+                }
+            }
+
+            pub fn with_prep_init_fn<F: Fn() -> Result<(), VdafError>>(mut self, f: F) -> Self
+            where
+                F: 'static + Send + Sync,
+            {
+                self.prep_init_fn = Arc::new(f);
+                self
+            }
+
+            pub fn with_prep_step_fn<F: Fn() -> PrepareTransition<(), (), OutputShare>>(
+                mut self,
+                f: F,
+            ) -> Self
+            where
+                F: 'static + Send + Sync,
+            {
+                self.prep_step_fn = Arc::new(f);
+                self
+            }
+        }
+
+        impl vdaf::Vdaf for Vdaf {
+            type Measurement = ();
+            type AggregateResult = ();
+            type AggregationParam = ();
+            type PublicParam = ();
+            type VerifyParam = ();
+            type InputShare = ();
+            type OutputShare = OutputShare;
+            type AggregateShare = AggregateShare;
+
+            fn setup(&self) -> Result<(Self::PublicParam, Vec<Self::VerifyParam>), VdafError> {
+                Ok(((), vec![(), ()]))
+            }
+
+            fn num_aggregators(&self) -> usize {
+                2
+            }
+        }
+
+        impl vdaf::Aggregator for Vdaf {
+            type PrepareStep = ();
+            type PrepareMessage = ();
+
+            fn prepare_init(
+                &self,
+                _: &Self::VerifyParam,
+                _: &Self::AggregationParam,
+                _: &[u8],
+                _: &Self::InputShare,
+            ) -> Result<Self::PrepareStep, VdafError> {
+                (self.prep_init_fn)()
+            }
+
+            fn prepare_preprocess<M: IntoIterator<Item = Self::PrepareMessage>>(
+                &self,
+                _: M,
+            ) -> Result<Self::PrepareMessage, VdafError> {
+                Ok(())
+            }
+
+            fn prepare_step(
+                &self,
+                _: Self::PrepareStep,
+                _: Option<Self::PrepareMessage>,
+            ) -> PrepareTransition<Self::PrepareStep, Self::PrepareMessage, Self::OutputShare>
+            {
+                (self.prep_step_fn)()
+            }
+
+            fn aggregate<M: IntoIterator<Item = Self::OutputShare>>(
+                &self,
+                _: &Self::AggregationParam,
+                _: M,
+            ) -> Result<Self::AggregateShare, VdafError> {
+                Ok(AggregateShare())
+            }
+        }
+
+        impl vdaf::Client for Vdaf {
+            fn shard(
+                &self,
+                _: &Self::PublicParam,
+                _: &Self::Measurement,
+            ) -> Result<Vec<Self::InputShare>, VdafError> {
+                Ok(vec![(), ()])
+            }
+        }
+
+        #[derive(Clone, Debug)]
+        pub struct OutputShare();
+
+        impl TryFrom<&[u8]> for OutputShare {
+            type Error = Infallible;
+
+            fn try_from(_: &[u8]) -> Result<Self, Self::Error> {
+                Ok(Self())
+            }
+        }
+
+        impl From<&OutputShare> for Vec<u8> {
+            fn from(_: &OutputShare) -> Self {
+                Self::new()
+            }
+        }
+
+        #[derive(Clone, Debug)]
+        pub struct AggregateShare();
+
+        impl Aggregatable for AggregateShare {
+            type OutputShare = OutputShare;
+
+            fn merge(&mut self, _: &Self) -> Result<(), VdafError> {
+                Ok(())
+            }
+
+            fn accumulate(&mut self, _: &Self::OutputShare) -> Result<(), VdafError> {
+                Ok(())
+            }
+        }
+
+        impl From<OutputShare> for AggregateShare {
+            fn from(_: OutputShare) -> Self {
+                Self()
+            }
+        }
+
+        impl TryFrom<&[u8]> for AggregateShare {
+            type Error = Infallible;
+
+            fn try_from(_: &[u8]) -> Result<Self, Self::Error> {
+                Ok(Self())
+            }
+        }
+
+        impl From<&AggregateShare> for Vec<u8> {
+            fn from(_: &AggregateShare) -> Self {
+                Self::new()
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
+        aggregator::test_util::fake,
         datastore::test_util::{ephemeral_datastore, DbHandle},
         hpke::{HpkeSender, Label},
         message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
@@ -753,7 +930,7 @@ mod tests {
     use prio::{
         codec::Decode,
         vdaf::prio3::Prio3Aes128Count,
-        vdaf::{prio3::Prio3Aes128Sum, Vdaf},
+        vdaf::{Vdaf, VdafError},
     };
     use rand::{thread_rng, Rng};
     use ring::{hmac::HMAC_SHA256, rand::SystemRandom};
@@ -1427,19 +1604,6 @@ mod tests {
             &associated_data,
         );
 
-        // report_share_3 fails prepare_init/prepare_step, because the input share is for a
-        // different VDAF.
-        // TODO(brandon): find a better/more-blessed way to generate a bogus input share that will
-        // be detected by the VDAF in use.
-        let another_vdaf = Prio3Aes128Sum::new(2, 64).unwrap();
-        let another_input_share = generate_helper_input_share(&another_vdaf, &(), &0);
-        let report_share_3 = generate_helper_report_share::<Prio3Aes128Sum>(
-            task_id,
-            generate_nonce(&clock),
-            &hpke_recipient.config,
-            &another_input_share,
-        );
-
         let request = AggregateReq {
             task_id,
             job_id: AggregationJobId::random(),
@@ -1449,12 +1613,11 @@ mod tests {
                     report_share_0.clone(),
                     report_share_1.clone(),
                     report_share_2.clone(),
-                    report_share_3.clone(),
                 ],
             },
         };
 
-        // Create aggregator filter & send request.
+        // Create aggregator filter, send request, and parse response.
         let filter = aggregator_filter(
             vdaf,
             Arc::new(datastore),
@@ -1467,7 +1630,6 @@ mod tests {
         )
         .unwrap();
 
-        // Retrieve & parse response.
         let mut response = warp::test::request()
             .method("POST")
             .path("/aggregate")
@@ -1476,6 +1638,7 @@ mod tests {
             .await
             .unwrap()
             .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
         let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp: AggregateResp =
             AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
@@ -1484,7 +1647,7 @@ mod tests {
                 .unwrap();
 
         // Validate response.
-        assert_eq!(aggregate_resp.seq.len(), 4);
+        assert_eq!(aggregate_resp.seq.len(), 3);
 
         let transition_0 = aggregate_resp.seq.get(0).unwrap();
         assert_eq!(transition_0.nonce, report_share_0.nonce);
@@ -1510,11 +1673,178 @@ mod tests {
                 error: TransitionError::VdafPrepError
             }
         );
+    }
 
-        let transition_3 = aggregate_resp.seq.get(3).unwrap();
-        assert_eq!(transition_3.nonce, report_share_3.nonce);
+    #[tokio::test]
+    async fn aggregate_init_prep_init_failed() {
+        // Prepare datastore & request.
+        install_trace_subscriber();
+
+        let task_id = TaskId::random();
+        let vdaf = fake::Vdaf::new().with_prep_init_fn(|| -> Result<(), VdafError> {
+            Err(VdafError::Uncategorized(
+                "PrepInitFailer failed at prep_init".to_string(),
+            ))
+        });
+        let verify_param = vdaf.setup().unwrap().1.remove(1);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let skew = Duration::minutes(10);
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let hmac_key = generate_hmac_key();
+
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let input_share = generate_helper_input_share(&vdaf, &(), &());
+        let report_share = generate_helper_report_share::<fake::Vdaf>(
+            task_id,
+            generate_nonce(&clock),
+            &hpke_recipient.config,
+            &input_share,
+        );
+        let request = AggregateReq {
+            task_id,
+            job_id: AggregationJobId::random(),
+            body: AggregateInitReq {
+                agg_param: Vec::new(),
+                seq: vec![report_share.clone()],
+            },
+        };
+
+        // Create aggregator filter, send request, and parse response.
+        let filter = aggregator_filter(
+            vdaf,
+            Arc::new(datastore),
+            clock,
+            skew,
+            Role::Helper,
+            verify_param,
+            hpke_recipient,
+            hmac_key.clone(),
+        )
+        .unwrap();
+
+        let mut response = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let aggregate_resp: AggregateResp =
+            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
+                .unwrap()
+                .decode(&hmac_key)
+                .unwrap();
+
+        // Validate response.
+        assert_eq!(aggregate_resp.seq.len(), 1);
+
+        let transition = aggregate_resp.seq.get(0).unwrap();
+        assert_eq!(transition.nonce, report_share.nonce);
         assert_matches!(
-            transition_3.trans_data,
+            transition.trans_data,
+            TransitionTypeSpecificData::Failed {
+                error: TransitionError::VdafPrepError,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_init_prep_step_failed() {
+        // Prepare datastore & request.
+        install_trace_subscriber();
+
+        let task_id = TaskId::random();
+        let vdaf = fake::Vdaf::new().with_prep_step_fn(
+            || -> PrepareTransition<(), (), fake::OutputShare> {
+                PrepareTransition::Fail(VdafError::Uncategorized(
+                    "VDAF failed at prep_step".to_string(),
+                ))
+            },
+        );
+        let verify_param = vdaf.setup().unwrap().1.remove(1);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let skew = Duration::minutes(10);
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let hmac_key = generate_hmac_key();
+
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let input_share = generate_helper_input_share(&vdaf, &(), &());
+        let report_share = generate_helper_report_share::<fake::Vdaf>(
+            task_id,
+            generate_nonce(&clock),
+            &hpke_recipient.config,
+            &input_share,
+        );
+        let request = AggregateReq {
+            task_id,
+            job_id: AggregationJobId::random(),
+            body: AggregateInitReq {
+                agg_param: Vec::new(),
+                seq: vec![report_share.clone()],
+            },
+        };
+
+        // Create aggregator filter, send request, and parse response.
+        let filter = aggregator_filter(
+            vdaf,
+            Arc::new(datastore),
+            clock,
+            skew,
+            Role::Helper,
+            verify_param,
+            hpke_recipient,
+            hmac_key.clone(),
+        )
+        .unwrap();
+
+        let mut response = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let aggregate_resp: AggregateResp =
+            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
+                .unwrap()
+                .decode(&hmac_key)
+                .unwrap();
+
+        // Validate response.
+        assert_eq!(aggregate_resp.seq.len(), 1);
+
+        let transition = aggregate_resp.seq.get(0).unwrap();
+        assert_eq!(transition.nonce, report_share.nonce);
+        assert_matches!(
+            transition.trans_data,
             TransitionTypeSpecificData::Failed {
                 error: TransitionError::VdafPrepError,
             }
