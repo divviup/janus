@@ -30,8 +30,8 @@ CREATE TABLE client_reports(
     task_id       BYTEA NOT NULL,      -- task ID the report is associated with
     nonce_time    TIMESTAMP NOT NULL,  -- timestamp from nonce
     nonce_rand    BIGINT NOT NULL,     -- random value from nonce
-    extensions    BYTEA NOT NULL,      -- encoded sequence of Extension messages
-    input_shares  BYTEA NOT NULL,      -- encoded sequence of HpkeCiphertext messages
+    extensions    BYTEA,               -- encoded sequence of Extension messages (populated for leader only)
+    input_shares  BYTEA,               -- encoded sequence of HpkeCiphertext messages (populated for leader only)
 
     CONSTRAINT unique_task_id_and_nonce UNIQUE(task_id, nonce_time, nonce_rand),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
@@ -47,10 +47,12 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 -- An aggregation job, representing the aggregation of a number of client reports.
 CREATE TABLE aggregation_jobs(
     id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id            BYTEA NOT NULL,                  -- task
+    aggregation_job_id BYTEA NOT NULL,                  -- aggregation job ID
+    task_id            BYTEA NOT NULL,                  -- ID of related task
     aggregation_param  BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     state              AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
 
+    CONSTRAINT unique_aggregation_job_id UNIQUE(aggregation_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 

@@ -9,7 +9,7 @@ use crate::{
 use http::StatusCode;
 use prio::{
     codec::{Decode, Encode},
-    vdaf::Client as VdafClient,
+    vdaf,
 };
 use std::io::Cursor;
 
@@ -75,17 +75,23 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 
 /// A PPM client.
 #[derive(Debug)]
-pub struct Client<V, P, C> {
+pub struct Client<V: vdaf::Client, C>
+where
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+{
     task_parameters: TaskParameters,
     vdaf_client: V,
-    vdaf_public_parameter: P,
+    vdaf_public_parameter: V::PublicParam,
     clock: C,
     http_client: reqwest::Client,
     leader_report_sender: HpkeSender,
     helper_report_sender: HpkeSender,
 }
 
-impl<V: VdafClient, C: Clock> Client<V, V::PublicParam, C> {
+impl<V: vdaf::Client, C: Clock> Client<V, C>
+where
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+{
     pub fn new(
         task_parameters: TaskParameters,
         vdaf_client: V,
@@ -94,7 +100,10 @@ impl<V: VdafClient, C: Clock> Client<V, V::PublicParam, C> {
         http_client: &reqwest::Client,
         leader_report_sender: HpkeSender,
         helper_report_sender: HpkeSender,
-    ) -> Self {
+    ) -> Self
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
         Self {
             task_parameters,
             vdaf_client,
@@ -176,10 +185,13 @@ mod tests {
     use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Sum};
     use url::Url;
 
-    fn setup_client<V: VdafClient>(
+    fn setup_client<V: vdaf::Client>(
         vdaf_client: V,
         public_parameter: V::PublicParam,
-    ) -> Client<V, V::PublicParam, MockClock> {
+    ) -> Client<V, MockClock>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
         let task_id = TaskId::random();
 
         let clock = MockClock::default();
