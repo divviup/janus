@@ -537,8 +537,6 @@ static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
 /// Construct an error response in accordance with §3.1.
 //
-// TODO (PR abetterinternet/ppm-specification#208): base64-encoding the TaskID has not yet been
-// adopted in the specification, and may change.
 // TODO (issue abetterinternet/ppm-specification#209): The handling of the instance, title,
 // detail, and taskid fields are subject to change.
 fn build_problem_details_response(error_type: PpmProblemType, task_id: TaskId) -> Response {

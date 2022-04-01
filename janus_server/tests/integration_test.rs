@@ -141,16 +141,16 @@ async fn teardown_test(test_case: TestCase) {
     test_case.leader_task_handle.abort();
     test_case.helper_task_handle.abort();
 
-    test_case
+    assert!(test_case
         .leader_task_handle
         .await
         .unwrap_err()
-        .is_cancelled();
-    test_case
+        .is_cancelled());
+    assert!(test_case
         .helper_task_handle
         .await
         .unwrap_err()
-        .is_cancelled();
+        .is_cancelled());
 }
 
 #[tokio::test]
