@@ -42,7 +42,7 @@ fn base_layer<S>() -> Layer<S> {
 /// Configures and installs a tracing subscriber, to capture events logged with
 /// [`tracing::info`] and the like. Captured events are written to stdout, with
 /// formatting affected by the provided [`TraceConfiguration`].
-pub fn install_subscriber(config: &TraceConfiguration) -> Result<(), Error> {
+pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error> {
     // If stdout is not a tty or if forced by config, output logs as JSON
     // structures
     let output_json = atty::isnt(Stream::Stdout) || config.force_json_output;
@@ -74,12 +74,13 @@ pub(crate) mod test_util {
     use super::*;
     use std::sync::Once;
 
-    /// install_trace_subscriber installs a tracing subscriber suitable for tests. It should be
-    /// called at the beginning of any test that requires a tracing subscriber.
-    pub(crate) fn install_trace_subscriber() {
+    /// install_test_trace_subscriber installs a tracing subscriber suitable for
+    /// tests. It should be called at the beginning of any test that requires a
+    /// tracing subscriber.
+    pub(crate) fn install_test_trace_subscriber() {
         static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
         INSTALL_TRACE_SUBSCRIBER.call_once(|| {
-            super::install_subscriber(&TraceConfiguration {
+            install_trace_subscriber(&TraceConfiguration {
                 use_test_writer: true,
                 ..Default::default()
             })
