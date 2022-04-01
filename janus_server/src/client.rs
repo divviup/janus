@@ -178,7 +178,7 @@ mod tests {
     use super::*;
     use crate::{
         hpke::HpkeRecipient, message::TaskId, time::tests::MockClock,
-        trace::test_util::install_trace_subscriber,
+        trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use mockito::mock;
@@ -220,7 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_prio3_count() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let mocked_upload = mock("POST", "/upload").with_status(200).expect(1).create();
 
         let client = setup_client(Prio3Aes128Count::new(2).unwrap(), ());
@@ -232,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_prio3_invalid_measurement() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let vdaf = Prio3Aes128Sum::new(2, 16).unwrap();
 
         let client = setup_client(vdaf, ());
@@ -244,7 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_prio3_http_status_code() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let mocked_upload = mock("POST", "/upload").with_status(501).expect(1).create();
 

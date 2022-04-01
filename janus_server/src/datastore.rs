@@ -723,7 +723,7 @@ mod tests {
     use crate::hpke::{HpkeRecipient, Label};
     use crate::message::{Duration, ExtensionType, HpkeConfigId, Role, TransitionError};
     use crate::task::Vdaf;
-    use crate::trace::test_util::install_trace_subscriber;
+    use crate::trace::test_util::install_test_trace_subscriber;
     use prio::field::Field128;
     use prio::vdaf::poplar1::{IdpfInput, Poplar1, ToyIdpf};
     use prio::vdaf::prg::PrgAes128;
@@ -733,6 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_task() {
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let task_ids = [
@@ -798,7 +799,7 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_report() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let report = Report {
@@ -853,7 +854,7 @@ mod tests {
 
     #[tokio::test]
     async fn report_not_found() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let rslt = ds
@@ -865,7 +866,7 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_report_by_task_id_and_nonce() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let report = Report {
@@ -924,7 +925,7 @@ mod tests {
 
     #[tokio::test]
     async fn report_not_found_by_task_id_and_nonce() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let task_id = TaskId::random();
@@ -947,7 +948,7 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_report_share() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let task_id = TaskId::random();
@@ -1023,7 +1024,7 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_aggregation_job_by_aggregation_job_id() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         // We use Poplar1 for this test as it has a non-trivial aggregation parameter, to allow
@@ -1068,7 +1069,7 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_report_aggregation() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();

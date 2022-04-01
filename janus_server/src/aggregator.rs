@@ -923,7 +923,7 @@ mod tests {
         message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
         task::TaskParameters,
         time::tests::MockClock,
-        trace::test_util::install_trace_subscriber,
+        trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use http::Method;
@@ -944,7 +944,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_role() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
@@ -976,7 +976,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_clock_skew() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
@@ -1005,7 +1005,7 @@ mod tests {
 
     #[tokio::test]
     async fn hpke_config() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let vdaf = Prio3Aes128Count::new(2).unwrap();
@@ -1119,7 +1119,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_filter() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
@@ -1263,7 +1263,7 @@ mod tests {
     // Helper should not expose /upload endpoint
     #[tokio::test]
     async fn upload_filter_helper() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
@@ -1333,7 +1333,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, report, datastore, _db_handle) = setup_upload_test(skew).await;
@@ -1361,7 +1361,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_wrong_number_of_encrypted_shares() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, mut report, _, _db_handle) = setup_upload_test(skew).await;
@@ -1376,7 +1376,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_wrong_hpke_config_id() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, mut report, _, _db_handle) = setup_upload_test(skew).await;
@@ -1409,7 +1409,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_report_in_the_future() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let skew = Duration::minutes(10);
         let (aggregator, mut report, datastore, _db_handle) = setup_upload_test(skew).await;
@@ -1442,7 +1442,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_leader() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let vdaf = Prio3Aes128Count::new(2).unwrap();
@@ -1493,7 +1493,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_wrong_agg_auth_key() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let vdaf = Prio3Aes128Count::new(2).unwrap();
@@ -1555,7 +1555,7 @@ mod tests {
     #[tokio::test]
     async fn aggregate_init() {
         // Prepare datastore & request.
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let vdaf = Prio3Aes128Count::new(2).unwrap();
@@ -1678,7 +1678,7 @@ mod tests {
     #[tokio::test]
     async fn aggregate_init_prep_init_failed() {
         // Prepare datastore & request.
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let vdaf = fake::Vdaf::new().with_prep_init_fn(|| -> Result<(), VdafError> {
@@ -1765,7 +1765,7 @@ mod tests {
     #[tokio::test]
     async fn aggregate_init_prep_step_failed() {
         // Prepare datastore & request.
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let vdaf = fake::Vdaf::new().with_prep_step_fn(
@@ -1853,7 +1853,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_init_duplicated_nonce() {
-        install_trace_subscriber();
+        install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let vdaf = Prio3Aes128Count::new(2).unwrap();

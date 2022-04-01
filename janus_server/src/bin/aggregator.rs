@@ -9,7 +9,7 @@ use janus_server::{
     message::Role,
     message::TaskId,
     time::RealClock,
-    trace::install_subscriber,
+    trace::install_trace_subscriber,
 };
 use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf};
 use ring::{
@@ -82,7 +82,8 @@ async fn main() -> Result<()> {
     let config: AggregatorConfig = serde_yaml::from_reader(&config_file)
         .with_context(|| format!("failed to parse config file: {:?}", options.config_file))?;
 
-    install_subscriber(&config.logging_config).context("failed to install tracing subscriber")?;
+    install_trace_subscriber(&config.logging_config)
+        .context("failed to install tracing subscriber")?;
 
     info!(?options, ?config, "starting aggregator");
 
