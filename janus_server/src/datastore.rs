@@ -1,5 +1,15 @@
 //! Janus datastore (durable storage) implementation.
 
+use self::models::{
+    AggregationJob, AggregatorRole, ReportAggregation, ReportAggregationState,
+    ReportAggregationStateCode,
+};
+#[cfg(test)]
+use crate::{
+    hpke::{HpkePrivateKey, HpkeRecipient, Label},
+    message::{Duration, HpkeConfig, Role},
+    task::AggregatorAuthKey,
+};
 use crate::{
     message::{AggregationJobId, Extension, HpkeCiphertext, Nonce, Report, ReportShare, TaskId},
     task::TaskParameters,
@@ -8,12 +18,10 @@ use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     vdaf,
 };
-use std::{future::Future, io::Cursor, pin::Pin};
-use tokio_postgres::{error::SqlState, IsolationLevel, Row};
-
-use self::models::{
-    AggregationJob, ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
-};
+use std::{convert::TryFrom, fmt::Display, future::Future, io::Cursor, pin::Pin};
+use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
+#[cfg(test)]
+use url::Url;
 
 // TODO(brandon): retry network-related & other transient failures once we know what they look like
 
@@ -89,38 +97,103 @@ impl Transaction<'_> {
     // This is pub to be used in integration tests
     #[doc(hidden)]
     pub async fn put_task(&self, task: &TaskParameters) -> Result<(), Error> {
-        // TODO: interpolate values from `task` into prepared statement
+        let aggregator_role = AggregatorRole::from_role(task.role)?;
+
+        let endpoints: Vec<&str> = task
+            .aggregator_endpoints
+            .iter()
+            .map(|url| url.as_str())
+            .collect();
+
+        let max_batch_lifetime = i64::try_from(task.max_batch_lifetime)?;
+        let min_batch_size = i64::try_from(task.min_batch_size)?;
+        let min_batch_duration = i64::try_from(task.min_batch_duration.0)?;
+
         let stmt = self
             .tx
             .prepare_cached(
-                "INSERT INTO tasks (task_id, ord, aggregator_endpoints, vdaf,
-                vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
-                collector_hpke_config) VALUES ($1, 0, '{}', $2, '', 0, 0, INTERVAL '0', '')",
+                "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
+                max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config,
+                agg_auth_key, hpke_config, hpke_private_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             )
             .await?;
         self.tx
             .execute(
                 &stmt,
                 &[
-                    &&task.id.0[..], // id
-                    &task.vdaf,      // vdaf
+                    &&task.id.0[..],                             // id
+                    &aggregator_role,                            // aggregator_role
+                    &endpoints,                                  // aggregator_endpoints
+                    &task.vdaf,                                  // vdaf
+                    &task.vdaf_verify_parameter,                 // verify param
+                    &max_batch_lifetime,                         // max batch lifetime
+                    &min_batch_size,                             // min batch size
+                    &min_batch_duration,                         // min batch duration
+                    &task.collector_hpke_config.get_encoded(),   // collector hpke config
+                    &task.agg_auth_key.as_slice(),               // agg_auth_key
+                    &task.hpke_recipient.config().get_encoded(), // hpke_config
+                    &task.hpke_recipient.private_key().as_ref(), // hpke_private_key
                 ],
             )
             .await?;
         Ok(())
     }
 
-    /// This is a test-only method that is used to test round-tripping of values.
-    /// TODO: remove this once the tasks table is finalized, and there's a method to retrieve an
-    /// entire `TaskParameters` from the database.
+    /// Fetch the task parameters corresponing to the provided `task_id`.
+    //
+    // Only available in test configs for now, but will soon be used by
+    // aggregators to discover tasks from the database.
     #[cfg(test)]
-    async fn get_task_vdaf_by_id(&self, task_id: TaskId) -> Result<crate::task::Vdaf, Error> {
+    pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<TaskParameters, Error> {
         let stmt = self
             .tx
-            .prepare_cached("SELECT vdaf FROM tasks WHERE task_id = $1")
+            .prepare_cached(
+                "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
+                max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config,
+                agg_auth_key, hpke_config, hpke_private_key
+                FROM tasks WHERE task_id = $1",
+            )
             .await?;
         let row = single_row(self.tx.query(&stmt, &[&&task_id.0[..]]).await?)?;
-        Ok(row.get("vdaf"))
+
+        let aggregator_role: AggregatorRole = row.get("aggregator_role");
+        let endpoints: Vec<String> = row.get("aggregator_endpoints");
+        let endpoints = endpoints
+            .into_iter()
+            .map(|endpoint| Ok(Url::parse(&endpoint)?))
+            .collect::<Result<_, Error>>()?;
+        let vdaf = row.get("vdaf");
+        let vdaf_verify_parameter = row.get("vdaf_verify_param");
+        let max_batch_lifetime = row.get_bigint_as_u64("max_batch_lifetime")?;
+        let min_batch_size = row.get_bigint_as_u64("min_batch_size")?;
+        let min_batch_duration = Duration(row.get_bigint_as_u64("min_batch_duration")?);
+        let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
+        let agg_auth_key = AggregatorAuthKey::from_bytes(row.get("agg_auth_key"))?;
+        let hpke_config = HpkeConfig::get_decoded(row.get("hpke_config"))?;
+        let hpke_private_key = HpkePrivateKey::new(row.get("hpke_private_key"));
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            &hpke_config,
+            Label::InputShare,
+            Role::Client,
+            aggregator_role.as_role(),
+            &hpke_private_key,
+        );
+
+        Ok(TaskParameters::new(
+            task_id,
+            endpoints,
+            vdaf,
+            aggregator_role.as_role(),
+            vdaf_verify_parameter,
+            max_batch_lifetime,
+            min_batch_size,
+            min_batch_duration,
+            &collector_hpke_config,
+            agg_auth_key,
+            &hpke_recipient,
+        ))
     }
 
     /// get_client_report retrieves a client report by ID.
@@ -140,7 +213,7 @@ impl Transaction<'_> {
                     &[
                         &&task_id.0[..],
                         &nonce.time.as_naive_date_time(),
-                        &(nonce.rand as i64),
+                        &&nonce.rand.to_be_bytes()[..],
                     ],
                 )
                 .await?,
@@ -165,7 +238,7 @@ impl Transaction<'_> {
     /// put_client_report stores a client report.
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
         let nonce_time = report.nonce.time.as_naive_date_time();
-        let nonce_rand = report.nonce.rand as i64;
+        let nonce_rand = report.nonce.rand.to_be_bytes();
 
         let mut encoded_extensions = Vec::new();
         encode_u16_items(&mut encoded_extensions, &(), &report.extensions);
@@ -185,9 +258,9 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &&report.task_id.0[..],
+                    /* task_id */ &&report.task_id.get_encoded(),
                     /* nonce_time */ &nonce_time,
-                    /* nonce_rand */ &nonce_rand,
+                    /* nonce_rand */ &&nonce_rand[..],
                     /* extensions */ &encoded_extensions,
                     /* input_shares */ &encoded_input_shares,
                 ],
@@ -208,7 +281,7 @@ impl Transaction<'_> {
         report_share: &ReportShare,
     ) -> Result<(), Error> {
         let nonce_time = report_share.nonce.time.as_naive_date_time();
-        let nonce_rand = report_share.nonce.rand as i64;
+        let nonce_rand = report_share.nonce.rand.to_be_bytes();
 
         let stmt = self
             .tx
@@ -221,9 +294,9 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &&task_id.0[..],
+                    /* task_id */ &task_id.get_encoded(),
                     /* nonce_time */ &nonce_time,
-                    /* nonce_rand */ &nonce_rand,
+                    /* nonce_rand */ &&nonce_rand[..],
                 ],
             )
             .await?;
@@ -299,7 +372,7 @@ impl Transaction<'_> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let nonce_time = nonce.time.as_naive_date_time();
-        let nonce_rand = nonce.rand as i64;
+        let nonce_rand = &nonce.rand.to_be_bytes()[..];
 
         let stmt = self
             .tx
@@ -398,7 +471,7 @@ impl Transaction<'_> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let nonce_time = report_aggregation.nonce.time.as_naive_date_time();
-        let nonce_rand = report_aggregation.nonce.rand as i64;
+        let nonce_rand = &report_aggregation.nonce.rand.to_be_bytes()[..];
         let state_code = report_aggregation.state.state_code();
         let (vdaf_message, error_code) = match &report_aggregation.state {
             ReportAggregationState::Start() => (None, None),
@@ -444,6 +517,49 @@ fn single_row(rows: Vec<Row>) -> Result<Row, Error> {
     }
 }
 
+/// Extensions for [`tokio_postgres::row::Row`]
+trait RowExt {
+    /// Get a PostgreSQL `BIGINT` from the row, which is represented in Rust as
+    /// i64 ([1]), then attempt to convert it to u64.
+    ///
+    /// [1]: https://docs.rs/postgres-types/latest/postgres_types/trait.FromSql.html
+    fn get_bigint_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    where
+        I: RowIndex + Display;
+
+    /// Get a PostgreSQL `BYTEA` from the row and then attempt to convert it to
+    /// u64, treating it as an 8 byte big endian array.
+    fn get_bytea_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    where
+        I: RowIndex + Display;
+}
+
+impl RowExt for Row {
+    fn get_bigint_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    where
+        I: RowIndex + Display,
+    {
+        let bigint: i64 = self.try_get(idx)?;
+        Ok(u64::try_from(bigint)?)
+    }
+
+    fn get_bytea_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    where
+        I: RowIndex + Display,
+    {
+        let encoded_u64: Vec<u8> = self.try_get(idx)?;
+
+        // `u64::from_be_bytes` takes `[u8; 8]` and `Vec<u8>::try_into` will
+        // fail unless the vector has exactly that length [1].
+        //
+        // [1]: https://doc.rust-lang.org/std/primitive.array.html#method.try_from-4
+        Ok(u64::from_be_bytes(encoded_u64.try_into().map_err(
+            // The error is just the vector that was rejected
+            |_| Error::DbState("byte array in database does not have expected length".to_string()),
+        )?))
+    }
+}
+
 /// Error represents a datastore-level error.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -468,6 +584,12 @@ pub enum Error {
     /// will never be generated by the datastore library itself.
     #[error(transparent)]
     User(#[from] Box<dyn std::error::Error + Send + Sync>),
+    #[error("URL parse error: {0}")]
+    Url(#[from] url::ParseError),
+    #[error("invalid task parameters: {0}")]
+    TaskParameters(#[from] crate::task::Error),
+    #[error("integer conversion failed: {0}")]
+    TryFromInt(#[from] std::num::TryFromIntError),
 }
 
 impl Error {
@@ -488,13 +610,47 @@ impl Error {
 
 /// This module contains models used by the datastore that are not PPM messages.
 pub mod models {
-    use crate::message::{AggregationJobId, Nonce, TaskId, TransitionError};
+    use super::Error;
+    use crate::message::{AggregationJobId, Nonce, Role, TaskId, TransitionError};
     use postgres_types::{FromSql, ToSql};
     use prio::vdaf;
 
     // We have to manually implement [Partial]Eq for a number of types because the dervied
     // implementations don't play nice with generic fields, even if those fields are constrained to
     // themselves implement [Partial]Eq.
+
+    /// AggregatorRole corresponds to the `AGGREGATOR_ROLE` enum in the schema.
+    #[derive(Clone, Debug, ToSql, FromSql)]
+    #[postgres(name = "aggregator_role")]
+    pub(super) enum AggregatorRole {
+        #[postgres(name = "LEADER")]
+        Leader,
+        #[postgres(name = "HELPER")]
+        Helper,
+    }
+
+    impl AggregatorRole {
+        /// If the provided [`Role`] is an aggregator, returns the corresponding
+        /// [`AggregatorRole`], or `None` otherwise.
+        pub(super) fn from_role(role: Role) -> Result<Self, Error> {
+            match role {
+                Role::Leader => Ok(Self::Leader),
+                Role::Helper => Ok(Self::Helper),
+                _ => Err(Error::TaskParameters(crate::task::Error::InvalidParameter(
+                    "role is not an aggregator",
+                ))),
+            }
+        }
+
+        /// Returns the [`Role`] corresponding to this value.
+        #[cfg(test)]
+        pub(super) fn as_role(&self) -> Role {
+            match self {
+                Self::Leader => Role::Leader,
+                Self::Helper => Role::Helper,
+            }
+        }
+    }
 
     /// AggregationJob represents an aggregation job from the PPM specification.
     #[derive(Clone, Debug)]
@@ -702,18 +858,22 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::models::AggregationJobState;
     use super::*;
-    use crate::datastore::test_util::ephemeral_datastore;
-    use crate::hpke::{HpkeRecipient, Label};
-    use crate::message::{Duration, ExtensionType, HpkeConfigId, Role, Time, TransitionError};
-    use crate::task::Vdaf;
-    use crate::trace::test_util::install_test_trace_subscriber;
-    use prio::field::Field128;
-    use prio::vdaf::poplar1::{IdpfInput, Poplar1, ToyIdpf};
-    use prio::vdaf::prg::PrgAes128;
-    use prio::vdaf::prio3::Prio3Aes128Count;
-    use prio::vdaf::PrepareTransition;
+    use crate::{
+        datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
+        message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
+        task::Vdaf,
+        trace::test_util::install_test_trace_subscriber,
+    };
+    use prio::{
+        field::Field128,
+        vdaf::{
+            poplar1::{IdpfInput, Poplar1, ToyIdpf},
+            prg::PrgAes128,
+            prio3::Prio3Aes128Count,
+            PrepareTransition,
+        },
+    };
     use std::collections::BTreeSet;
 
     #[tokio::test]
@@ -721,50 +881,50 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
-        let task_ids = [
-            TaskId([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 1,
-            ]),
-            TaskId([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 2,
-            ]),
-            TaskId([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 3,
-            ]),
-            TaskId([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 4,
-            ]),
-        ];
-        let vdafs = [
-            Vdaf::Prio3Aes128Count,
-            Vdaf::Prio3Aes128Sum,
-            Vdaf::Prio3Aes128Histogram,
-            Vdaf::Poplar1,
+        let values = [
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 1,
+                ]),
+                Vdaf::Prio3Aes128Count,
+                Role::Leader,
+            ),
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 2,
+                ]),
+                Vdaf::Prio3Aes128Sum,
+                Role::Helper,
+            ),
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 3,
+                ]),
+                Vdaf::Prio3Aes128Histogram,
+                Role::Leader,
+            ),
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 4,
+                ]),
+                Vdaf::Poplar1,
+                Role::Helper,
+            ),
         ];
 
-        for (task_id, vdaf) in task_ids.into_iter().zip(vdafs.into_iter()) {
-            let task_params = TaskParameters::new(
+        for (task_id, vdaf, role) in values {
+            let task_params = TaskParameters::new_dummy(
                 task_id,
                 vec![
                     "https://example.com/".parse().unwrap(),
                     "https://example.net/".parse().unwrap(),
                 ],
-                vdaf.clone(),
-                vec![],
-                0,
-                0,
-                Duration(0),
-                &HpkeRecipient::generate(
-                    task_id,
-                    Label::AggregateShare,
-                    Role::Leader,
-                    Role::Collector,
-                )
-                .config,
+                vdaf,
+                role,
             );
 
             ds.run_tx(|tx| {
@@ -774,11 +934,11 @@ mod tests {
             .await
             .unwrap();
 
-            let retrieved_vdaf = ds
-                .run_tx(|tx| Box::pin(async move { tx.get_task_vdaf_by_id(task_id).await }))
+            let retrieved_task = ds
+                .run_tx(|tx| Box::pin(async move { tx.get_task_by_id(task_id).await }))
                 .await
                 .unwrap();
-            assert_eq!(vdaf, retrieved_vdaf);
+            assert_eq!(task_params, retrieved_task);
         }
     }
 
@@ -820,8 +980,13 @@ mod tests {
         ds.run_tx(|tx| {
             let report = report.clone();
             Box::pin(async move {
-                tx.put_task(&TaskParameters::new_dummy(report.task_id, vec![]))
-                    .await?;
+                tx.put_task(&TaskParameters::new_dummy(
+                    report.task_id,
+                    vec![],
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
                 tx.put_client_report(&report).await
             })
         })
@@ -892,8 +1057,13 @@ mod tests {
         ds.run_tx(|tx| {
             let report_share = report_share.clone();
             Box::pin(async move {
-                tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                    .await?;
+                tx.put_task(&TaskParameters::new_dummy(
+                    task_id,
+                    Vec::new(),
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
                 tx.put_report_share(task_id, &report_share).await
             })
         })
@@ -904,14 +1074,14 @@ mod tests {
             .run_tx(|tx| {
                 Box::pin(async move {
                     let nonce_time = report_share.nonce.time.as_naive_date_time();
-                    let nonce_rand = report_share.nonce.rand as i64;
+                    let nonce_rand = report_share.nonce.rand.to_be_bytes();
                     let row = tx
                         .tx
                         .query_one(
                             "SELECT tasks.task_id, client_reports.nonce_time, client_reports.nonce_rand, client_reports.extensions, client_reports.input_shares
                             FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
                             WHERE nonce_time = $1 AND nonce_rand = $2",
-                            &[&nonce_time, &nonce_rand],
+                            &[&nonce_time, &&nonce_rand[..]],
                         )
                         .await?;
 
@@ -955,6 +1125,8 @@ mod tests {
                 tx.put_task(&TaskParameters::new_dummy(
                     aggregation_job.task_id,
                     Vec::new(),
+                    Vdaf::Poplar1,
+                    Role::Leader,
                 ))
                 .await?;
                 tx.put_aggregation_job(&aggregation_job).await
@@ -1005,8 +1177,13 @@ mod tests {
                 .run_tx(|tx| {
                     let state = state.clone();
                     Box::pin(async move {
-                        tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                            .await?;
+                        tx.put_task(&TaskParameters::new_dummy(
+                            task_id,
+                            Vec::new(),
+                            Vdaf::Prio3Aes128Count,
+                            Role::Leader,
+                        ))
+                        .await?;
                         tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
                             aggregation_job_id,
                             task_id,

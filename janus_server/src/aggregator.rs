@@ -175,7 +175,7 @@ where
         let leader_report = &report.encrypted_input_shares[0];
 
         // §4.2.2: verify that the report's HPKE config ID is known
-        if leader_report.config_id != self.report_recipient.config.id {
+        if leader_report.config_id != self.report_recipient.config().id {
             warn!(
                 config_id = ?leader_report.config_id,
                 "unknown HPKE config ID"
@@ -618,7 +618,7 @@ where
         return Err(Error::InvalidConfiguration("role is not an aggregator"));
     }
 
-    let hpke_config_encoded = hpke_recipient.config.get_encoded();
+    let hpke_config_encoded = hpke_recipient.config().get_encoded();
 
     let aggregator = Arc::new(Aggregator::new(
         vdaf,
@@ -916,7 +916,7 @@ mod tests {
         datastore::test_util::{ephemeral_datastore, DbHandle},
         hpke::{HpkeSender, Label},
         message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
-        task::TaskParameters,
+        task::{TaskParameters, Vdaf},
         time::tests::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
@@ -925,7 +925,7 @@ mod tests {
     use prio::{
         codec::Decode,
         vdaf::prio3::Prio3Aes128Count,
-        vdaf::{Vdaf, VdafError},
+        vdaf::{Vdaf as VdafTrait, VdafError},
     };
     use rand::{thread_rng, Rng};
     use ring::{hmac::HMAC_SHA256, rand::SystemRandom};
@@ -1037,7 +1037,7 @@ mod tests {
 
         let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(hpke_config, hpke_recipient.config);
+        assert_eq!(&hpke_config, hpke_recipient.config());
         let sender = HpkeSender::from_recipient(&hpke_recipient);
 
         let message = b"this is a message";
@@ -1060,8 +1060,12 @@ mod tests {
             .run_tx(|tx| {
                 let fake_url = Url::parse("localhost:8080").unwrap();
 
-                let task_parameters =
-                    TaskParameters::new_dummy(task_id, vec![fake_url.clone(), fake_url]);
+                let task_parameters = TaskParameters::new_dummy(
+                    task_id,
+                    vec![fake_url.clone(), fake_url],
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                );
                 Box::pin(async move { tx.put_task(&task_parameters).await })
             })
             .await
@@ -1559,8 +1563,13 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                        .await
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await
                 })
             })
             .await
@@ -1571,7 +1580,7 @@ mod tests {
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             generate_nonce(&clock),
-            &hpke_recipient.config,
+            hpke_recipient.config(),
             &input_share,
         );
 
@@ -1588,7 +1597,7 @@ mod tests {
         let report_share_2 = generate_helper_report_share_for_plaintext(
             task_id,
             nonce,
-            &hpke_recipient.config,
+            hpke_recipient.config(),
             &input_share_bytes,
             &associated_data,
         );
@@ -1686,8 +1695,13 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                        .await
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await
                 })
             })
             .await
@@ -1697,7 +1711,7 @@ mod tests {
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
             generate_nonce(&clock),
-            &hpke_recipient.config,
+            hpke_recipient.config(),
             &input_share,
         );
         let request = AggregateReq {
@@ -1775,8 +1789,13 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                        .await
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await
                 })
             })
             .await
@@ -1786,7 +1805,7 @@ mod tests {
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
             generate_nonce(&clock),
-            &hpke_recipient.config,
+            hpke_recipient.config(),
             &input_share,
         );
         let request = AggregateReq {

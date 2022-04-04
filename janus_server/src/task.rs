@@ -5,15 +5,24 @@ use crate::{
     message::{Duration, HpkeConfig, Role, TaskId},
 };
 use postgres_types::{FromSql, ToSql};
+use ring::{
+    digest::SHA256_OUTPUT_LEN,
+    hmac::{self, HMAC_SHA256},
+    rand::{self, SystemRandom},
+};
 use url::Url;
 
 /// Errors that methods and functions in this module may return.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Invalid parameter {0}")]
+    #[error("invalid parameter {0}")]
     InvalidParameter(&'static str),
+    #[error("failed to generate aggregator authentication key")]
+    AggregatorAuthenticationKeyGeneration,
     #[error("URL parse error")]
     Url(#[from] url::ParseError),
+    #[error("could not convert slice to array: {0}")]
+    TryFromSlice(#[from] std::array::TryFromSliceError),
 }
 
 /// Identifiers for VDAFs supported by this aggregator, corresponding to
@@ -21,7 +30,7 @@ pub enum Error {
 /// [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-patton-cfrg-vdaf/
-#[derive(Debug, Clone, PartialEq, Eq, ToSql, FromSql)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ToSql, FromSql)]
 #[postgres(name = "vdaf_identifier")]
 pub enum Vdaf {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
@@ -38,8 +47,40 @@ pub enum Vdaf {
     Poplar1,
 }
 
+/// An HMAC SHA-256 key used to authenticate messages exchanged between
+/// aggregators. See `agg_auth_key` in draft-gpew-priv-ppm §4.2. We define this
+/// because while we can use [`ring::hmac::Key::new`] to get a
+/// [`ring::hmac::Key`] from a slice of bytes, we can't get the bytes back out
+/// of the key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AggregatorAuthKey([u8; SHA256_OUTPUT_LEN]);
+
+impl AggregatorAuthKey {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        Ok(Self(bytes.try_into()?))
+    }
+
+    /// Randomly generate an [`AggregatorAuthKey`].
+    pub fn generate() -> Result<Self, Error> {
+        let rng = SystemRandom::new();
+        Ok(Self(
+            rand::generate(&rng)
+                .map_err(|_| Error::AggregatorAuthenticationKeyGeneration)?
+                .expose(),
+        ))
+    }
+
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.0[..]
+    }
+
+    pub fn as_hmac_key(&self) -> hmac::Key {
+        hmac::Key::new(HMAC_SHA256, &self.0)
+    }
+}
+
 /// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskParameters {
     /// Unique identifier for the task
     pub(crate) id: TaskId,
@@ -48,17 +89,24 @@ pub struct TaskParameters {
     pub(crate) aggregator_endpoints: Vec<Url>,
     /// The VDAF this task executes.
     pub(crate) vdaf: Vdaf,
+    /// The role performed by the aggregator.
+    pub(crate) role: Role,
     /// Secret verification parameter shared by the aggregators.
-    _vdaf_verify_parameter: Vec<u8>,
+    pub(crate) vdaf_verify_parameter: Vec<u8>,
     /// The maximum number of times a given batch may be collected.
-    _max_batch_lifetime: u64,
+    pub(crate) max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
-    _min_batch_size: u64,
+    pub(crate) min_batch_size: u64,
     /// The minimum batch interval for a collect request. Batch intervals must
     /// be multiples of this duration.
-    _min_batch_duration: Duration,
-    /// HPKE configuration for the collector
-    _collector_hpke_config: HpkeConfig,
+    pub(crate) min_batch_duration: Duration,
+    /// HPKE configuration for the collector.
+    pub(crate) collector_hpke_config: HpkeConfig,
+    /// Key used to authenticate messages sent to or received from the other
+    /// aggregators.
+    pub(crate) agg_auth_key: AggregatorAuthKey,
+    /// HPKE recipient used by this aggregator to decrypt client reports
+    pub(crate) hpke_recipient: HpkeRecipient,
 }
 
 impl TaskParameters {
@@ -67,11 +115,14 @@ impl TaskParameters {
         id: TaskId,
         aggregator_endpoints: Vec<Url>,
         vdaf: Vdaf,
+        role: Role,
         vdaf_verify_parameter: Vec<u8>,
         max_batch_lifetime: u64,
         min_batch_size: u64,
         min_batch_duration: Duration,
         collector_hpke_config: &HpkeConfig,
+        agg_auth_key: AggregatorAuthKey,
+        hpke_recipient: &HpkeRecipient,
     ) -> Self {
         // All currently defined VDAFs have exactly two aggregators
         assert_eq!(aggregator_endpoints.len(), 2);
@@ -80,11 +131,14 @@ impl TaskParameters {
             id,
             aggregator_endpoints,
             vdaf,
-            _vdaf_verify_parameter: vdaf_verify_parameter,
-            _max_batch_lifetime: max_batch_lifetime,
-            _min_batch_size: min_batch_size,
-            _min_batch_duration: min_batch_duration,
-            _collector_hpke_config: collector_hpke_config.clone(),
+            role,
+            vdaf_verify_parameter,
+            max_batch_lifetime,
+            min_batch_size,
+            min_batch_duration,
+            collector_hpke_config: collector_hpke_config.clone(),
+            agg_auth_key,
+            hpke_recipient: hpke_recipient.clone(),
         }
     }
 
@@ -92,42 +146,31 @@ impl TaskParameters {
     /// dummy values for the other fields. This is pub because it is needed for
     /// integration tests.
     #[doc(hidden)]
-    pub fn new_dummy(task_id: TaskId, aggregator_endpoints: Vec<Url>) -> Self {
+    pub fn new_dummy(
+        task_id: TaskId,
+        aggregator_endpoints: Vec<Url>,
+        vdaf: Vdaf,
+        role: Role,
+    ) -> Self {
         Self {
             id: task_id,
             aggregator_endpoints,
-            vdaf: Vdaf::Prio3Aes128Count,
-            _vdaf_verify_parameter: vec![],
-            _max_batch_lifetime: 0,
-            _min_batch_size: 0,
-            _min_batch_duration: Duration(1),
-            _collector_hpke_config: HpkeRecipient::generate(
+            vdaf,
+            role,
+            vdaf_verify_parameter: vec![],
+            max_batch_lifetime: 0,
+            min_batch_size: 0,
+            min_batch_duration: Duration(1),
+            collector_hpke_config: HpkeRecipient::generate(
                 task_id,
                 Label::AggregateShare,
                 Role::Leader,
                 Role::Collector,
             )
-            .config,
+            .config()
+            .clone(),
+            agg_auth_key: AggregatorAuthKey::generate().unwrap(),
+            hpke_recipient: HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, role),
         }
-    }
-
-    /// The URL relative to which the API endpoints for the aggregator may be
-    /// found, if the role is an aggregator, or an error otherwise.
-    fn aggregator_endpoint(&self, role: Role) -> Result<&Url, Error> {
-        Ok(&self.aggregator_endpoints[role
-            .index()
-            .ok_or(Error::InvalidParameter("role is not an aggregator"))?])
-    }
-
-    /// URL from which the HPKE configuration for the server filling `role` may
-    /// be fetched per draft-gpew-priv-ppm §4.3.1
-    pub(crate) fn hpke_config_endpoint(&self, role: Role) -> Result<Url, Error> {
-        Ok(self.aggregator_endpoint(role)?.join("hpke_config")?)
-    }
-
-    /// URL to which reports may be uploaded by clients per draft-gpew-priv-ppm
-    /// §4.3.2
-    pub(crate) fn upload_endpoint(&self) -> Result<Url, Error> {
-        Ok(self.aggregator_endpoint(Role::Leader)?.join("upload")?)
     }
 }

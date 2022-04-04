@@ -21,7 +21,7 @@ pub enum Error {
 }
 
 /// Labels incorporated into HPKE application info string
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Label {
     InputShare,
     AggregateShare,
@@ -36,10 +36,10 @@ impl Label {
     }
 }
 
-/// PPM protocol message representing an HPKE private key, serialized using the
-/// `SerializePrivateKey` function as described in RFC 9180, §4 and §7.1.2.
+/// An HPKE private key, serialized using the `SerializePrivateKey` function as
+/// described in RFC 9180, §4 and §7.1.2.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HpkePrivateKey(pub(crate) Vec<u8>);
+pub struct HpkePrivateKey(Vec<u8>);
 
 impl HpkePrivateKey {
     pub(crate) fn new(bytes: Vec<u8>) -> Self {
@@ -218,10 +218,10 @@ fn seal<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
 //
 // This type only exists separately from Recipient so that we can have a type
 // that doesn't "leak" the generic type parameters into the caller.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HpkeRecipient {
     task_id: TaskId,
-    pub(crate) config: HpkeConfig,
+    config: HpkeConfig,
     label: Label,
     sender_role: Role,
     recipient_role: Role,
@@ -246,6 +246,16 @@ impl HpkeRecipient {
             recipient_role,
             recipient_private_key: serialized_private_key.clone(),
         }
+    }
+
+    /// The HPKE configuration for this recipient.
+    pub fn config(&self) -> &HpkeConfig {
+        &self.config
+    }
+
+    /// The private key used by this recipient.
+    pub fn private_key(&self) -> &HpkePrivateKey {
+        &self.recipient_private_key
     }
 
     /// Generate a new X25519HkdfSha256 keypair and construct an HPKE recipient
