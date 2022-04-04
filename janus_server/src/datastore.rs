@@ -143,22 +143,21 @@ impl Transaction<'_> {
         Ok(())
     }
 
-    /// Fetch the task parameters corresponing to the provided `task_id`.
-    //
-    // Only available in test configs for now, but will soon be used by
-    // aggregators to discover tasks from the database.
+    /// Construct a [`TaskParameters`] from the contents of the provided `Row`.
+    /// If `task_id` is not `None`, it is used. Otherwise the task ID is read
+    /// from the row.
     #[cfg(test)]
-    pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<TaskParameters, Error> {
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
-                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
-                collector_hpke_config, agg_auth_key, hpke_config, hpke_private_key
-                FROM tasks WHERE task_id=$1",
-            )
-            .await?;
-        let row = single_row(self.tx.query(&stmt, &[&&task_id.0[..]]).await?)?;
+    fn task_parameters_from_row(
+        task_id: Option<TaskId>,
+        row: &Row,
+    ) -> Result<TaskParameters, Error> {
+        let task_id = task_id.map_or_else(
+            || {
+                let encoded_task_id: Vec<u8> = row.get("task_id");
+                TaskId::get_decoded(&encoded_task_id)
+            },
+            Ok,
+        )?;
 
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
         let endpoints: Vec<String> = row.get("aggregator_endpoints");
@@ -199,6 +198,46 @@ impl Transaction<'_> {
             agg_auth_key,
             &hpke_recipient,
         ))
+    }
+
+    /// Fetch the task parameters corresponing to the provided `task_id`.
+    //
+    // Only available in test configs for now, but will soon be used by
+    // aggregators to discover tasks from the database.
+    #[cfg(test)]
+    pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<TaskParameters, Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
+                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
+                collector_hpke_config, agg_auth_key, hpke_config, hpke_private_key
+                FROM tasks WHERE task_id=$1",
+            )
+            .await?;
+        let row = single_row(self.tx.query(&stmt, &[&&task_id.0[..]]).await?)?;
+
+        Self::task_parameters_from_row(Some(task_id), &row)
+    }
+
+    /// Fetch all the tasks in the database.
+    #[cfg(test)]
+    pub(crate) async fn get_tasks(&self) -> Result<Vec<TaskParameters>, Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf,
+                vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
+                tolerable_clock_skew, collector_hpke_config, agg_auth_key, hpke_config,
+                hpke_private_key
+                FROM tasks",
+            )
+            .await?;
+        let rows = self.tx.query(&stmt, &[]).await?;
+
+        rows.iter()
+            .map(|row| Self::task_parameters_from_row(None, row))
+            .collect::<Result<_, _>>()
     }
 
     /// get_client_report retrieves a client report by ID.
@@ -944,6 +983,23 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(task_params, retrieved_task);
+        }
+
+        let retrieved_tasks = ds
+            .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .await
+            .unwrap();
+        assert_eq!(retrieved_tasks.len(), values.len());
+        let mut saw_tasks = vec![false; values.len()];
+        for task in retrieved_tasks {
+            for (idx, value) in values.iter().enumerate() {
+                if value.0 == task.id {
+                    saw_tasks[idx] = true;
+                }
+            }
+        }
+        for (idx, saw_task) in saw_tasks.iter().enumerate() {
+            assert!(saw_task, "never saw task {} in datastore", idx);
         }
     }
 
