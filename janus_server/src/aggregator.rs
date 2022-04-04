@@ -211,10 +211,7 @@ where
                 let report = report.clone();
                 Box::pin(async move {
                     // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before
-                    match tx
-                        .get_client_report_by_task_id_and_nonce(report.task_id, report.nonce)
-                        .await
-                    {
+                    match tx.get_client_report(report.task_id, report.nonce).await {
                         Ok(_) => {
                             warn!(?report.task_id, ?report.nonce, "report replayed");
                             // TODO (issue #34): change this error type.
@@ -407,16 +404,16 @@ where
                 let report_share_data = report_share_data.clone();
                 Box::pin(async move {
                     // Write aggregation job.
-                    let aggregation_job_id = tx.put_aggregation_job(&aggregation_job).await?;
+                    tx.put_aggregation_job(&aggregation_job).await?;
 
                     for (ord, share_data) in report_share_data.as_ref().iter().enumerate() {
                         // Write client report & report aggregation.
-                        let client_report_id = tx
-                            .put_report_share(task_id, &share_data.report_share)
+                        tx.put_report_share(task_id, &share_data.report_share)
                             .await?;
                         tx.put_report_aggregation(&ReportAggregation::<A> {
-                            aggregation_job_id,
-                            client_report_id,
+                            aggregation_job_id: job_id,
+                            task_id,
+                            nonce: share_data.report_share.nonce,
                             ord: ord as i64,
                             state: share_data.agg_state.clone(),
                         })
@@ -1344,10 +1341,7 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.get_client_report_by_task_id_and_nonce(report.task_id, report.nonce)
-                        .await
-                })
+                Box::pin(async move { tx.get_client_report(report.task_id, report.nonce).await })
             })
             .await
             .unwrap();
@@ -1423,10 +1417,7 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.get_client_report_by_task_id_and_nonce(report.task_id, report.nonce)
-                        .await
-                })
+                Box::pin(async move { tx.get_client_report(report.task_id, report.nonce).await })
             })
             .await
             .unwrap();
