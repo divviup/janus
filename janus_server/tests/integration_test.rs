@@ -102,6 +102,7 @@ async fn setup_test() -> TestCase {
         0,                                  // max_batch_lifetime
         0,                                  // min_batch_size
         message::Duration::from_seconds(1), // min_batch_duration,
+        message::Duration::from_seconds(1), // tolerable_clock_skew,
         collector_hpke_recipient.config(),
         agg_auth_key,
         &leader_hpke_recipient,

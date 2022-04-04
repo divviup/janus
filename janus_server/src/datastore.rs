@@ -110,14 +110,15 @@ impl Transaction<'_> {
         let max_batch_lifetime = i64::try_from(task.max_batch_lifetime)?;
         let min_batch_size = i64::try_from(task.min_batch_size)?;
         let min_batch_duration = i64::try_from(task.min_batch_duration.0)?;
+        let tolerable_clock_skew = i64::try_from(task.tolerable_clock_skew.0)?;
 
         let stmt = self
             .tx
             .prepare_cached(
                 "INSERT INTO tasks (id, aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
-                max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config,
+                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew, collector_hpke_config,
                 agg_auth_key, hpke_config, hpke_private_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
             )
             .await?;
         self.tx
@@ -132,6 +133,7 @@ impl Transaction<'_> {
                     &max_batch_lifetime,                         // max batch lifetime
                     &min_batch_size,                             // min batch size
                     &min_batch_duration,                         // min batch duration
+                    &tolerable_clock_skew,                       // tolerable clock skew
                     &task.collector_hpke_config.get_encoded(),   // collector hpke config
                     &task.agg_auth_key.as_slice(),               // agg_auth_key
                     &task.hpke_recipient.config().get_encoded(), // hpke_config
@@ -152,8 +154,8 @@ impl Transaction<'_> {
             .tx
             .prepare_cached(
                 "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
-                max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config,
-                agg_auth_key, hpke_config, hpke_private_key
+                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
+                collector_hpke_config, agg_auth_key, hpke_config, hpke_private_key
                 FROM tasks WHERE id=$1",
             )
             .await?;
@@ -170,6 +172,7 @@ impl Transaction<'_> {
         let max_batch_lifetime = row.get_bigint_as_u64("max_batch_lifetime")?;
         let min_batch_size = row.get_bigint_as_u64("min_batch_size")?;
         let min_batch_duration = Duration(row.get_bigint_as_u64("min_batch_duration")?);
+        let tolerable_clock_skew = Duration(row.get_bigint_as_u64("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
         let agg_auth_key = AggregatorAuthKey::from_bytes(row.get("agg_auth_key"))?;
         let hpke_config = HpkeConfig::get_decoded(row.get("hpke_config"))?;
@@ -192,6 +195,7 @@ impl Transaction<'_> {
             max_batch_lifetime,
             min_batch_size,
             min_batch_duration,
+            tolerable_clock_skew,
             &collector_hpke_config,
             agg_auth_key,
             &hpke_recipient,

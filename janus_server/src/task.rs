@@ -100,6 +100,9 @@ pub struct TaskParameters {
     /// The minimum batch interval for a collect request. Batch intervals must
     /// be multiples of this duration.
     pub(crate) min_batch_duration: Duration,
+    /// How much clock skew to allow between client and aggregator. Reports from
+    /// farther than this duration into the future will be rejected.
+    pub(crate) tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
     pub(crate) collector_hpke_config: HpkeConfig,
     /// Key used to authenticate messages sent to or received from the other
@@ -120,6 +123,7 @@ impl TaskParameters {
         max_batch_lifetime: u64,
         min_batch_size: u64,
         min_batch_duration: Duration,
+        tolerable_clock_skew: Duration,
         collector_hpke_config: &HpkeConfig,
         agg_auth_key: AggregatorAuthKey,
         hpke_recipient: &HpkeRecipient,
@@ -136,6 +140,7 @@ impl TaskParameters {
             max_batch_lifetime,
             min_batch_size,
             min_batch_duration,
+            tolerable_clock_skew,
             collector_hpke_config: collector_hpke_config.clone(),
             agg_auth_key,
             hpke_recipient: hpke_recipient.clone(),
@@ -161,6 +166,7 @@ impl TaskParameters {
             max_batch_lifetime: 0,
             min_batch_size: 0,
             min_batch_duration: Duration(1),
+            tolerable_clock_skew: Duration(1),
             collector_hpke_config: HpkeRecipient::generate(
                 task_id,
                 Label::AggregateShare,

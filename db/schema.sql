@@ -25,6 +25,7 @@ CREATE TABLE tasks(
     max_batch_lifetime     BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     min_batch_duration     BIGINT NOT NULL,           -- the minimum duration in seconds of a single batch interval
+    tolerable_clock_skew   BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
     collector_hpke_config  BYTEA NOT NULL,            -- the HPKE config of the collector (encoded HpkeConfig message)
     agg_auth_key           BYTEA NOT NULL,            -- HMAC key used by this aggregator to authenticate messages to/from the other aggregator
     hpke_config            BYTEA NOT NULL,            -- the HPKE config of this aggregator (encoded HpkeConfig message)
