@@ -1,19 +1,15 @@
 use chrono::Duration;
 use janus_server::{
     aggregator::aggregator_server,
-    client::{self, Client},
+    client::{self, Client, ClientParameters},
     datastore::test_util::{ephemeral_datastore, DbHandle},
     hpke::{HpkeRecipient, Label},
-    message::{Role, TaskId},
-    task::TaskParameters,
+    message::{self, Role, TaskId},
+    task::{AggregatorAuthKey, TaskParameters, Vdaf},
     time::RealClock,
     trace::{install_trace_subscriber, TraceConfiguration},
 };
-use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf};
-use ring::{
-    hmac::{self, HMAC_SHA256},
-    rand::SystemRandom,
-};
+use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf as VdafTrait};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -51,13 +47,24 @@ async fn setup_test() -> TestCase {
     let leader_verify_param = verify_params_iter.next().unwrap();
     let helper_verify_param = verify_params_iter.next().unwrap();
 
-    let agg_auth_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap();
+    let agg_auth_key = AggregatorAuthKey::generate().unwrap();
+
+    let collector_hpke_recipient = HpkeRecipient::generate(
+        task_id,
+        Label::AggregateShare,
+        Role::Leader,
+        Role::Collector,
+    );
 
     let (leader_datastore, _leader_db_handle) = ephemeral_datastore().await;
     let leader_datastore = Arc::new(leader_datastore);
+    let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
 
     let leader_hpke_recipient =
         HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+    let helper_hpke_recipient =
+        HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+
     let (leader_address, leader_server) = aggregator_server(
         vdaf.clone(),
         leader_datastore.clone(),
@@ -65,16 +72,12 @@ async fn setup_test() -> TestCase {
         Duration::minutes(10),
         Role::Leader,
         leader_verify_param,
-        leader_hpke_recipient,
-        agg_auth_key.clone(),
+        leader_hpke_recipient.clone(),
+        agg_auth_key.as_hmac_key(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
-    let leader_task_handle = tokio::spawn(leader_server);
 
-    let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
-    let helper_hpke_recipient =
-        HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
     let (helper_address, helper_server) = aggregator_server(
         vdaf.clone(),
         Arc::new(helper_datastore),
@@ -82,44 +85,56 @@ async fn setup_test() -> TestCase {
         Duration::minutes(10),
         Role::Helper,
         helper_verify_param,
-        helper_hpke_recipient,
-        agg_auth_key.clone(),
+        helper_hpke_recipient.clone(),
+        agg_auth_key.as_hmac_key(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
-    let helper_task_handle = tokio::spawn(helper_server);
-
-    let task_parameters = TaskParameters::new_dummy(
+    let leader_task_parameters = TaskParameters::new(
         task_id,
         vec![
             endpoint_from_socket_addr(&leader_address),
             endpoint_from_socket_addr(&helper_address),
         ],
+        Vdaf::Prio3Aes128Count,
+        Role::Leader,
+        vec![],                             // vdaf_verify_parameter
+        0,                                  // max_batch_lifetime
+        0,                                  // min_batch_size
+        message::Duration::from_seconds(1), // min_batch_duration,
+        collector_hpke_recipient.config(),
+        agg_auth_key,
+        &leader_hpke_recipient,
     );
 
     leader_datastore
         .run_tx(|tx| {
-            let task_parameters = task_parameters.clone();
+            let task_parameters = leader_task_parameters.clone();
             Box::pin(async move { tx.put_task(&task_parameters).await })
         })
         .await
         .unwrap();
 
+    let leader_task_handle = tokio::spawn(leader_server);
+    let helper_task_handle = tokio::spawn(helper_server);
+
+    let client_parameters = ClientParameters::from_task_parameters(&leader_task_parameters);
+
     let http_client = client::default_http_client().unwrap();
     let leader_report_sender =
-        client::aggregator_hpke_sender(&task_parameters, Role::Leader, &http_client)
+        client::aggregator_hpke_sender(&client_parameters, Role::Leader, &http_client)
             .await
             .unwrap();
 
     let helper_report_sender =
-        client::aggregator_hpke_sender(&task_parameters, Role::Helper, &http_client)
+        client::aggregator_hpke_sender(&client_parameters, Role::Helper, &http_client)
             .await
             .unwrap();
 
     let vdaf = Prio3Aes128Count::new(2).unwrap();
 
     let client = Client::new(
-        task_parameters,
+        client_parameters,
         vdaf,
         (), // no public parameter for prio3
         RealClock::default(),
