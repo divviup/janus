@@ -122,10 +122,11 @@ where
 
 impl<A: vdaf::Aggregator, C: Clock> Aggregator<A, C>
 where
-    A: 'static,
+    A: 'static + Send + Sync,
     A::AggregationParam: Send + Sync,
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
+    A::PrepareMessage: Send + Sync,
     A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
     for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     A::VerifyParam: Send + Sync,
@@ -445,21 +446,24 @@ where
         job_id: AggregationJobId,
         transitions: Vec<Transition>,
     ) -> Result<AggregateResp, Error> {
-        // TODO(brandon): verify that `task_id` is consistent with the task `job_id` refers to?
+        let vdaf = Arc::new(self.vdaf.clone());
         let verify_param = Arc::new(self.verify_param.clone());
         let transitions = Arc::new(transitions);
 
-        let foo = self // XXX: rename or drop variable
+        Ok(self
             .datastore
             .run_tx(|tx| {
+                let vdaf = vdaf.clone();
                 let verify_param = verify_param.clone();
                 let transitions = transitions.clone();
+
                 Box::pin(async move {
                     // Read existing state.
-                    let (aggregation_job, report_aggregations) = future::try_join(
-                        tx.get_aggregation_job::<A>(job_id),
-                        tx.get_report_aggregations_by_aggregation_job_id::<A>(
+                    let (mut aggregation_job, report_aggregations) = future::try_join(
+                        tx.get_aggregation_job::<A>(task_id, job_id),
+                        tx.get_report_aggregations_for_aggregation_job::<A>(
                             &verify_param,
+                            task_id,
                             job_id,
                         ),
                     )
@@ -467,49 +471,134 @@ where
 
                     // Handle each transition in the request.
                     let mut report_aggregations = report_aggregations.into_iter();
+                    let (mut saw_continue, mut saw_finish) = (false, false);
+                    let mut response_transitions = Vec::new();
                     for transition in transitions.iter() {
-                        // Match transition received from leader to stored report aggregation.
-                        let report_aggregation = loop {
-                            let report_agg = report_aggregations.next().ok_or_else(|| {
+                        // Match transition received from leader to stored report aggregation, and
+                        // extract the stored preparation step.
+                        let mut report_aggregation = loop {
+                            let mut report_agg = report_aggregations.next().ok_or_else(|| {
+                                warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent unexpected or out-of-order transitions");
                                 datastore::Error::User(Box::new(Error::UnrecognizedMessage(
-                                    "missing or out-of-order transitions",
+                                    "leader sent unexpected or out-of-order transitions",
                                     task_id,
                                 )))
                             })?;
                             if report_agg.nonce != transition.nonce {
+                                // TODO(brandon): assuming we aren't going to fail due to
+                                // out-of-order/unexpected transitions, any report aggregations that
+                                // get skipped here are skipped because the leader omitted them
+                                // because something failed on the leader's side. We move to INVALID
+                                // state to ensure we don't get later updates, but is that the
+                                // desired behavior?
+                                report_agg.state = ReportAggregationState::Invalid;
+                                tx.update_report_aggregation(&report_agg).await?;
                                 continue;
                             }
                             break report_agg;
                         };
-                        let prep_step: A::PrepareStep;
-                        // XXX: retrieve prepare step from report aggregation (verifying it's in Waiting state)
-                        // XXX: how to deal with non-waiting state?
+                        let prep_step =
+                            match report_aggregation.state {
+                                ReportAggregationState::Waiting(prep_step) => prep_step,
+                                _ => {
+                                    warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent transition for non-WAITING report aggregation");
+                                    return Err(datastore::Error::User(Box::new(
+                                        Error::UnrecognizedMessage(
+                                            "leader sent transition for non-WAITING report aggregation",
+                                            task_id,
+                                        ),
+                                    )));
+                                },
+                            };
 
-                        // Parse transition.
-                        let prep_msg = if let TransitionTypeSpecificData::Continued { payload } =
-                            &transition.trans_data
-                        {
-                            A::PrepareMessage::decode_with_param(
-                                &prep_step,
-                                &mut Cursor::new(payload),
-                            )? // XXX: is returning appropriate here?
-                        } else {
-                            return Err(datastore::Error::User(Box::new(
-                                Error::UnrecognizedMessage(
-                                    "leader sent non-Continued transition in payload",
-                                    task_id,
-                                ),
-                            )));
+                        // Parse preparation message out of transition received from leader.
+                        let prep_msg = match &transition.trans_data {
+                            TransitionTypeSpecificData::Continued { payload } => {
+                                A::PrepareMessage::decode_with_param(
+                                    &prep_step,
+                                    &mut Cursor::new(payload),
+                                )?
+                            }
+                            _ => {
+                                // TODO(brandon): should this be reflected in the response?
+                                warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent non-Continued transition");
+                                report_aggregation.state = ReportAggregationState::Invalid;
+                                tx.update_report_aggregation(&report_aggregation).await?;
+                                continue;
+                            }
                         };
-                        // XXX
+
+                        // Compute the next transition, prepare to respond & update DB.
+                        let prep_trans = vdaf.prepare_step(prep_step, Some(prep_msg));
+                        match prep_trans {
+                            PrepareTransition::Continue(prep_step, prep_msg) => {
+                                saw_continue = true;
+                                report_aggregation.state =
+                                    ReportAggregationState::Waiting(prep_step);
+                                response_transitions.push(Transition {
+                                    nonce: transition.nonce,
+                                    trans_data: TransitionTypeSpecificData::Continued {
+                                        payload: prep_msg.get_encoded(),
+                                    },
+                                })
+                            }
+
+                            PrepareTransition::Finish(output_share) => {
+                                saw_finish = true;
+                                report_aggregation.state =
+                                    ReportAggregationState::Finished(output_share);
+                                response_transitions.push(Transition {
+                                    nonce: transition.nonce,
+                                    trans_data: TransitionTypeSpecificData::Finished,
+                                });
+                            }
+
+                            PrepareTransition::Fail(err) => {
+                                warn!(?task_id, ?job_id, nonce = %transition.nonce, %err, "Prepare step failed");
+                                report_aggregation.state =
+                                    ReportAggregationState::Failed(TransitionError::VdafPrepError);
+                                response_transitions.push(Transition {
+                                    nonce: transition.nonce,
+                                    trans_data: TransitionTypeSpecificData::Failed {
+                                        error: TransitionError::VdafPrepError,
+                                    },
+                                })
+                            }
+                        }
+
+                        tx.update_report_aggregation(&report_aggregation).await?;
                     }
 
-                    Ok(()) // XXX
+                    for mut report_aggregation in report_aggregations {
+                        // TODO(brandon): assuming we aren't going to fail due to
+                        // out-of-order/unexpected transitions, any report aggregations that
+                        // get skipped here are skipped because the leader omitted them
+                        // because something failed on the leader's side. We move to INVALID
+                        // state to ensure we don't get later updates, but is that the
+                        // desired behavior?
+                        report_aggregation.state = ReportAggregationState::Invalid;
+                        tx.update_report_aggregation(&report_aggregation).await?;
+                    }
+
+                    aggregation_job.state = match (saw_continue, saw_finish) {
+                        (false, false) => AggregationJobState::Finished, // everything failed, or there were no reports
+                        (true, false) => AggregationJobState::InProgress,
+                        (false, true) => AggregationJobState::Finished,
+                        (true, true) => {
+                            return Err(datastore::Error::User(Box::new(Error::Internal(
+                                "VDAF took an inconsistent number of rounds to reach Finish state"
+                                    .to_string(),
+                            ))))
+                        }
+                    };
+                    tx.update_aggregation_job(&aggregation_job).await?;
+
+                    Ok(AggregateResp {
+                        seq: response_transitions,
+                    })
                 })
             })
-            .await?;
-
-        todo!()
+            .await?)
     }
 }
 
@@ -676,6 +765,7 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::VerifyParam: Send + Sync,
     A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
+    A::PrepareMessage: Send + Sync,
     A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
     for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     C: 'static + Clock,
@@ -708,8 +798,6 @@ where
         })
         .with(trace::named("hpke_config"));
 
-    // TODO(brandon): add a `recover` handler to all filters, and map errors to non-500 result
-    // codes. [https://docs.rs/warp/0.3.2/warp/reject/index.html]
     let upload_endpoint = warp::path("upload")
         .and(warp::post())
         .and(with_cloned_value(aggregator.clone()))
@@ -783,6 +871,7 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::VerifyParam: Send + Sync,
     A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
+    A::PrepareMessage: Send + Sync,
     A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
     for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     C: 'static + Clock,
@@ -922,7 +1011,7 @@ pub(crate) mod test_util {
             }
         }
 
-        #[derive(Clone, Debug)]
+        #[derive(Clone, Debug, PartialEq, Eq)]
         pub struct OutputShare();
 
         impl TryFrom<&[u8]> for OutputShare {
@@ -939,7 +1028,7 @@ pub(crate) mod test_util {
             }
         }
 
-        #[derive(Clone, Debug)]
+        #[derive(Clone, Debug, PartialEq, Eq)]
         pub struct AggregateShare();
 
         impl Aggregatable for AggregateShare {
@@ -1001,9 +1090,11 @@ mod tests {
     use url::Url;
     use warp::reply::Reply;
 
-    fn generate_hmac_key() -> hmac::Key {
-        hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap()
-    }
+    type PrepareTransition<V> = vdaf::PrepareTransition<
+        <V as vdaf::Aggregator>::PrepareStep,
+        <V as vdaf::Aggregator>::PrepareMessage,
+        <V as vdaf::Vdaf>::OutputShare,
+    >;
 
     #[tokio::test]
     async fn invalid_role() {
@@ -1620,7 +1711,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.remove(1);
+        let (public_param, verify_params) = vdaf.setup().unwrap();
+        let aggregation_param = ();
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
@@ -1644,10 +1736,20 @@ mod tests {
             .unwrap();
 
         // report_share_0 is a "happy path" report.
-        let input_share = generate_helper_input_share(&vdaf, &(), &0);
+        let nonce_0 = generate_nonce(&clock);
+        let input_share = run_vdaf(
+            &vdaf,
+            &public_param,
+            &verify_params,
+            &aggregation_param,
+            nonce_0,
+            &0,
+        )
+        .input_shares
+        .remove(1);
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            generate_nonce(&clock),
+            nonce_0,
             hpke_recipient.config(),
             &input_share,
         );
@@ -1690,7 +1792,7 @@ mod tests {
             clock,
             skew,
             Role::Helper,
-            verify_param,
+            verify_params[1].clone(),
             hpke_recipient,
             hmac_key.clone(),
         )
@@ -1752,7 +1854,6 @@ mod tests {
                 "PrepInitFailer failed at prep_init".to_string(),
             ))
         });
-        let verify_param = vdaf.setup().unwrap().1.remove(1);
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
@@ -1775,12 +1876,11 @@ mod tests {
             .await
             .unwrap();
 
-        let input_share = generate_helper_input_share(&vdaf, &(), &());
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
             generate_nonce(&clock),
             hpke_recipient.config(),
-            &input_share,
+            &(),
         );
         let request = AggregateReq {
             task_id,
@@ -1798,7 +1898,7 @@ mod tests {
             clock,
             skew,
             Role::Helper,
-            verify_param,
+            (),
             hpke_recipient,
             hmac_key.clone(),
         )
@@ -1839,14 +1939,11 @@ mod tests {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
-        let vdaf = fake::Vdaf::new().with_prep_step_fn(
-            || -> PrepareTransition<(), (), fake::OutputShare> {
-                PrepareTransition::Fail(VdafError::Uncategorized(
-                    "VDAF failed at prep_step".to_string(),
-                ))
-            },
-        );
-        let verify_param = vdaf.setup().unwrap().1.remove(1);
+        let vdaf = fake::Vdaf::new().with_prep_step_fn(|| -> PrepareTransition<fake::Vdaf> {
+            PrepareTransition::<fake::Vdaf>::Fail(VdafError::Uncategorized(
+                "VDAF failed at prep_step".to_string(),
+            ))
+        });
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
@@ -1869,12 +1966,11 @@ mod tests {
             .await
             .unwrap();
 
-        let input_share = generate_helper_input_share(&vdaf, &(), &());
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
             generate_nonce(&clock),
             hpke_recipient.config(),
-            &input_share,
+            &(),
         );
         let request = AggregateReq {
             task_id,
@@ -1892,7 +1988,7 @@ mod tests {
             clock,
             skew,
             Role::Helper,
-            verify_param,
+            (),
             hpke_recipient,
             hmac_key.clone(),
         )
@@ -2003,6 +2099,933 @@ mod tests {
         assert_eq!(want_status, parts.status.as_u16());
     }
 
+    #[tokio::test]
+    async fn aggregate_continue() {
+        // Prepare datastore & request.
+        install_test_trace_subscriber();
+
+        let task_id = TaskId::random();
+        let aggregation_job_id = AggregationJobId::random();
+        let vdaf = Prio3Aes128Count::new(2).unwrap();
+        let (public_param, verify_params) = vdaf.setup().unwrap();
+        let aggregation_param = ();
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let datastore = Arc::new(datastore);
+        let clock = MockClock::default();
+        let skew = Duration::minutes(10);
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let hmac_key = generate_hmac_key();
+
+        // report_share_0 is a "happy path" report.
+        let nonce_0 = generate_nonce(&clock);
+        let transcript_0 = run_vdaf(
+            &vdaf,
+            &public_param,
+            &verify_params,
+            &aggregation_param,
+            nonce_0,
+            &0,
+        );
+        let prep_step_0 = assert_matches!(&transcript_0.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
+        let out_share_0 = assert_matches!(&transcript_0.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
+        let prep_msg_0 = transcript_0.messages[0].clone();
+        let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_0,
+            hpke_recipient.config(),
+            &transcript_0.input_shares[1],
+        );
+
+        // report_share_1 is omitted by the leader's request.
+        let nonce_1 = generate_nonce(&clock);
+        let transcript_1 = run_vdaf(
+            &vdaf,
+            &public_param,
+            &verify_params,
+            &aggregation_param,
+            nonce_1,
+            &0,
+        );
+        let prep_step_1 = assert_matches!(&transcript_1.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
+        let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_1,
+            hpke_recipient.config(),
+            &transcript_1.input_shares[1],
+        );
+
+        datastore
+            .run_tx(|tx| {
+                let (report_share_0, report_share_1) =
+                    (report_share_0.clone(), report_share_1.clone());
+                let (prep_step_0, prep_step_1) = (prep_step_0.clone(), prep_step_1.clone());
+
+                Box::pin(async move {
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await?;
+
+                    tx.put_report_share(task_id, &report_share_0).await?;
+                    tx.put_report_share(task_id, &report_share_1).await?;
+
+                    tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce: nonce_0,
+                        ord: 0,
+                        state: ReportAggregationState::Waiting(prep_step_0),
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce: nonce_1,
+                        ord: 1,
+                        state: ReportAggregationState::Waiting(prep_step_1),
+                    })
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let request = AggregateReq {
+            task_id,
+            job_id: aggregation_job_id,
+            body: AggregateContinueReq {
+                seq: vec![Transition {
+                    nonce: nonce_0,
+                    trans_data: TransitionTypeSpecificData::Continued {
+                        payload: prep_msg_0.get_encoded(),
+                    },
+                }],
+            },
+        };
+
+        // Create aggregator filter, send request, and parse response.
+        let filter = aggregator_filter(
+            vdaf,
+            datastore.clone(),
+            clock,
+            skew,
+            Role::Helper,
+            verify_params[1].clone(),
+            hpke_recipient,
+            hmac_key.clone(),
+        )
+        .unwrap();
+
+        let mut response = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let aggregate_resp: AggregateResp =
+            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
+                .unwrap()
+                .decode(&hmac_key)
+                .unwrap();
+
+        // Validate response.
+        assert_eq!(
+            aggregate_resp,
+            AggregateResp {
+                seq: vec![Transition {
+                    nonce: nonce_0,
+                    trans_data: TransitionTypeSpecificData::Finished,
+                }]
+            }
+        );
+
+        // Validate datastore.
+        let (aggregation_job, report_aggregations) = datastore
+            .run_tx(|tx| {
+                let verify_params = verify_params.clone();
+
+                Box::pin(async move {
+                    let aggregation_job = tx
+                        .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
+                        .await?;
+                    let report_aggregations = tx
+                        .get_report_aggregations_for_aggregation_job::<Prio3Aes128Count>(
+                            &verify_params[1].clone(),
+                            task_id,
+                            aggregation_job_id,
+                        )
+                        .await?;
+                    Ok((aggregation_job, report_aggregations))
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            aggregation_job,
+            AggregationJob {
+                aggregation_job_id,
+                task_id,
+                aggregation_param,
+                state: AggregationJobState::Finished,
+            }
+        );
+        assert_eq!(
+            report_aggregations,
+            vec![
+                ReportAggregation {
+                    aggregation_job_id,
+                    task_id,
+                    nonce: nonce_0,
+                    ord: 0,
+                    state: ReportAggregationState::Finished(out_share_0),
+                },
+                ReportAggregation {
+                    aggregation_job_id,
+                    task_id,
+                    nonce: nonce_1,
+                    ord: 1,
+                    state: ReportAggregationState::Invalid,
+                }
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_continue_leader_sends_non_continue_transition() {
+        // Prepare datastore & request.
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+        let aggregation_job_id = AggregationJobId::random();
+        let nonce = Nonce {
+            time: Time(54321),
+            rand: 314,
+        };
+        let vdaf = fake::Vdaf::new();
+        let verify_param = vdaf.setup().unwrap().1.remove(1);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let datastore = Arc::new(datastore);
+        let clock = MockClock::default();
+        let skew = Duration::minutes(10);
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let hmac_key = generate_hmac_key();
+
+        // Setup datastore.
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await?;
+                    tx.put_report_share(
+                        task_id,
+                        &ReportShare {
+                            nonce,
+                            extensions: Vec::new(),
+                            encrypted_input_share: HpkeCiphertext {
+                                config_id: HpkeConfigId(42),
+                                encapsulated_context: Vec::from("012345"),
+                                payload: Vec::from("543210"),
+                            },
+                        },
+                    )
+                    .await?;
+                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce,
+                        ord: 0,
+                        state: ReportAggregationState::Waiting(()),
+                    })
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        // Make request.
+        let request = AggregateReq {
+            task_id,
+            job_id: aggregation_job_id,
+            body: AggregateContinueReq {
+                seq: vec![Transition {
+                    nonce,
+                    trans_data: TransitionTypeSpecificData::Finished,
+                }],
+            },
+        };
+
+        let filter = aggregator_filter(
+            vdaf,
+            datastore.clone(),
+            clock,
+            skew,
+            Role::Helper,
+            verify_param,
+            hpke_recipient,
+            hmac_key.clone(),
+        )
+        .unwrap();
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        // Validate response.
+        assert_eq!(parts.status, StatusCode::OK);
+        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+        let aggregate_resp: AggregateResp =
+            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
+                .unwrap()
+                .decode(&hmac_key)
+                .unwrap();
+
+        assert_eq!(aggregate_resp, AggregateResp { seq: Vec::new() });
+
+        // Validate datastore.
+        let (aggregation_job, report_aggregation) = datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let aggregation_job = tx
+                        .get_aggregation_job::<fake::Vdaf>(task_id, aggregation_job_id)
+                        .await?;
+                    let report_aggregation = tx
+                        .get_report_aggregation::<fake::Vdaf>(
+                            &(),
+                            task_id,
+                            aggregation_job_id,
+                            nonce,
+                        )
+                        .await?;
+                    Ok((aggregation_job, report_aggregation))
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            aggregation_job,
+            AggregationJob {
+                aggregation_job_id,
+                task_id,
+                aggregation_param: (),
+                state: AggregationJobState::Finished,
+            }
+        );
+        assert_eq!(
+            report_aggregation,
+            ReportAggregation {
+                aggregation_job_id,
+                task_id,
+                nonce,
+                ord: 0,
+                state: ReportAggregationState::Invalid,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_continue_prep_step_fails() {
+        // Prepare datastore & request.
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+        let aggregation_job_id = AggregationJobId::random();
+        let nonce = Nonce {
+            time: Time(54321),
+            rand: 314,
+        };
+        let vdaf = fake::Vdaf::new().with_prep_step_fn(|| -> PrepareTransition<fake::Vdaf> {
+            PrepareTransition::<fake::Vdaf>::Fail(VdafError::Uncategorized(
+                "VDAF failed at prep_step".to_string(),
+            ))
+        });
+        let verify_param = vdaf.setup().unwrap().1.remove(1);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let datastore = Arc::new(datastore);
+        let clock = MockClock::default();
+        let skew = Duration::minutes(10);
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let hmac_key = generate_hmac_key();
+
+        // Setup datastore.
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await?;
+                    tx.put_report_share(
+                        task_id,
+                        &ReportShare {
+                            nonce,
+                            extensions: Vec::new(),
+                            encrypted_input_share: HpkeCiphertext {
+                                config_id: HpkeConfigId(42),
+                                encapsulated_context: Vec::from("012345"),
+                                payload: Vec::from("543210"),
+                            },
+                        },
+                    )
+                    .await?;
+                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce,
+                        ord: 0,
+                        state: ReportAggregationState::Waiting(()),
+                    })
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        // Make request.
+        let request = AggregateReq {
+            task_id,
+            job_id: aggregation_job_id,
+            body: AggregateContinueReq {
+                seq: vec![Transition {
+                    nonce,
+                    trans_data: TransitionTypeSpecificData::Continued {
+                        payload: Vec::new(),
+                    },
+                }],
+            },
+        };
+
+        let filter = aggregator_filter(
+            vdaf,
+            datastore.clone(),
+            clock,
+            skew,
+            Role::Helper,
+            verify_param,
+            hpke_recipient,
+            hmac_key.clone(),
+        )
+        .unwrap();
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        // Check that response is as desired.
+        assert_eq!(parts.status, StatusCode::OK);
+        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+        let aggregate_resp: AggregateResp =
+            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
+                .unwrap()
+                .decode(&hmac_key)
+                .unwrap();
+        assert_eq!(
+            aggregate_resp,
+            AggregateResp {
+                seq: vec![Transition {
+                    nonce,
+                    trans_data: TransitionTypeSpecificData::Failed {
+                        error: TransitionError::VdafPrepError
+                    }
+                }]
+            }
+        );
+
+        // Check datastore state.
+        let (aggregation_job, report_aggregation) = datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let aggregation_job = tx
+                        .get_aggregation_job::<fake::Vdaf>(task_id, aggregation_job_id)
+                        .await?;
+                    let report_aggregation = tx
+                        .get_report_aggregation::<fake::Vdaf>(
+                            &(),
+                            task_id,
+                            aggregation_job_id,
+                            nonce,
+                        )
+                        .await?;
+                    Ok((aggregation_job, report_aggregation))
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            aggregation_job,
+            AggregationJob {
+                aggregation_job_id,
+                task_id,
+                aggregation_param: (),
+                state: AggregationJobState::Finished,
+            }
+        );
+        assert_eq!(
+            report_aggregation,
+            ReportAggregation {
+                aggregation_job_id,
+                task_id,
+                nonce,
+                ord: 0,
+                state: ReportAggregationState::Failed(TransitionError::VdafPrepError),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_continue_unexpected_transition() {
+        // Prepare datastore & request.
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+        let aggregation_job_id = AggregationJobId::random();
+        let nonce = Nonce {
+            time: Time(54321),
+            rand: 314,
+        };
+        let vdaf = fake::Vdaf::new();
+        let verify_param = vdaf.setup().unwrap().1.remove(1);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let skew = Duration::minutes(10);
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let hmac_key = generate_hmac_key();
+
+        // Setup datastore.
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await?;
+                    tx.put_report_share(
+                        task_id,
+                        &ReportShare {
+                            nonce,
+                            extensions: Vec::new(),
+                            encrypted_input_share: HpkeCiphertext {
+                                config_id: HpkeConfigId(42),
+                                encapsulated_context: Vec::from("012345"),
+                                payload: Vec::from("543210"),
+                            },
+                        },
+                    )
+                    .await?;
+                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce,
+                        ord: 0,
+                        state: ReportAggregationState::Waiting(()),
+                    })
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        // Make request.
+        let request = AggregateReq {
+            task_id,
+            job_id: aggregation_job_id,
+            body: AggregateContinueReq {
+                seq: vec![Transition {
+                    nonce: Nonce {
+                        time: Time(54321),
+                        rand: 315, // not the same as above
+                    },
+                    trans_data: TransitionTypeSpecificData::Continued {
+                        payload: Vec::new(),
+                    },
+                }],
+            },
+        };
+
+        let filter = aggregator_filter(
+            vdaf,
+            Arc::new(datastore),
+            clock,
+            skew,
+            Role::Helper,
+            verify_param,
+            hpke_recipient,
+            hmac_key.clone(),
+        )
+        .unwrap();
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        // Check that response is as desired.
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "The message type for a response was incorrect or the payload was malformed.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_continue_out_of_order_transition() {
+        // Prepare datastore & request.
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+        let aggregation_job_id = AggregationJobId::random();
+        let nonce_0 = Nonce {
+            time: Time(54321),
+            rand: 314,
+        };
+        let nonce_1 = Nonce {
+            time: Time(54321),
+            rand: 315,
+        };
+
+        let vdaf = fake::Vdaf::new();
+        let verify_param = vdaf.setup().unwrap().1.remove(1);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let skew = Duration::minutes(10);
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let hmac_key = generate_hmac_key();
+
+        // Setup datastore.
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await?;
+
+                    tx.put_report_share(
+                        task_id,
+                        &ReportShare {
+                            nonce: nonce_0,
+                            extensions: Vec::new(),
+                            encrypted_input_share: HpkeCiphertext {
+                                config_id: HpkeConfigId(42),
+                                encapsulated_context: Vec::from("012345"),
+                                payload: Vec::from("543210"),
+                            },
+                        },
+                    )
+                    .await?;
+                    tx.put_report_share(
+                        task_id,
+                        &ReportShare {
+                            nonce: nonce_1,
+                            extensions: Vec::new(),
+                            encrypted_input_share: HpkeCiphertext {
+                                config_id: HpkeConfigId(42),
+                                encapsulated_context: Vec::from("012345"),
+                                payload: Vec::from("543210"),
+                            },
+                        },
+                    )
+                    .await?;
+
+                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+
+                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce: nonce_0,
+                        ord: 0,
+                        state: ReportAggregationState::Waiting(()),
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce: nonce_1,
+                        ord: 1,
+                        state: ReportAggregationState::Waiting(()),
+                    })
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        // Make request.
+        let request = AggregateReq {
+            task_id,
+            job_id: aggregation_job_id,
+            body: AggregateContinueReq {
+                seq: vec![
+                    // nonces are in opposite order to what was stored in the datastore.
+                    Transition {
+                        nonce: nonce_1,
+                        trans_data: TransitionTypeSpecificData::Continued {
+                            payload: Vec::new(),
+                        },
+                    },
+                    Transition {
+                        nonce: nonce_0,
+                        trans_data: TransitionTypeSpecificData::Continued {
+                            payload: Vec::new(),
+                        },
+                    },
+                ],
+            },
+        };
+
+        let filter = aggregator_filter(
+            vdaf,
+            Arc::new(datastore),
+            clock,
+            skew,
+            Role::Helper,
+            verify_param,
+            hpke_recipient,
+            hmac_key.clone(),
+        )
+        .unwrap();
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        // Check that response is as desired.
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "The message type for a response was incorrect or the payload was malformed.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_continue_for_non_waiting_aggregation() {
+        // Prepare datastore & request.
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+        let aggregation_job_id = AggregationJobId::random();
+        let nonce = Nonce {
+            time: Time(54321),
+            rand: 314,
+        };
+        let vdaf = fake::Vdaf::new();
+        let verify_param = vdaf.setup().unwrap().1.remove(1);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let skew = Duration::minutes(10);
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let hmac_key = generate_hmac_key();
+
+        // Setup datastore.
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await?;
+                    tx.put_report_share(
+                        task_id,
+                        &ReportShare {
+                            nonce,
+                            extensions: Vec::new(),
+                            encrypted_input_share: HpkeCiphertext {
+                                config_id: HpkeConfigId(42),
+                                encapsulated_context: Vec::from("012345"),
+                                payload: Vec::from("543210"),
+                            },
+                        },
+                    )
+                    .await?;
+                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce,
+                        ord: 0,
+                        state: ReportAggregationState::Invalid,
+                    })
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        // Make request.
+        let request = AggregateReq {
+            task_id,
+            job_id: aggregation_job_id,
+            body: AggregateContinueReq {
+                seq: vec![Transition {
+                    nonce: Nonce {
+                        time: Time(54321),
+                        rand: 314,
+                    },
+                    trans_data: TransitionTypeSpecificData::Continued {
+                        payload: Vec::new(),
+                    },
+                }],
+            },
+        };
+
+        let filter = aggregator_filter(
+            vdaf,
+            Arc::new(datastore),
+            clock,
+            skew,
+            Role::Helper,
+            verify_param,
+            hpke_recipient,
+            hmac_key.clone(),
+        )
+        .unwrap();
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        // Check that response is as desired.
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "The message type for a response was incorrect or the payload was malformed.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+    }
+
     fn generate_nonce<C: Clock>(clock: &C) -> Nonce {
         Nonce {
             time: Time::from_naive_date_time(clock.now()),
@@ -2010,16 +3033,77 @@ mod tests {
         }
     }
 
-    fn generate_helper_input_share<V: vdaf::Client>(
-        vdaf: &V,
-        public_param: &V::PublicParam,
-        measurement: &V::Measurement,
-    ) -> V::InputShare
+    /// A transcript of a VDAF run. All fields are indexed by participant index (in PPM terminology,
+    /// index 0 = leader, index 1 = helper).
+    struct VdafTranscript<V: vdaf::Aggregator>
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        assert_eq!(vdaf.num_aggregators(), 2);
-        vdaf.shard(public_param, measurement).unwrap().remove(1)
+        input_shares: Vec<V::InputShare>,
+        transitions: Vec<Vec<PrepareTransition<V>>>,
+        messages: Vec<V::PrepareMessage>,
+    }
+
+    // run_vdaf runs a VDAF state machine from sharding through to generating an output share,
+    // returning a "transcript" of all states & messages.
+    fn run_vdaf<V: vdaf::Aggregator + vdaf::Client>(
+        vdaf: &V,
+        public_param: &V::PublicParam,
+        verify_params: &[V::VerifyParam],
+        aggregation_param: &V::AggregationParam,
+        nonce: Nonce,
+        measurement: &V::Measurement,
+    ) -> VdafTranscript<V>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
+        // Shard inputs into input shares, and initialize the initial PrepareTransitions.
+        let input_shares = vdaf.shard(public_param, measurement).unwrap();
+        let mut prep_trans: Vec<Vec<PrepareTransition<V>>> = input_shares
+            .iter()
+            .enumerate()
+            .map(|(idx, input_share)| {
+                let prep_step = vdaf.prepare_init(
+                    &verify_params[idx],
+                    aggregation_param,
+                    &nonce.get_encoded(),
+                    input_share,
+                )?;
+                let prep_trans = vdaf.prepare_step(prep_step, None);
+                Ok(vec![prep_trans])
+            })
+            .collect::<Result<Vec<Vec<PrepareTransition<V>>>, VdafError>>()
+            .unwrap();
+        let mut combined_prep_msgs = Vec::new();
+
+        // Repeatedly step the VDAF until we reach a terminal state.
+        loop {
+            // Gather messages from last round & combine them into next round's message; if any
+            // participants have reached a terminal state (Finish or Fail), we are done.
+            let mut prep_msgs = Vec::new();
+            for pts in &prep_trans {
+                match pts.last().unwrap() {
+                    PrepareTransition::<V>::Continue(_, prep_msg) => {
+                        prep_msgs.push(prep_msg.clone())
+                    }
+                    _ => {
+                        return VdafTranscript {
+                            input_shares,
+                            transitions: prep_trans,
+                            messages: combined_prep_msgs,
+                        }
+                    }
+                }
+            }
+            let combined_prep_msg = vdaf.prepare_preprocess(prep_msgs).unwrap();
+            combined_prep_msgs.push(combined_prep_msg.clone());
+
+            // Compute each participant's next transition.
+            for pts in &mut prep_trans {
+                let prep_step = assert_matches!(pts.last().unwrap(), PrepareTransition::<V>::Continue(prep_step, _) => prep_step).clone();
+                pts.push(vdaf.prepare_step(prep_step, Some(combined_prep_msg.clone())));
+            }
+        }
     }
 
     fn generate_helper_report_share<V: vdaf::Client>(
@@ -2061,5 +3145,9 @@ mod tests {
             extensions: Vec::new(),
             encrypted_input_share,
         }
+    }
+
+    fn generate_hmac_key() -> hmac::Key {
+        hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap()
     }
 }

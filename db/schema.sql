@@ -56,8 +56,8 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 -- An aggregation job, representing the aggregation of a number of client reports.
 CREATE TABLE aggregation_jobs(
     id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    aggregation_job_id BYTEA NOT NULL,                  -- aggregation job ID
     task_id            BIGINT NOT NULL,                 -- ID of related task
+    aggregation_job_id BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the PPM specification
     aggregation_param  BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     state              AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
 
