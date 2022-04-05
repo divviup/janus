@@ -480,7 +480,7 @@ where
                                 )))
                             })?;
                         };
-                        if report_aggregation.job_
+                        // XXX
                     }
 
                     Ok(()) // XXX
