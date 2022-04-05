@@ -1,5 +1,15 @@
 //! Janus datastore (durable storage) implementation.
 
+use self::models::{
+    AggregationJob, AggregatorRole, ReportAggregation, ReportAggregationState,
+    ReportAggregationStateCode,
+};
+#[cfg(test)]
+use crate::{
+    hpke::{HpkePrivateKey, HpkeRecipient, Label},
+    message::{Duration, HpkeConfig, Role},
+    task::AggregatorAuthKey,
+};
 use crate::{
     message::{
         AggregationJobId, Extension, HpkeCiphertext, Nonce, Report, ReportShare, TaskId, Time,
@@ -10,12 +20,10 @@ use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     vdaf,
 };
-use std::{future::Future, io::Cursor, pin::Pin};
-use tokio_postgres::{error::SqlState, IsolationLevel, Row};
-
-use self::models::{
-    AggregationJob, ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
-};
+use std::{convert::TryFrom, fmt::Display, future::Future, io::Cursor, pin::Pin};
+use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
+#[cfg(test)]
+use url::Url;
 
 // TODO(brandon): retry network-related & other transient failures once we know what they look like
 
@@ -91,89 +99,113 @@ impl Transaction<'_> {
     // This is pub to be used in integration tests
     #[doc(hidden)]
     pub async fn put_task(&self, task: &TaskParameters) -> Result<(), Error> {
-        // TODO: interpolate values from `task` into prepared statement
+        let aggregator_role = AggregatorRole::from_role(task.role)?;
+
+        let endpoints: Vec<&str> = task
+            .aggregator_endpoints
+            .iter()
+            .map(|url| url.as_str())
+            .collect();
+
+        let max_batch_lifetime = i64::try_from(task.max_batch_lifetime)?;
+        let min_batch_size = i64::try_from(task.min_batch_size)?;
+        let min_batch_duration = i64::try_from(task.min_batch_duration.0)?;
+
         let stmt = self
             .tx
             .prepare_cached(
-                "INSERT INTO tasks (id, ord, aggregator_endpoints, vdaf, vdaf_verify_param,
-                max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config)
-                VALUES ($1, 0, '{}', $2, '', 0, 0, INTERVAL '0', '')",
+                "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
+                max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config,
+                agg_auth_key, hpke_config, hpke_private_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             )
             .await?;
         self.tx
             .execute(
                 &stmt,
                 &[
-                    &&task.id.0[..], // id
-                    &task.vdaf,      // vdaf
+                    &&task.id.0[..],                             // id
+                    &aggregator_role,                            // aggregator_role
+                    &endpoints,                                  // aggregator_endpoints
+                    &task.vdaf,                                  // vdaf
+                    &task.vdaf_verify_parameter,                 // verify param
+                    &max_batch_lifetime,                         // max batch lifetime
+                    &min_batch_size,                             // min batch size
+                    &min_batch_duration,                         // min batch duration
+                    &task.collector_hpke_config.get_encoded(),   // collector hpke config
+                    &task.agg_auth_key.as_slice(),               // agg_auth_key
+                    &task.hpke_recipient.config().get_encoded(), // hpke_config
+                    &task.hpke_recipient.private_key().as_ref(), // hpke_private_key
                 ],
             )
             .await?;
         Ok(())
     }
 
-    /// This is a test-only method that is used to test round-tripping of values.
-    /// TODO: remove this once the tasks table is finalized, and there's a method to retrieve an
-    /// entire `TaskParameters` from the database.
+    /// Fetch the task parameters corresponing to the provided `task_id`.
+    //
+    // Only available in test configs for now, but will soon be used by
+    // aggregators to discover tasks from the database.
     #[cfg(test)]
-    async fn get_task_vdaf_by_id(&self, task_id: &TaskId) -> Result<crate::task::Vdaf, Error> {
+    pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<TaskParameters, Error> {
         let stmt = self
             .tx
-            .prepare_cached("SELECT vdaf FROM tasks WHERE id=$1")
+            .prepare_cached(
+                "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
+                max_batch_lifetime, min_batch_size, min_batch_duration, collector_hpke_config,
+                agg_auth_key, hpke_config, hpke_private_key
+                FROM tasks WHERE task_id = $1",
+            )
             .await?;
         let row = single_row(self.tx.query(&stmt, &[&&task_id.0[..]]).await?)?;
-        Ok(row.get("vdaf"))
+
+        let aggregator_role: AggregatorRole = row.get("aggregator_role");
+        let endpoints: Vec<String> = row.get("aggregator_endpoints");
+        let endpoints = endpoints
+            .into_iter()
+            .map(|endpoint| Ok(Url::parse(&endpoint)?))
+            .collect::<Result<_, Error>>()?;
+        let vdaf = row.get("vdaf");
+        let vdaf_verify_parameter = row.get("vdaf_verify_param");
+        let max_batch_lifetime = row.get_bigint_as_u64("max_batch_lifetime")?;
+        let min_batch_size = row.get_bigint_as_u64("min_batch_size")?;
+        let min_batch_duration = Duration(row.get_bigint_as_u64("min_batch_duration")?);
+        let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
+        let agg_auth_key = AggregatorAuthKey::from_bytes(row.get("agg_auth_key"))?;
+        let hpke_config = HpkeConfig::get_decoded(row.get("hpke_config"))?;
+        let hpke_private_key = HpkePrivateKey::new(row.get("hpke_private_key"));
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            &hpke_config,
+            Label::InputShare,
+            Role::Client,
+            aggregator_role.as_role(),
+            &hpke_private_key,
+        );
+
+        Ok(TaskParameters::new(
+            task_id,
+            endpoints,
+            vdaf,
+            aggregator_role.as_role(),
+            vdaf_verify_parameter,
+            max_batch_lifetime,
+            min_batch_size,
+            min_batch_duration,
+            &collector_hpke_config,
+            agg_auth_key,
+            &hpke_recipient,
+        ))
     }
 
     /// get_client_report retrieves a client report by ID.
-    pub async fn get_client_report(&self, id: i64) -> Result<Report, Error> {
+    pub async fn get_client_report(&self, task_id: TaskId, nonce: Nonce) -> Result<Report, Error> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT task_id, nonce_time, nonce_rand, extensions, input_shares
-                FROM client_reports WHERE id = $1",
-            )
-            .await?;
-        let row = single_row(self.tx.query(&stmt, &[&id]).await?)?;
-
-        let task_id = TaskId::get_decoded(row.get("task_id"))?;
-
-        let nonce_time = Time::from_naive_date_time(row.get("nonce_time"));
-        let nonce_rand: i64 = row.get("nonce_rand");
-
-        let encoded_extensions: Vec<u8> = row.get("extensions");
-        let extensions: Vec<Extension> =
-            decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
-
-        let encoded_input_shares: Vec<u8> = row.get("input_shares");
-        let input_shares: Vec<HpkeCiphertext> =
-            decode_u16_items(&(), &mut Cursor::new(&encoded_input_shares))?;
-
-        Ok(Report {
-            task_id,
-            nonce: Nonce {
-                time: nonce_time,
-                rand: nonce_rand as u64,
-            },
-            extensions,
-            encrypted_input_shares: input_shares,
-        })
-    }
-
-    // XXX: documentation
-    pub async fn get_client_report_by_task_id_and_nonce(
-        &self,
-        task_id: TaskId,
-        nonce: Nonce,
-    ) -> Result<Report, Error> {
-        let nonce_time = nonce.time.as_naive_date_time();
-        let nonce_rand = nonce.rand as i64;
-
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "SELECT extensions, input_shares FROM client_reports
-                WHERE task_id = $1 AND nonce_time = $2 AND nonce_rand = $3",
+                "SELECT client_reports.extensions, client_reports.input_shares FROM client_reports
+                JOIN tasks ON tasks.id = client_reports.task_id
+                WHERE tasks.task_id = $1 AND client_reports.nonce_time = $2 AND client_reports.nonce_rand = $3",
             )
             .await?;
         let row = single_row(
@@ -181,9 +213,9 @@ impl Transaction<'_> {
                 .query(
                     &stmt,
                     &[
-                        /* task_id */ &task_id.get_encoded(),
-                        /* nonce_time */ &nonce_time,
-                        /* nonce_rand */ &nonce_rand,
+                        &&task_id.0[..],
+                        &nonce.time.as_naive_date_time(),
+                        &&nonce.rand.to_be_bytes()[..],
                     ],
                 )
                 .await?,
@@ -206,9 +238,9 @@ impl Transaction<'_> {
     }
 
     /// put_client_report stores a client report.
-    pub async fn put_client_report(&self, report: &Report) -> Result<i64, Error> {
+    pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
         let nonce_time = report.nonce.time.as_naive_date_time();
-        let nonce_rand = report.nonce.rand as i64;
+        let nonce_rand = report.nonce.rand.to_be_bytes();
 
         let mut encoded_extensions = Vec::new();
         encode_u16_items(&mut encoded_extensions, &(), &report.extensions);
@@ -222,22 +254,21 @@ impl Transaction<'_> {
 
         let stmt = self.tx.prepare_cached(
             "INSERT INTO client_reports (task_id, nonce_time, nonce_rand, extensions, input_shares)
-            VALUES ($1, $2, $3, $4, $5) RETURNING (id)"
+            VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5)"
         ).await?;
-        let row = self
-            .tx
-            .query_one(
+        self.tx
+            .execute(
                 &stmt,
                 &[
-                    /* task_id */ &&report.task_id.0[..],
+                    /* task_id */ &&report.task_id.get_encoded(),
                     /* nonce_time */ &nonce_time,
-                    /* nonce_rand */ &nonce_rand,
+                    /* nonce_rand */ &&nonce_rand[..],
                     /* extensions */ &encoded_extensions,
                     /* input_shares */ &encoded_input_shares,
                 ],
             )
             .await?;
-        Ok(row.get("id"))
+        Ok(())
     }
 
     /// put_report_share stores a report share, given its associated task ID.
@@ -250,32 +281,31 @@ impl Transaction<'_> {
         &self,
         task_id: TaskId,
         report_share: &ReportShare,
-    ) -> Result<i64, Error> {
+    ) -> Result<(), Error> {
         let nonce_time = report_share.nonce.time.as_naive_date_time();
-        let nonce_rand = report_share.nonce.rand as i64;
+        let nonce_rand = report_share.nonce.rand.to_be_bytes();
 
         let stmt = self
             .tx
             .prepare_cached(
                 "INSERT INTO client_reports (task_id, nonce_time, nonce_rand)
-                VALUES ($1, $2, $3) RETURNING (id)",
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3)",
             )
             .await?;
-        let row = self
-            .tx
-            .query_one(
+        self.tx
+            .execute(
                 &stmt,
                 &[
-                    /* task_id */ &&task_id.0[..],
+                    /* task_id */ &task_id.get_encoded(),
                     /* nonce_time */ &nonce_time,
-                    /* nonce_rand */ &nonce_rand,
+                    /* nonce_rand */ &&nonce_rand[..],
                 ],
             )
             .await?;
-        Ok(row.get("id"))
+        Ok(())
     }
 
-    pub async fn get_aggregation_job_by_aggregation_job_id<A: vdaf::Aggregator>(
+    pub async fn get_aggregation_job<A: vdaf::Aggregator>(
         &self,
         aggregation_job_id: AggregationJobId,
     ) -> Result<AggregationJob<A>, Error>
@@ -285,8 +315,9 @@ impl Transaction<'_> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT task_id, aggregation_param, state
-                FROM aggregation_jobs WHERE aggregation_job_id = $1",
+                "SELECT tasks.task_id, aggregation_jobs.aggregation_param, aggregation_jobs.state
+                FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE aggregation_job_id = $1",
             )
             .await?;
         let row = single_row(self.tx.query(&stmt, &[&&aggregation_job_id.0[..]]).await?)?;
@@ -307,17 +338,16 @@ impl Transaction<'_> {
     pub async fn put_aggregation_job<A: vdaf::Aggregator>(
         &self,
         aggregation_job: &AggregationJob<A>,
-    ) -> Result<i64, Error>
+    ) -> Result<(), Error>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self.tx.prepare_cached(
             "INSERT INTO aggregation_jobs (aggregation_job_id, task_id, aggregation_param, state)
-            VALUES ($1, $2, $3, $4) RETURNING (id)"
+            VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4)"
         ).await?;
-        let row = self
-            .tx
-            .query_one(
+        self.tx
+            .execute(
                 &stmt,
                 &[
                     /* aggregation_job_id */ &&aggregation_job.aggregation_job_id.0[..],
@@ -327,33 +357,49 @@ impl Transaction<'_> {
                 ],
             )
             .await?;
-        Ok(row.get("id"))
+        Ok(())
     }
 
     // XXX: documentation
     pub async fn get_report_aggregation<A: vdaf::Aggregator>(
         &self,
         verify_param: &A::VerifyParam,
-        id: i64,
+        aggregation_job_id: AggregationJobId,
+        task_id: TaskId,
+        nonce: Nonce,
     ) -> Result<ReportAggregation<A>, Error>
     where
         A::PrepareStep: ParameterizedDecode<A::VerifyParam>,
         A::OutputShare: for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+        let nonce_time = nonce.time.as_naive_date_time();
+        let nonce_rand = &nonce.rand.to_be_bytes()[..];
+
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT aggregation_job_id, client_report_id, ord, state, vdaf_message, error_code
-                FROM report_aggregations WHERE id = $1",
+                "SELECT tasks.task_id, client_reports.nonce_time, client_reports.nonce_rand, report_aggregations.ord, report_aggregations.state, report_aggregations.vdaf_message, report_aggregations.error_code
+                FROM report_aggregations
+                JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
+                JOIN tasks ON tasks.id = client_reports.task_id
+                WHERE report_aggregations.aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1) AND tasks.task_id = $2 AND client_reports.nonce_time = $3 AND client_reports.nonce_rand = $4",
             )
             .await?;
         self.tx
-            .query(&stmt, &[&id])
+            .query(
+                &stmt,
+                &[
+                    &&aggregation_job_id.0[..],
+                    &&task_id.0[..],
+                    &nonce_time,
+                    &nonce_rand,
+                ],
+            )
             .await
             .map_err(Error::from)
             .and_then(single_row)
-            .and_then(|row| report_aggregation_from_row(verify_param, row))
+            .and_then(|row| report_aggregation_from_row(verify_param, aggregation_job_id, row))
     }
 
     // XXX: documentation
@@ -371,16 +417,18 @@ impl Transaction<'_> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT aggregation_job_id, client_report_id, ord, state, vdaf_message, error_code
-                FROM report_aggregations WHERE id IN (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1)
-                ORDER BY ord",
+                "SELECT tasks.task_id, client_reports.nonce_time, client_reports.nonce_rand, report_aggregations.ord, report_aggregations.state, report_aggregations.vdaf_message, report_aggregations.error_code
+                FROM report_aggregations
+                JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
+                JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE report_aggregations.aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1)"
             )
             .await?;
         self.tx
             .query(&stmt, &[&&aggregation_job_id.0[..]])
             .await?
             .into_iter()
-            .map(|row| report_aggregation_from_row(verify_param, row))
+            .map(|row| report_aggregation_from_row(verify_param, aggregation_job_id, row))
             .collect()
     }
 
@@ -388,12 +436,14 @@ impl Transaction<'_> {
     pub async fn put_report_aggregation<A: vdaf::Aggregator>(
         &self,
         report_aggregation: &ReportAggregation<A>,
-    ) -> Result<i64, Error>
+    ) -> Result<(), Error>
     where
         A::PrepareStep: Encode,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+        let nonce_time = report_aggregation.nonce.time.as_naive_date_time();
+        let nonce_rand = &report_aggregation.nonce.rand.to_be_bytes()[..];
         let state_code = report_aggregation.state.state_code();
         let (vdaf_message, error_code) = match &report_aggregation.state {
             ReportAggregationState::Start() => (None, None),
@@ -406,15 +456,20 @@ impl Transaction<'_> {
 
         let stmt = self.tx.prepare_cached(
             "INSERT INTO report_aggregations (aggregation_job_id, client_report_id, ord, state, vdaf_message, error_code)
-            VALUES ($1, $2, $3, $4, $5, $6) RETURNING (id)"
+            VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
+                    (SELECT id FROM client_reports
+                     WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
+                     AND nonce_time = $3 AND nonce_rand = $4),
+                    $5, $6, $7, $8)"
         ).await?;
-        let row = self
-            .tx
-            .query_one(
+        self.tx
+            .execute(
                 &stmt,
                 &[
-                    /* aggregation_job_id */ &report_aggregation.aggregation_job_id,
-                    /* client_report_id */ &report_aggregation.client_report_id,
+                    /* aggregation_job_id */ &&report_aggregation.aggregation_job_id.0[..],
+                    /* task_id */ &&report_aggregation.task_id.0[..],
+                    /* nonce_time */ &nonce_time,
+                    /* nonce_rand */ &nonce_rand,
                     /* ord */ &report_aggregation.ord,
                     /* state */ &state_code,
                     /* vdaf_message */ &vdaf_message,
@@ -422,7 +477,7 @@ impl Transaction<'_> {
                 ],
             )
             .await?;
-        Ok(row.get("id"))
+        Ok(())
     }
 }
 
@@ -436,6 +491,7 @@ fn single_row(rows: Vec<Row>) -> Result<Row, Error> {
 
 fn report_aggregation_from_row<A: vdaf::Aggregator>(
     verify_param: &A::VerifyParam,
+    aggregation_job_id: AggregationJobId,
     row: Row,
 ) -> Result<ReportAggregation<A>, Error>
 where
@@ -443,8 +499,12 @@ where
     A::OutputShare: for<'a> TryFrom<&'a [u8]>,
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
-    let aggregation_job_id: i64 = row.get("aggregation_job_id");
-    let client_report_id: i64 = row.get("client_report_id");
+    // XXX: read task_id, nonce from row
+    let task_id = TaskId::get_decoded(row.get("task_id"))?;
+    let nonce = Nonce {
+        time: Time::from_naive_date_time(row.get("nonce_time")),
+        rand: row.get_bytea_as_u64("nonce_rand")?,
+    };
     let ord: i64 = row.get("ord");
     let state: ReportAggregationStateCode = row.get("state");
     let vdaf_message_bytes: Option<Vec<u8>> = row.get("vdaf_message");
@@ -498,10 +558,54 @@ where
 
     Ok(ReportAggregation {
         aggregation_job_id,
-        client_report_id,
+        task_id,
+        nonce,
         ord,
         state: agg_state,
     })
+}
+
+/// Extensions for [`tokio_postgres::row::Row`]
+trait RowExt {
+    /// Get a PostgreSQL `BIGINT` from the row, which is represented in Rust as
+    /// i64 ([1]), then attempt to convert it to u64.
+    ///
+    /// [1]: https://docs.rs/postgres-types/latest/postgres_types/trait.FromSql.html
+    fn get_bigint_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    where
+        I: RowIndex + Display;
+
+    /// Get a PostgreSQL `BYTEA` from the row and then attempt to convert it to
+    /// u64, treating it as an 8 byte big endian array.
+    fn get_bytea_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    where
+        I: RowIndex + Display;
+}
+
+impl RowExt for Row {
+    fn get_bigint_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    where
+        I: RowIndex + Display,
+    {
+        let bigint: i64 = self.try_get(idx)?;
+        Ok(u64::try_from(bigint)?)
+    }
+
+    fn get_bytea_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    where
+        I: RowIndex + Display,
+    {
+        let encoded_u64: Vec<u8> = self.try_get(idx)?;
+
+        // `u64::from_be_bytes` takes `[u8; 8]` and `Vec<u8>::try_into` will
+        // fail unless the vector has exactly that length [1].
+        //
+        // [1]: https://doc.rust-lang.org/std/primitive.array.html#method.try_from-4
+        Ok(u64::from_be_bytes(encoded_u64.try_into().map_err(
+            // The error is just the vector that was rejected
+            |_| Error::DbState("byte array in database does not have expected length".to_string()),
+        )?))
+    }
 }
 
 /// Error represents a datastore-level error.
@@ -528,6 +632,12 @@ pub enum Error {
     /// will never be generated by the datastore library itself.
     #[error(transparent)]
     User(#[from] Box<dyn std::error::Error + Send + Sync>),
+    #[error("URL parse error: {0}")]
+    Url(#[from] url::ParseError),
+    #[error("invalid task parameters: {0}")]
+    TaskParameters(#[from] crate::task::Error),
+    #[error("integer conversion failed: {0}")]
+    TryFromInt(#[from] std::num::TryFromIntError),
 }
 
 impl Error {
@@ -548,13 +658,47 @@ impl Error {
 
 /// This module contains models used by the datastore that are not PPM messages.
 pub mod models {
-    use crate::message::{AggregationJobId, TaskId, TransitionError};
+    use super::Error;
+    use crate::message::{AggregationJobId, Nonce, Role, TaskId, TransitionError};
     use postgres_types::{FromSql, ToSql};
     use prio::vdaf;
 
     // We have to manually implement [Partial]Eq for a number of types because the dervied
     // implementations don't play nice with generic fields, even if those fields are constrained to
     // themselves implement [Partial]Eq.
+
+    /// AggregatorRole corresponds to the `AGGREGATOR_ROLE` enum in the schema.
+    #[derive(Clone, Debug, ToSql, FromSql)]
+    #[postgres(name = "aggregator_role")]
+    pub(super) enum AggregatorRole {
+        #[postgres(name = "LEADER")]
+        Leader,
+        #[postgres(name = "HELPER")]
+        Helper,
+    }
+
+    impl AggregatorRole {
+        /// If the provided [`Role`] is an aggregator, returns the corresponding
+        /// [`AggregatorRole`], or `None` otherwise.
+        pub(super) fn from_role(role: Role) -> Result<Self, Error> {
+            match role {
+                Role::Leader => Ok(Self::Leader),
+                Role::Helper => Ok(Self::Helper),
+                _ => Err(Error::TaskParameters(crate::task::Error::InvalidParameter(
+                    "role is not an aggregator",
+                ))),
+            }
+        }
+
+        /// Returns the [`Role`] corresponding to this value.
+        #[cfg(test)]
+        pub(super) fn as_role(&self) -> Role {
+            match self {
+                Self::Leader => Role::Leader,
+                Self::Helper => Role::Helper,
+            }
+        }
+    }
 
     /// AggregationJob represents an aggregation job from the PPM specification.
     #[derive(Clone, Debug)]
@@ -605,8 +749,9 @@ pub mod models {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        pub(crate) aggregation_job_id: i64,
-        pub(crate) client_report_id: i64,
+        pub(crate) aggregation_job_id: AggregationJobId,
+        pub(crate) task_id: TaskId,
+        pub(crate) nonce: Nonce,
         pub(crate) ord: i64,
         pub(crate) state: ReportAggregationState<A>,
     }
@@ -619,7 +764,8 @@ pub mod models {
     {
         fn eq(&self, other: &Self) -> bool {
             self.aggregation_job_id == other.aggregation_job_id
-                && self.client_report_id == other.client_report_id
+                && self.task_id == other.task_id
+                && self.nonce == other.nonce
                 && self.ord == other.ord
                 && self.state == other.state
         }
@@ -760,18 +906,22 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::models::AggregationJobState;
     use super::*;
-    use crate::datastore::test_util::ephemeral_datastore;
-    use crate::hpke::{HpkeRecipient, Label};
-    use crate::message::{Duration, ExtensionType, HpkeConfigId, Role, TransitionError};
-    use crate::task::Vdaf;
-    use crate::trace::test_util::install_test_trace_subscriber;
-    use prio::field::Field128;
-    use prio::vdaf::poplar1::{IdpfInput, Poplar1, ToyIdpf};
-    use prio::vdaf::prg::PrgAes128;
-    use prio::vdaf::prio3::Prio3Aes128Count;
-    use prio::vdaf::PrepareTransition;
+    use crate::{
+        datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
+        message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
+        task::Vdaf,
+        trace::test_util::install_test_trace_subscriber,
+    };
+    use prio::{
+        field::Field128,
+        vdaf::{
+            poplar1::{IdpfInput, Poplar1, ToyIdpf},
+            prg::PrgAes128,
+            prio3::Prio3Aes128Count,
+            PrepareTransition,
+        },
+    };
     use std::collections::BTreeSet;
 
     #[tokio::test]
@@ -779,50 +929,50 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
-        let task_ids = [
-            TaskId([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 1,
-            ]),
-            TaskId([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 2,
-            ]),
-            TaskId([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 3,
-            ]),
-            TaskId([
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 4,
-            ]),
-        ];
-        let vdafs = [
-            Vdaf::Prio3Aes128Count,
-            Vdaf::Prio3Aes128Sum,
-            Vdaf::Prio3Aes128Histogram,
-            Vdaf::Poplar1,
+        let values = [
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 1,
+                ]),
+                Vdaf::Prio3Aes128Count,
+                Role::Leader,
+            ),
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 2,
+                ]),
+                Vdaf::Prio3Aes128Sum,
+                Role::Helper,
+            ),
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 3,
+                ]),
+                Vdaf::Prio3Aes128Histogram,
+                Role::Leader,
+            ),
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 4,
+                ]),
+                Vdaf::Poplar1,
+                Role::Helper,
+            ),
         ];
 
-        for (task_id, vdaf) in task_ids.into_iter().zip(vdafs.into_iter()) {
-            let task_params = TaskParameters::new(
+        for (task_id, vdaf, role) in values {
+            let task_params = TaskParameters::new_dummy(
                 task_id,
                 vec![
                     "https://example.com/".parse().unwrap(),
                     "https://example.net/".parse().unwrap(),
                 ],
-                vdaf.clone(),
-                vec![],
-                0,
-                0,
-                Duration(0),
-                &HpkeRecipient::generate(
-                    task_id,
-                    Label::AggregateShare,
-                    Role::Leader,
-                    Role::Collector,
-                )
-                .config,
+                vdaf,
+                role,
             );
 
             ds.run_tx(|tx| {
@@ -832,11 +982,11 @@ mod tests {
             .await
             .unwrap();
 
-            let retrieved_vdaf = ds
-                .run_tx(|tx| Box::pin(async move { tx.get_task_vdaf_by_id(&task_id).await }))
+            let retrieved_task = ds
+                .run_tx(|tx| Box::pin(async move { tx.get_task_by_id(task_id).await }))
                 .await
                 .unwrap();
-            assert_eq!(vdaf, retrieved_vdaf);
+            assert_eq!(task_params, retrieved_task);
         }
     }
 
@@ -875,20 +1025,26 @@ mod tests {
             ],
         };
 
-        let report_id = ds
-            .run_tx(|tx| {
-                let report = report.clone();
-                Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(report.task_id, vec![]))
-                        .await?;
-                    tx.put_client_report(&report).await
-                })
+        ds.run_tx(|tx| {
+            let report = report.clone();
+            Box::pin(async move {
+                tx.put_task(&TaskParameters::new_dummy(
+                    report.task_id,
+                    vec![],
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
+                tx.put_client_report(&report).await
             })
-            .await
-            .unwrap();
+        })
+        .await
+        .unwrap();
 
         let retrieved_report = ds
-            .run_tx(|tx| Box::pin(async move { tx.get_client_report(report_id).await }))
+            .run_tx(|tx| {
+                Box::pin(async move { tx.get_client_report(report.task_id, report.nonce).await })
+            })
             .await
             .unwrap();
 
@@ -901,87 +1057,16 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let rslt = ds
-            .run_tx(|tx| Box::pin(async move { tx.get_client_report(12345).await }))
-            .await;
-
-        assert_matches::assert_matches!(rslt, Err(Error::NotFound));
-    }
-
-    #[tokio::test]
-    async fn roundtrip_report_by_task_id_and_nonce() {
-        install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
-
-        let report = Report {
-            task_id: TaskId::random(),
-            nonce: Nonce {
-                time: Time(12345),
-                rand: 54321,
-            },
-            extensions: vec![
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_0"),
-                },
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_1"),
-                },
-            ],
-            encrypted_input_shares: vec![
-                HpkeCiphertext {
-                    config_id: HpkeConfigId(12),
-                    encapsulated_context: Vec::from("encapsulated_context_0"),
-                    payload: Vec::from("payload_0"),
-                },
-                HpkeCiphertext {
-                    config_id: HpkeConfigId(13),
-                    encapsulated_context: Vec::from("encapsulated_context_1"),
-                    payload: Vec::from("payload_1"),
-                },
-            ],
-        };
-
-        ds.run_tx(|tx| {
-            let report = report.clone();
-            Box::pin(async move {
-                tx.put_task(&TaskParameters::new_dummy(report.task_id, vec![]))
-                    .await?;
-                tx.put_client_report(&report).await
-            })
-        })
-        .await
-        .unwrap();
-
-        let retrieved_report = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_client_report_by_task_id_and_nonce(report.task_id, report.nonce)
-                        .await
-                })
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(report, retrieved_report);
-    }
-
-    #[tokio::test]
-    async fn report_not_found_by_task_id_and_nonce() {
-        install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
-
-        let task_id = TaskId::random();
-        let nonce = Nonce {
-            time: Time(12345),
-            rand: 54321,
-        };
-
-        let rslt = ds
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.get_client_report_by_task_id_and_nonce(task_id, nonce)
-                        .await
+                    tx.get_client_report(
+                        TaskId::random(),
+                        Nonce {
+                            time: Time(12345),
+                            rand: 54321,
+                        },
+                    )
+                    .await
                 })
             })
             .await;
@@ -1017,50 +1102,49 @@ mod tests {
             },
         };
 
-        let report_id = ds
-            .run_tx(|tx| {
-                let report_share = report_share.clone();
-                Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                        .await?;
-                    tx.put_report_share(task_id, &report_share).await
-                })
+        ds.run_tx(|tx| {
+            let report_share = report_share.clone();
+            Box::pin(async move {
+                tx.put_task(&TaskParameters::new_dummy(
+                    task_id,
+                    Vec::new(),
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
+                tx.put_report_share(task_id, &report_share).await
             })
-            .await
-            .unwrap();
+        })
+        .await
+        .unwrap();
 
-        let (got_task_id, got_nonce, got_extensions, got_input_shares) = ds
+        let (got_task_id, got_extensions, got_input_shares) = ds
             .run_tx(|tx| {
                 Box::pin(async move {
+                    let nonce_time = report_share.nonce.time.as_naive_date_time();
+                    let nonce_rand = report_share.nonce.rand.to_be_bytes();
                     let row = tx
                         .tx
                         .query_one(
-                            "SELECT task_id, nonce_time, nonce_rand, extensions, input_shares
-                            FROM client_reports WHERE id = $1",
-                            &[&report_id],
+                            "SELECT tasks.task_id, client_reports.nonce_time, client_reports.nonce_rand, client_reports.extensions, client_reports.input_shares
+                            FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
+                            WHERE nonce_time = $1 AND nonce_rand = $2",
+                            &[&nonce_time, &&nonce_rand[..]],
                         )
                         .await?;
 
                     let task_id = TaskId::get_decoded(row.get("task_id"))?;
 
-                    let nonce_time = Time::from_naive_date_time(row.get("nonce_time"));
-                    let nonce_rand: i64 = row.get("nonce_rand");
-                    let nonce = Nonce {
-                        time: nonce_time,
-                        rand: nonce_rand as u64,
-                    };
-
                     let maybe_extensions: Option<Vec<u8>> = row.get("extensions");
                     let maybe_input_shares: Option<Vec<u8>> = row.get("input_shares");
 
-                    Ok((task_id, nonce, maybe_extensions, maybe_input_shares))
+                    Ok((task_id, maybe_extensions, maybe_input_shares))
                 })
             })
             .await
             .unwrap();
 
         assert_eq!(task_id, got_task_id);
-        assert_eq!(report_share.nonce, got_nonce);
         assert!(got_extensions.is_none());
         assert!(got_input_shares.is_none());
     }
@@ -1089,6 +1173,8 @@ mod tests {
                 tx.put_task(&TaskParameters::new_dummy(
                     aggregation_job.task_id,
                     Vec::new(),
+                    Vdaf::Poplar1,
+                    Role::Leader,
                 ))
                 .await?;
                 tx.put_aggregation_job(&aggregation_job).await
@@ -1100,7 +1186,7 @@ mod tests {
         let got_aggregation_job: AggregationJob<ToyPoplar1> = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_aggregation_job_by_aggregation_job_id(aggregation_job.aggregation_job_id)
+                    tx.get_aggregation_job(aggregation_job.aggregation_job_id)
                         .await
                 })
             })
@@ -1130,50 +1216,54 @@ mod tests {
         {
             let task_id = TaskId::random();
             let aggregation_job_id = AggregationJobId::random();
+            let nonce = Nonce {
+                time: Time(12345),
+                rand: 54321,
+            };
 
-            let (report_aggregation_id, report_aggregation) = ds
+            let report_aggregation = ds
                 .run_tx(|tx| {
                     let state = state.clone();
                     Box::pin(async move {
-                        tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                            .await?;
-                        let aggregation_job_id = tx
-                            .put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
-                                aggregation_job_id,
-                                task_id,
-                                aggregation_param: (),
-                                state: AggregationJobState::InProgress,
-                            })
-                            .await?;
-                        let client_report_id = tx
-                            .put_report_share(
-                                task_id,
-                                &ReportShare {
-                                    nonce: Nonce {
-                                        time: Time(12345),
-                                        rand: 54321,
-                                    },
-                                    extensions: Vec::new(),
-                                    encrypted_input_share: HpkeCiphertext {
-                                        config_id: HpkeConfigId(12),
-                                        encapsulated_context: Vec::from("encapsulated_context_0"),
-                                        payload: Vec::from("payload_0"),
-                                    },
+                        tx.put_task(&TaskParameters::new_dummy(
+                            task_id,
+                            Vec::new(),
+                            Vdaf::Prio3Aes128Count,
+                            Role::Leader,
+                        ))
+                        .await?;
+                        tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                            aggregation_job_id,
+                            task_id,
+                            aggregation_param: (),
+                            state: AggregationJobState::InProgress,
+                        })
+                        .await?;
+                        tx.put_report_share(
+                            task_id,
+                            &ReportShare {
+                                nonce,
+                                extensions: Vec::new(),
+                                encrypted_input_share: HpkeCiphertext {
+                                    config_id: HpkeConfigId(12),
+                                    encapsulated_context: Vec::from("encapsulated_context_0"),
+                                    payload: Vec::from("payload_0"),
                                 },
-                            )
-                            .await?;
+                            },
+                        )
+                        .await?;
 
                         let report_aggregation = ReportAggregation {
                             aggregation_job_id,
-                            client_report_id,
+                            task_id,
+                            nonce,
                             ord: ord as i64,
                             state: state.clone(),
                         };
 
-                        let report_aggregation_id =
-                            tx.put_report_aggregation(&report_aggregation).await?;
+                        tx.put_report_aggregation(&report_aggregation).await?;
 
-                        Ok((report_aggregation_id, report_aggregation))
+                        Ok(report_aggregation)
                     })
                 })
                 .await
@@ -1185,7 +1275,9 @@ mod tests {
                     Box::pin(async move {
                         tx.get_report_aggregation::<Prio3Aes128Count>(
                             &verify_param,
-                            report_aggregation_id,
+                            aggregation_job_id,
+                            task_id,
+                            nonce,
                         )
                         .await
                     })

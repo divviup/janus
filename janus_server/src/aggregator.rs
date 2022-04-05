@@ -25,8 +25,8 @@ use prio::{
 };
 use ring::hmac;
 use std::{
-    collections::HashSet, convert::Infallible, future::Future, net::SocketAddr, ops::Sub, pin::Pin,
-    sync::Arc,
+    collections::HashSet, convert::Infallible, future::Future, io::Cursor, net::SocketAddr,
+    ops::Sub, pin::Pin, sync::Arc,
 };
 use tracing::warn;
 use warp::{
@@ -177,7 +177,7 @@ where
         let leader_report = &report.encrypted_input_shares[0];
 
         // §4.2.2: verify that the report's HPKE config ID is known
-        if leader_report.config_id != self.report_recipient.config.id {
+        if leader_report.config_id != self.report_recipient.config().id {
             warn!(
                 config_id = ?leader_report.config_id,
                 "unknown HPKE config ID"
@@ -213,10 +213,7 @@ where
                 let report = report.clone();
                 Box::pin(async move {
                     // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before
-                    match tx
-                        .get_client_report_by_task_id_and_nonce(report.task_id, report.nonce)
-                        .await
-                    {
+                    match tx.get_client_report(report.task_id, report.nonce).await {
                         Ok(_) => {
                             warn!(?report.task_id, ?report.nonce, "report replayed");
                             // TODO (issue #34): change this error type.
@@ -409,16 +406,16 @@ where
                 let report_share_data = report_share_data.clone();
                 Box::pin(async move {
                     // Write aggregation job.
-                    let aggregation_job_id = tx.put_aggregation_job(&aggregation_job).await?;
+                    tx.put_aggregation_job(&aggregation_job).await?;
 
                     for (ord, share_data) in report_share_data.as_ref().iter().enumerate() {
                         // Write client report & report aggregation.
-                        let client_report_id = tx
-                            .put_report_share(task_id, &share_data.report_share)
+                        tx.put_report_share(task_id, &share_data.report_share)
                             .await?;
                         tx.put_report_aggregation(&ReportAggregation::<A> {
-                            aggregation_job_id,
-                            client_report_id,
+                            aggregation_job_id: job_id,
+                            task_id,
+                            nonce: share_data.report_share.nonce,
                             ord: ord as i64,
                             state: share_data.agg_state.clone(),
                         })
@@ -460,7 +457,7 @@ where
                 Box::pin(async move {
                     // Read existing state.
                     let (aggregation_job, report_aggregations) = future::try_join(
-                        tx.get_aggregation_job_by_aggregation_job_id::<A>(job_id),
+                        tx.get_aggregation_job::<A>(job_id),
                         tx.get_report_aggregations_by_aggregation_job_id::<A>(
                             &verify_param,
                             job_id,
@@ -471,7 +468,7 @@ where
                     // Handle each transition in the request.
                     let mut report_aggregations = report_aggregations.into_iter();
                     for transition in transitions.iter() {
-                        // Match current transition to existing report aggregation.
+                        // Match transition received from leader to stored report aggregation.
                         let report_aggregation = loop {
                             let report_agg = report_aggregations.next().ok_or_else(|| {
                                 datastore::Error::User(Box::new(Error::UnrecognizedMessage(
@@ -479,6 +476,30 @@ where
                                     task_id,
                                 )))
                             })?;
+                            if report_agg.nonce != transition.nonce {
+                                continue;
+                            }
+                            break report_agg;
+                        };
+                        let prep_step: A::PrepareStep;
+                        // XXX: retrieve prepare step from report aggregation (verifying it's in Waiting state)
+                        // XXX: how to deal with non-waiting state?
+
+                        // Parse transition.
+                        let prep_msg = if let TransitionTypeSpecificData::Continued { payload } =
+                            &transition.trans_data
+                        {
+                            A::PrepareMessage::decode_with_param(
+                                &prep_step,
+                                &mut Cursor::new(payload),
+                            )? // XXX: is returning appropriate here?
+                        } else {
+                            return Err(datastore::Error::User(Box::new(
+                                Error::UnrecognizedMessage(
+                                    "leader sent non-Continued transition in payload",
+                                    task_id,
+                                ),
+                            )));
                         };
                         // XXX
                     }
@@ -663,7 +684,7 @@ where
         return Err(Error::InvalidConfiguration("role is not an aggregator"));
     }
 
-    let hpke_config_encoded = hpke_recipient.config.get_encoded();
+    let hpke_config_encoded = hpke_recipient.config().get_encoded();
 
     let aggregator = Arc::new(Aggregator::new(
         vdaf,
@@ -963,7 +984,7 @@ mod tests {
         datastore::test_util::{ephemeral_datastore, DbHandle},
         hpke::{HpkeSender, Label},
         message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
-        task::TaskParameters,
+        task::{TaskParameters, Vdaf},
         time::tests::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
@@ -972,7 +993,7 @@ mod tests {
     use prio::{
         codec::Decode,
         vdaf::prio3::Prio3Aes128Count,
-        vdaf::{Vdaf, VdafError},
+        vdaf::{Vdaf as VdafTrait, VdafError},
     };
     use rand::{thread_rng, Rng};
     use ring::{hmac::HMAC_SHA256, rand::SystemRandom};
@@ -1084,7 +1105,7 @@ mod tests {
 
         let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(hpke_config, hpke_recipient.config);
+        assert_eq!(&hpke_config, hpke_recipient.config());
         let sender = HpkeSender::from_recipient(&hpke_recipient);
 
         let message = b"this is a message";
@@ -1107,8 +1128,12 @@ mod tests {
             .run_tx(|tx| {
                 let fake_url = Url::parse("localhost:8080").unwrap();
 
-                let task_parameters =
-                    TaskParameters::new_dummy(task_id, vec![fake_url.clone(), fake_url]);
+                let task_parameters = TaskParameters::new_dummy(
+                    task_id,
+                    vec![fake_url.clone(), fake_url],
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                );
                 Box::pin(async move { tx.put_task(&task_parameters).await })
             })
             .await
@@ -1384,10 +1409,7 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.get_client_report_by_task_id_and_nonce(report.task_id, report.nonce)
-                        .await
-                })
+                Box::pin(async move { tx.get_client_report(report.task_id, report.nonce).await })
             })
             .await
             .unwrap();
@@ -1463,10 +1485,7 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.get_client_report_by_task_id_and_nonce(report.task_id, report.nonce)
-                        .await
-                })
+                Box::pin(async move { tx.get_client_report(report.task_id, report.nonce).await })
             })
             .await
             .unwrap();
@@ -1612,8 +1631,13 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                        .await
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await
                 })
             })
             .await
@@ -1624,7 +1648,7 @@ mod tests {
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             generate_nonce(&clock),
-            &hpke_recipient.config,
+            hpke_recipient.config(),
             &input_share,
         );
 
@@ -1641,7 +1665,7 @@ mod tests {
         let report_share_2 = generate_helper_report_share_for_plaintext(
             task_id,
             nonce,
-            &hpke_recipient.config,
+            hpke_recipient.config(),
             &input_share_bytes,
             &associated_data,
         );
@@ -1739,8 +1763,13 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                        .await
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await
                 })
             })
             .await
@@ -1750,7 +1779,7 @@ mod tests {
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
             generate_nonce(&clock),
-            &hpke_recipient.config,
+            hpke_recipient.config(),
             &input_share,
         );
         let request = AggregateReq {
@@ -1828,8 +1857,13 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(task_id, Vec::new()))
-                        .await
+                    tx.put_task(&TaskParameters::new_dummy(
+                        task_id,
+                        Vec::new(),
+                        Vdaf::Prio3Aes128Count,
+                        Role::Helper,
+                    ))
+                    .await
                 })
             })
             .await
@@ -1839,7 +1873,7 @@ mod tests {
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
             generate_nonce(&clock),
-            &hpke_recipient.config,
+            hpke_recipient.config(),
             &input_share,
         );
         let request = AggregateReq {
