@@ -107,8 +107,10 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
 
     // Configure filters with RUST_LOG env var. Format discussed at
     // https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html
+    #[allow(unused_mut)]
     let mut global_filter = EnvFilter::from_default_env();
 
+    #[cfg(feature = "tokio-console")]
     let console_layer = match &config.tokio_console_config.enabled {
         true => {
             global_filter = global_filter.add_directive("tokio=trace".parse().unwrap());
@@ -123,6 +125,21 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
             Some(layer)
         }
         false => None,
+    };
+
+    #[cfg(not(feature = "tokio-console"))]
+    let console_layer = {
+        if config.tokio_console_config.enabled {
+            eprintln!(
+                "Warning: the tokio-console subscriber was enabled in the \
+                configuration file, but support was not enabled at compile \
+                time. Rebuild with `RUSTFLAGS=\"--cfg tokio_unstable\"` and \
+                `--features tokio-console`."
+            );
+        }
+
+        // Always return a no-op layer.
+        None::<EnvFilter>
     };
 
     let subscriber = Registry::default()
