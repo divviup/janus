@@ -13,6 +13,7 @@ use crate::{
         AuthenticatedRequestDecoder, HpkeConfigId, Nonce, Report, ReportShare, Role, TaskId,
         Transition, TransitionError, TransitionTypeSpecificData,
     },
+    task::{TaskParameters, Vdaf},
     time::Clock,
 };
 use bytes::Bytes;
@@ -20,14 +21,27 @@ use chrono::Duration;
 use http::{header::CACHE_CONTROL, StatusCode};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
-    vdaf::{self, PrepareTransition},
+    field::Field128,
+    vdaf::{
+        self,
+        poplar1::{Poplar1, ToyIdpf},
+        prg::PrgAes128,
+        prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
+        PrepareTransition,
+    },
 };
 use ring::hmac;
+use serde::Deserialize;
 use std::{
-    collections::HashSet, convert::Infallible, future::Future, net::SocketAddr, ops::Sub, pin::Pin,
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+    future::Future,
+    net::SocketAddr,
+    ops::Sub,
+    pin::Pin,
     sync::Arc,
 };
-use tracing::warn;
+use tracing::{info, warn};
 use warp::{
     filters::BoxedFilter,
     reply::{self, Response},
@@ -71,6 +85,12 @@ pub enum Error {
     /// conditions.
     #[error("internal aggregator error: {0}")]
     Internal(String),
+    #[error("resource not found: {0}")]
+    NotFound(&'static str),
+    #[error("VDAF execution error: {0}")]
+    Vdaf(#[from] prio::vdaf::VdafError),
+    #[error("decoding task ID: {0}")]
+    TaskIdDecode(#[from] crate::message::TaskIdDecodeError),
 }
 
 // This From implementation ensures that we don't end up with e.g.
@@ -89,11 +109,108 @@ impl From<datastore::Error> for Error {
     }
 }
 
-/// A PPM aggregator.
-// TODO: refactor Aggregator to be non-task-specific (look up task-specific data based on task ID)
+/// Arguments needed to construct an [`Aggregator`].
 #[derive(Clone, derivative::Derivative)]
 #[derivative(Debug)]
-pub struct Aggregator<A: vdaf::Aggregator, C: Clock>
+struct AggregatorArgs<'a, C: Clock> {
+    #[derivative(Debug = "ignore")]
+    datastore: &'a Arc<Datastore>,
+    clock: C,
+    tolerable_clock_skew: Duration,
+    role: Role,
+    encoded_verify_param: &'a [u8],
+    report_recipient: &'a HpkeRecipient,
+}
+
+/// AggregatorWrapper allows us to dynamically dispatch to some specialization
+/// of [`Aggregator`] using a single, Sized type.
+#[derive(Clone, Debug)]
+enum AggregatorWrapper<C> {
+    Prio3Aes128Count(Aggregator<Prio3Aes128Count, C>),
+    Prio3Aes128Sum(Aggregator<Prio3Aes128Sum, C>),
+    Prio3Aes128Histogram(Aggregator<Prio3Aes128Histogram, C>),
+    #[allow(dead_code)]
+    Poplar1(Aggregator<Poplar1<ToyIdpf<Field128>, PrgAes128, 16>, C>),
+}
+
+impl<C: Clock> AggregatorWrapper<C> {
+    /// Construct a new [`AggregatorWrapper`].
+    fn new(
+        task_parameters: &TaskParameters,
+        datastore: Arc<Datastore>,
+        clock: C,
+    ) -> Result<Self, Error> {
+        let tolerable_clock_skew = Duration::seconds(task_parameters.tolerable_clock_skew.0 as i64);
+
+        // We bundle the arguments to [`Aggregator::new`] into this struct to
+        // avoid duplicating code in the match arms, below.
+        let aggregator_args = AggregatorArgs {
+            datastore: &datastore,
+            clock,
+            tolerable_clock_skew,
+            role: task_parameters.role,
+            encoded_verify_param: &task_parameters.vdaf_verify_parameter,
+            report_recipient: &task_parameters.hpke_recipient,
+        };
+
+        let aggregator_wrapper = match task_parameters.vdaf {
+            Vdaf::Prio3Aes128Count => {
+                Self::Prio3Aes128Count(Aggregator::new(Prio3Aes128Count::new(2)?, aggregator_args)?)
+            }
+            // TODO: Encode the bit length for sums and the buckets for
+            // histograms into TaskParameters
+            Vdaf::Prio3Aes128Sum => Self::Prio3Aes128Sum(Aggregator::new(
+                Prio3Aes128Sum::new(2, 64)?,
+                aggregator_args,
+            )?),
+            Vdaf::Prio3Aes128Histogram => Self::Prio3Aes128Histogram(Aggregator::new(
+                Prio3Aes128Histogram::new(2, &[1, 100, 1_000])?,
+                aggregator_args,
+            )?),
+            // Poplar1's associated types are still missing some trait
+            // implementations and in any case its implementation is not usable
+            // yet.
+            Vdaf::Poplar1 => {
+                return Err(Error::InvalidConfiguration("Poplar1 is not supported yet"))
+            }
+        };
+
+        Ok(aggregator_wrapper)
+    }
+
+    async fn handle_upload(&self, report: &Report) -> Result<(), Error> {
+        match self {
+            Self::Prio3Aes128Count(a) => a.handle_upload(report).await,
+            Self::Prio3Aes128Sum(a) => a.handle_upload(report).await,
+            Self::Prio3Aes128Histogram(a) => a.handle_upload(report).await,
+            Self::Poplar1(_) => Err(Error::InvalidConfiguration("Poplar1 is not supported yet")),
+        }
+    }
+
+    async fn handle_aggregate(&self, req: AggregateReq) -> Result<AggregateResp, Error> {
+        match self {
+            Self::Prio3Aes128Count(a) => a.handle_aggregate(req).await,
+            Self::Prio3Aes128Sum(a) => a.handle_aggregate(req).await,
+            Self::Prio3Aes128Histogram(a) => a.handle_aggregate(req).await,
+            Self::Poplar1(_) => Err(Error::InvalidConfiguration("Poplar1 is not supported yet")),
+        }
+    }
+
+    #[cfg(test)]
+    fn report_recipient(&self) -> &HpkeRecipient {
+        match self {
+            Self::Prio3Aes128Count(a) => &a.report_recipient,
+            Self::Prio3Aes128Sum(a) => &a.report_recipient,
+            Self::Prio3Aes128Histogram(a) => &a.report_recipient,
+            Self::Poplar1(a) => &a.report_recipient,
+        }
+    }
+}
+
+/// A PPM aggregator.
+#[derive(Clone, derivative::Derivative)]
+#[derivative(Debug)]
+pub struct Aggregator<A: vdaf::Aggregator, C>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
@@ -115,46 +232,39 @@ where
     // TODO: Aggregators should have multiple generations of HPKE config
     // available to decrypt tardy reports
     report_recipient: HpkeRecipient,
-    /// The key used to authenticate aggregation messages for this task.
-    agg_auth_key: hmac::Key,
 }
 
-impl<A: vdaf::Aggregator, C: Clock> Aggregator<A, C>
+impl<A, C> Aggregator<A, C>
 where
-    A: 'static,
+    A: 'static + vdaf::Aggregator,
     A::AggregationParam: Send + Sync,
+    A::VerifyParam: ParameterizedDecode<A>,
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
     A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
     for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+    C: Clock,
 {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports
     /// received by this aggregator.
-    fn new(
-        vdaf: A,
-        datastore: Arc<Datastore>,
-        clock: C,
-        tolerable_clock_skew: Duration,
-        role: Role,
-        verify_param: A::VerifyParam,
-        report_recipient: HpkeRecipient,
-        agg_auth_key: hmac::Key,
-    ) -> Result<Self, Error> {
-        if tolerable_clock_skew < Duration::zero() {
+    fn new(vdaf: A, args: AggregatorArgs<C>) -> Result<Self, Error> {
+        if args.tolerable_clock_skew < Duration::zero() {
             return Err(Error::InvalidConfiguration(
                 "tolerable clock skew must be non-negative",
             ));
         }
 
+        let verify_param =
+            A::VerifyParam::get_decoded_with_param(&vdaf, args.encoded_verify_param)?;
+
         Ok(Self {
             vdaf,
-            datastore,
-            clock,
-            tolerable_clock_skew,
-            role,
+            datastore: args.datastore.clone(),
+            clock: args.clock,
+            tolerable_clock_skew: args.tolerable_clock_skew,
+            role: args.role,
             verify_param,
-            report_recipient,
-            agg_auth_key,
+            report_recipient: args.report_recipient.clone(),
         })
     }
 
@@ -469,7 +579,7 @@ fn with_authenticated_body<T, KeyFn>(
 ) -> impl Filter<Extract = (Result<(hmac::Key, T), Error>,), Error = Rejection> + Clone
 where
     T: Decode + Send + Sync,
-    KeyFn: Fn(&TaskId) -> Pin<Box<dyn Future<Output = Result<hmac::Key, Error>> + Send + Sync>>
+    KeyFn: Fn(TaskId) -> Pin<Box<dyn Future<Output = Result<hmac::Key, Error>> + Send + Sync>>
         + Clone
         + Send
         + Sync,
@@ -481,7 +591,7 @@ where
             let decoder: AuthenticatedRequestDecoder<T> =
                 AuthenticatedRequestDecoder::new(Vec::from(body.as_ref())).map_err(Error::from)?;
             let task_id = decoder.task_id();
-            let key = key_fn(&task_id).await?;
+            let key = key_fn(task_id).await?;
             let decoded_body: T = decoder.decode(&key).map_err(|err| match err {
                 AuthenticatedDecodeError::InvalidHmac => Error::InvalidHmac(task_id),
                 AuthenticatedDecodeError::Codec(err) => Error::MessageDecode(err),
@@ -530,6 +640,16 @@ impl PpmProblemType {
             PpmProblemType::InvalidHmac => "The aggregate message's HMAC was not valid.",
         }
     }
+
+    /// Returns the HTTP status code for this problem type.
+    fn status_code(&self) -> StatusCode {
+        match self {
+            Self::UnrecognizedTask => StatusCode::NOT_FOUND,
+            // So far, 400 Bad Request seems to be the appropriate choice for
+            // the remaining defined problem types.
+            _ => StatusCode::BAD_REQUEST,
+        }
+    }
 }
 
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
@@ -540,14 +660,12 @@ static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 // TODO (issue abetterinternet/ppm-specification#209): The handling of the instance, title,
 // detail, and taskid fields are subject to change.
 fn build_problem_details_response(error_type: PpmProblemType, task_id: TaskId) -> Response {
-    // So far, 400 Bad Request seems to be the appropriate choice for each defined problem type.
-    let status = StatusCode::BAD_REQUEST;
     warp::reply::with_status(
         warp::reply::with_header(
             warp::reply::json(&serde_json::json!({
                 "type": error_type.type_uri(),
                 "title": error_type.description(),
-                "status": status.as_u16(),
+                "status": error_type.status_code().as_u16(),
                 "detail": error_type.description(),
                 // The base URI is either "[leader]/upload", "[aggregator]/aggregate",
                 // "[helper]/aggregate_share", or "[leader]/collect". Relative URLs are allowed in
@@ -559,7 +677,7 @@ fn build_problem_details_response(error_type: PpmProblemType, task_id: TaskId) -
             http::header::CONTENT_TYPE,
             PROBLEM_DETAILS_JSON_MEDIA_TYPE,
         ),
-        status,
+        error_type.status_code(),
     )
     .into_response()
 }
@@ -567,122 +685,141 @@ fn build_problem_details_response(error_type: PpmProblemType, task_id: TaskId) -
 /// Produces a closure that will transform applicable errors into a problem details JSON object.
 /// (See RFC 7807) The returned closure is meant to be used in a warp `map` filter.
 fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Response + Clone {
-    move |result| match result {
-        Ok(reply) => reply.into_response(),
-        Err(Error::InvalidConfiguration(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
-        Err(Error::StaleReport(_, task_id)) => {
-            build_problem_details_response(PpmProblemType::StaleReport, task_id)
+    move |result| {
+        if let Err(ref e) = result {
+            info!(?e, "handling error");
         }
-        Err(Error::UnrecognizedMessage(_, task_id)) => {
-            build_problem_details_response(PpmProblemType::UnrecognizedMessage, task_id)
+        match result {
+            Ok(reply) => reply.into_response(),
+            Err(Error::InvalidConfiguration(_)) => {
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+            Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
+            Err(Error::StaleReport(_, task_id)) => {
+                build_problem_details_response(PpmProblemType::StaleReport, task_id)
+            }
+            Err(Error::UnrecognizedMessage(_, task_id)) => {
+                build_problem_details_response(PpmProblemType::UnrecognizedMessage, task_id)
+            }
+            Err(Error::UnrecognizedTask(task_id)) => {
+                build_problem_details_response(PpmProblemType::UnrecognizedTask, task_id)
+            }
+            Err(Error::OutdatedHpkeConfig(_, task_id)) => {
+                build_problem_details_response(PpmProblemType::OutdatedConfig, task_id)
+            }
+            Err(Error::ReportFromTheFuture(_, _)) => {
+                // TODO: build a problem details document once an error type is defined for reports
+                // with timestamps too far in the future.
+                StatusCode::BAD_REQUEST.into_response()
+            }
+            Err(Error::InvalidHmac(task_id)) => {
+                build_problem_details_response(PpmProblemType::InvalidHmac, task_id)
+            }
+            Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(Error::TaskIdDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
+            Err(Error::NotFound(_)) => StatusCode::NOT_FOUND.into_response(),
+            Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
-        Err(Error::UnrecognizedTask(task_id)) => {
-            build_problem_details_response(PpmProblemType::UnrecognizedTask, task_id)
-        }
-        Err(Error::OutdatedHpkeConfig(_, task_id)) => {
-            build_problem_details_response(PpmProblemType::OutdatedConfig, task_id)
-        }
-        Err(Error::ReportFromTheFuture(_, _)) => {
-            // TODO: build a problem details document once an error type is defined for reports
-            // with timestamps too far in the future.
-            StatusCode::BAD_REQUEST.into_response()
-        }
-        Err(Error::InvalidHmac(task_id)) => {
-            build_problem_details_response(PpmProblemType::InvalidHmac, task_id)
-        }
-        Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct HpkeConfigQueryParameters {
+    task_id: String,
+}
+
 /// Constructs a Warp filter with endpoints common to all aggregators.
-fn aggregator_filter<A, C>(
-    vdaf: A,
-    datastore: Arc<Datastore>,
-    clock: C,
-    tolerable_clock_skew: Duration,
-    role: Role,
-    verify_param: A::VerifyParam,
-    hpke_recipient: HpkeRecipient,
-    agg_auth_key: hmac::Key,
+fn aggregator_filter<C>(
+    tasks: HashMap<TaskId, (TaskParameters, AggregatorWrapper<C>)>,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error>
 where
-    A: 'static + vdaf::Aggregator + Send + Sync,
-    A::AggregationParam: Send + Sync,
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    A::VerifyParam: Send + Sync,
-    A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
-    A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
-    for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     C: 'static + Clock,
 {
-    if !role.is_aggregator() {
-        return Err(Error::InvalidConfiguration("role is not an aggregator"));
-    }
-
-    let hpke_config_encoded = hpke_recipient.config().get_encoded();
-
-    let aggregator = Arc::new(Aggregator::new(
-        vdaf,
-        datastore,
-        clock,
-        tolerable_clock_skew,
-        role,
-        verify_param,
-        hpke_recipient,
-        agg_auth_key,
-    )?);
+    let tasks = Arc::new(tasks);
 
     let hpke_config_endpoint = warp::path("hpke_config")
         .and(warp::get())
-        .map(move || {
-            reply::with_header(
-                reply::with_status(hpke_config_encoded.clone(), StatusCode::OK),
-                CACHE_CONTROL,
-                "max-age=86400",
-            )
-        })
+        .and(warp::query::<HpkeConfigQueryParameters>())
+        .and(with_cloned_value(tasks.clone()))
+        .then(
+            |query_params: HpkeConfigQueryParameters,
+             tasks: Arc<HashMap<TaskId, (TaskParameters, AggregatorWrapper<C>)>>| async move {
+                let task_id = TaskId::from_unpadded_base64url(&query_params.task_id)?;
+                info!(?task_id, ?query_params, "getting hpke config");
+
+                let hpke_config = tasks
+                    .get(&task_id)
+                    .ok_or(Error::UnrecognizedTask(task_id))?
+                    .0
+                    .hpke_recipient
+                    .config();
+
+                Ok(reply::with_header(
+                    reply::with_status(hpke_config.get_encoded(), StatusCode::OK),
+                    CACHE_CONTROL,
+                    "max-age=86400",
+                ))
+            },
+        )
+        .map(error_handler())
         .with(trace::named("hpke_config"));
 
     let upload_endpoint = warp::path("upload")
         .and(warp::post())
-        .and(with_cloned_value(aggregator.clone()))
-        .and_then(|aggregator: Arc<Aggregator<A, C>>| async {
-            // Only the leader supports upload
-            if aggregator.role != Role::Leader {
-                return Err(warp::reject::not_found());
-            }
-            Ok(aggregator)
-        })
         .and(with_decoded_body())
+        .and(with_cloned_value(tasks.clone()))
         .then(
-            |aggregator: Arc<Aggregator<A, C>>, report_res: Result<Report, Error>| async move {
-                aggregator.handle_upload(&report_res?).await?;
+            move |report_res: Result<Report, _>,
+                  tasks: Arc<HashMap<TaskId, (TaskParameters, AggregatorWrapper<C>)>>| async move {
+                let report = report_res?;
+
+                let (task_parameters, aggregator) = tasks
+                    .get(&report.task_id)
+                    .ok_or(Error::UnrecognizedTask(report.task_id))?;
+
+                // Only the leader supports upload
+                if task_parameters.role != Role::Leader {
+                    return Err(Error::NotFound("upload"));
+                }
+
+                aggregator.handle_upload(&report).await?;
+
                 Ok(StatusCode::OK)
             },
         )
         .map(error_handler())
         .with(trace::named("upload"));
 
+    // Clone tasks to move it into with_authenticated_body
+    let tasks_clone = tasks.clone();
+
     let aggregate_endpoint = warp::path("aggregate")
         .and(warp::post())
-        .and(with_cloned_value(aggregator.clone()))
-        .and_then(|aggregator: Arc<Aggregator<A, C>>| async {
-            // Only the helper supports /aggregate.
-            if aggregator.role != Role::Helper {
-                return Err(warp::reject::not_found());
-            }
-            Ok(aggregator)
-        })
-        .and(with_authenticated_body(move |_task_id| {
-            let aggregator = aggregator.clone();
-            Box::pin(async move { Ok(aggregator.agg_auth_key.clone()) })
+        .and(with_authenticated_body(move |task_id| {
+            let tasks_clone_again = tasks_clone.clone();
+            Box::pin(async move {
+                let (task_parameters, _) = tasks_clone_again
+                    .get(&task_id)
+                    .ok_or(Error::UnrecognizedTask(task_id))?;
+
+                Ok(task_parameters.agg_auth_key.as_hmac_key())
+            })
         }))
+        .and(with_cloned_value(tasks))
         .then(
-            |aggregator: Arc<Aggregator<A, C>>,
-             req_rslt: Result<(hmac::Key, AggregateReq), Error>| async move {
+            move |req_rslt: Result<(hmac::Key, AggregateReq), Error>,
+                  tasks: Arc<HashMap<TaskId, (TaskParameters, AggregatorWrapper<C>)>>| async move {
                 let (key, req) = req_rslt?;
+                let (task_parameters, aggregator) = tasks
+                    .get(&req.task_id)
+                    .ok_or(Error::UnrecognizedTask(req.task_id))?;
+
+                // Only the leader supports upload
+                if task_parameters.role != Role::Helper {
+                    return Err(Error::NotFound("aggregate"));
+                }
+
                 let resp = aggregator.handle_aggregate(req).await?;
                 let resp_bytes = AuthenticatedEncoder::new(resp).encode(&key);
                 Ok(reply::with_status(resp_bytes, StatusCode::OK))
@@ -698,41 +835,32 @@ where
 }
 
 /// Construct a PPM aggregator server, listening on the provided [`SocketAddr`].
+/// The resulting server can service API requests for all tasks discovered in
+/// the provided [`Datastore`].
+///
 /// If the `SocketAddr`'s `port` is 0, an ephemeral port is used. Returns a
 /// `SocketAddr` representing the address and port the server are listening on
 /// and a future that can be `await`ed to begin serving requests.
-pub fn aggregator_server<A, C>(
-    vdaf: A,
+pub async fn aggregator_server<C>(
     datastore: Arc<Datastore>,
     clock: C,
-    tolerable_clock_skew: Duration,
-    role: Role,
-    verify_param: A::VerifyParam,
-    hpke_recipient: HpkeRecipient,
-    agg_auth_key: hmac::Key,
     listen_address: SocketAddr,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error>
 where
-    A: 'static + vdaf::Aggregator + Send + Sync,
-    A::AggregationParam: Send + Sync,
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    A::VerifyParam: Send + Sync,
-    A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
-    A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
-    for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     C: 'static + Clock,
 {
-    Ok(warp::serve(aggregator_filter(
-        vdaf,
-        datastore,
-        clock,
-        tolerable_clock_skew,
-        role,
-        verify_param,
-        hpke_recipient,
-        agg_auth_key,
-    )?)
-    .bind_ephemeral(listen_address))
+    let tasks = datastore
+        .run_tx(|tx| Box::pin(async { tx.get_tasks().await }))
+        .await?;
+    let tasks_by_id: HashMap<_, _> = tasks
+        .into_iter()
+        .map(|t| {
+            let aggregator_wrapper = AggregatorWrapper::new(&t, datastore.clone(), clock)?;
+            Ok((t.id, (t, aggregator_wrapper)))
+        })
+        .collect::<Result<_, Error>>()?;
+
+    Ok(warp::serve(aggregator_filter(tasks_by_id)?).bind_ephemeral(listen_address))
 }
 
 #[cfg(test)]
@@ -918,8 +1046,8 @@ mod tests {
         aggregator::test_util::fake,
         datastore::test_util::{ephemeral_datastore, DbHandle},
         hpke::{HpkeSender, Label},
-        message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
-        task::{TaskParameters, Vdaf},
+        message::{self, AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
+        task::{AggregatorAuthKey, TaskParameters, Vdaf},
         time::tests::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
@@ -931,54 +1059,18 @@ mod tests {
         vdaf::{Vdaf as VdafTrait, VdafError},
     };
     use rand::{thread_rng, Rng};
-    use ring::{hmac::HMAC_SHA256, rand::SystemRandom};
     use std::io::Cursor;
     use url::Url;
     use warp::reply::Reply;
-
-    fn generate_hmac_key() -> hmac::Key {
-        hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap()
-    }
-
-    #[tokio::test]
-    async fn invalid_role() {
-        install_test_trace_subscriber();
-
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
-        let (datastore, _db_handle) = ephemeral_datastore().await;
-        let datastore = Arc::new(datastore);
-        let hpke_recipient = HpkeRecipient::generate(
-            TaskId::random(),
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-        );
-
-        for invalid_role in [Role::Collector, Role::Client] {
-            assert_matches!(
-                aggregator_filter(
-                    vdaf.clone(),
-                    datastore.clone(),
-                    MockClock::default(),
-                    Duration::minutes(10),
-                    invalid_role,
-                    verify_param.clone(),
-                    hpke_recipient.clone(),
-                    generate_hmac_key(),
-                ),
-                Err(Error::InvalidConfiguration(_))
-            );
-        }
-    }
 
     #[tokio::test]
     async fn invalid_clock_skew() {
         install_test_trace_subscriber();
 
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let hpke_recipient = HpkeRecipient::generate(
             TaskId::random(),
             Label::InputShare,
@@ -989,13 +1081,14 @@ mod tests {
         assert_matches!(
             Aggregator::new(
                 vdaf,
-                Arc::new(datastore),
-                MockClock::default(),
-                Duration::minutes(-10),
-                Role::Leader,
-                verify_param,
-                hpke_recipient,
-                generate_hmac_key(),
+                AggregatorArgs {
+                    datastore: &Arc::new(datastore),
+                    clock: MockClock::default(),
+                    tolerable_clock_skew: Duration::minutes(-10),
+                    role: Role::Leader,
+                    encoded_verify_param: &verify_param.get_encoded(),
+                    report_recipient: &hpke_recipient,
+                },
             ),
             Err(Error::InvalidConfiguration(_))
         );
@@ -1005,29 +1098,27 @@ mod tests {
     async fn hpke_config() {
         install_test_trace_subscriber();
 
-        let task_id = TaskId::random();
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, _db_handle) = ephemeral_datastore().await;
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+
+        let (task_id, tasks, _) = setup_report(
+            Role::Leader,
+            Arc::new(datastore),
+            MockClock::default(),
+            Duration::minutes(10),
+            message::Duration::from_seconds(600),
+        )
+        .await;
+
+        let (task_parameters, _) = tasks.get(&task_id).unwrap().clone();
+        let aggregator_filter = aggregator_filter(tasks).unwrap();
 
         let response = warp::test::request()
-            .path("/hpke_config")
+            .path(&format!(
+                "/hpke_config?task_id={}",
+                task_id.as_unpadded_base64url()
+            ))
             .method("GET")
-            .filter(
-                &aggregator_filter(
-                    vdaf,
-                    Arc::new(datastore),
-                    MockClock::default(),
-                    Duration::minutes(10),
-                    Role::Leader,
-                    verify_param,
-                    hpke_recipient.clone(),
-                    generate_hmac_key(),
-                )
-                .unwrap(),
-            )
+            .filter(&aggregator_filter)
             .await
             .unwrap()
             .into_response();
@@ -1040,44 +1131,101 @@ mod tests {
 
         let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(&hpke_config, hpke_recipient.config());
-        let sender = HpkeSender::from_recipient(&hpke_recipient);
+        assert_eq!(&hpke_config, task_parameters.hpke_recipient.config());
+        let sender = HpkeSender::from_recipient(&task_parameters.hpke_recipient);
 
         let message = b"this is a message";
         let associated_data = b"some associated data";
 
         let ciphertext = sender.seal(message, associated_data).unwrap();
 
-        let plaintext = hpke_recipient.open(&ciphertext, associated_data).unwrap();
+        let plaintext = task_parameters
+            .hpke_recipient
+            .open(&ciphertext, associated_data)
+            .unwrap();
         assert_eq!(&plaintext, message);
+
+        // Task ID is well formed but not known to aggregator
+        let unknown_task_id = TaskId::random();
+        let response = warp::test::request()
+            .path(&format!(
+                "/hpke_config?task_id={}",
+                unknown_task_id.as_unpadded_base64url()
+            ))
+            .method("GET")
+            .filter(&aggregator_filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // Task ID is not base64url
+        let response = warp::test::request()
+            .path("/hpke_config?task_id=thisisnotbase64url")
+            .method("GET")
+            .filter(&aggregator_filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // Wrong query parameter
+        let rejection = warp::test::request()
+            .path(&format!(
+                "/hpke_config?wrong_parameter={}",
+                task_id.as_unpadded_base64url()
+            ))
+            .method("GET")
+            .filter(&aggregator_filter)
+            .await;
+        // impl Reply is not Debug so we can't use .unwrap_err().
+        // warp::reject::Rejection also makes it difficult to see what's inside
+        // so we can't verify that the rejection was due to invalid query param.
+        assert!(rejection.is_err());
     }
 
     async fn setup_report(
-        datastore: &Datastore,
-        clock: &MockClock,
-        skew: Duration,
-    ) -> (HpkeRecipient, Report) {
+        role: Role,
+        datastore: Arc<Datastore>,
+        clock: MockClock,
+        report_skew: Duration,
+        tolerable_clock_skew: message::Duration,
+    ) -> (
+        TaskId,
+        HashMap<TaskId, (TaskParameters, AggregatorWrapper<MockClock>)>,
+        Report,
+    ) {
         let task_id = TaskId::random();
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, role);
+        let vdaf = Prio3Aes128Count::new(2).unwrap();
+        let (_, verify_parameters) = vdaf.setup().unwrap();
+
+        let fake_url = Url::parse("localhost:8080").unwrap();
+        let task_parameters = TaskParameters::new(
+            task_id,
+            vec![fake_url.clone(), fake_url],
+            Vdaf::Prio3Aes128Count,
+            role,
+            verify_parameters[role.index().unwrap()].get_encoded(),
+            0,
+            0,
+            message::Duration::from_seconds(0),
+            tolerable_clock_skew,
+            HpkeRecipient::generate(task_id, Label::AggregateShare, role, Role::Collector).config(),
+            AggregatorAuthKey::generate().unwrap(),
+            &hpke_recipient,
+        );
 
         datastore
             .run_tx(|tx| {
-                let fake_url = Url::parse("localhost:8080").unwrap();
-
-                let task_parameters = TaskParameters::new_dummy(
-                    task_id,
-                    vec![fake_url.clone(), fake_url],
-                    Vdaf::Prio3Aes128Count,
-                    Role::Leader,
-                );
+                let task_parameters = task_parameters.clone();
                 Box::pin(async move { tx.put_task(&task_parameters).await })
             })
             .await
             .unwrap();
 
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
-
-        let report_time = clock.now() - skew;
+        let report_time = clock.now() - report_skew;
 
         let nonce = Nonce {
             time: Time(report_time.timestamp() as u64),
@@ -1100,7 +1248,16 @@ mod tests {
             encrypted_input_shares: vec![leader_ciphertext, helper_ciphertext],
         };
 
-        (hpke_recipient, report)
+        let aggregator_wrapper =
+            AggregatorWrapper::new(&task_parameters, datastore, clock).unwrap();
+
+        (
+            task_id,
+            [(task_id, (task_parameters, aggregator_wrapper))]
+                .into_iter()
+                .collect(),
+            report,
+        )
     }
 
     /// Convenience method to handle interaction with `warp::test` for typical PPM requests.
@@ -1123,24 +1280,17 @@ mod tests {
     async fn upload_filter() {
         install_test_trace_subscriber();
 
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, _db_handle) = ephemeral_datastore().await;
-        let clock = MockClock::default();
-        let skew = Duration::minutes(10);
 
-        let (report_recipient, report) = setup_report(&datastore, &clock, skew).await;
-        let filter = aggregator_filter(
-            vdaf,
-            Arc::new(datastore),
-            clock,
-            skew,
+        let (_, tasks, report) = setup_report(
             Role::Leader,
-            verify_param,
-            report_recipient,
-            generate_hmac_key(),
+            Arc::new(datastore),
+            MockClock::default(),
+            Duration::minutes(10),
+            message::Duration::from_seconds(600),
         )
-        .unwrap();
+        .await;
+        let filter = aggregator_filter(tasks).unwrap();
 
         let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
@@ -1267,70 +1417,52 @@ mod tests {
     async fn upload_filter_helper() {
         install_test_trace_subscriber();
 
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
 
-        let (report_recipient, report) = setup_report(&datastore, &clock, skew).await;
-
-        let filter = aggregator_filter(
-            vdaf,
+        let (_, tasks, report) = setup_report(
+            Role::Helper,
             Arc::new(datastore),
             clock,
             skew,
-            Role::Helper,
-            verify_param,
-            report_recipient,
-            generate_hmac_key(),
+            message::Duration::from_seconds(600),
         )
-        .unwrap();
+        .await;
 
-        let result = warp::test::request()
-            .method("POST")
-            .path("/upload")
-            .body(report.get_encoded())
-            .filter(&filter)
-            .await;
+        let filter = aggregator_filter(tasks).unwrap();
 
-        // We can't use `Result::unwrap_err` or `assert_matches!` here because
-        //  `impl Reply` is not `Debug`
-        if let Err(rejection) = result {
-            assert!(rejection.is_not_found());
-        } else {
-            panic!("should get rejection");
-        }
+        let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404);
     }
 
     async fn setup_upload_test(
         skew: Duration,
     ) -> (
-        Aggregator<Prio3Aes128Count, MockClock>,
+        AggregatorWrapper<MockClock>,
         Report,
         Arc<Datastore>,
         DbHandle,
     ) {
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, db_handle) = ephemeral_datastore().await;
         let datastore = Arc::new(datastore);
-        let clock = MockClock::default();
-        let (report_recipient, report) = setup_report(&datastore, &clock, skew).await;
-
-        let aggregator = Aggregator::new(
-            vdaf,
-            datastore.clone(),
-            clock,
-            skew,
+        let (task_id, tasks, report) = setup_report(
             Role::Leader,
-            verify_param,
-            report_recipient,
-            generate_hmac_key(),
+            datastore.clone(),
+            MockClock::default(),
+            skew,
+            message::Duration::from_seconds(600),
         )
-        .unwrap();
+        .await;
 
-        (aggregator, report, datastore, db_handle)
+        (
+            tasks.get(&task_id).unwrap().1.clone(),
+            report,
+            datastore,
+            db_handle,
+        )
     }
 
     #[tokio::test]
@@ -1417,8 +1549,8 @@ mod tests {
         let (aggregator, mut report, datastore, _db_handle) = setup_upload_test(skew).await;
 
         // Boundary condition
-        report.nonce.time = Time::from_naive_date_time(aggregator.clock.now() + skew);
-        let mut report = reencrypt_report(report, &aggregator.report_recipient);
+        report.nonce.time = Time::from_naive_date_time(MockClock::default().now() + skew);
+        let mut report = reencrypt_report(report, aggregator.report_recipient());
         aggregator.handle_upload(&report).await.unwrap();
 
         let got_report = datastore
@@ -1434,77 +1566,82 @@ mod tests {
 
         // Just past the clock skew
         report.nonce.time =
-            Time::from_naive_date_time(aggregator.clock.now() + skew + Duration::seconds(1));
-        let report = reencrypt_report(report, &aggregator.report_recipient);
+            Time::from_naive_date_time(MockClock::default().now() + skew + Duration::seconds(1));
+        let report = reencrypt_report(report, aggregator.report_recipient());
         assert_matches!(aggregator.handle_upload(&report).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id);
             assert_eq!(report.nonce, nonce);
         });
     }
 
+    async fn setup_filter(
+        role: Role,
+        clock: MockClock,
+        datastore: Arc<Datastore>,
+    ) -> (
+        Prio3Aes128Count,
+        TaskId,
+        AggregatorAuthKey,
+        HpkeRecipient,
+        BoxedFilter<(impl Reply,)>,
+    ) {
+        let task_id = TaskId::random();
+        let vdaf = Prio3Aes128Count::new(2).unwrap();
+        let (_, verify_parameters) = vdaf.setup().unwrap();
+        let hpke_recipient =
+            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, role);
+        let aggregator_auth_key = AggregatorAuthKey::generate().unwrap();
+
+        let task_parameters = TaskParameters::new(
+            task_id,
+            vec![
+                Url::parse("https://localhost").unwrap(),
+                Url::parse("https://localhost").unwrap(),
+            ],
+            Vdaf::Prio3Aes128Count,
+            role,
+            verify_parameters[role.index().unwrap()].get_encoded(),
+            0,
+            0,
+            message::Duration::from_seconds(0),
+            message::Duration::from_seconds(0),
+            HpkeRecipient::generate(
+                task_id,
+                Label::AggregateShare,
+                Role::Helper,
+                Role::Collector,
+            )
+            .config(),
+            aggregator_auth_key,
+            &hpke_recipient,
+        );
+
+        datastore
+            .run_tx(|tx| {
+                let task_parameters = task_parameters.clone();
+                Box::pin(async move { tx.put_task(&task_parameters).await })
+            })
+            .await
+            .unwrap();
+
+        let aggregator_wrapper =
+            AggregatorWrapper::new(&task_parameters, datastore.clone(), clock).unwrap();
+        let tasks = [(task_id, (task_parameters, aggregator_wrapper))]
+            .into_iter()
+            .collect();
+
+        let filter = aggregator_filter(tasks).unwrap();
+
+        (vdaf, task_id, aggregator_auth_key, hpke_recipient, filter)
+    }
+
     #[tokio::test]
     async fn aggregate_leader() {
         install_test_trace_subscriber();
 
-        let task_id = TaskId::random();
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.remove(1);
         let (datastore, _db_handle) = ephemeral_datastore().await;
-        let clock = MockClock::default();
-        let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
-        let hmac_key = generate_hmac_key();
-
-        let request = AggregateReq {
-            task_id: TaskId::random(),
-            job_id: AggregationJobId::random(),
-            body: AggregateInitReq {
-                agg_param: Vec::new(),
-                seq: Vec::new(),
-            },
-        };
-
-        let filter = aggregator_filter(
-            vdaf,
-            Arc::new(datastore),
-            clock,
-            skew,
-            Role::Leader,
-            verify_param,
-            hpke_recipient,
-            hmac_key.clone(),
-        )
-        .unwrap();
-
-        let result = warp::test::request()
-            .method("POST")
-            .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
-            .filter(&filter)
-            .await;
-
-        // We can't use `Result::unwrap_err` or `assert_matches!` here because
-        //  `impl Reply` is not `Debug`
-        if let Err(rejection) = result {
-            assert!(rejection.is_not_found());
-        } else {
-            panic!("Should get rejection");
-        }
-    }
-
-    #[tokio::test]
-    async fn aggregate_wrong_agg_auth_key() {
-        install_test_trace_subscriber();
-
-        let task_id = TaskId::random();
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.remove(1);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
-        let clock = MockClock::default();
-        let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (_, task_id, aggregator_auth_key, _, filter) =
+            setup_filter(Role::Leader, MockClock::default(), Arc::new(datastore)).await;
 
         let request = AggregateReq {
             task_id,
@@ -1515,22 +1652,41 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(
-            vdaf,
-            Arc::new(datastore),
-            clock,
-            skew,
-            Role::Helper,
-            verify_param,
-            hpke_recipient,
-            generate_hmac_key(),
-        )
-        .unwrap();
+        let response = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(AuthenticatedEncoder::new(request).encode(&aggregator_auth_key.as_hmac_key()))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn aggregate_wrong_agg_auth_key() {
+        install_test_trace_subscriber();
+
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let (_, task_id, _, _, filter) =
+            setup_filter(Role::Helper, MockClock::default(), Arc::new(datastore)).await;
+
+        let request = AggregateReq {
+            task_id,
+            job_id: AggregationJobId::random(),
+            body: AggregateInitReq {
+                agg_param: Vec::new(),
+                seq: Vec::new(),
+            },
+        };
 
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&generate_hmac_key()))
+            .body(
+                AuthenticatedEncoder::new(request)
+                    .encode(&AggregatorAuthKey::generate().unwrap().as_hmac_key()),
+            )
             .filter(&filter)
             .await
             .unwrap()
@@ -1559,47 +1715,27 @@ mod tests {
         // Prepare datastore & request.
         install_test_trace_subscriber();
 
-        let task_id = TaskId::random();
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.remove(1);
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
-        let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
-        let hmac_key = generate_hmac_key();
-
-        datastore
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
-                        task_id,
-                        Vec::new(),
-                        Vdaf::Prio3Aes128Count,
-                        Role::Helper,
-                    ))
-                    .await
-                })
-            })
-            .await
-            .unwrap();
+        let (vdaf, task_id, aggregator_auth_key, hpke_recipient, filter) =
+            setup_filter(Role::Helper, clock, Arc::new(datastore)).await;
 
         // report_share_0 is a "happy path" report.
         let input_share = generate_helper_input_share(&vdaf, &(), &0);
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            generate_nonce(&clock),
+            generate_nonce(clock),
             hpke_recipient.config(),
             &input_share,
         );
 
         // report_share_1 fails decryption.
         let mut report_share_1 = report_share_0.clone();
-        report_share_1.nonce = generate_nonce(&clock);
+        report_share_1.nonce = generate_nonce(clock);
         report_share_1.encrypted_input_share.payload[0] ^= 0xFF;
 
         // report_share_2 fails decoding.
-        let nonce = generate_nonce(&clock);
+        let nonce = generate_nonce(clock);
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
         let associated_data = Report::associated_data(nonce, &[]);
@@ -1624,23 +1760,10 @@ mod tests {
             },
         };
 
-        // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(
-            vdaf,
-            Arc::new(datastore),
-            clock,
-            skew,
-            Role::Helper,
-            verify_param,
-            hpke_recipient,
-            hmac_key.clone(),
-        )
-        .unwrap();
-
         let mut response = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .body(AuthenticatedEncoder::new(request).encode(&aggregator_auth_key.as_hmac_key()))
             .filter(&filter)
             .await
             .unwrap()
@@ -1650,7 +1773,7 @@ mod tests {
         let aggregate_resp: AggregateResp =
             AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
                 .unwrap()
-                .decode(&hmac_key)
+                .decode(&aggregator_auth_key.as_hmac_key())
                 .unwrap();
 
         // Validate response.
@@ -1695,71 +1818,75 @@ mod tests {
         });
         let verify_param = vdaf.setup().unwrap().1.remove(1);
         let (datastore, _db_handle) = ephemeral_datastore().await;
+        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
-        let skew = Duration::minutes(10);
+        let tolerable_clock_skew = message::Duration::from_seconds(600);
+
         let hpke_recipient =
             HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
-        let hmac_key = generate_hmac_key();
+        let agg_auth_key = AggregatorAuthKey::generate().unwrap();
+        let task_parameters = TaskParameters::new(
+            task_id,
+            vec![
+                Url::parse("https://leader.fake").unwrap(),
+                Url::parse("https://helper.fake").unwrap(),
+            ],
+            Vdaf::Prio3Aes128Count,
+            Role::Helper,
+            verify_param.get_encoded(),
+            0,
+            0,
+            crate::message::Duration::from_seconds(0),
+            tolerable_clock_skew,
+            HpkeRecipient::generate(
+                task_id,
+                Label::AggregateShare,
+                Role::Helper,
+                Role::Collector,
+            )
+            .config(),
+            agg_auth_key,
+            &hpke_recipient,
+        );
 
         datastore
             .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
-                        task_id,
-                        Vec::new(),
-                        Vdaf::Prio3Aes128Count,
-                        Role::Helper,
-                    ))
-                    .await
-                })
+                let task_parameters = task_parameters.clone();
+                Box::pin(async move { tx.put_task(&task_parameters).await })
             })
             .await
             .unwrap();
 
-        let input_share = generate_helper_input_share(&vdaf, &(), &());
-        let report_share = generate_helper_report_share::<fake::Vdaf>(
-            task_id,
-            generate_nonce(&clock),
-            hpke_recipient.config(),
-            &input_share,
-        );
-        let request = AggregateReq {
-            task_id,
-            job_id: AggregationJobId::random(),
-            body: AggregateInitReq {
-                agg_param: Vec::new(),
-                seq: vec![report_share.clone()],
+        let aggregator = Aggregator::new(
+            vdaf.clone(),
+            AggregatorArgs {
+                datastore: &datastore,
+                clock,
+                tolerable_clock_skew: Duration::seconds(600),
+                role: Role::Helper,
+                encoded_verify_param: &verify_param.get_encoded(),
+                report_recipient: &hpke_recipient,
             },
-        };
-
-        // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(
-            vdaf,
-            Arc::new(datastore),
-            clock,
-            skew,
-            Role::Helper,
-            verify_param,
-            hpke_recipient,
-            hmac_key.clone(),
         )
         .unwrap();
 
-        let mut response = warp::test::request()
-            .method("POST")
-            .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
-            .filter(&filter)
+        let input_share = generate_helper_input_share(&vdaf, &(), &());
+        let report_share = generate_helper_report_share::<fake::Vdaf>(
+            task_id,
+            generate_nonce(clock),
+            hpke_recipient.config(),
+            &input_share,
+        );
+
+        let aggregate_resp = aggregator
+            .handle_aggregate_init(
+                task_id,
+                AggregationJobId::random(),
+                Vec::new(),
+                vec![report_share.clone()],
+            )
             .await
-            .unwrap()
-            .into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp: AggregateResp =
-            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
-                .unwrap()
-                .decode(&hmac_key)
-                .unwrap();
+            .unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.seq.len(), 1);
@@ -1789,71 +1916,73 @@ mod tests {
         );
         let verify_param = vdaf.setup().unwrap().1.remove(1);
         let (datastore, _db_handle) = ephemeral_datastore().await;
+        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
-        let skew = Duration::minutes(10);
         let hpke_recipient =
             HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
-        let hmac_key = generate_hmac_key();
+        let aggregator_auth_key = AggregatorAuthKey::generate().unwrap();
+
+        let task_parameters = TaskParameters::new(
+            task_id,
+            vec![
+                Url::parse("https://localhost").unwrap(),
+                Url::parse("https://localhost").unwrap(),
+            ],
+            Vdaf::Prio3Aes128Count,
+            Role::Helper,
+            verify_param.get_encoded(),
+            0,
+            0,
+            message::Duration::from_seconds(0),
+            message::Duration::from_seconds(0),
+            HpkeRecipient::generate(
+                task_id,
+                Label::AggregateShare,
+                Role::Helper,
+                Role::Collector,
+            )
+            .config(),
+            aggregator_auth_key,
+            &hpke_recipient,
+        );
 
         datastore
             .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
-                        task_id,
-                        Vec::new(),
-                        Vdaf::Prio3Aes128Count,
-                        Role::Helper,
-                    ))
-                    .await
-                })
+                let task_parameters = task_parameters.clone();
+                Box::pin(async move { tx.put_task(&task_parameters).await })
             })
             .await
             .unwrap();
 
+        let aggregator = Aggregator::new(
+            vdaf.clone(),
+            AggregatorArgs {
+                datastore: &datastore,
+                clock,
+                tolerable_clock_skew: Duration::seconds(600),
+                role: Role::Helper,
+                encoded_verify_param: &verify_param.get_encoded(),
+                report_recipient: &hpke_recipient,
+            },
+        )
+        .unwrap();
         let input_share = generate_helper_input_share(&vdaf, &(), &());
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
-            generate_nonce(&clock),
+            generate_nonce(clock),
             hpke_recipient.config(),
             &input_share,
         );
-        let request = AggregateReq {
-            task_id,
-            job_id: AggregationJobId::random(),
-            body: AggregateInitReq {
-                agg_param: Vec::new(),
-                seq: vec![report_share.clone()],
-            },
-        };
 
-        // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(
-            vdaf,
-            Arc::new(datastore),
-            clock,
-            skew,
-            Role::Helper,
-            verify_param,
-            hpke_recipient,
-            hmac_key.clone(),
-        )
-        .unwrap();
-
-        let mut response = warp::test::request()
-            .method("POST")
-            .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
-            .filter(&filter)
+        let aggregate_resp = aggregator
+            .handle_aggregate_init(
+                task_id,
+                AggregationJobId::random(),
+                Vec::new(),
+                vec![report_share.clone()],
+            )
             .await
-            .unwrap()
-            .into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp: AggregateResp =
-            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
-                .unwrap()
-                .decode(&hmac_key)
-                .unwrap();
+            .unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.seq.len(), 1);
@@ -1872,15 +2001,10 @@ mod tests {
     async fn aggregate_init_duplicated_nonce() {
         install_test_trace_subscriber();
 
-        let task_id = TaskId::random();
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let verify_param = vdaf.setup().unwrap().1.remove(1);
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
-        let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
-        let hmac_key = generate_hmac_key();
+        let (_, task_id, aggregator_auth_key, _, filter) =
+            setup_filter(Role::Helper, clock, Arc::new(datastore)).await;
 
         let report_share = ReportShare {
             nonce: Nonce {
@@ -1905,22 +2029,10 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(
-            vdaf,
-            Arc::new(datastore),
-            clock,
-            skew,
-            Role::Helper,
-            verify_param,
-            hpke_recipient,
-            hmac_key.clone(),
-        )
-        .unwrap();
-
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .body(AuthenticatedEncoder::new(request).encode(&aggregator_auth_key.as_hmac_key()))
             .filter(&filter)
             .await
             .unwrap()
@@ -1944,7 +2056,7 @@ mod tests {
         assert_eq!(want_status, parts.status.as_u16());
     }
 
-    fn generate_nonce<C: Clock>(clock: &C) -> Nonce {
+    fn generate_nonce<C: Clock>(clock: C) -> Nonce {
         Nonce {
             time: Time::from_naive_date_time(clock.now()),
             rand: thread_rng().gen(),

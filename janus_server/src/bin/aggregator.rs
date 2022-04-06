@@ -1,20 +1,8 @@
-use anyhow::{anyhow, Context, Result};
-use chrono::Duration;
+use anyhow::{Context, Result};
 use deadpool_postgres::{Manager, Pool};
 use janus_server::{
-    aggregator::aggregator_server,
-    config::AggregatorConfig,
-    datastore::Datastore,
-    hpke::{HpkeRecipient, Label},
-    message::Role,
-    message::TaskId,
-    time::RealClock,
-    trace::install_trace_subscriber,
-};
-use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf};
-use ring::{
-    hmac::{self, HMAC_SHA256},
-    rand::SystemRandom,
+    aggregator::aggregator_server, config::AggregatorConfig, datastore::Datastore, message::Role,
+    time::RealClock, trace::install_trace_subscriber,
 };
 use std::{
     fmt::{self, Debug, Formatter},
@@ -87,9 +75,6 @@ async fn main() -> Result<()> {
 
     info!(?options, ?config, "starting aggregator");
 
-    let vdaf = Prio3Aes128Count::new(2).unwrap();
-    let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
-
     let database_config = tokio_postgres::Config::from_str(config.database.url.as_str())
         .with_context(|| {
             format!(
@@ -103,28 +88,11 @@ async fn main() -> Result<()> {
         .context("failed to create database connection pool")?;
     let datastore = Arc::new(Datastore::new(pool));
 
-    // TODO(timg): tasks and the corresponding HPKE configuration and private
-    // keys should be loaded from the database (see discussion in #37)
-    let task_id = TaskId::random();
-    let hpke_recipient =
-        HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, options.role);
-
-    let agg_auth_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new())
-        .map_err(|_| anyhow!("couldn't generate agg_auth_key"))?;
-
-    let (bound_address, server) = aggregator_server(
-        vdaf,
-        datastore,
-        RealClock::default(),
-        Duration::minutes(10),
-        options.role,
-        verify_param,
-        hpke_recipient,
-        agg_auth_key,
-        config.listen_address,
-    )
-    .context("failed to create aggregator server")?;
-    info!(?task_id, ?bound_address, "running aggregator");
+    let (bound_address, server) =
+        aggregator_server(datastore, RealClock::default(), config.listen_address)
+            .await
+            .context("failed to create aggregator server")?;
+    info!(?bound_address, "running aggregator");
 
     server.await;
 

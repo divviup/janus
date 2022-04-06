@@ -91,8 +91,10 @@ pub async fn aggregator_hpke_sender(
 ) -> Result<HpkeSender, Error> {
     let hpke_config_response = http_client
         .get(client_parameters.hpke_config_endpoint(aggregator_role)?)
-        .send()
-        .await?;
+        .query(&[("task_id", client_parameters.task_id.as_unpadded_base64url())]);
+
+    tracing::info!(?hpke_config_response, "sending hpke config request");
+    let hpke_config_response = hpke_config_response.send().await?;
     let status = hpke_config_response.status();
     if !status.is_success() {
         return Err(Error::Http(status));

@@ -1,15 +1,17 @@
-use chrono::Duration;
 use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
     datastore::test_util::{ephemeral_datastore, DbHandle},
     hpke::{HpkeRecipient, Label},
-    message::{self, Role, TaskId},
+    message::{Duration, Role, TaskId},
     task::{AggregatorAuthKey, TaskParameters, Vdaf},
     time::RealClock,
     trace::{install_trace_subscriber, TraceConfiguration},
 };
-use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf as VdafTrait};
+use prio::{
+    codec::Encode,
+    vdaf::{prio3::Prio3Aes128Count, Vdaf as VdafTrait},
+};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -58,51 +60,35 @@ async fn setup_test() -> TestCase {
 
     let (leader_datastore, _leader_db_handle) = ephemeral_datastore().await;
     let leader_datastore = Arc::new(leader_datastore);
+
     let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
+    let helper_datastore = Arc::new(helper_datastore);
 
     let leader_hpke_recipient =
         HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
     let helper_hpke_recipient =
         HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
 
-    let (leader_address, leader_server) = aggregator_server(
-        vdaf.clone(),
-        leader_datastore.clone(),
-        RealClock::default(),
-        Duration::minutes(10),
-        Role::Leader,
-        leader_verify_param,
-        leader_hpke_recipient.clone(),
-        agg_auth_key.as_hmac_key(),
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-    )
-    .unwrap();
+    // There's a chicken and egg problem here: we don't know the port that the
+    // leader and helper will bind until we call `aggregator_server`, but we
+    // can't call that without defining task parameters. We cheat here by
+    // providing fake endpoints, then inserting the real endpoints later for the
+    // client.
+    let dummy_endpoints = vec![
+        Url::parse("https://leader.fake").unwrap(),
+        Url::parse("https://helper.fake").unwrap(),
+    ];
 
-    let (helper_address, helper_server) = aggregator_server(
-        vdaf.clone(),
-        Arc::new(helper_datastore),
-        RealClock::default(),
-        Duration::minutes(10),
-        Role::Helper,
-        helper_verify_param,
-        helper_hpke_recipient.clone(),
-        agg_auth_key.as_hmac_key(),
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-    )
-    .unwrap();
-    let leader_task_parameters = TaskParameters::new(
+    let mut leader_task_parameters = TaskParameters::new(
         task_id,
-        vec![
-            endpoint_from_socket_addr(&leader_address),
-            endpoint_from_socket_addr(&helper_address),
-        ],
+        dummy_endpoints.clone(),
         Vdaf::Prio3Aes128Count,
         Role::Leader,
-        vec![],                             // vdaf_verify_parameter
-        0,                                  // max_batch_lifetime
-        0,                                  // min_batch_size
-        message::Duration::from_seconds(1), // min_batch_duration,
-        message::Duration::from_seconds(1), // tolerable_clock_skew,
+        leader_verify_param.get_encoded(),
+        0,                         // max_batch_lifetime
+        0,                         // min_batch_size
+        Duration::from_seconds(1), // min_batch_duration,
+        Duration::from_seconds(1), // tolerable_clock_skew,
         collector_hpke_recipient.config(),
         agg_auth_key,
         &leader_hpke_recipient,
@@ -116,8 +102,52 @@ async fn setup_test() -> TestCase {
         .await
         .unwrap();
 
+    let helper_task_parameters = TaskParameters::new(
+        task_id,
+        dummy_endpoints,
+        Vdaf::Prio3Aes128Count,
+        Role::Helper,
+        helper_verify_param.get_encoded(),
+        0,                         // max_batch_lifetime
+        0,                         // min_batch_size
+        Duration::from_seconds(1), // min_batch_duration,
+        Duration::from_seconds(1), // tolerable_clock_skew,
+        collector_hpke_recipient.config(),
+        agg_auth_key,
+        &helper_hpke_recipient,
+    );
+
+    helper_datastore
+        .run_tx(|tx| {
+            let task_parameters = helper_task_parameters.clone();
+            Box::pin(async move { tx.put_task(&task_parameters).await })
+        })
+        .await
+        .unwrap();
+
+    let (leader_address, leader_server) = aggregator_server(
+        leader_datastore.clone(),
+        RealClock::default(),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+    )
+    .await
+    .unwrap();
+
+    let (helper_address, helper_server) = aggregator_server(
+        helper_datastore.clone(),
+        RealClock::default(),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+    )
+    .await
+    .unwrap();
+
     let leader_task_handle = tokio::spawn(leader_server);
     let helper_task_handle = tokio::spawn(helper_server);
+
+    leader_task_parameters.set_aggregator_endpoints(vec![
+        endpoint_from_socket_addr(&leader_address),
+        endpoint_from_socket_addr(&helper_address),
+    ]);
 
     let client_parameters = ClientParameters::from_task_parameters(&leader_task_parameters);
 

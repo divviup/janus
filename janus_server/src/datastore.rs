@@ -914,6 +914,7 @@ mod tests {
         task::Vdaf,
         trace::test_util::install_test_trace_subscriber,
     };
+    use assert_matches::assert_matches;
     use prio::{
         field::Field128,
         vdaf::{
@@ -974,6 +975,7 @@ mod tests {
                 ],
                 vdaf,
                 role,
+                &HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, role),
             );
 
             ds.run_tx(|tx| {
@@ -1005,6 +1007,39 @@ mod tests {
         }
         for (idx, saw_task) in saw_tasks.iter().enumerate() {
             assert!(saw_task, "never saw task {} in datastore", idx);
+        }
+    }
+
+    #[tokio::test]
+    async fn put_task_with_invalid_role() {
+        install_test_trace_subscriber();
+        let (ds, _db_handle) = ephemeral_datastore().await;
+
+        for role in [Role::Client, Role::Collector] {
+            let task_id = TaskId::random();
+            let task_params = TaskParameters::new_dummy(
+                TaskId::random(),
+                vec![
+                    "https://example.com/".parse().unwrap(),
+                    "https://example.net/".parse().unwrap(),
+                ],
+                Vdaf::Prio3Aes128Count,
+                role,
+                &HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, role),
+            );
+
+            let err = ds
+                .run_tx(|tx| {
+                    let task_params = task_params.clone();
+                    Box::pin(async move { tx.put_task(&task_params).await })
+                })
+                .await
+                .unwrap_err();
+
+            assert_matches!(
+                err,
+                Error::TaskParameters(crate::task::Error::InvalidParameter(_))
+            );
         }
     }
 
@@ -1052,6 +1087,12 @@ mod tests {
                         vec![],
                         Vdaf::Prio3Aes128Count,
                         Role::Leader,
+                        &HpkeRecipient::generate(
+                            report.task_id,
+                            Label::InputShare,
+                            Role::Client,
+                            Role::Leader,
+                        ),
                     ))
                     .await?;
                     tx.put_client_report(&report).await
@@ -1123,6 +1164,12 @@ mod tests {
                     vec![],
                     Vdaf::Prio3Aes128Count,
                     Role::Leader,
+                    &HpkeRecipient::generate(
+                        report.task_id,
+                        Label::InputShare,
+                        Role::Client,
+                        Role::Leader,
+                    ),
                 ))
                 .await?;
                 tx.put_client_report(&report).await
@@ -1204,6 +1251,12 @@ mod tests {
                         Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Leader,
+                        &HpkeRecipient::generate(
+                            task_id,
+                            Label::InputShare,
+                            Role::Client,
+                            Role::Leader,
+                        ),
                     ))
                     .await?;
                     tx.put_report_share(task_id, &report_share).await
@@ -1274,6 +1327,12 @@ mod tests {
                     Vec::new(),
                     Vdaf::Poplar1,
                     Role::Leader,
+                    &HpkeRecipient::generate(
+                        aggregation_job.task_id,
+                        Label::InputShare,
+                        Role::Client,
+                        Role::Leader,
+                    ),
                 ))
                 .await?;
                 tx.put_aggregation_job(&aggregation_job).await
@@ -1325,6 +1384,12 @@ mod tests {
                             Vec::new(),
                             Vdaf::Prio3Aes128Count,
                             Role::Leader,
+                            &HpkeRecipient::generate(
+                                task_id,
+                                Label::InputShare,
+                                Role::Client,
+                                Role::Leader,
+                            ),
                         ))
                         .await?;
                         let aggregation_job_id = tx

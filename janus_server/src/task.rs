@@ -56,6 +56,7 @@ pub enum Vdaf {
 pub struct AggregatorAuthKey([u8; SHA256_OUTPUT_LEN]);
 
 impl AggregatorAuthKey {
+    /// Construct an [`AggregatorAuthKey`] from the provided byte slice.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         Ok(Self(bytes.try_into()?))
     }
@@ -70,10 +71,12 @@ impl AggregatorAuthKey {
         ))
     }
 
+    /// Get this key as a slice of bytes.
     pub(crate) fn as_slice(&self) -> &[u8] {
         &self.0[..]
     }
 
+    /// Get this key as a [`ring::hmac::Key`].
     pub fn as_hmac_key(&self) -> hmac::Key {
         hmac::Key::new(HMAC_SHA256, &self.0)
     }
@@ -147,6 +150,12 @@ impl TaskParameters {
         }
     }
 
+    /// Set the aggregator endpoints. Pub for use in integration tests.
+    #[doc(hidden)]
+    pub fn set_aggregator_endpoints(&mut self, endpoints: Vec<Url>) {
+        self.aggregator_endpoints = endpoints;
+    }
+
     /// Create a dummy [`TaskParameters`] from the provided [`TaskId`], with
     /// dummy values for the other fields. This is pub because it is needed for
     /// integration tests.
@@ -156,6 +165,7 @@ impl TaskParameters {
         aggregator_endpoints: Vec<Url>,
         vdaf: Vdaf,
         role: Role,
+        hpke_recipient: &HpkeRecipient,
     ) -> Self {
         Self {
             id: task_id,
@@ -176,7 +186,7 @@ impl TaskParameters {
             .config()
             .clone(),
             agg_auth_key: AggregatorAuthKey::generate().unwrap(),
-            hpke_recipient: HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, role),
+            hpke_recipient: hpke_recipient.clone(),
         }
     }
 }

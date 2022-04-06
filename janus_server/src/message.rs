@@ -273,11 +273,6 @@ pub enum Role {
 }
 
 impl Role {
-    /// True if this [`Role`] is one of the aggregators.
-    pub(crate) fn is_aggregator(&self) -> bool {
-        matches!(self, Role::Leader | Role::Helper)
-    }
-
     /// If this [`Role`] is one of the aggregators, returns the index at which
     /// that aggregator's message or data can be found in various lists, or
     /// `None` if the role is not an aggregator.
@@ -387,8 +382,19 @@ impl Decode for HpkeCiphertext {
     }
 }
 
+/// Errors that may occur while decoding a TaskID
+#[derive(Debug, thiserror::Error)]
+pub enum TaskIdDecodeError {
+    /// Failure to decode base64url string
+    #[error("failed to decode unpadded base64url string: {0}")]
+    Base64UrlDecode(#[from] base64::DecodeError),
+    /// Decoded value has wrong length for a task ID
+    #[error("encoded TaskId has wrong length: {0}")]
+    WrongLength(usize),
+}
+
 /// PPM protocol message representing an identifier for a PPM task.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
 
 impl Debug for TaskId {
@@ -418,6 +424,29 @@ impl TaskId {
     /// Get a reference to the task ID as a byte slice
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    /// Construct a [`TaskId`] from the provided string, which is parsed as
+    /// unpadded[1] base64url[2] per RFC 4648.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc4648#section-3.2
+    /// [2]: https://datatracker.ietf.org/doc/html/rfc4648#section-5
+    pub fn from_unpadded_base64url(encoded: &str) -> Result<Self, TaskIdDecodeError> {
+        Ok(Self(
+            base64::decode_config(encoded, base64::URL_SAFE_NO_PAD)?
+                .try_into()
+                .map_err(|rejected_bytes: Vec<u8>| {
+                    TaskIdDecodeError::WrongLength(rejected_bytes.len())
+                })?,
+        ))
+    }
+
+    /// Encode this value into unpadded[1] base64url[2] per RFC 4648.
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc4648#section-3.2
+    /// [2]: https://datatracker.ietf.org/doc/html/rfc4648#section-5
+    pub fn as_unpadded_base64url(&self) -> String {
+        base64::encode_config(self.0, base64::URL_SAFE_NO_PAD)
     }
 
     /// Generate a random [`TaskId`]
