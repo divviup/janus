@@ -817,19 +817,19 @@ pub mod test_util {
     use deadpool_postgres::{Manager, Pool};
     use lazy_static::lazy_static;
     use std::str::{self, FromStr};
-    use testcontainers::{clients::Cli, images::postgres::Postgres, Container, Docker};
+    use testcontainers::{clients::Cli, images::postgres::Postgres, Container};
     use tokio_postgres::{Config, NoTls};
 
     const SCHEMA: &str = include_str!("../../db/schema.sql");
 
     // TODO(brandon): use podman instead of docker for container management once testcontainers supports it
     lazy_static! {
-        static ref DOCKER: Cli = Cli::default();
+        static ref CONTAINER_CLIENT: Cli = Cli::default();
     }
 
     /// DbHandle represents a handle to a running (ephemeral) database. Dropping this value causes
     /// the database to be shut down & cleaned up.
-    pub struct DbHandle(Container<'static, Cli, Postgres>);
+    pub struct DbHandle(Container<'static, Postgres>);
 
     /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database which
     /// has the Janus schema applied but is otherwise empty.
@@ -837,13 +837,13 @@ pub mod test_util {
     /// Dropping the second return value causes the database to be shut down & cleaned up.
     pub async fn ephemeral_datastore() -> (Datastore, DbHandle) {
         // Start an instance of Postgres running in a container.
-        let db_container = DOCKER.run(Postgres::default().with_version(14));
+        let db_container = CONTAINER_CLIENT.run(Postgres::default());
 
         // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
         let connection_string = format!(
             "postgres://postgres:postgres@localhost:{}/postgres",
-            db_container.get_host_port(POSTGRES_DEFAULT_PORT).unwrap()
+            db_container.get_host_port(POSTGRES_DEFAULT_PORT)
         );
         let cfg = Config::from_str(&connection_string).unwrap();
         let conn_mgr = Manager::new(cfg, NoTls);
