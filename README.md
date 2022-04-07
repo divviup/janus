@@ -24,10 +24,10 @@ logging_config:
     listen_address: 127.0.0.1:6669
 ```
 
-Compile the server with the flag `--cfg tokio_unstable`, as follows. (If `tokio-console` support is enabled in the configuration, but the `tokio_unstable` flag was not present at compilation time, the server will panic upon startup)
+Compile the server with the `tokio-console` feature enabled, and provide the flag `--cfg tokio_unstable` to `rustc`, as follows. (If `tokio-console` support is enabled in a build without the `tokio_unstable` flag, the server will panic upon startup)
 
 ```bash
-RUSTFLAGS="--cfg tokio_unstable" CARGO_TARGET_DIR=target/tokio_unstable cargo build
+RUSTFLAGS="--cfg tokio_unstable" CARGO_TARGET_DIR=target/tokio_unstable cargo build --features tokio-console
 ```
 
 Install `tokio-console`, run the server, and run `tokio-console http://127.0.0.1:6669` to connect to it and monitor tasks.
