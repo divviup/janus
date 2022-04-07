@@ -92,6 +92,8 @@ impl From<datastore::Error> for Error {
 
 /// A PPM aggregator.
 // TODO: refactor Aggregator to be non-task-specific (look up task-specific data based on task ID)
+// TODO: refactor Aggregator to perform indepedent batched operations (e.g. report handling in
+//       Aggregate requests) using a parallelized library like Rayon.
 #[derive(Clone, derivative::Derivative)]
 #[derivative(Debug)]
 pub struct Aggregator<A: vdaf::Aggregator, C: Clock>
@@ -450,6 +452,8 @@ where
         let verify_param = Arc::new(self.verify_param.clone());
         let transitions = Arc::new(transitions);
 
+        // TODO(brandon): don't hold DB transaction open while computing VDAF updates?
+        // TODO(brandon): don't do O(n) network round-trips (where n is the number of transitions)
         Ok(self
             .datastore
             .run_tx(|tx| {
@@ -478,9 +482,9 @@ where
                         // extract the stored preparation step.
                         let mut report_aggregation = loop {
                             let mut report_agg = report_aggregations.next().ok_or_else(|| {
-                                warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent unexpected or out-of-order transitions");
+                                warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent unexpected, duplicate, or out-of-order transitions");
                                 datastore::Error::User(Box::new(Error::UnrecognizedMessage(
-                                    "leader sent unexpected or out-of-order transitions",
+                                    "leader sent unexpected, duplicate, or out-of-order transitions",
                                     task_id,
                                 )))
                             })?;
