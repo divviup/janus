@@ -817,7 +817,7 @@ pub mod test_util {
     use deadpool_postgres::{Manager, Pool};
     use lazy_static::lazy_static;
     use std::str::{self, FromStr};
-    use testcontainers::{clients::Cli, images::postgres::Postgres, Container};
+    use testcontainers::{clients::Cli, images::postgres::Postgres, Container, RunnableImage};
     use tokio_postgres::{Config, NoTls};
 
     const SCHEMA: &str = include_str!("../../db/schema.sql");
@@ -837,7 +837,8 @@ pub mod test_util {
     /// Dropping the second return value causes the database to be shut down & cleaned up.
     pub async fn ephemeral_datastore() -> (Datastore, DbHandle) {
         // Start an instance of Postgres running in a container.
-        let db_container = CONTAINER_CLIENT.run(Postgres::default());
+        let db_container =
+            CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
 
         // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
