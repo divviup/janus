@@ -512,7 +512,8 @@ impl Transaction<'_> {
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 WHERE report_aggregations.aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1)
-                  AND client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $2)"
+                  AND client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $2)
+                ORDER BY report_aggregations.ord ASC"
             )
             .await?;
         self.tx

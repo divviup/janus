@@ -526,9 +526,12 @@ where
                             _ => {
                                 // TODO(brandon): should this be reflected in the response?
                                 warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent non-Continued transition");
-                                report_aggregation.state = ReportAggregationState::Invalid;
-                                tx.update_report_aggregation(&report_aggregation).await?;
-                                continue;
+                                return Err(datastore::Error::User(Box::new(
+                                    Error::UnrecognizedMessage(
+                                        "leader sent non-Continued transition",
+                                        task_id,
+                                    ),
+                                )));
                             }
                         };
 
@@ -2411,56 +2414,20 @@ mod tests {
             .into_response()
             .into_parts();
 
-        // Validate response.
-        assert_eq!(parts.status, StatusCode::OK);
-        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
-        let aggregate_resp: AggregateResp =
-            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
-                .unwrap()
-                .decode(&hmac_key)
-                .unwrap();
-
-        assert_eq!(aggregate_resp, AggregateResp { seq: Vec::new() });
-
-        // Validate datastore.
-        let (aggregation_job, report_aggregation) = datastore
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    let aggregation_job = tx
-                        .get_aggregation_job::<fake::Vdaf>(task_id, aggregation_job_id)
-                        .await?;
-                    let report_aggregation = tx
-                        .get_report_aggregation::<fake::Vdaf>(
-                            &(),
-                            task_id,
-                            aggregation_job_id,
-                            nonce,
-                        )
-                        .await?;
-                    Ok((aggregation_job, report_aggregation))
-                })
+        // Check that response is as desired.
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "The message type for a response was incorrect or the payload was malformed.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
             })
-            .await
-            .unwrap();
-
-        assert_eq!(
-            aggregation_job,
-            AggregationJob {
-                aggregation_job_id,
-                task_id,
-                aggregation_param: (),
-                state: AggregationJobState::Finished,
-            }
-        );
-        assert_eq!(
-            report_aggregation,
-            ReportAggregation {
-                aggregation_job_id,
-                task_id,
-                nonce,
-                ord: 0,
-                state: ReportAggregationState::Invalid,
-            }
         );
     }
 
