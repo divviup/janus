@@ -489,14 +489,13 @@ where
                                 )))
                             })?;
                             if report_agg.nonce != transition.nonce {
-                                // TODO(brandon): assuming we aren't going to fail due to
-                                // out-of-order/unexpected transitions, any report aggregations that
-                                // get skipped here are skipped because the leader omitted them
-                                // because something failed on the leader's side. We move to INVALID
-                                // state to ensure we don't get later updates, but is that the
-                                // desired behavior?
-                                report_agg.state = ReportAggregationState::Invalid;
-                                tx.update_report_aggregation(&report_agg).await?;
+                                // This report was omitted by the leader because of a prior failure.
+                                // Note that the report was dropped (if it's not already in an error
+                                // state) and continue.
+                                if matches!(report_agg.state, ReportAggregationState::Waiting(_)) {
+                                    report_agg.state = ReportAggregationState::Failed(TransitionError::ReportDropped);
+                                    tx.update_report_aggregation(&report_agg).await?;
+                                }
                                 continue;
                             }
                             break report_agg;
@@ -524,7 +523,7 @@ where
                                 )?
                             }
                             _ => {
-                                // TODO(brandon): should this be reflected in the response?
+                                // TODO(brandon): should we record a state change in this case?
                                 warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent non-Continued transition");
                                 return Err(datastore::Error::User(Box::new(
                                     Error::UnrecognizedMessage(
@@ -576,15 +575,14 @@ where
                         tx.update_report_aggregation(&report_aggregation).await?;
                     }
 
-                    for mut report_aggregation in report_aggregations {
-                        // TODO(brandon): assuming we aren't going to fail due to
-                        // out-of-order/unexpected transitions, any report aggregations that
-                        // get skipped here are skipped because the leader omitted them
-                        // because something failed on the leader's side. We move to INVALID
-                        // state to ensure we don't get later updates, but is that the
-                        // desired behavior?
-                        report_aggregation.state = ReportAggregationState::Invalid;
-                        tx.update_report_aggregation(&report_aggregation).await?;
+                    for mut report_agg in report_aggregations {
+                        // This report was omitted by the leader because of a prior failure.
+                        // Note that the report was dropped (if it's not already in an error state)
+                        // and continue.
+                        if matches!(report_agg.state, ReportAggregationState::Waiting(_)) {
+                            report_agg.state = ReportAggregationState::Failed(TransitionError::ReportDropped);
+                            tx.update_report_aggregation(&report_agg).await?;
+                        }
                     }
 
                     aggregation_job.state = match (saw_continue, saw_finish) {
