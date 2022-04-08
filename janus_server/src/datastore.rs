@@ -20,7 +20,9 @@ use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     vdaf,
 };
-use std::{convert::TryFrom, fmt::Display, future::Future, io::Cursor, pin::Pin};
+use rand::{thread_rng, Rng};
+use ring::aead::{self, LessSafeKey, AES_128_GCM};
+use std::{convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of, pin::Pin};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 #[cfg(test)]
 use url::Url;
@@ -764,6 +766,115 @@ impl RowExt for Row {
     }
 }
 
+/// A Crypter allows a Datastore to encrypt/decrypt sensitive values stored to the datastore. Values
+/// are cryptographically bound to the specific location in the datastore in which they are stored.
+/// Rollback protection is not provided.
+pub struct Crypter {
+    keys: Vec<LessSafeKey>,
+}
+
+#[allow(dead_code)] // TODO(brandon): remove once Crypter is used by Datastore
+impl Crypter {
+    // The internal serialized format of a Crypter encrypted value is:
+    //   ciphertext || tag || nonce
+    // (the `ciphertext || tag` portion is as returned from `seal_in_place_append_tag`)
+
+    /// Creates a new Crypter instance, using the given set of keys. The first key in the provided
+    /// vector is considered to be the "primary" key, used for encryption operations; any of the
+    /// provided keys can be used for decryption operations.
+    ///
+    /// The keys must be for the AES-128-GCM algorithm.
+    pub fn new(keys: Vec<LessSafeKey>) -> Self {
+        assert!(!keys.is_empty());
+        for key in &keys {
+            assert_eq!(key.algorithm(), &AES_128_GCM);
+        }
+        Self { keys }
+    }
+
+    fn encrypt(
+        &self,
+        table: &str,
+        row: &[u8],
+        column: &str,
+        value: &[u8],
+    ) -> Result<Vec<u8>, Error> {
+        // It is safe to unwrap the key because we have already validated that keys is nonempty
+        // in Crypter::new.
+        Self::encrypt_with_key(self.keys.first().unwrap(), table, row, column, value)
+    }
+
+    fn encrypt_with_key(
+        key: &LessSafeKey,
+        table: &str,
+        row: &[u8],
+        column: &str,
+        value: &[u8],
+    ) -> Result<Vec<u8>, Error> {
+        // Generate a random nonce, compute AAD.
+        let mut nonce_bytes = [0u8; aead::NONCE_LEN];
+        thread_rng().fill(&mut nonce_bytes);
+        let nonce = aead::Nonce::assume_unique_for_key(nonce_bytes);
+        let aad = aead::Aad::from(Self::aad_bytes_for(table, row, column)?);
+
+        // Encrypt, append nonce.
+        let mut result = value.to_vec();
+        key.seal_in_place_append_tag(nonce, aad, &mut result)?;
+        result.extend(nonce_bytes);
+        Ok(result)
+    }
+
+    fn decrypt(
+        &self,
+        table: &str,
+        row: &[u8],
+        column: &str,
+        value: &[u8],
+    ) -> Result<Vec<u8>, Error> {
+        if value.len() < aead::NONCE_LEN {
+            return Err(Error::CryptError);
+        }
+
+        // TODO(brandon): use `rsplit_array_ref` once it is stabilized. [https://github.com/rust-lang/rust/issues/90091]
+        let (ciphertext_and_tag, nonce_bytes) = value.split_at(value.len() - aead::NONCE_LEN);
+        let nonce_bytes: [u8; aead::NONCE_LEN] = nonce_bytes.try_into().unwrap();
+        let aad_bytes = Self::aad_bytes_for(table, row, column)?;
+
+        for key in &self.keys {
+            let mut ciphertext_and_tag = ciphertext_and_tag.to_vec();
+            if let Ok(plaintext) = key.open_in_place(
+                aead::Nonce::assume_unique_for_key(nonce_bytes),
+                aead::Aad::from(aad_bytes.clone()),
+                &mut ciphertext_and_tag,
+            ) {
+                let len = plaintext.len();
+                ciphertext_and_tag.truncate(len);
+                return Ok(ciphertext_and_tag);
+            }
+        }
+        Err(Error::CryptError)
+    }
+
+    fn aad_bytes_for(table: &str, row: &[u8], column: &str) -> Result<Vec<u8>, Error> {
+        // AAD computation is based on (table, row, column).
+        // The serialized AAD is:
+        //   (length of table) || table || (length of row) || row || (length of column) || column.
+        // Lengths are expressed as 8-byte unsigned integers.
+
+        let aad_length = 3 * size_of::<u64>() + table.len() + row.len() + column.len();
+        let mut aad_bytes = Vec::with_capacity(aad_length);
+        aad_bytes.extend_from_slice(&u64::try_from(table.len())?.to_be_bytes());
+        aad_bytes.extend_from_slice(table.as_ref());
+        aad_bytes.extend_from_slice(&u64::try_from(row.len())?.to_be_bytes());
+        aad_bytes.extend_from_slice(row);
+        aad_bytes.extend_from_slice(&u64::try_from(column.len())?.to_be_bytes());
+        aad_bytes.extend_from_slice(column.as_ref());
+        assert_eq!(aad_bytes.len(), aad_length);
+
+        Ok(aad_bytes)
+    }
+}
+
 /// Error represents a datastore-level error.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -772,6 +883,8 @@ pub enum Error {
     Db(#[from] tokio_postgres::Error),
     #[error("DB pool error: {0}")]
     Pool(#[from] deadpool_postgres::PoolError),
+    #[error("crypter error")]
+    CryptError,
     /// An entity requested from the datastore was not found.
     #[error("not found in datastore")]
     NotFound,
@@ -810,6 +923,12 @@ impl Error {
                 .map_or(false, |c| c == &SqlState::T_R_SERIALIZATION_FAILURE),
             _ => false,
         }
+    }
+}
+
+impl From<ring::error::Unspecified> for Error {
+    fn from(_: ring::error::Unspecified) -> Self {
+        Error::CryptError
     }
 }
 
@@ -1082,6 +1201,7 @@ mod tests {
             PrepareTransition,
         },
     };
+    use ring::aead::UnboundKey;
     use std::collections::BTreeSet;
 
     #[tokio::test]
@@ -1684,6 +1804,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(report_aggregations, got_report_aggregations);
+    }
+
+    #[tokio::test]
+    async fn crypter() {
+        let crypter = Crypter::new(vec![generate_aead_key(), generate_aead_key()]);
+        let bad_key = generate_aead_key();
+
+        const TABLE: &str = "some_table";
+        const ROW: &[u8] = b"12345";
+        const COLUMN: &str = "some_column";
+        const PLAINTEXT: &[u8] = b"This is my plaintext value.";
+
+        // Test that roundtripping encryption works.
+        let ciphertext = crypter.encrypt(TABLE, ROW, COLUMN, PLAINTEXT).unwrap();
+        let plaintext = crypter.decrypt(TABLE, ROW, COLUMN, &ciphertext).unwrap();
+        assert_eq!(PLAINTEXT, &plaintext);
+
+        // Roundtripping encryption works even if a non-primary key was used for encryption.
+        let ciphertext =
+            Crypter::encrypt_with_key(crypter.keys.last().unwrap(), TABLE, ROW, COLUMN, PLAINTEXT)
+                .unwrap();
+        let plaintext = crypter.decrypt(TABLE, ROW, COLUMN, &ciphertext).unwrap();
+        assert_eq!(PLAINTEXT, &plaintext);
+
+        // Roundtripping encryption with an unknown key fails.
+        let ciphertext =
+            Crypter::encrypt_with_key(&bad_key, TABLE, ROW, COLUMN, PLAINTEXT).unwrap();
+        assert!(crypter.decrypt(TABLE, ROW, COLUMN, &ciphertext).is_err());
+
+        // Roundtripping encryption with a mismatched table, row, or column fails.
+        let ciphertext = crypter.encrypt(TABLE, ROW, COLUMN, PLAINTEXT).unwrap();
+        assert!(crypter
+            .decrypt("wrong_table", ROW, COLUMN, &ciphertext)
+            .is_err());
+        assert!(crypter
+            .decrypt(TABLE, b"wrong_row", COLUMN, &ciphertext)
+            .is_err());
+        assert!(crypter
+            .decrypt(TABLE, ROW, "wrong_column", &ciphertext)
+            .is_err());
+    }
+
+    fn generate_aead_key() -> LessSafeKey {
+        let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
+        thread_rng().fill(&mut key_bytes[..]);
+        let unbound_key = UnboundKey::new(&AES_128_GCM, &key_bytes).unwrap();
+        LessSafeKey::new(unbound_key)
     }
 
     /// generate_vdaf_values generates some arbitrary VDAF values for use in testing. It is cribbed
