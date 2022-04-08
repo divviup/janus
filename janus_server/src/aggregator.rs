@@ -2306,7 +2306,7 @@ mod tests {
                     task_id,
                     nonce: nonce_1,
                     ord: 1,
-                    state: ReportAggregationState::Invalid,
+                    state: ReportAggregationState::Failed(TransitionError::ReportDropped),
                 }
             ]
         );
