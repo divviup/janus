@@ -11,9 +11,6 @@ env:
 
 jobs:
   janus_server_build:
-    defaults:
-      run:
-        working-directory: janus_server
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
