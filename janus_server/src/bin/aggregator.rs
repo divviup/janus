@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
 
     let datastore_keys = options
         .datastore_keys
-        .split(",")
+        .split(',')
         .filter(|k| !k.is_empty())
         .map(|k| {
             base64::decode_config(k, base64::STANDARD_NO_PAD)
