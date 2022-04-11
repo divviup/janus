@@ -4,11 +4,11 @@ use crate::{
     hpke::{HpkeRecipient, Label},
     message::{Duration, HpkeConfig, Role, TaskId},
 };
+use ::rand::{thread_rng, Rng};
 use postgres_types::{FromSql, ToSql};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
-    rand::{self, SystemRandom},
 };
 use url::Url;
 
@@ -17,12 +17,10 @@ use url::Url;
 pub enum Error {
     #[error("invalid parameter {0}")]
     InvalidParameter(&'static str),
-    #[error("failed to generate aggregator authentication key")]
-    AggregatorAuthenticationKeyGeneration,
     #[error("URL parse error")]
     Url(#[from] url::ParseError),
-    #[error("could not convert slice to array: {0}")]
-    TryFromSlice(#[from] std::array::TryFromSliceError),
+    #[error("aggregator auth key size out of range")]
+    AggregatorAuthKeySize,
 }
 
 /// Identifiers for VDAFs supported by this aggregator, corresponding to
@@ -47,37 +45,61 @@ pub enum Vdaf {
     Poplar1,
 }
 
-/// An HMAC SHA-256 key used to authenticate messages exchanged between
-/// aggregators. See `agg_auth_key` in draft-gpew-priv-ppm §4.2. We define this
-/// because while we can use [`ring::hmac::Key::new`] to get a
-/// [`ring::hmac::Key`] from a slice of bytes, we can't get the bytes back out
-/// of the key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AggregatorAuthKey([u8; SHA256_OUTPUT_LEN]);
+/// An HMAC-SHA-256 key used to authenticate messages exchanged between
+/// aggregators. See `agg_auth_key` in draft-gpew-priv-ppm §4.2.
+// We define the type this way because while we can use `ring::hmac::Key::new`
+// to get a `ring::hmac::Key` from a slice of bytes, we can't get the bytes
+// back out of the key.
+#[derive(Clone, Debug)]
+pub struct AggregatorAuthKey(Vec<u8>, hmac::Key);
+
+// TODO(brandon): use a ring constant once one is exposed. This is the correct value per ring:
+//   https://docs.rs/ring/0.16.20/src/ring/digest.rs.html#339
+// (but we can't use the value in ring as a const because it's not const, it's static)
+const SHA256_BLOCK_LEN: usize = 512 / 8;
 
 impl AggregatorAuthKey {
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        Ok(Self(bytes.try_into()?))
-    }
-
-    /// Randomly generate an [`AggregatorAuthKey`].
-    pub fn generate() -> Result<Self, Error> {
-        let rng = SystemRandom::new();
+    pub fn new(key_bytes: &[u8]) -> Result<Self, Error> {
+        if key_bytes.len() < SHA256_OUTPUT_LEN || key_bytes.len() > SHA256_BLOCK_LEN {
+            return Err(Error::AggregatorAuthKeySize);
+        }
         Ok(Self(
-            rand::generate(&rng)
-                .map_err(|_| Error::AggregatorAuthenticationKeyGeneration)?
-                .expose(),
+            Vec::from(key_bytes),
+            hmac::Key::new(HMAC_SHA256, key_bytes),
         ))
     }
 
-    pub(crate) fn as_slice(&self) -> &[u8] {
-        &self.0[..]
-    }
-
-    pub fn as_hmac_key(&self) -> hmac::Key {
-        hmac::Key::new(HMAC_SHA256, &self.0)
+    /// Randomly generate an [`AggregatorAuthKey`].
+    pub fn generate() -> Self {
+        let mut key_bytes = [0u8; SHA256_BLOCK_LEN];
+        thread_rng().fill(&mut key_bytes);
+        // Won't panic: key_bytes is constructed as SHA256_BLOCK_LEN bytes, which will pass the
+        // validation check.
+        Self::new(&key_bytes).unwrap()
     }
 }
+
+impl AsRef<[u8]> for AggregatorAuthKey {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsRef<hmac::Key> for AggregatorAuthKey {
+    fn as_ref(&self) -> &hmac::Key {
+        &self.1
+    }
+}
+
+impl PartialEq for AggregatorAuthKey {
+    fn eq(&self, other: &Self) -> bool {
+        // The key is ignored because it is derived from the key bytes.
+        // (also, ring::hmac::Key doesn't implement PartialEq)
+        self.0 == other.0
+    }
+}
+
+impl Eq for AggregatorAuthKey {}
 
 /// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -175,7 +197,7 @@ impl TaskParameters {
             )
             .config()
             .clone(),
-            agg_auth_key: AggregatorAuthKey::generate().unwrap(),
+            agg_auth_key: AggregatorAuthKey::generate(),
             hpke_recipient: HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, role),
         }
     }
