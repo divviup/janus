@@ -4,7 +4,7 @@ use deadpool_postgres::{Manager, Pool};
 use janus_server::{
     aggregator::aggregator_server,
     config::AggregatorConfig,
-    datastore::Datastore,
+    datastore::{self, Datastore},
     hpke::{HpkeRecipient, Label},
     message::Role,
     message::TaskId,
@@ -13,6 +13,7 @@ use janus_server::{
 };
 use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf};
 use ring::{
+    aead::{LessSafeKey, UnboundKey, AES_128_GCM},
     hmac::{self, HMAC_SHA256},
     rand::SystemRandom,
 };
@@ -36,7 +37,7 @@ use tracing::info;
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    /// Path to configuration YAML
+    /// Path to configuration YAML.
     #[structopt(
         long,
         env = "CONFIG_FILE",
@@ -46,6 +47,7 @@ struct Options {
         help = "path to configuration file"
     )]
     config_file: PathBuf,
+
     /// The PPM protocol role this aggregator should assume.
     //
     // TODO(timg): obtain the role from the task definition in the database
@@ -58,6 +60,16 @@ struct Options {
         help = "role for this aggregator",
     )]
     role: Role,
+
+    /// Datastore encryption keys.
+    #[structopt(
+        long,
+        env = "DATASTORE_KEYS",
+        takes_value = true,
+        required(true),
+        help = "datastore encryption keys, encoded in base64 then comma-separated"
+    )]
+    datastore_keys: String,
 }
 
 impl Debug for Options {
@@ -90,6 +102,7 @@ async fn main() -> Result<()> {
     let vdaf = Prio3Aes128Count::new(2).unwrap();
     let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
 
+    // Connect to database.
     let database_config = tokio_postgres::Config::from_str(config.database.url.as_str())
         .with_context(|| {
             format!(
@@ -101,7 +114,28 @@ async fn main() -> Result<()> {
     let pool = Pool::builder(conn_mgr)
         .build()
         .context("failed to create database connection pool")?;
-    let datastore = Arc::new(Datastore::new(pool));
+
+    let datastore_keys = options
+        .datastore_keys
+        .split(",")
+        .filter(|k| !k.is_empty())
+        .map(|k| {
+            base64::decode_config(k, base64::STANDARD_NO_PAD)
+                .context("couldn't base64-decode datastore keys")
+                .and_then(|k| {
+                    Ok(LessSafeKey::new(
+                        UnboundKey::new(&AES_128_GCM, &k)
+                            .map_err(|_| anyhow!("coulnd't parse datastore keys as keys"))?,
+                    ))
+                })
+        })
+        .collect::<Result<Vec<LessSafeKey>>>()?;
+    if datastore_keys.is_empty() {
+        return Err(anyhow!("datastore keys is empty"));
+    }
+    let crypter = datastore::Crypter::new(datastore_keys);
+
+    let datastore = Arc::new(Datastore::new(pool, crypter));
 
     // TODO(timg): tasks and the corresponding HPKE configuration and private
     // keys should be loaded from the database (see discussion in #37)

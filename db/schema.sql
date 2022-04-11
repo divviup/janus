@@ -19,19 +19,18 @@ CREATE TABLE tasks(
     aggregator_role        AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator for this task
     aggregator_endpoints   TEXT[] NOT NULL,           -- aggregator HTTPS endpoints, leader first
     vdaf                   VDAF_IDENTIFIER NOT NULL,  -- the VDAF in use for this task
-    vdaf_verify_param      BYTEA NOT NULL,            -- the VDAF verify parameter (opaque VDAF message)
+    vdaf_verify_param      BYTEA NOT NULL,            -- the VDAF verify parameter (opaque VDAF message, encrypted)
     max_batch_lifetime     BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     min_batch_duration     BIGINT NOT NULL,           -- the minimum duration in seconds of a single batch interval
     tolerable_clock_skew   BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
     collector_hpke_config  BYTEA NOT NULL,            -- the HPKE config of the collector (encoded HpkeConfig message)
-    agg_auth_key           BYTEA NOT NULL,            -- HMAC key used by this aggregator to authenticate messages to/from the other aggregator
+    agg_auth_key           BYTEA NOT NULL,            -- HMAC key used by this aggregator to authenticate messages to/from the other aggregator (encrypted)
     hpke_config            BYTEA NOT NULL,            -- the HPKE config of this aggregator (encoded HpkeConfig message)
-    hpke_private_key       BYTEA NOT NULL             -- private key corresponding to hpke_config (hpke::HpkePrivateKey)
+    hpke_private_key       BYTEA NOT NULL             -- private key corresponding to hpke_config (hpke::HpkePrivateKey, encrypted)
 
     -- TODO(timg): move vdaf_verify_param, agg_auth_key, hpke_config, hpke_private_key to new
     -- tables with many:1 relationships to tasks to allow for rotation of secrets
-    -- TODO(timg): vdaf_verify_params, agg_auth_key and hpke_private_key should be encrypted
 );
 
 -- Individual reports received from clients.
