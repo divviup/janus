@@ -13,6 +13,14 @@ The aggregator server requires a connection to a PostgreSQL 14 database. Prepare
 aggregator --config-file <config-file> --role <role>
 ```
 
+## Container image
+
+To build a container image, run the following command.
+
+```bash
+DOCKER_BUILDKIT=1 docker build --tag=janus_server .
+```
+
 ## Monitoring with `tokio-console`
 
 Optional support is included to monitor the server's async runtime using `tokio-console`. When enabled, a separate tracing subscriber will be installed to monitor when the async runtime polls tasks, and expose that information to diagnostic tools via a gRPC server. Currently, this requires both changes to the aggregator configuration and to the build flags used at compilation. Add a stanza similar to the following to the configuration file.
