@@ -36,7 +36,7 @@ testcontainers = "0.13.0"
 thiserror = "1.0"
 tokio = { version = "^1.9", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.5", features = ["with-chrono-0_4"] }
-tracing = "0.1.32"
+tracing = "0.1.33"
 tracing-log = "0.1.2"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt", "json"] }
 url = { version = "2.2.2", features = ["serde"] }
