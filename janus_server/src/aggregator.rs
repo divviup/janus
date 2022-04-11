@@ -28,7 +28,7 @@ use std::{
     collections::HashSet, convert::Infallible, future::Future, io::Cursor, net::SocketAddr,
     ops::Sub, pin::Pin, sync::Arc,
 };
-use tracing::warn;
+use tracing::{error, warn};
 use warp::{
     filters::BoxedFilter,
     reply::{self, Response},
@@ -724,32 +724,39 @@ fn build_problem_details_response(error_type: PpmProblemType, task_id: TaskId) -
 /// Produces a closure that will transform applicable errors into a problem details JSON object.
 /// (See RFC 7807) The returned closure is meant to be used in a warp `map` filter.
 fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Response + Clone {
-    move |result| match result {
-        Ok(reply) => reply.into_response(),
-        Err(Error::InvalidConfiguration(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
-        Err(Error::StaleReport(_, task_id)) => {
-            build_problem_details_response(PpmProblemType::StaleReport, task_id)
+    |result| {
+        if let Err(error) = &result {
+            error!(%error);
         }
-        Err(Error::UnrecognizedMessage(_, task_id)) => {
-            build_problem_details_response(PpmProblemType::UnrecognizedMessage, task_id)
+        match result {
+            Ok(reply) => reply.into_response(),
+            Err(Error::InvalidConfiguration(_)) => {
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+            Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
+            Err(Error::StaleReport(_, task_id)) => {
+                build_problem_details_response(PpmProblemType::StaleReport, task_id)
+            }
+            Err(Error::UnrecognizedMessage(_, task_id)) => {
+                build_problem_details_response(PpmProblemType::UnrecognizedMessage, task_id)
+            }
+            Err(Error::UnrecognizedTask(task_id)) => {
+                build_problem_details_response(PpmProblemType::UnrecognizedTask, task_id)
+            }
+            Err(Error::OutdatedHpkeConfig(_, task_id)) => {
+                build_problem_details_response(PpmProblemType::OutdatedConfig, task_id)
+            }
+            Err(Error::ReportFromTheFuture(_, _)) => {
+                // TODO: build a problem details document once an error type is defined for reports
+                // with timestamps too far in the future.
+                StatusCode::BAD_REQUEST.into_response()
+            }
+            Err(Error::InvalidHmac(task_id)) => {
+                build_problem_details_response(PpmProblemType::InvalidHmac, task_id)
+            }
+            Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
-        Err(Error::UnrecognizedTask(task_id)) => {
-            build_problem_details_response(PpmProblemType::UnrecognizedTask, task_id)
-        }
-        Err(Error::OutdatedHpkeConfig(_, task_id)) => {
-            build_problem_details_response(PpmProblemType::OutdatedConfig, task_id)
-        }
-        Err(Error::ReportFromTheFuture(_, _)) => {
-            // TODO: build a problem details document once an error type is defined for reports
-            // with timestamps too far in the future.
-            StatusCode::BAD_REQUEST.into_response()
-        }
-        Err(Error::InvalidHmac(task_id)) => {
-            build_problem_details_response(PpmProblemType::InvalidHmac, task_id)
-        }
-        Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
