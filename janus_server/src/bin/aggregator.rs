@@ -58,6 +58,10 @@ struct Options {
         help = "role for this aggregator",
     )]
     role: Role,
+    /// Password for the PostgreSQL database connection. (if not included in the connection
+    /// string)
+    #[structopt(long, env = "PGPASSWORD", help = "PostgreSQL password")]
+    database_password: Option<String>,
 }
 
 impl Debug for Options {
@@ -98,7 +102,7 @@ async fn main() -> Result<()> {
             )
         })?;
     if database_config.get_password().is_none() {
-        if let Ok(password) = std::env::var("PGPASSWORD") {
+        if let Some(password) = options.database_password {
             database_config.password(password);
         }
     }
