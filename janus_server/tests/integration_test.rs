@@ -75,7 +75,7 @@ async fn setup_test() -> TestCase {
         Role::Leader,
         leader_verify_param,
         leader_hpke_recipient.clone(),
-        hmac_key.clone(),
+        vec![hmac_key.clone()],
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
@@ -88,7 +88,7 @@ async fn setup_test() -> TestCase {
         Role::Helper,
         helper_verify_param,
         helper_hpke_recipient.clone(),
-        hmac_key.clone(),
+        vec![hmac_key.clone()],
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();

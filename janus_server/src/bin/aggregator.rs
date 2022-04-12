@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
         options.role,
         verify_param,
         hpke_recipient,
-        agg_auth_key,
+        vec![agg_auth_key],
         config.listen_address,
     )
     .context("failed to create aggregator server")?;
