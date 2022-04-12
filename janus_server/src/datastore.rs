@@ -33,13 +33,14 @@ use url::Url;
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
 pub struct Datastore {
     pool: deadpool_postgres::Pool,
+    crypter: Crypter,
 }
 
 impl Datastore {
     /// new creates a new Datastore using the given Client for backing storage. It is assumed that
     /// the Client is connected to a database with a compatible version of the Janus database schema.
-    pub fn new(pool: deadpool_postgres::Pool) -> Datastore {
-        Self { pool }
+    pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter) -> Datastore {
+        Self { pool, crypter }
     }
 
     /// run_tx runs a transaction, whose body is determined by the given function. The transaction
@@ -79,6 +80,7 @@ impl Datastore {
                 .isolation_level(IsolationLevel::Serializable)
                 .start()
                 .await?,
+            crypter: &self.crypter,
         };
 
         // Run user-provided function with the transaction.
@@ -93,11 +95,10 @@ impl Datastore {
 /// Transaction represents an ongoing datastore transaction.
 pub struct Transaction<'a> {
     tx: deadpool_postgres::Transaction<'a>,
+    crypter: &'a Crypter,
 }
 
 impl Transaction<'_> {
-    // TODO(brandon): implement basic getters/putters for all types
-
     // This is pub to be used in integration tests
     #[doc(hidden)]
     pub async fn put_task(&self, task: &TaskParameters) -> Result<(), Error> {
@@ -113,7 +114,25 @@ impl Transaction<'_> {
         let min_batch_size = i64::try_from(task.min_batch_size)?;
         let min_batch_duration = i64::try_from(task.min_batch_duration.0)?;
         let tolerable_clock_skew = i64::try_from(task.tolerable_clock_skew.0)?;
-        let agg_auth_key: &[u8] = task.agg_auth_key.as_ref();
+
+        let encrypted_vdaf_verify_param = self.crypter.encrypt(
+            "tasks",
+            &task.id.0,
+            "vdaf_verify_param",
+            &task.vdaf_verify_parameter,
+        )?;
+        let encrypted_agg_auth_key = self.crypter.encrypt(
+            "tasks",
+            &task.id.0,
+            "agg_auth_key",
+            task.agg_auth_key.as_ref(),
+        )?;
+        let encrypted_hpke_private_key = self.crypter.encrypt(
+            "tasks",
+            &task.id.0,
+            "hpke_private_key",
+            task.hpke_recipient.private_key().as_ref(),
+        )?;
 
         let stmt = self
             .tx
@@ -133,15 +152,15 @@ impl Transaction<'_> {
                     &aggregator_role,                            // aggregator_role
                     &endpoints,                                  // aggregator_endpoints
                     &task.vdaf,                                  // vdaf
-                    &task.vdaf_verify_parameter,                 // verify param
+                    &encrypted_vdaf_verify_param,                // verify param
                     &max_batch_lifetime,                         // max batch lifetime
                     &min_batch_size,                             // min batch size
                     &min_batch_duration,                         // min batch duration
                     &tolerable_clock_skew,                       // tolerable clock skew
                     &task.collector_hpke_config.get_encoded(),   // collector hpke config
-                    &agg_auth_key,                               // agg_auth_key
+                    &encrypted_agg_auth_key,                     // agg_auth_key
                     &task.hpke_recipient.config().get_encoded(), // hpke_config
-                    &task.hpke_recipient.private_key().as_ref(), // hpke_private_key
+                    &encrypted_hpke_private_key,                 // hpke_private_key
                 ],
             )
             .await?;
@@ -153,6 +172,7 @@ impl Transaction<'_> {
     /// from the row.
     #[cfg(test)]
     fn task_parameters_from_row(
+        &self,
         task_id: Option<TaskId>,
         row: &Row,
     ) -> Result<TaskParameters, Error> {
@@ -171,15 +191,35 @@ impl Transaction<'_> {
             .map(|endpoint| Ok(Url::parse(&endpoint)?))
             .collect::<Result<_, Error>>()?;
         let vdaf = row.get("vdaf");
-        let vdaf_verify_parameter = row.get("vdaf_verify_param");
+        let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
         let max_batch_lifetime = row.get_bigint_as_u64("max_batch_lifetime")?;
         let min_batch_size = row.get_bigint_as_u64("min_batch_size")?;
         let min_batch_duration = Duration(row.get_bigint_as_u64("min_batch_duration")?);
         let tolerable_clock_skew = Duration(row.get_bigint_as_u64("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
-        let agg_auth_key = AggregatorAuthKey::new(row.get("agg_auth_key"))?;
+        let encrypted_agg_auth_key: Vec<u8> = row.get("agg_auth_key");
         let hpke_config = HpkeConfig::get_decoded(row.get("hpke_config"))?;
-        let hpke_private_key = HpkePrivateKey::new(row.get("hpke_private_key"));
+        let encrypted_hpke_private_key: Vec<u8> = row.get("hpke_private_key");
+
+        let vdaf_verify_param = self.crypter.decrypt(
+            "tasks",
+            task_id.as_bytes(),
+            "vdaf_verify_param",
+            &encrypted_vdaf_verify_param,
+        )?;
+        let agg_auth_key = AggregatorAuthKey::new(&self.crypter.decrypt(
+            "tasks",
+            task_id.as_bytes(),
+            "agg_auth_key",
+            &encrypted_agg_auth_key,
+        )?)?;
+        let hpke_private_key = HpkePrivateKey::new(self.crypter.decrypt(
+            "tasks",
+            task_id.as_bytes(),
+            "hpke_private_key",
+            &encrypted_hpke_private_key,
+        )?);
+
         let hpke_recipient = HpkeRecipient::new(
             task_id,
             &hpke_config,
@@ -194,7 +234,7 @@ impl Transaction<'_> {
             endpoints,
             vdaf,
             aggregator_role.as_role(),
-            vdaf_verify_parameter,
+            vdaf_verify_param,
             max_batch_lifetime,
             min_batch_size,
             min_batch_duration,
@@ -222,7 +262,7 @@ impl Transaction<'_> {
             .await?;
         let row = single_row(self.tx.query(&stmt, &[&&task_id.0[..]]).await?)?;
 
-        Self::task_parameters_from_row(Some(task_id), &row)
+        self.task_parameters_from_row(Some(task_id), &row)
     }
 
     /// Fetch all the tasks in the database.
@@ -241,7 +281,7 @@ impl Transaction<'_> {
         let rows = self.tx.query(&stmt, &[]).await?;
 
         rows.iter()
-            .map(|row| Self::task_parameters_from_row(None, row))
+            .map(|row| self.task_parameters_from_row(None, row))
             .collect::<Result<_, _>>()
     }
 
@@ -1141,6 +1181,7 @@ pub mod test_util {
     use super::*;
     use deadpool_postgres::{Manager, Pool};
     use lazy_static::lazy_static;
+    use ring::aead::UnboundKey;
     use std::str::{self, FromStr};
     use testcontainers::{clients::Cli, images::postgres::Postgres, Container, RunnableImage};
     use tokio_postgres::{Config, NoTls};
@@ -1175,10 +1216,21 @@ pub mod test_util {
         let conn_mgr = Manager::new(cfg, NoTls);
         let pool = Pool::builder(conn_mgr).build().unwrap();
 
+        // Create a crypter with a random (ephemeral) key.
+        let key = generate_aead_key();
+        let crypter = Crypter::new(vec![key]);
+
         // Connect to the database & run our schema.
         let client = pool.get().await.unwrap();
         client.batch_execute(SCHEMA).await.unwrap();
-        (Datastore::new(pool), DbHandle(db_container))
+        (Datastore::new(pool, crypter), DbHandle(db_container))
+    }
+
+    pub fn generate_aead_key() -> LessSafeKey {
+        let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
+        thread_rng().fill(&mut key_bytes[..]);
+        let unbound_key = UnboundKey::new(&AES_128_GCM, &key_bytes).unwrap();
+        LessSafeKey::new(unbound_key)
     }
 }
 
@@ -1187,7 +1239,10 @@ mod tests {
     use super::*;
     use crate::{
         aggregator::test_util::fake,
-        datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
+        datastore::{
+            models::AggregationJobState,
+            test_util::{ephemeral_datastore, generate_aead_key},
+        },
         message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
         task::Vdaf,
         trace::test_util::install_test_trace_subscriber,
@@ -1202,7 +1257,6 @@ mod tests {
             PrepareTransition,
         },
     };
-    use ring::aead::UnboundKey;
     use std::collections::BTreeSet;
 
     #[tokio::test]
@@ -1845,13 +1899,6 @@ mod tests {
         assert!(crypter
             .decrypt(TABLE, ROW, "wrong_column", &ciphertext)
             .is_err());
-    }
-
-    fn generate_aead_key() -> LessSafeKey {
-        let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
-        thread_rng().fill(&mut key_bytes[..]);
-        let unbound_key = UnboundKey::new(&AES_128_GCM, &key_bytes).unwrap();
-        LessSafeKey::new(unbound_key)
     }
 
     /// generate_vdaf_values generates some arbitrary VDAF values for use in testing. It is cribbed
