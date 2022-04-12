@@ -117,7 +117,7 @@ impl Transaction<'_> {
 
         let mut encoded_agg_auth_keys = String::new();
         for key in &task.agg_auth_keys {
-            if encoded_agg_auth_keys.len() > 0 {
+            if !encoded_agg_auth_keys.is_empty() {
                 encoded_agg_auth_keys.push(',');
             }
             let key_bytes: &[u8] = key.as_ref();
