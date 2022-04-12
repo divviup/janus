@@ -14,7 +14,7 @@ use crate::{
     message::{
         AggregationJobId, Extension, HpkeCiphertext, Nonce, Report, ReportShare, TaskId, Time,
     },
-    task::TaskParameters,
+    task::{self, TaskParameters},
 };
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -115,6 +115,19 @@ impl Transaction<'_> {
         let min_batch_duration = i64::try_from(task.min_batch_duration.0)?;
         let tolerable_clock_skew = i64::try_from(task.tolerable_clock_skew.0)?;
 
+        let mut encoded_agg_auth_keys = String::new();
+        for key in &task.agg_auth_keys {
+            if encoded_agg_auth_keys.len() > 0 {
+                encoded_agg_auth_keys.push(',');
+            }
+            let key_bytes: &[u8] = key.as_ref();
+            base64::encode_config_buf(
+                key_bytes,
+                base64::STANDARD_NO_PAD,
+                &mut encoded_agg_auth_keys,
+            )
+        }
+
         let encrypted_vdaf_verify_param = self.crypter.encrypt(
             "tasks",
             &task.id.0,
@@ -125,7 +138,7 @@ impl Transaction<'_> {
             "tasks",
             &task.id.0,
             "agg_auth_key",
-            task.agg_auth_key.as_ref(),
+            encoded_agg_auth_keys.as_bytes(),
         )?;
         let encrypted_hpke_private_key = self.crypter.encrypt(
             "tasks",
@@ -197,7 +210,7 @@ impl Transaction<'_> {
         let min_batch_duration = Duration(row.get_bigint_as_u64("min_batch_duration")?);
         let tolerable_clock_skew = Duration(row.get_bigint_as_u64("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
-        let encrypted_agg_auth_key: Vec<u8> = row.get("agg_auth_key");
+        let encrypted_agg_auth_keys: Vec<u8> = row.get("agg_auth_key");
         let hpke_config = HpkeConfig::get_decoded(row.get("hpke_config"))?;
         let encrypted_hpke_private_key: Vec<u8> = row.get("hpke_private_key");
 
@@ -207,18 +220,27 @@ impl Transaction<'_> {
             "vdaf_verify_param",
             &encrypted_vdaf_verify_param,
         )?;
-        let agg_auth_key = AggregatorAuthKey::new(&self.crypter.decrypt(
+        let encoded_agg_auth_keys = self.crypter.decrypt(
             "tasks",
             task_id.as_bytes(),
             "agg_auth_key",
-            &encrypted_agg_auth_key,
-        )?)?;
+            &encrypted_agg_auth_keys,
+        )?;
         let hpke_private_key = HpkePrivateKey::new(self.crypter.decrypt(
             "tasks",
             task_id.as_bytes(),
             "hpke_private_key",
             &encrypted_hpke_private_key,
         )?);
+
+        let agg_auth_keys = encoded_agg_auth_keys
+            .split(|&c| c == b',')
+            .map(|k| {
+                base64::decode_config(k, base64::STANDARD_NO_PAD)
+                    .map_err(Error::from)
+                    .and_then(|k| AggregatorAuthKey::new(&k).map_err(Error::from))
+            })
+            .collect::<Result<Vec<AggregatorAuthKey>, Error>>()?;
 
         let hpke_recipient = HpkeRecipient::new(
             task_id,
@@ -240,7 +262,7 @@ impl Transaction<'_> {
             min_batch_duration,
             tolerable_clock_skew,
             &collector_hpke_config,
-            agg_auth_key,
+            agg_auth_keys,
             &hpke_recipient,
         ))
     }
@@ -741,9 +763,7 @@ where
                     "report aggregation in state FINISHED but vdaf_message is NULL".to_string(),
                 )
             })?)
-            .map_err(|_| {
-                Error::DecodeError(CodecError::Other("couldn't decode output share".into()))
-            })?,
+            .map_err(|_| Error::Decode(CodecError::Other("couldn't decode output share".into())))?,
         ),
         ReportAggregationStateCode::Failed => {
             ReportAggregationState::Failed(error_code.ok_or_else(|| {
@@ -873,7 +893,7 @@ impl Crypter {
         value: &[u8],
     ) -> Result<Vec<u8>, Error> {
         if value.len() < aead::NONCE_LEN {
-            return Err(Error::CryptError);
+            return Err(Error::Crypt);
         }
 
         // TODO(brandon): use `rsplit_array_ref` once it is stabilized. [https://github.com/rust-lang/rust/issues/90091]
@@ -893,7 +913,7 @@ impl Crypter {
                 return Ok(ciphertext_and_tag);
             }
         }
-        Err(Error::CryptError)
+        Err(Error::Crypt)
     }
 
     fn aad_bytes_for(table: &str, row: &[u8], column: &str) -> Result<Vec<u8>, Error> {
@@ -925,7 +945,7 @@ pub enum Error {
     #[error("DB pool error: {0}")]
     Pool(#[from] deadpool_postgres::PoolError),
     #[error("crypter error")]
-    CryptError,
+    Crypt,
     /// An entity requested from the datastore was not found.
     #[error("not found in datastore")]
     NotFound,
@@ -938,7 +958,9 @@ pub enum Error {
     DbState(String),
     /// An error from decoding a value stored encoded in the underlying database.
     #[error("decoding error: {0}")]
-    DecodeError(#[from] CodecError),
+    Decode(#[from] CodecError),
+    #[error("base64 decoding error: {0}")]
+    Base64(#[from] base64::DecodeError),
     /// An arbitrary error returned from the user callback; unrelated to DB internals. This error
     /// will never be generated by the datastore library itself.
     #[error(transparent)]
@@ -946,7 +968,7 @@ pub enum Error {
     #[error("URL parse error: {0}")]
     Url(#[from] url::ParseError),
     #[error("invalid task parameters: {0}")]
-    TaskParameters(#[from] crate::task::Error),
+    TaskParameters(#[from] task::Error),
     #[error("integer conversion failed: {0}")]
     TryFromInt(#[from] std::num::TryFromIntError),
 }
@@ -969,14 +991,17 @@ impl Error {
 
 impl From<ring::error::Unspecified> for Error {
     fn from(_: ring::error::Unspecified) -> Self {
-        Error::CryptError
+        Error::Crypt
     }
 }
 
 /// This module contains models used by the datastore that are not PPM messages.
 pub mod models {
     use super::Error;
-    use crate::message::{AggregationJobId, Nonce, Role, TaskId, TransitionError};
+    use crate::{
+        message::{AggregationJobId, Nonce, Role, TaskId, TransitionError},
+        task,
+    };
     use postgres_types::{FromSql, ToSql};
     use prio::vdaf;
 
@@ -1001,7 +1026,7 @@ pub mod models {
             match role {
                 Role::Leader => Ok(Self::Leader),
                 Role::Helper => Ok(Self::Helper),
-                _ => Err(Error::TaskParameters(crate::task::Error::InvalidParameter(
+                _ => Err(Error::TaskParameters(task::Error::InvalidParameter(
                     "role is not an aggregator",
                 ))),
             }

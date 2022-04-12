@@ -106,7 +106,7 @@ async fn setup_test() -> TestCase {
         message::Duration::from_seconds(1), // min_batch_duration,
         message::Duration::from_seconds(1), // tolerable_clock_skew,
         collector_hpke_recipient.config(),
-        agg_auth_key.clone(),
+        vec![agg_auth_key.clone()],
         &leader_hpke_recipient,
     );
 

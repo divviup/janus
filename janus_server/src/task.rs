@@ -129,7 +129,7 @@ pub struct TaskParameters {
     pub(crate) collector_hpke_config: HpkeConfig,
     /// Key used to authenticate messages sent to or received from the other
     /// aggregators.
-    pub(crate) agg_auth_key: AggregatorAuthKey,
+    pub(crate) agg_auth_keys: Vec<AggregatorAuthKey>,
     /// HPKE recipient used by this aggregator to decrypt client reports
     pub(crate) hpke_recipient: HpkeRecipient,
 }
@@ -147,7 +147,7 @@ impl TaskParameters {
         min_batch_duration: Duration,
         tolerable_clock_skew: Duration,
         collector_hpke_config: &HpkeConfig,
-        agg_auth_key: AggregatorAuthKey,
+        agg_auth_keys: Vec<AggregatorAuthKey>,
         hpke_recipient: &HpkeRecipient,
     ) -> Self {
         // All currently defined VDAFs have exactly two aggregators
@@ -164,7 +164,7 @@ impl TaskParameters {
             min_batch_duration,
             tolerable_clock_skew,
             collector_hpke_config: collector_hpke_config.clone(),
-            agg_auth_key,
+            agg_auth_keys,
             hpke_recipient: hpke_recipient.clone(),
         }
     }
@@ -197,7 +197,7 @@ impl TaskParameters {
             )
             .config()
             .clone(),
-            agg_auth_key: AggregatorAuthKey::generate(),
+            agg_auth_keys: vec![AggregatorAuthKey::generate()],
             hpke_recipient: HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, role),
         }
     }
