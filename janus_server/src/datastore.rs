@@ -113,6 +113,7 @@ impl Transaction<'_> {
         let min_batch_size = i64::try_from(task.min_batch_size)?;
         let min_batch_duration = i64::try_from(task.min_batch_duration.0)?;
         let tolerable_clock_skew = i64::try_from(task.tolerable_clock_skew.0)?;
+        let agg_auth_key: &[u8] = task.agg_auth_key.as_ref();
 
         let stmt = self
             .tx
@@ -138,7 +139,7 @@ impl Transaction<'_> {
                     &min_batch_duration,                         // min batch duration
                     &tolerable_clock_skew,                       // tolerable clock skew
                     &task.collector_hpke_config.get_encoded(),   // collector hpke config
-                    &task.agg_auth_key.as_slice(),               // agg_auth_key
+                    &agg_auth_key,                               // agg_auth_key
                     &task.hpke_recipient.config().get_encoded(), // hpke_config
                     &task.hpke_recipient.private_key().as_ref(), // hpke_private_key
                 ],
@@ -176,7 +177,7 @@ impl Transaction<'_> {
         let min_batch_duration = Duration(row.get_bigint_as_u64("min_batch_duration")?);
         let tolerable_clock_skew = Duration(row.get_bigint_as_u64("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
-        let agg_auth_key = AggregatorAuthKey::from_bytes(row.get("agg_auth_key"))?;
+        let agg_auth_key = AggregatorAuthKey::new(row.get("agg_auth_key"))?;
         let hpke_config = HpkeConfig::get_decoded(row.get("hpke_config"))?;
         let hpke_private_key = HpkePrivateKey::new(row.get("hpke_private_key"));
         let hpke_recipient = HpkeRecipient::new(

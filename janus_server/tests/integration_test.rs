@@ -10,6 +10,7 @@ use janus_server::{
     trace::{install_trace_subscriber, TraceConfiguration},
 };
 use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf as VdafTrait};
+use ring::hmac;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -47,7 +48,8 @@ async fn setup_test() -> TestCase {
     let leader_verify_param = verify_params_iter.next().unwrap();
     let helper_verify_param = verify_params_iter.next().unwrap();
 
-    let agg_auth_key = AggregatorAuthKey::generate().unwrap();
+    let agg_auth_key = AggregatorAuthKey::generate();
+    let hmac_key: &hmac::Key = agg_auth_key.as_ref();
 
     let collector_hpke_recipient = HpkeRecipient::generate(
         task_id,
@@ -73,7 +75,7 @@ async fn setup_test() -> TestCase {
         Role::Leader,
         leader_verify_param,
         leader_hpke_recipient.clone(),
-        agg_auth_key.as_hmac_key(),
+        hmac_key.clone(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
@@ -86,7 +88,7 @@ async fn setup_test() -> TestCase {
         Role::Helper,
         helper_verify_param,
         helper_hpke_recipient.clone(),
-        agg_auth_key.as_hmac_key(),
+        hmac_key.clone(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
@@ -104,7 +106,7 @@ async fn setup_test() -> TestCase {
         message::Duration::from_seconds(1), // min_batch_duration,
         message::Duration::from_seconds(1), // tolerable_clock_skew,
         collector_hpke_recipient.config(),
-        agg_auth_key,
+        agg_auth_key.clone(),
         &leader_hpke_recipient,
     );
 
