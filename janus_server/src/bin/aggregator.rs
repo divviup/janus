@@ -71,10 +71,11 @@ struct Options {
         long,
         env = "DATASTORE_KEYS",
         takes_value = true,
+        use_delimiter = true,
         required(true),
         help = "datastore encryption keys, encoded in base64 then comma-separated"
     )]
-    datastore_keys: String,
+    datastore_keys: Vec<String>,
 }
 
 impl Debug for Options {
@@ -126,7 +127,7 @@ async fn main() -> Result<()> {
 
     let datastore_keys = options
         .datastore_keys
-        .split(',')
+        .into_iter()
         .filter(|k| !k.is_empty())
         .map(|k| {
             base64::decode_config(k, base64::STANDARD_NO_PAD)
