@@ -125,7 +125,7 @@ impl Transaction<'_> {
             "tasks",
             &task.id.0,
             "agg_auth_key",
-            task.agg_auth_key.as_slice(),
+            task.agg_auth_key.as_ref(),
         )?;
         let encrypted_hpke_private_key = self.crypter.encrypt(
             "tasks",
@@ -207,7 +207,7 @@ impl Transaction<'_> {
             "vdaf_verify_param",
             &encrypted_vdaf_verify_param,
         )?;
-        let agg_auth_key = AggregatorAuthKey::from_bytes(&self.crypter.decrypt(
+        let agg_auth_key = AggregatorAuthKey::new(&self.crypter.decrypt(
             "tasks",
             task_id.as_bytes(),
             "agg_auth_key",

@@ -61,6 +61,11 @@ struct Options {
     )]
     role: Role,
 
+    /// Password for the PostgreSQL database connection. (if not included in the connection
+    /// string)
+    #[structopt(long, env = "PGPASSWORD", help = "PostgreSQL password")]
+    database_password: Option<String>,
+
     /// Datastore encryption keys.
     #[structopt(
         long,
@@ -102,14 +107,18 @@ async fn main() -> Result<()> {
     let vdaf = Prio3Aes128Count::new(2).unwrap();
     let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
 
-    // Connect to database.
-    let database_config = tokio_postgres::Config::from_str(config.database.url.as_str())
+    let mut database_config = tokio_postgres::Config::from_str(config.database.url.as_str())
         .with_context(|| {
             format!(
                 "failed to parse database connect string: {:?}",
                 config.database.url
             )
         })?;
+    if database_config.get_password().is_none() {
+        if let Some(password) = options.database_password {
+            database_config.password(password);
+        }
+    }
     let conn_mgr = Manager::new(database_config, NoTls);
     let pool = Pool::builder(conn_mgr)
         .build()
