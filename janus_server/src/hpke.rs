@@ -5,7 +5,7 @@ use hpke::{
     aead::{Aead, AesGcm256, ChaCha20Poly1305},
     kdf::{HkdfSha256, HkdfSha512, Kdf},
     kem::{DhP256HkdfSha256, X25519HkdfSha256},
-    setup_receiver, setup_sender, Deserializable, HpkeError, Kem, OpModeR, OpModeS, Serializable,
+    Deserializable, HpkeError, Kem, OpModeR, OpModeS, Serializable,
 };
 use rand::thread_rng;
 use std::str::FromStr;
@@ -191,23 +191,23 @@ fn seal<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
     plaintext: &[u8],
     associated_data: &[u8],
 ) -> Result<HpkeCiphertext, Error> {
-    let mut rng = thread_rng();
-
-    // Deserialize recipient pub into the appropriate PublicKey type for the
-    // KEM
+    // Deserialize recipient pub into the appropriate PublicKey type for the KEM.
     let recipient_public_key = Encapsulate::PublicKey::from_bytes(&recipient_config.public_key.0)?;
 
-    let (encapsulated_context, mut context) = setup_sender::<Encrypt, Derive, Encapsulate, _>(
-        &OpModeS::Base,
-        &recipient_public_key,
-        &application_info.0,
-        &mut rng,
-    )?;
+    let (encapsulated_context, ciphertext) =
+        hpke::single_shot_seal::<Encrypt, Derive, Encapsulate, _>(
+            &OpModeS::Base,
+            &recipient_public_key,
+            &application_info.0,
+            plaintext,
+            associated_data,
+            &mut thread_rng(),
+        )?;
 
     Ok(HpkeCiphertext {
         config_id: recipient_config.id,
         encapsulated_context: encapsulated_context.to_bytes().to_vec(),
-        payload: context.seal(plaintext, associated_data)?,
+        payload: ciphertext,
     })
 }
 
@@ -344,24 +344,22 @@ fn open<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
     associated_data: &[u8],
     serialized_recipient_private_key: &HpkePrivateKey,
 ) -> Result<Vec<u8>, Error> {
-    // Deserialize recipient priv into the appropriate PrivateKey type for
-    // the KEM
+    // Deserialize recipient priv into the appropriate PrivateKey type for the KEM.
     let recipient_private_key =
         Encapsulate::PrivateKey::from_bytes(&serialized_recipient_private_key.0)?;
 
-    // Deserialize sender encapsulated key into the appropriate EncappedKey for
-    // the KEM
+    // Deserialize sender encapsulated key into the appropriate EncappedKey for the KEM.
     let sender_encapped_key =
         Encapsulate::EncappedKey::from_bytes(&ciphertext.encapsulated_context)?;
 
-    let mut context = setup_receiver::<Encrypt, Derive, Encapsulate>(
+    Ok(hpke::single_shot_open::<Encrypt, Derive, Encapsulate>(
         &OpModeR::Base,
         &recipient_private_key,
         &sender_encapped_key,
         &application_info.0,
-    )?;
-
-    Ok(context.open(&ciphertext.payload, associated_data)?)
+        &ciphertext.payload,
+        associated_data,
+    )?)
 }
 
 #[cfg(test)]
