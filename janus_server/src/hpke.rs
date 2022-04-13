@@ -232,19 +232,19 @@ impl HpkeRecipient {
     /// Create an HPKE recipient from the provided parameters.
     pub fn new(
         task_id: TaskId,
-        hpke_config: &HpkeConfig,
+        hpke_config: HpkeConfig,
         label: Label,
         sender_role: Role,
         recipient_role: Role,
-        serialized_private_key: &HpkePrivateKey,
+        serialized_private_key: HpkePrivateKey,
     ) -> Self {
         Self {
             task_id,
-            config: hpke_config.clone(),
+            config: hpke_config,
             label,
             sender_role,
             recipient_role,
-            recipient_private_key: serialized_private_key.clone(),
+            recipient_private_key: serialized_private_key,
         }
     }
 
@@ -256,39 +256,6 @@ impl HpkeRecipient {
     /// The private key used by this recipient.
     pub fn private_key(&self) -> &HpkePrivateKey {
         &self.recipient_private_key
-    }
-
-    /// Generate a new X25519HkdfSha256 keypair and construct an HPKE recipient
-    /// using the private key, with KEM = X25519HkdfSha256, KDF = HkdfSha512 and
-    /// AEAD = ChaCha20Poly1305, and the specified label, and roles.
-    pub fn generate(
-        task_id: TaskId,
-        label: Label,
-        sender_role: Role,
-        recipient_role: Role,
-    ) -> Self {
-        use crate::message::{HpkeConfigId, HpkePublicKey};
-
-        let mut rng = thread_rng();
-
-        let (private_key, public_key) = X25519HkdfSha256::gen_keypair(&mut rng);
-
-        let config = HpkeConfig {
-            id: HpkeConfigId(0),
-            kem_id: HpkeKemId::X25519HkdfSha256,
-            kdf_id: HpkeKdfId::HkdfSha512,
-            aead_id: HpkeAeadId::ChaCha20Poly1305,
-            public_key: HpkePublicKey(public_key.to_bytes().as_slice().to_vec()),
-        };
-
-        Self {
-            task_id,
-            config,
-            label,
-            sender_role,
-            recipient_role,
-            recipient_private_key: HpkePrivateKey(private_key.to_bytes().as_slice().to_vec()),
-        }
     }
 
     /// Decrypt `ciphertext` and return the plaintext.
@@ -362,9 +329,36 @@ fn open<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
     )?)
 }
 
+// This is public to allow use in integration tests.
+#[doc(hidden)]
+pub mod test_util {
+    use super::HpkePrivateKey;
+    use crate::message::{
+        HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
+    };
+    use hpke::{kem::X25519HkdfSha256, Kem, Serializable};
+    use rand::thread_rng;
+
+    /// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
+    /// HpkePrivateKey (private portion).
+    pub fn generate_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
+        let (private_key, public_key) = X25519HkdfSha256::gen_keypair(&mut thread_rng());
+        (
+            HpkeConfig {
+                id: HpkeConfigId(0),
+                kem_id: HpkeKemId::X25519HkdfSha256,
+                kdf_id: HpkeKdfId::HkdfSha512,
+                aead_id: HpkeAeadId::ChaCha20Poly1305,
+                public_key: HpkePublicKey(public_key.to_bytes().as_slice().to_vec()),
+            },
+            HpkePrivateKey(private_key.to_bytes().as_slice().to_vec()),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{test_util::generate_hpke_config_and_private_key, *};
     use crate::trace::test_util::install_test_trace_subscriber;
 
     #[test]
@@ -375,8 +369,15 @@ mod tests {
         let associated_data = b"message associated data";
         let message = b"a message that is secret";
 
-        let recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+            hpke_private_key,
+        );
 
         let sender = HpkeSender {
             task_id: recipient.task_id,
@@ -400,8 +401,15 @@ mod tests {
         let associated_data = b"message associated data";
         let message = b"a message that is secret";
 
-        let recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+            hpke_private_key,
+        );
 
         let sender = HpkeSender {
             task_id: recipient.task_id,
@@ -414,8 +422,15 @@ mod tests {
         let ciphertext = sender.seal(message, associated_data).unwrap();
 
         // Attempt to decrypt with different private key
-        let wrong_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let (wrong_hpke_config, wrong_hpke_private_key) = generate_hpke_config_and_private_key();
+        let wrong_recipient = HpkeRecipient::new(
+            task_id,
+            wrong_hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+            wrong_hpke_private_key,
+        );
 
         wrong_recipient
             .open(&ciphertext, associated_data)
@@ -430,8 +445,15 @@ mod tests {
         let associated_data = b"message associated data";
         let message = b"a message that is secret";
 
-        let recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+            hpke_private_key,
+        );
 
         let sender = HpkeSender {
             task_id: recipient.task_id,
@@ -451,8 +473,15 @@ mod tests {
         let task_id = TaskId::random();
         let message = b"a message that is secret";
 
-        let recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+            hpke_private_key,
+        );
 
         let sender = HpkeSender {
             task_id: recipient.task_id,

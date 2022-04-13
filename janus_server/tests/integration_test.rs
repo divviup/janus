@@ -3,7 +3,7 @@ use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
     datastore::test_util::{ephemeral_datastore, DbHandle},
-    hpke::{HpkeRecipient, Label},
+    hpke::{test_util::generate_hpke_config_and_private_key, HpkeRecipient, Label},
     message::{self, Role, TaskId},
     task::{AggregatorAuthKey, TaskParameters, Vdaf},
     time::RealClock,
@@ -51,21 +51,30 @@ async fn setup_test() -> TestCase {
     let agg_auth_key = AggregatorAuthKey::generate();
     let hmac_key: &hmac::Key = agg_auth_key.as_ref();
 
-    let collector_hpke_recipient = HpkeRecipient::generate(
+    let (collector_hpke_config, _) = generate_hpke_config_and_private_key();
+    let (leader_hpke_config, leader_private_key) = generate_hpke_config_and_private_key();
+    let (helper_hpke_config, helper_private_key) = generate_hpke_config_and_private_key();
+
+    let leader_hpke_recipient = HpkeRecipient::new(
         task_id,
-        Label::AggregateShare,
+        leader_hpke_config.clone(),
+        Label::InputShare,
+        Role::Client,
         Role::Leader,
-        Role::Collector,
+        leader_private_key.clone(),
+    );
+    let helper_hpke_recipient = HpkeRecipient::new(
+        task_id,
+        helper_hpke_config,
+        Label::InputShare,
+        Role::Client,
+        Role::Helper,
+        helper_private_key,
     );
 
     let (leader_datastore, _leader_db_handle) = ephemeral_datastore().await;
     let leader_datastore = Arc::new(leader_datastore);
     let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
-
-    let leader_hpke_recipient =
-        HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
-    let helper_hpke_recipient =
-        HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
 
     let (leader_address, leader_server) = aggregator_server(
         vdaf.clone(),
@@ -74,7 +83,7 @@ async fn setup_test() -> TestCase {
         Duration::minutes(10),
         Role::Leader,
         leader_verify_param,
-        leader_hpke_recipient.clone(),
+        leader_hpke_recipient,
         hmac_key.clone(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
@@ -87,7 +96,7 @@ async fn setup_test() -> TestCase {
         Duration::minutes(10),
         Role::Helper,
         helper_verify_param,
-        helper_hpke_recipient.clone(),
+        helper_hpke_recipient,
         hmac_key.clone(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
@@ -105,9 +114,9 @@ async fn setup_test() -> TestCase {
         0,                                  // min_batch_size
         message::Duration::from_seconds(1), // min_batch_duration,
         message::Duration::from_seconds(1), // tolerable_clock_skew,
-        collector_hpke_recipient.config(),
+        collector_hpke_config,
         agg_auth_key.clone(),
-        &leader_hpke_recipient,
+        vec![(leader_hpke_config, leader_private_key)],
     );
 
     leader_datastore

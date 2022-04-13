@@ -1,8 +1,10 @@
 //! Shared parameters for a PPM task.
 
+use std::collections::HashMap;
+
 use crate::{
-    hpke::{HpkeRecipient, Label},
-    message::{Duration, HpkeConfig, Role, TaskId},
+    hpke::HpkePrivateKey,
+    message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
 };
 use ::rand::{thread_rng, Rng};
 use postgres_types::{FromSql, ToSql};
@@ -127,17 +129,16 @@ pub struct TaskParameters {
     pub(crate) tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
     pub(crate) collector_hpke_config: HpkeConfig,
-    /// Key used to authenticate messages sent to or received from the other
-    /// aggregators.
+    /// Key used to authenticate messages sent to or received from the other aggregators.
     pub(crate) agg_auth_key: AggregatorAuthKey,
-    /// HPKE recipient used by this aggregator to decrypt client reports
-    pub(crate) hpke_recipient: HpkeRecipient,
+    /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
+    pub(crate) hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
 
 impl TaskParameters {
     /// Create a new [`TaskParameters`] from the provided values
-    pub fn new(
-        id: TaskId,
+    pub fn new<I: IntoIterator<Item = (HpkeConfig, HpkePrivateKey)>>(
+        task_id: TaskId,
         aggregator_endpoints: Vec<Url>,
         vdaf: Vdaf,
         role: Role,
@@ -146,15 +147,21 @@ impl TaskParameters {
         min_batch_size: u64,
         min_batch_duration: Duration,
         tolerable_clock_skew: Duration,
-        collector_hpke_config: &HpkeConfig,
+        collector_hpke_config: HpkeConfig,
         agg_auth_key: AggregatorAuthKey,
-        hpke_recipient: &HpkeRecipient,
+        hpke_configs: I,
     ) -> Self {
         // All currently defined VDAFs have exactly two aggregators
         assert_eq!(aggregator_endpoints.len(), 2);
 
+        // Compute hpke_configs mapping cfg.id -> (cfg, key).
+        let hpke_configs = hpke_configs
+            .into_iter()
+            .map(|(cfg, key)| (cfg.id, (cfg, key)))
+            .collect();
+
         Self {
-            id,
+            id: task_id,
             aggregator_endpoints,
             vdaf,
             role,
@@ -163,42 +170,47 @@ impl TaskParameters {
             min_batch_size,
             min_batch_duration,
             tolerable_clock_skew,
-            collector_hpke_config: collector_hpke_config.clone(),
+            collector_hpke_config,
             agg_auth_key,
-            hpke_recipient: hpke_recipient.clone(),
+            hpke_configs,
         }
     }
+}
+
+// This is public to allow use in integration tests.
+#[doc(hidden)]
+pub mod test_util {
+    use super::{TaskParameters, Vdaf};
+    use crate::{
+        message::{Duration, Role, TaskId},
+        task::AggregatorAuthKey,
+    };
 
     /// Create a dummy [`TaskParameters`] from the provided [`TaskId`], with
     /// dummy values for the other fields. This is pub because it is needed for
     /// integration tests.
-    #[doc(hidden)]
-    pub fn new_dummy(
-        task_id: TaskId,
-        aggregator_endpoints: Vec<Url>,
-        vdaf: Vdaf,
-        role: Role,
-    ) -> Self {
-        Self {
-            id: task_id,
-            aggregator_endpoints,
+    pub fn new_dummy_task_parameters(task_id: TaskId, vdaf: Vdaf, role: Role) -> TaskParameters {
+        use crate::hpke::test_util::generate_hpke_config_and_private_key;
+
+        let (collector_config, _) = generate_hpke_config_and_private_key();
+        let (aggregator_config, aggregator_private_key) = generate_hpke_config_and_private_key();
+
+        TaskParameters::new(
+            task_id,
+            vec![
+                "http://leader_endpoint".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+            ],
             vdaf,
             role,
-            vdaf_verify_parameter: vec![],
-            max_batch_lifetime: 0,
-            min_batch_size: 0,
-            min_batch_duration: Duration(1),
-            tolerable_clock_skew: Duration(1),
-            collector_hpke_config: HpkeRecipient::generate(
-                task_id,
-                Label::AggregateShare,
-                Role::Leader,
-                Role::Collector,
-            )
-            .config()
-            .clone(),
-            agg_auth_key: AggregatorAuthKey::generate(),
-            hpke_recipient: HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, role),
-        }
+            vec![],
+            0,
+            0,
+            Duration(1),
+            Duration(1),
+            collector_config,
+            AggregatorAuthKey::generate(),
+            vec![(aggregator_config, aggregator_private_key)],
+        )
     }
 }
