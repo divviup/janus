@@ -23,6 +23,7 @@ derivative = "2.2.0"
 futures = "0.3.21"
 hex = "0.4.3"
 hpke = { version = "0.8.0", features = ["default", "std"] }
+hpke-dispatch = "0.2.0"
 http = "0.2.7"
 hyper = "0.14.18"
 itertools = "0.10.3"
