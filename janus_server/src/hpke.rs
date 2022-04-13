@@ -144,170 +144,79 @@ impl HpkeSender {
         plaintext: &[u8],
         associated_data: &[u8],
     ) -> Result<HpkeCiphertext, Error> {
+        // We must manually dispatch to each possible specialization of seal
+        let seal = match (
+            self.recipient_config.aead_id,
+            self.recipient_config.kdf_id,
+            self.recipient_config.kem_id,
+        ) {
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+                seal::<AesGcm128, HkdfSha256, DhP256HkdfSha256>
+            }
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+                seal::<AesGcm256, HkdfSha256, DhP256HkdfSha256>
+            }
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+                seal::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>
+            }
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+                seal::<AesGcm128, HkdfSha384, DhP256HkdfSha256>
+            }
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+                seal::<AesGcm256, HkdfSha384, DhP256HkdfSha256>
+            }
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+                seal::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>
+            }
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+                seal::<AesGcm128, HkdfSha512, DhP256HkdfSha256>
+            }
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+                seal::<AesGcm256, HkdfSha512, DhP256HkdfSha256>
+            }
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+                seal::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>
+            }
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+                seal::<AesGcm128, HkdfSha256, X25519HkdfSha256>
+            }
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+                seal::<AesGcm256, HkdfSha256, X25519HkdfSha256>
+            }
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+                seal::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>
+            }
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+                seal::<AesGcm128, HkdfSha384, X25519HkdfSha256>
+            }
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+                seal::<AesGcm256, HkdfSha384, X25519HkdfSha256>
+            }
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+                seal::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>
+            }
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+                seal::<AesGcm128, HkdfSha512, X25519HkdfSha256>
+            }
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+                seal::<AesGcm256, HkdfSha512, X25519HkdfSha256>
+            }
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+                seal::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>
+            }
+        };
         let application_info = HpkeApplicationInfo::new(
             self.task_id,
             self.label,
             self.sender_role,
             self.recipient_role,
         );
-        // We must manually dispatch to each possible specialization of seal
-        match (
-            self.recipient_config.kem_id,
-            self.recipient_config.kdf_id,
-            self.recipient_config.aead_id,
-        ) {
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes128Gcm) => {
-                seal::<AesGcm128, HkdfSha256, DhP256HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes256Gcm) => {
-                seal::<AesGcm256, HkdfSha256, DhP256HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::ChaCha20Poly1305) => {
-                seal::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::Aes128Gcm) => {
-                seal::<AesGcm128, HkdfSha384, DhP256HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::Aes256Gcm) => {
-                seal::<AesGcm256, HkdfSha384, DhP256HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::ChaCha20Poly1305) => {
-                seal::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::Aes128Gcm) => {
-                seal::<AesGcm128, HkdfSha512, DhP256HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::Aes256Gcm) => {
-                seal::<AesGcm256, HkdfSha512, DhP256HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::ChaCha20Poly1305) => {
-                seal::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes128Gcm) => {
-                seal::<AesGcm128, HkdfSha256, X25519HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes256Gcm) => {
-                seal::<AesGcm256, HkdfSha256, X25519HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::ChaCha20Poly1305) => {
-                seal::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::Aes128Gcm) => {
-                seal::<AesGcm128, HkdfSha384, X25519HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::Aes256Gcm) => {
-                seal::<AesGcm256, HkdfSha384, X25519HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::ChaCha20Poly1305) => {
-                seal::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::Aes128Gcm) => {
-                seal::<AesGcm128, HkdfSha512, X25519HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::Aes256Gcm) => {
-                seal::<AesGcm256, HkdfSha512, X25519HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::ChaCha20Poly1305) => {
-                seal::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>(
-                    &self.recipient_config,
-                    application_info,
-                    plaintext,
-                    associated_data,
-                )
-            }
-            // This catch-all pattern is unreachable at time of writing, but it may be necessary
-            // if, for example, the remaining three DHKEMs in the RFC are implemented in a later
-            // version of the HPKE crate, or if one of the enums is marked as #[non_exhaustive].
-            #[allow(unreachable_patterns)]
-            (_, _, _) => Err(Error::InvalidConfiguration(
-                "unsupported set of HPKE algorithms",
-            )),
-        }
+        seal(
+            &self.recipient_config,
+            application_info,
+            plaintext,
+            associated_data,
+        )
     }
 }
 
@@ -450,159 +359,68 @@ impl HpkeRecipient {
         associated_data: &[u8],
     ) -> Result<Vec<u8>, Error> {
         // We must manually dispatch to each possible specialization of open
-        match (self.config.kem_id, self.config.kdf_id, self.config.aead_id) {
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes128Gcm) => {
-                open::<AesGcm128, HkdfSha256, DhP256HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+        let open = match (self.config.aead_id, self.config.kdf_id, self.config.kem_id) {
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+                open::<AesGcm128, HkdfSha256, DhP256HkdfSha256>
             }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes256Gcm) => {
-                open::<AesGcm256, HkdfSha256, DhP256HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+                open::<AesGcm256, HkdfSha256, DhP256HkdfSha256>
             }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::ChaCha20Poly1305) => {
-                open::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+                open::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>
             }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::Aes128Gcm) => {
-                open::<AesGcm128, HkdfSha384, DhP256HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+                open::<AesGcm128, HkdfSha384, DhP256HkdfSha256>
             }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::Aes256Gcm) => {
-                open::<AesGcm256, HkdfSha384, DhP256HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+                open::<AesGcm256, HkdfSha384, DhP256HkdfSha256>
             }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::ChaCha20Poly1305) => {
-                open::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+                open::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>
             }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::Aes128Gcm) => {
-                open::<AesGcm128, HkdfSha512, DhP256HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+                open::<AesGcm128, HkdfSha512, DhP256HkdfSha256>
             }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::Aes256Gcm) => {
-                open::<AesGcm256, HkdfSha512, DhP256HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+                open::<AesGcm256, HkdfSha512, DhP256HkdfSha256>
             }
-            (HpkeKemId::P256HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::ChaCha20Poly1305) => {
-                open::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+                open::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>
             }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes128Gcm) => {
-                open::<AesGcm128, HkdfSha256, X25519HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+                open::<AesGcm128, HkdfSha256, X25519HkdfSha256>
             }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::Aes256Gcm) => {
-                open::<AesGcm256, HkdfSha256, X25519HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+                open::<AesGcm256, HkdfSha256, X25519HkdfSha256>
             }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha256, HpkeAeadId::ChaCha20Poly1305) => {
-                open::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+                open::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>
             }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::Aes128Gcm) => {
-                open::<AesGcm128, HkdfSha384, X25519HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+                open::<AesGcm128, HkdfSha384, X25519HkdfSha256>
             }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::Aes256Gcm) => {
-                open::<AesGcm256, HkdfSha384, X25519HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+                open::<AesGcm256, HkdfSha384, X25519HkdfSha256>
             }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha384, HpkeAeadId::ChaCha20Poly1305) => {
-                open::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+                open::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>
             }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::Aes128Gcm) => {
-                open::<AesGcm128, HkdfSha512, X25519HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+                open::<AesGcm128, HkdfSha512, X25519HkdfSha256>
             }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::Aes256Gcm) => {
-                open::<AesGcm256, HkdfSha512, X25519HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+                open::<AesGcm256, HkdfSha512, X25519HkdfSha256>
             }
-            (HpkeKemId::X25519HkdfSha256, HpkeKdfId::HkdfSha512, HpkeAeadId::ChaCha20Poly1305) => {
-                open::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>(
-                    application_info,
-                    ciphertext,
-                    associated_data,
-                    &self.recipient_private_key,
-                )
+            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+                open::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>
             }
-            // This catch-all pattern is unreachable at time of writing, but it may be necessary
-            // if, for example, the remaining three DHKEMs in the RFC are implemented in a later
-            // version of the HPKE crate, or if one of the enums is marked as #[non_exhaustive].
-            #[allow(unreachable_patterns)]
-            (_, _, _) => Err(Error::InvalidConfiguration(
-                "unsupported set of HPKE algorithms",
-            )),
-        }
+        };
+        open(
+            application_info,
+            ciphertext,
+            associated_data,
+            &self.recipient_private_key,
+        )
     }
 }
 
@@ -636,7 +454,6 @@ fn open<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
 mod tests {
     use std::collections::HashSet;
 
-    use rand::prelude::ThreadRng;
     use serde::Deserialize;
 
     use super::*;
@@ -746,14 +563,14 @@ mod tests {
             .unwrap_err();
     }
 
-    fn round_trip_check<KEM: hpke::Kem, KDF: hpke::kdf::Kdf, AEAD: hpke::aead::Aead>(
-        task_id: TaskId,
-        rng: &mut ThreadRng,
-    ) {
+    fn round_trip_check<KEM: hpke::Kem, KDF: hpke::kdf::Kdf, AEAD: hpke::aead::Aead>() {
         static ASSOCIATED_DATA: &[u8] = b"round trip test associated data";
         static MESSAGE: &[u8] = b"round trip test message";
 
-        let (private_key, public_key) = KEM::gen_keypair(rng);
+        let task_id = TaskId::random();
+        let mut rng = thread_rng();
+
+        let (private_key, public_key) = KEM::gen_keypair(&mut rng);
         let config = HpkeConfig {
             id: HpkeConfigId(0),
             kem_id: KEM::KEM_ID.try_into().unwrap(),
@@ -779,27 +596,24 @@ mod tests {
 
     #[test]
     fn round_trip_all_algorithms() {
-        let task_id = TaskId::random();
-        let mut rng = thread_rng();
-
-        round_trip_check::<DhP256HkdfSha256, HkdfSha256, AesGcm128>(task_id, &mut rng);
-        round_trip_check::<DhP256HkdfSha256, HkdfSha256, AesGcm256>(task_id, &mut rng);
-        round_trip_check::<DhP256HkdfSha256, HkdfSha256, ChaCha20Poly1305>(task_id, &mut rng);
-        round_trip_check::<DhP256HkdfSha256, HkdfSha384, AesGcm128>(task_id, &mut rng);
-        round_trip_check::<DhP256HkdfSha256, HkdfSha384, AesGcm256>(task_id, &mut rng);
-        round_trip_check::<DhP256HkdfSha256, HkdfSha384, ChaCha20Poly1305>(task_id, &mut rng);
-        round_trip_check::<DhP256HkdfSha256, HkdfSha512, AesGcm128>(task_id, &mut rng);
-        round_trip_check::<DhP256HkdfSha256, HkdfSha512, AesGcm256>(task_id, &mut rng);
-        round_trip_check::<DhP256HkdfSha256, HkdfSha512, ChaCha20Poly1305>(task_id, &mut rng);
-        round_trip_check::<X25519HkdfSha256, HkdfSha256, AesGcm128>(task_id, &mut rng);
-        round_trip_check::<X25519HkdfSha256, HkdfSha256, AesGcm256>(task_id, &mut rng);
-        round_trip_check::<X25519HkdfSha256, HkdfSha256, ChaCha20Poly1305>(task_id, &mut rng);
-        round_trip_check::<X25519HkdfSha256, HkdfSha384, AesGcm128>(task_id, &mut rng);
-        round_trip_check::<X25519HkdfSha256, HkdfSha384, AesGcm256>(task_id, &mut rng);
-        round_trip_check::<X25519HkdfSha256, HkdfSha384, ChaCha20Poly1305>(task_id, &mut rng);
-        round_trip_check::<X25519HkdfSha256, HkdfSha512, AesGcm128>(task_id, &mut rng);
-        round_trip_check::<X25519HkdfSha256, HkdfSha512, AesGcm256>(task_id, &mut rng);
-        round_trip_check::<X25519HkdfSha256, HkdfSha512, ChaCha20Poly1305>(task_id, &mut rng);
+        round_trip_check::<DhP256HkdfSha256, HkdfSha256, AesGcm128>();
+        round_trip_check::<DhP256HkdfSha256, HkdfSha256, AesGcm256>();
+        round_trip_check::<DhP256HkdfSha256, HkdfSha256, ChaCha20Poly1305>();
+        round_trip_check::<DhP256HkdfSha256, HkdfSha384, AesGcm128>();
+        round_trip_check::<DhP256HkdfSha256, HkdfSha384, AesGcm256>();
+        round_trip_check::<DhP256HkdfSha256, HkdfSha384, ChaCha20Poly1305>();
+        round_trip_check::<DhP256HkdfSha256, HkdfSha512, AesGcm128>();
+        round_trip_check::<DhP256HkdfSha256, HkdfSha512, AesGcm256>();
+        round_trip_check::<DhP256HkdfSha256, HkdfSha512, ChaCha20Poly1305>();
+        round_trip_check::<X25519HkdfSha256, HkdfSha256, AesGcm128>();
+        round_trip_check::<X25519HkdfSha256, HkdfSha256, AesGcm256>();
+        round_trip_check::<X25519HkdfSha256, HkdfSha256, ChaCha20Poly1305>();
+        round_trip_check::<X25519HkdfSha256, HkdfSha384, AesGcm128>();
+        round_trip_check::<X25519HkdfSha256, HkdfSha384, AesGcm256>();
+        round_trip_check::<X25519HkdfSha256, HkdfSha384, ChaCha20Poly1305>();
+        round_trip_check::<X25519HkdfSha256, HkdfSha512, AesGcm128>();
+        round_trip_check::<X25519HkdfSha256, HkdfSha512, AesGcm256>();
+        round_trip_check::<X25519HkdfSha256, HkdfSha512, ChaCha20Poly1305>();
     }
 
     #[derive(Deserialize)]
