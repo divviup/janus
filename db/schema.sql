@@ -24,11 +24,20 @@ CREATE TABLE tasks(
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     min_batch_duration     BIGINT NOT NULL,           -- the minimum duration in seconds of a single batch interval
     tolerable_clock_skew   BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
-    collector_hpke_config  BYTEA NOT NULL,            -- the HPKE config of the collector (encoded HpkeConfig message)
-    agg_auth_key           BYTEA NOT NULL             -- HMAC key used by this aggregator to authenticate messages to/from the other aggregator (encrypted)
+    collector_hpke_config  BYTEA NOT NULL             -- the HPKE config of the collector (encoded HpkeConfig message)
 
-    -- TODO(timg): move vdaf_verify_param, agg_auth_key to new
-    -- tables with many:1 relationships to tasks to allow for rotation of secrets
+    -- TODO(timg): move vdaf_verify_param to new table with many:1 relationship to tasks to allow for rotation of secrets
+);
+
+-- The aggregator authentication keys used by a given task.
+CREATE TABLE task_aggregator_auth_keys(
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
+    task_id BIGINT NOT NULL,  -- task ID the key is associated with
+    ord BIGINT NOT NULL,      -- a value used to specify the ordering of the authentication keys
+    key BYTEA NOT NULL,       -- HMAC key used to authenticate messages to/from the other aggregator (encrypted)
+
+    CONSTRAINT unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
 -- The HPKE public keys (aka configs) and private keys used by a given task.

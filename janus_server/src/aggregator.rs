@@ -120,8 +120,9 @@ where
     // TODO: Aggregators should have multiple generations of HPKE config
     // available to decrypt tardy reports
     report_recipient: HpkeRecipient,
-    /// The key used to authenticate aggregation messages for this task.
-    agg_auth_key: hmac::Key,
+    /// The keys used to authenticate aggregation messages for this task.
+    /// The first key in the list will be used when generating authentication tags.
+    agg_auth_keys: Vec<hmac::Key>,
 }
 
 impl<A: vdaf::Aggregator, C: Clock> Aggregator<A, C>
@@ -145,12 +146,15 @@ where
         role: Role,
         verify_param: A::VerifyParam,
         report_recipient: HpkeRecipient,
-        agg_auth_key: hmac::Key,
+        agg_auth_keys: Vec<hmac::Key>,
     ) -> Result<Self, Error> {
         if tolerable_clock_skew < Duration::zero() {
             return Err(Error::InvalidConfiguration(
                 "tolerable clock skew must be non-negative",
             ));
+        }
+        if agg_auth_keys.is_empty() {
+            return Err(Error::InvalidConfiguration("agg_auth_keys is empty"));
         }
 
         Ok(Self {
@@ -161,7 +165,7 @@ where
             role,
             verify_param,
             report_recipient,
-            agg_auth_key,
+            agg_auth_keys,
         })
     }
 
@@ -623,29 +627,42 @@ fn with_decoded_body<T: Decode + Send + Sync>(
     warp::body::bytes().map(|body: Bytes| T::get_decoded(&body).map_err(Error::from))
 }
 
-fn with_authenticated_body<T, KeyFn>(
+fn with_authenticated_body<A, T, KeyFn>(
+    aggregator: Arc<A>,
     key_fn: KeyFn,
-) -> impl Filter<Extract = (Result<(hmac::Key, T), Error>,), Error = Rejection> + Clone
+) -> impl Filter<Extract = (Result<T, Error>,), Error = Rejection> + Clone
 where
+    A: Send + Sync,
     T: Decode + Send + Sync,
-    KeyFn: Fn(&TaskId) -> Pin<Box<dyn Future<Output = Result<hmac::Key, Error>> + Send + Sync>>
+    for<'a> KeyFn: Fn(
+            &'a A,
+            TaskId,
+        )
+            -> Pin<Box<dyn Future<Output = Result<&'a [hmac::Key], Error>> + Send + Sync + 'a>>
         + Clone
         + Send
         + Sync,
 {
     warp::body::bytes().then(move |body: Bytes| {
+        let aggregator = aggregator.clone();
         let key_fn = key_fn.clone();
         async move {
             // TODO(brandon): avoid copying the body here (make AuthenticatedRequestDecoder operate on Bytes or &[u8] or AsRef<[u8]>, most likely)
             let decoder: AuthenticatedRequestDecoder<T> =
                 AuthenticatedRequestDecoder::new(Vec::from(body.as_ref())).map_err(Error::from)?;
             let task_id = decoder.task_id();
-            let key = key_fn(&task_id).await?;
-            let decoded_body: T = decoder.decode(&key).map_err(|err| match err {
-                AuthenticatedDecodeError::InvalidHmac => Error::InvalidHmac(task_id),
-                AuthenticatedDecodeError::Codec(err) => Error::MessageDecode(err),
-            })?;
-            Ok((key, decoded_body))
+            let keys = key_fn(&aggregator, task_id).await?;
+            for key in keys.iter().rev() {
+                match decoder.decode(key) {
+                    Ok(decoded_body) => return Ok(decoded_body),
+                    Err(AuthenticatedDecodeError::InvalidHmac) => continue, // try the next key
+                    Err(AuthenticatedDecodeError::Codec(err)) => {
+                        return Err(Error::MessageDecode(err))
+                    }
+                }
+            }
+            // If we get here, every available key returned InvalidHmac.
+            Err(Error::InvalidHmac(task_id))
         }
     })
 }
@@ -771,7 +788,7 @@ fn aggregator_filter<A, C>(
     role: Role,
     verify_param: A::VerifyParam,
     hpke_recipient: HpkeRecipient,
-    agg_auth_key: hmac::Key,
+    agg_auth_keys: Vec<hmac::Key>,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error>
 where
     A: 'static + vdaf::Aggregator + Send + Sync,
@@ -798,7 +815,7 @@ where
         role,
         verify_param,
         hpke_recipient,
-        agg_auth_key,
+        agg_auth_keys,
     )?);
 
     let hpke_config_endpoint = warp::path("hpke_config")
@@ -842,16 +859,16 @@ where
             }
             Ok(aggregator)
         })
-        .and(with_authenticated_body(move |_task_id| {
-            let aggregator = aggregator.clone();
-            Box::pin(async move { Ok(aggregator.agg_auth_key.clone()) })
-        }))
+        .and(with_authenticated_body(
+            aggregator,
+            move |aggregator, _task_id| Box::pin(async move { Ok(&aggregator.agg_auth_keys[..]) }),
+        ))
         .then(
-            |aggregator: Arc<Aggregator<A, C>>,
-             req_rslt: Result<(hmac::Key, AggregateReq), Error>| async move {
-                let (key, req) = req_rslt?;
+            |aggregator: Arc<Aggregator<A, C>>, req_rslt: Result<AggregateReq, Error>| async move {
+                let req = req_rslt?;
                 let resp = aggregator.handle_aggregate(req).await?;
-                let resp_bytes = AuthenticatedEncoder::new(resp).encode(&key);
+                let key = aggregator.agg_auth_keys.last().unwrap();
+                let resp_bytes = AuthenticatedEncoder::new(resp).encode(key);
                 Ok(reply::with_status(resp_bytes, StatusCode::OK))
             },
         )
@@ -876,7 +893,7 @@ pub fn aggregator_server<A, C>(
     role: Role,
     verify_param: A::VerifyParam,
     hpke_recipient: HpkeRecipient,
-    agg_auth_key: hmac::Key,
+    agg_auth_keys: Vec<hmac::Key>,
     listen_address: SocketAddr,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error>
 where
@@ -898,7 +915,7 @@ where
         role,
         verify_param,
         hpke_recipient,
-        agg_auth_key,
+        agg_auth_keys,
     )?)
     .bind_ephemeral(listen_address))
 }
@@ -1137,7 +1154,7 @@ mod tests {
                     invalid_role,
                     verify_param.clone(),
                     hpke_recipient.clone(),
-                    generate_hmac_key(),
+                    vec![generate_hmac_key()],
                 ),
                 Err(Error::InvalidConfiguration(_))
             );
@@ -1170,7 +1187,7 @@ mod tests {
                 Role::Leader,
                 verify_param,
                 hpke_recipient,
-                generate_hmac_key(),
+                vec![generate_hmac_key()],
             ),
             Err(Error::InvalidConfiguration(_))
         );
@@ -1206,7 +1223,7 @@ mod tests {
                     Role::Leader,
                     verify_param,
                     hpke_recipient.clone(),
-                    generate_hmac_key(),
+                    vec![generate_hmac_key()],
                 )
                 .unwrap(),
             )
@@ -1321,7 +1338,7 @@ mod tests {
             Role::Leader,
             verify_param,
             report_recipient,
-            generate_hmac_key(),
+            vec![generate_hmac_key()],
         )
         .unwrap();
 
@@ -1466,7 +1483,7 @@ mod tests {
             Role::Helper,
             verify_param,
             report_recipient,
-            generate_hmac_key(),
+            vec![generate_hmac_key()],
         )
         .unwrap();
 
@@ -1509,7 +1526,7 @@ mod tests {
             Role::Leader,
             verify_param,
             report_recipient,
-            generate_hmac_key(),
+            vec![generate_hmac_key()],
         )
         .unwrap();
 
@@ -1657,7 +1674,7 @@ mod tests {
             Role::Leader,
             verify_param,
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -1714,7 +1731,7 @@ mod tests {
             Role::Helper,
             verify_param,
             hpke_recipient,
-            generate_hmac_key(),
+            vec![generate_hmac_key()],
         )
         .unwrap();
 
@@ -1841,7 +1858,7 @@ mod tests {
             Role::Helper,
             verify_params[1].clone(),
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -1953,7 +1970,7 @@ mod tests {
             Role::Helper,
             (),
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -2049,7 +2066,7 @@ mod tests {
             Role::Helper,
             (),
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -2134,7 +2151,7 @@ mod tests {
             Role::Helper,
             verify_param,
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -2296,7 +2313,7 @@ mod tests {
             Role::Helper,
             verify_params[1].clone(),
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -2471,7 +2488,7 @@ mod tests {
             Role::Helper,
             verify_param,
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -2600,7 +2617,7 @@ mod tests {
             Role::Helper,
             verify_param,
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -2772,7 +2789,7 @@ mod tests {
             Role::Helper,
             verify_param,
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -2934,7 +2951,7 @@ mod tests {
             Role::Helper,
             verify_param,
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 
@@ -3061,7 +3078,7 @@ mod tests {
             Role::Helper,
             verify_param,
             hpke_recipient,
-            hmac_key.clone(),
+            vec![hmac_key.clone()],
         )
         .unwrap();
 

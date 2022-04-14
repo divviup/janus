@@ -129,8 +129,9 @@ pub struct TaskParameters {
     pub(crate) tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
     pub(crate) collector_hpke_config: HpkeConfig,
-    /// Key used to authenticate messages sent to or received from the other aggregators.
-    pub(crate) agg_auth_key: AggregatorAuthKey,
+    /// Key used to authenticate messages sent to or received from the other
+    /// aggregators.
+    pub(crate) agg_auth_keys: Vec<AggregatorAuthKey>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
     pub(crate) hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
@@ -148,11 +149,16 @@ impl TaskParameters {
         min_batch_duration: Duration,
         tolerable_clock_skew: Duration,
         collector_hpke_config: HpkeConfig,
-        agg_auth_key: AggregatorAuthKey,
+        agg_auth_keys: Vec<AggregatorAuthKey>,
         hpke_configs: I,
     ) -> Result<Self, Error> {
-        // All currently defined VDAFs have exactly two aggregators
-        assert_eq!(aggregator_endpoints.len(), 2);
+        // PPM currently only supports configurations of exactly two aggregators.
+        if aggregator_endpoints.len() != 2 {
+            return Err(Error::InvalidParameter("aggregator_endpoints"));
+        }
+        if agg_auth_keys.is_empty() {
+            return Err(Error::InvalidParameter("agg_auth_keys"));
+        }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
         let hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_configs
@@ -174,7 +180,7 @@ impl TaskParameters {
             min_batch_duration,
             tolerable_clock_skew,
             collector_hpke_config,
-            agg_auth_key,
+            agg_auth_keys,
             hpke_configs,
         })
     }
@@ -185,7 +191,7 @@ impl TaskParameters {
 pub mod test_util {
     use super::{TaskParameters, Vdaf};
     use crate::{
-        message::{Duration, Role, TaskId},
+        message::{Duration, HpkeConfigId, Role, TaskId},
         task::AggregatorAuthKey,
     };
 
@@ -196,7 +202,11 @@ pub mod test_util {
         use crate::hpke::test_util::generate_hpke_config_and_private_key;
 
         let (collector_config, _) = generate_hpke_config_and_private_key();
-        let (aggregator_config, aggregator_private_key) = generate_hpke_config_and_private_key();
+        let (aggregator_config_0, aggregator_private_key_0) =
+            generate_hpke_config_and_private_key();
+        let (mut aggregator_config_1, aggregator_private_key_1) =
+            generate_hpke_config_and_private_key();
+        aggregator_config_1.id = HpkeConfigId(u8::MAX);
 
         TaskParameters::new(
             task_id,
@@ -212,8 +222,11 @@ pub mod test_util {
             Duration(1),
             Duration(1),
             collector_config,
-            AggregatorAuthKey::generate(),
-            vec![(aggregator_config, aggregator_private_key)],
+            vec![AggregatorAuthKey::generate(), AggregatorAuthKey::generate()],
+            vec![
+                (aggregator_config_0, aggregator_private_key_0),
+                (aggregator_config_1, aggregator_private_key_1),
+            ],
         )
         .unwrap()
     }
