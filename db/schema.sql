@@ -25,12 +25,22 @@ CREATE TABLE tasks(
     min_batch_duration     BIGINT NOT NULL,           -- the minimum duration in seconds of a single batch interval
     tolerable_clock_skew   BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
     collector_hpke_config  BYTEA NOT NULL,            -- the HPKE config of the collector (encoded HpkeConfig message)
-    agg_auth_key           BYTEA NOT NULL,            -- HMAC key used by this aggregator to authenticate messages to/from the other aggregator (encrypted)
-    hpke_config            BYTEA NOT NULL,            -- the HPKE config of this aggregator (encoded HpkeConfig message)
-    hpke_private_key       BYTEA NOT NULL             -- private key corresponding to hpke_config (hpke::HpkePrivateKey, encrypted)
+    agg_auth_key           BYTEA NOT NULL             -- HMAC key used by this aggregator to authenticate messages to/from the other aggregator (encrypted)
 
-    -- TODO(timg): move vdaf_verify_param, agg_auth_key, hpke_config, hpke_private_key to new
+    -- TODO(timg): move vdaf_verify_param, agg_auth_key to new
     -- tables with many:1 relationships to tasks to allow for rotation of secrets
+);
+
+-- The HPKE public keys (aka configs) and private keys used by a given task.
+CREATE TABLE task_hpke_keys(
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
+    task_id BIGINT NOT NULL,      -- task ID the HPKE key is associated with
+    config_id SMALLINT NOT NULL,  -- HPKE config ID
+    config BYTEA NOT NULL,        -- HPKE config, including public key (encoded HpkeConfig message)
+    private_key BYTEA NOT NULL,   -- private key (encrypted)
+
+    CONSTRAINT unique_task_id_and_config_id UNIQUE(task_id, config_id),
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
 -- Individual reports received from clients.
