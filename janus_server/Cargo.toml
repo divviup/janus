@@ -46,4 +46,5 @@ warp = { version = "^0.3", features = ["tls"] }
 assert_matches = "1"
 hyper = "0.14.17"
 mockito = "0.31.0"
+trycmd = "0.13.3"
 hex = { version = "0.4.3", features = ["serde"] }
