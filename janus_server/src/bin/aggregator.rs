@@ -181,3 +181,11 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cli_tests() {
+        trycmd::TestCases::new().case("tests/cmd/*.trycmd").run();
+    }
+}
