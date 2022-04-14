@@ -34,10 +34,10 @@ CREATE TABLE tasks(
 -- The HPKE public keys (aka configs) and private keys used by a given task.
 CREATE TABLE task_hpke_keys(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id BIGINT NOT NULL, -- XXX: document
-    config_id SMALLINT NOT NULL,
-    config BYTEA NOT NULL,
-    private_key BYTEA NOT NULL,
+    task_id BIGINT NOT NULL,      -- task ID the HPKE key is associated with
+    config_id SMALLINT NOT NULL,  -- HPKE config ID
+    config BYTEA NOT NULL,        -- HPKE config, including public key (encoded HpkeConfig message)
+    private_key BYTEA NOT NULL,   -- private key (encrypted)
 
     CONSTRAINT unique_task_id_and_config_id UNIQUE(task_id, config_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)

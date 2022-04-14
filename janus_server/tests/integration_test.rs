@@ -117,7 +117,8 @@ async fn setup_test() -> TestCase {
         collector_hpke_config,
         agg_auth_key.clone(),
         vec![(leader_hpke_config, leader_private_key)],
-    );
+    )
+    .unwrap();
 
     leader_datastore
         .run_tx(|tx| {

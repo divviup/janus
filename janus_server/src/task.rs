@@ -150,17 +150,20 @@ impl TaskParameters {
         collector_hpke_config: HpkeConfig,
         agg_auth_key: AggregatorAuthKey,
         hpke_configs: I,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         // All currently defined VDAFs have exactly two aggregators
         assert_eq!(aggregator_endpoints.len(), 2);
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
-        let hpke_configs = hpke_configs
+        let hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_configs
             .into_iter()
             .map(|(cfg, key)| (cfg.id, (cfg, key)))
             .collect();
+        if hpke_configs.is_empty() {
+            return Err(Error::InvalidParameter("hpke_configs"));
+        }
 
-        Self {
+        Ok(Self {
             id: task_id,
             aggregator_endpoints,
             vdaf,
@@ -173,7 +176,7 @@ impl TaskParameters {
             collector_hpke_config,
             agg_auth_key,
             hpke_configs,
-        }
+        })
     }
 }
 
@@ -212,5 +215,6 @@ pub mod test_util {
             AggregatorAuthKey::generate(),
             vec![(aggregator_config, aggregator_private_key)],
         )
+        .unwrap()
     }
 }

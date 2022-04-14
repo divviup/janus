@@ -256,17 +256,17 @@ impl Transaction<'_> {
             .tx
             .prepare_cached(
                 "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_hpke_keys.task_id),
-            config_id, config, private_key FROM task_hpke_keys",
+                config_id, config, private_key FROM task_hpke_keys",
             )
             .await?;
         let hpke_config_rows = self.tx.query(&stmt, &[]);
 
         let (task_rows, hpke_config_rows) = try_join(task_rows, hpke_config_rows).await?;
 
-        let mut task_row_by_id = HashMap::new();
+        let mut task_row_by_id = Vec::new();
         for row in task_rows {
             let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            task_row_by_id.insert(task_id, row);
+            task_row_by_id.push((task_id, row));
         }
 
         let mut hpke_config_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
@@ -365,7 +365,7 @@ impl Transaction<'_> {
             collector_hpke_config,
             agg_auth_key,
             hpke_configs,
-        ))
+        )?)
     }
 
     /// get_client_report retrieves a client report by ID.
@@ -1326,6 +1326,7 @@ mod tests {
             models::AggregationJobState,
             test_util::{ephemeral_datastore, generate_aead_key},
         },
+        hpke::test_util::generate_hpke_config_and_private_key,
         message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
         task::{test_util::new_dummy_task_parameters, Vdaf},
         trace::test_util::install_test_trace_subscriber,
@@ -1340,7 +1341,7 @@ mod tests {
             PrepareTransition,
         },
     };
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeSet, HashMap};
 
     #[tokio::test]
     async fn roundtrip_task() {
@@ -1382,8 +1383,17 @@ mod tests {
             ),
         ];
 
+        // Insert tasks, check that they can be retrieved by ID.
+        let mut want_tasks = HashMap::new();
         for (task_id, vdaf, role) in values {
-            let task_params = new_dummy_task_parameters(task_id, vdaf, role);
+            let mut task_params = new_dummy_task_parameters(task_id, vdaf, role);
+            let (mut second_hpke_config, second_hpke_private_key) =
+                generate_hpke_config_and_private_key();
+            second_hpke_config.id = HpkeConfigId(u8::MAX);
+            task_params.hpke_configs.insert(
+                second_hpke_config.id,
+                (second_hpke_config, second_hpke_private_key),
+            );
 
             ds.run_tx(|tx| {
                 let task_params = task_params.clone();
@@ -1397,24 +1407,17 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(task_params, retrieved_task);
+            want_tasks.insert(task_id, task_params);
         }
 
-        let retrieved_tasks = ds
+        let got_tasks: HashMap<TaskId, TaskParameters> = ds
             .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
-            .unwrap();
-        assert_eq!(retrieved_tasks.len(), values.len());
-        let mut saw_tasks = vec![false; values.len()];
-        for task in retrieved_tasks {
-            for (idx, value) in values.iter().enumerate() {
-                if value.0 == task.id {
-                    saw_tasks[idx] = true;
-                }
-            }
-        }
-        for (idx, saw_task) in saw_tasks.iter().enumerate() {
-            assert!(saw_task, "never saw task {} in datastore", idx);
-        }
+            .unwrap()
+            .into_iter()
+            .map(|task| (task.id, task))
+            .collect();
+        assert_eq!(want_tasks, got_tasks);
     }
 
     #[tokio::test]
