@@ -16,8 +16,8 @@ use crate::{
     },
     task::{self, TaskParameters},
 };
-#[cfg(test)]
-use futures::future::try_join;
+use futures::try_join;
+use postgres_types::ToSql;
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     vdaf,
@@ -117,30 +117,11 @@ impl Transaction<'_> {
         let min_batch_duration = i64::try_from(task.min_batch_duration.0)?;
         let tolerable_clock_skew = i64::try_from(task.tolerable_clock_skew.0)?;
 
-        let mut encoded_agg_auth_keys = String::new();
-        for key in &task.agg_auth_keys {
-            if !encoded_agg_auth_keys.is_empty() {
-                encoded_agg_auth_keys.push(',');
-            }
-            let key_bytes: &[u8] = key.as_ref();
-            base64::encode_config_buf(
-                key_bytes,
-                base64::STANDARD_NO_PAD,
-                &mut encoded_agg_auth_keys,
-            )
-        }
-
         let encrypted_vdaf_verify_param = self.crypter.encrypt(
             "tasks",
             &task.id.0,
             "vdaf_verify_param",
             &task.vdaf_verify_parameter,
-        )?;
-        let encrypted_agg_auth_key = self.crypter.encrypt(
-            "tasks",
-            &task.id.0,
-            "agg_auth_key",
-            encoded_agg_auth_keys.as_bytes(),
         )?;
 
         // Main task insert.
@@ -149,8 +130,8 @@ impl Transaction<'_> {
             .prepare_cached(
                 "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, vdaf,
                 vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
-                tolerable_clock_skew, collector_hpke_config, agg_auth_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                tolerable_clock_skew, collector_hpke_config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             )
             .await?;
         self.tx
@@ -167,19 +148,47 @@ impl Transaction<'_> {
                     &min_batch_duration,                       // min batch duration
                     &tolerable_clock_skew,                     // tolerable clock skew
                     &task.collector_hpke_config.get_encoded(), // collector hpke config
-                    &encrypted_agg_auth_key,                   // agg_auth_key
                 ],
             )
             .await?;
 
+        // Aggregator auth keys.
+        let mut agg_auth_key_ords: Vec<i64> = Vec::new();
+        let mut agg_auth_keys: Vec<Vec<u8>> = Vec::new();
+        for (ord, key) in task.agg_auth_keys.iter().enumerate() {
+            let ord = i64::try_from(ord)?;
+
+            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task.id.0[..]);
+            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
+
+            let encrypted_agg_auth_key =
+                self.crypter
+                    .encrypt("task_aggregator_auth_keys", &row_id, "key", key.as_ref())?;
+
+            agg_auth_key_ords.push(ord);
+            agg_auth_keys.push(encrypted_agg_auth_key);
+        }
+        let stmt = self.tx.prepare_cached(
+                "INSERT INTO task_aggregator_auth_keys (task_id, ord, key)
+                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], $3::BYTEA[])"
+            )
+            .await?;
+        let auth_keys_params: &[&(dyn ToSql + Sync)] = &[
+            /* task_id */ &&task.id.0[..],
+            /* ords */ &agg_auth_key_ords,
+            /* keys */ &agg_auth_keys,
+        ];
+        let auth_keys_future = self.tx.execute(&stmt, auth_keys_params);
+
         // HPKE keys.
-        let mut config_ids: Vec<i16> = Vec::new();
-        let mut configs: Vec<Vec<u8>> = Vec::new();
-        let mut private_keys: Vec<Vec<u8>> = Vec::new();
+        let mut hpke_config_ids: Vec<i16> = Vec::new();
+        let mut hpke_configs: Vec<Vec<u8>> = Vec::new();
+        let mut hpke_private_keys: Vec<Vec<u8>> = Vec::new();
         for (hpke_config, hpke_private_key) in task.hpke_configs.values() {
-            let mut row_id = [0u8; TaskId::ENCODED_LEN + 1];
+            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
             row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task.id.0);
-            row_id[TaskId::ENCODED_LEN] = hpke_config.id.0;
+            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&hpke_config.id.0.to_be_bytes());
 
             let encrypted_hpke_private_key = self.crypter.encrypt(
                 "task_hpke_keys",
@@ -188,9 +197,9 @@ impl Transaction<'_> {
                 hpke_private_key.as_ref(),
             )?;
 
-            config_ids.push(hpke_config.id.0 as i16);
-            configs.push(hpke_config.get_encoded());
-            private_keys.push(encrypted_hpke_private_key);
+            hpke_config_ids.push(hpke_config.id.0 as i16);
+            hpke_configs.push(hpke_config.get_encoded());
+            hpke_private_keys.push(encrypted_hpke_private_key);
         }
         let stmt = self
             .tx
@@ -199,17 +208,15 @@ impl Transaction<'_> {
                 SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::SMALLINT[], $3::BYTEA[], $4::BYTEA[])",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ &&task.id.0[..],
-                    /* config_id */ &config_ids,
-                    /* configs */ &configs,
-                    /* private_keys */ &private_keys,
-                ],
-            )
-            .await?;
+        let hpke_configs_params: &[&(dyn ToSql + Sync)] = &[
+            /* task_id */ &&task.id.0[..],
+            /* config_id */ &hpke_config_ids,
+            /* configs */ &hpke_configs,
+            /* private_keys */ &hpke_private_keys,
+        ];
+        let hpke_configs_future = self.tx.execute(&stmt, hpke_configs_params);
+
+        try_join!(auth_keys_future, hpke_configs_future)?;
 
         Ok(())
     }
@@ -220,19 +227,26 @@ impl Transaction<'_> {
     // aggregators to discover tasks from the database.
     #[cfg(test)]
     pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<TaskParameters, Error> {
-        use postgres_types::ToSql;
-
         let params: &[&(dyn ToSql + Sync)] = &[&&task_id.0[..]];
         let stmt = self
             .tx
             .prepare_cached(
                 "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
                 max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
-                collector_hpke_config, agg_auth_key
+                collector_hpke_config
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
         let task_row = self.tx.query(&stmt, params);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT ord, key FROM task_aggregator_auth_keys
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
+            )
+            .await?;
+        let agg_auth_key_rows = self.tx.query(&stmt, params);
 
         let stmt = self
             .tx
@@ -243,10 +257,11 @@ impl Transaction<'_> {
             .await?;
         let hpke_key_rows = self.tx.query(&stmt, params);
 
-        let (task_row, hpke_key_rows) = try_join(task_row, hpke_key_rows).await?;
+        let (task_row, agg_auth_key_rows, hpke_key_rows) =
+            try_join!(task_row, agg_auth_key_rows, hpke_key_rows)?;
         let task_row = single_row(task_row)?;
 
-        self.task_parameters_from_rows(task_id, task_row, hpke_key_rows)
+        self.task_parameters_from_rows(task_id, task_row, agg_auth_key_rows, hpke_key_rows)
     }
 
     /// Fetch all the tasks in the database.
@@ -259,11 +274,20 @@ impl Transaction<'_> {
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf,
                 vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
-                tolerable_clock_skew, collector_hpke_config, agg_auth_key 
+                tolerable_clock_skew, collector_hpke_config 
                 FROM tasks",
             )
             .await?;
         let task_rows = self.tx.query(&stmt, &[]);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_aggregator_auth_keys.task_id),
+                ord, key FROM task_aggregator_auth_keys ORDER BY ord ASC",
+            )
+            .await?;
+        let agg_auth_key_rows = self.tx.query(&stmt, &[]);
 
         let stmt = self
             .tx
@@ -274,12 +298,22 @@ impl Transaction<'_> {
             .await?;
         let hpke_config_rows = self.tx.query(&stmt, &[]);
 
-        let (task_rows, hpke_config_rows) = try_join(task_rows, hpke_config_rows).await?;
+        let (task_rows, agg_auth_key_rows, hpke_config_rows) =
+            try_join!(task_rows, agg_auth_key_rows, hpke_config_rows)?;
 
         let mut task_row_by_id = Vec::new();
         for row in task_rows {
             let task_id = TaskId::get_decoded(row.get("task_id"))?;
             task_row_by_id.push((task_id, row));
+        }
+
+        let mut agg_auth_key_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
+        for row in agg_auth_key_rows {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            agg_auth_key_rows_by_task_id
+                .entry(task_id)
+                .or_default()
+                .push(row);
         }
 
         let mut hpke_config_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
@@ -297,6 +331,9 @@ impl Transaction<'_> {
                 self.task_parameters_from_rows(
                     task_id,
                     row,
+                    agg_auth_key_rows_by_task_id
+                        .remove(&task_id)
+                        .unwrap_or_default(),
                     hpke_config_rows_by_task_id
                         .remove(&task_id)
                         .unwrap_or_default(),
@@ -306,13 +343,13 @@ impl Transaction<'_> {
     }
 
     /// Construct a [`TaskParameters`] from the contents of the provided `Row`.
-    /// If `task_id` is not `None`, it is used. Otherwise the task ID is read
-    /// from the row.
+    /// agg_auth_key_rows must be sorted in ascending order by `ord`.
     #[cfg(test)]
     fn task_parameters_from_rows(
         &self,
         task_id: TaskId,
         row: Row,
+        agg_auth_key_rows: Vec<Row>,
         hpke_key_rows: Vec<Row>,
     ) -> Result<TaskParameters, Error> {
         // Scalar task parameters.
@@ -329,7 +366,6 @@ impl Transaction<'_> {
         let min_batch_duration = Duration(row.get_bigint_as_u64("min_batch_duration")?);
         let tolerable_clock_skew = Duration(row.get_bigint_as_u64("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
-        let encrypted_agg_auth_key: Vec<u8> = row.get("agg_auth_key");
 
         let vdaf_verify_param = self.crypter.decrypt(
             "tasks",
@@ -337,22 +373,24 @@ impl Transaction<'_> {
             "vdaf_verify_param",
             &encrypted_vdaf_verify_param,
         )?;
-        let encoded_agg_auth_keys = self.crypter.decrypt(
-            "tasks",
-            task_id.as_bytes(),
-            "agg_auth_key",
-            &encrypted_agg_auth_key,
-        )?;
 
-        let agg_auth_keys = encoded_agg_auth_keys
-            .split(|&c| c == b',')
-            .map(|k| {
-                base64::decode_config(k, base64::STANDARD_NO_PAD)
-                    .map_err(Error::from)
-                    .and_then(|k| AggregatorAuthKey::new(&k).map_err(Error::from))
-            })
-            .collect::<Result<Vec<AggregatorAuthKey>, Error>>()?;
+        // Aggregator authentication keys.
+        let mut agg_auth_keys = Vec::new();
+        for row in agg_auth_key_rows {
+            let ord: i64 = row.get("ord");
+            let encrypted_agg_auth_key: Vec<u8> = row.get("key");
 
+            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task_id.0[..]);
+            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
+
+            agg_auth_keys.push(AggregatorAuthKey::new(&self.crypter.decrypt(
+                "task_aggregator_auth_keys",
+                &row_id,
+                "key",
+                &encrypted_agg_auth_key,
+            )?)?);
+        }
         // HPKE keys.
         let mut hpke_configs = Vec::new();
         for row in hpke_key_rows {
@@ -360,9 +398,9 @@ impl Transaction<'_> {
             let config = HpkeConfig::get_decoded(row.get("config"))?;
             let encrypted_private_key: Vec<u8> = row.get("private_key");
 
-            let mut row_id = [0u8; TaskId::ENCODED_LEN + 1];
+            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
             row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task_id.0);
-            row_id[TaskId::ENCODED_LEN] = config_id;
+            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&config_id.to_be_bytes());
 
             let private_key = HpkePrivateKey::new(self.crypter.decrypt(
                 "task_hpke_keys",
@@ -1351,7 +1389,6 @@ mod tests {
             models::AggregationJobState,
             test_util::{ephemeral_datastore, generate_aead_key},
         },
-        hpke::test_util::generate_hpke_config_and_private_key,
         message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
         task::{test_util::new_dummy_task_parameters, Vdaf},
         trace::test_util::install_test_trace_subscriber,
@@ -1411,14 +1448,7 @@ mod tests {
         // Insert tasks, check that they can be retrieved by ID.
         let mut want_tasks = HashMap::new();
         for (task_id, vdaf, role) in values {
-            let mut task_params = new_dummy_task_parameters(task_id, vdaf, role);
-            let (mut second_hpke_config, second_hpke_private_key) =
-                generate_hpke_config_and_private_key();
-            second_hpke_config.id = HpkeConfigId(u8::MAX);
-            task_params.hpke_configs.insert(
-                second_hpke_config.id,
-                (second_hpke_config, second_hpke_private_key),
-            );
+            let task_params = new_dummy_task_parameters(task_id, vdaf, role);
 
             ds.run_tx(|tx| {
                 let task_params = task_params.clone();

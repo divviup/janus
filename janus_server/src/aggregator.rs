@@ -153,6 +153,9 @@ where
                 "tolerable clock skew must be non-negative",
             ));
         }
+        if agg_auth_keys.is_empty() {
+            return Err(Error::InvalidConfiguration("agg_auth_keys is empty"));
+        }
 
         Ok(Self {
             vdaf,
@@ -649,7 +652,7 @@ where
                 AuthenticatedRequestDecoder::new(Vec::from(body.as_ref())).map_err(Error::from)?;
             let task_id = decoder.task_id();
             let keys = key_fn(&aggregator, task_id).await?;
-            for key in keys {
+            for key in keys.iter().rev() {
                 match decoder.decode(key) {
                     Ok(decoded_body) => return Ok(decoded_body),
                     Err(AuthenticatedDecodeError::InvalidHmac) => continue, // try the next key
@@ -864,7 +867,7 @@ where
             |aggregator: Arc<Aggregator<A, C>>, req_rslt: Result<AggregateReq, Error>| async move {
                 let req = req_rslt?;
                 let resp = aggregator.handle_aggregate(req).await?;
-                let key = aggregator.agg_auth_keys.first().unwrap();
+                let key = aggregator.agg_auth_keys.last().unwrap();
                 let resp_bytes = AuthenticatedEncoder::new(resp).encode(key);
                 Ok(reply::with_status(resp_bytes, StatusCode::OK))
             },
