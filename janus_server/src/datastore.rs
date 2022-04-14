@@ -6,8 +6,8 @@ use self::models::{
 };
 #[cfg(test)]
 use crate::{
-    hpke::{HpkePrivateKey, HpkeRecipient, Label},
-    message::{Duration, HpkeConfig, Role},
+    hpke::HpkePrivateKey,
+    message::{Duration, HpkeConfig},
     task::AggregatorAuthKey,
 };
 use crate::{
@@ -16,6 +16,8 @@ use crate::{
     },
     task::{self, TaskParameters},
 };
+#[cfg(test)]
+use futures::future::try_join;
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     vdaf,
@@ -140,63 +142,180 @@ impl Transaction<'_> {
             "agg_auth_key",
             encoded_agg_auth_keys.as_bytes(),
         )?;
-        let encrypted_hpke_private_key = self.crypter.encrypt(
-            "tasks",
-            &task.id.0,
-            "hpke_private_key",
-            task.hpke_recipient.private_key().as_ref(),
-        )?;
 
+        // Main task insert.
         let stmt = self
             .tx
             .prepare_cached(
                 "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, vdaf,
                 vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
-                tolerable_clock_skew, collector_hpke_config, agg_auth_key, hpke_config,
-                hpke_private_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                tolerable_clock_skew, collector_hpke_config, agg_auth_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
             )
             .await?;
         self.tx
             .execute(
                 &stmt,
                 &[
-                    &&task.id.0[..],                             // id
-                    &aggregator_role,                            // aggregator_role
-                    &endpoints,                                  // aggregator_endpoints
-                    &task.vdaf,                                  // vdaf
-                    &encrypted_vdaf_verify_param,                // verify param
-                    &max_batch_lifetime,                         // max batch lifetime
-                    &min_batch_size,                             // min batch size
-                    &min_batch_duration,                         // min batch duration
-                    &tolerable_clock_skew,                       // tolerable clock skew
-                    &task.collector_hpke_config.get_encoded(),   // collector hpke config
-                    &encrypted_agg_auth_key,                     // agg_auth_key
-                    &task.hpke_recipient.config().get_encoded(), // hpke_config
-                    &encrypted_hpke_private_key,                 // hpke_private_key
+                    &&task.id.0[..],                           // id
+                    &aggregator_role,                          // aggregator_role
+                    &endpoints,                                // aggregator_endpoints
+                    &task.vdaf,                                // vdaf
+                    &encrypted_vdaf_verify_param,              // verify param
+                    &max_batch_lifetime,                       // max batch lifetime
+                    &min_batch_size,                           // min batch size
+                    &min_batch_duration,                       // min batch duration
+                    &tolerable_clock_skew,                     // tolerable clock skew
+                    &task.collector_hpke_config.get_encoded(), // collector hpke config
+                    &encrypted_agg_auth_key,                   // agg_auth_key
                 ],
             )
             .await?;
+
+        // HPKE keys.
+        let mut config_ids: Vec<i16> = Vec::new();
+        let mut configs: Vec<Vec<u8>> = Vec::new();
+        let mut private_keys: Vec<Vec<u8>> = Vec::new();
+        for (hpke_config, hpke_private_key) in task.hpke_configs.values() {
+            let mut row_id = [0u8; TaskId::ENCODED_LEN + 1];
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task.id.0);
+            row_id[TaskId::ENCODED_LEN] = hpke_config.id.0;
+
+            let encrypted_hpke_private_key = self.crypter.encrypt(
+                "task_hpke_keys",
+                &row_id,
+                "private_key",
+                hpke_private_key.as_ref(),
+            )?;
+
+            config_ids.push(hpke_config.id.0 as i16);
+            configs.push(hpke_config.get_encoded());
+            private_keys.push(encrypted_hpke_private_key);
+        }
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "INSERT INTO task_hpke_keys (task_id, config_id, config, private_key)
+                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::SMALLINT[], $3::BYTEA[], $4::BYTEA[])",
+            )
+            .await?;
+        self.tx
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ &&task.id.0[..],
+                    /* config_id */ &config_ids,
+                    /* configs */ &configs,
+                    /* private_keys */ &private_keys,
+                ],
+            )
+            .await?;
+
         Ok(())
+    }
+
+    /// Fetch the task parameters corresponing to the provided `task_id`.
+    //
+    // Only available in test configs for now, but will soon be used by
+    // aggregators to discover tasks from the database.
+    #[cfg(test)]
+    pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<TaskParameters, Error> {
+        use postgres_types::ToSql;
+
+        let params: &[&(dyn ToSql + Sync)] = &[&&task_id.0[..]];
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
+                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
+                collector_hpke_config, agg_auth_key
+                FROM tasks WHERE task_id = $1",
+            )
+            .await?;
+        let task_row = self.tx.query(&stmt, params);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT config_id, config, private_key FROM task_hpke_keys
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        let hpke_key_rows = self.tx.query(&stmt, params);
+
+        let (task_row, hpke_key_rows) = try_join(task_row, hpke_key_rows).await?;
+        let task_row = single_row(task_row)?;
+
+        self.task_parameters_from_rows(task_id, task_row, hpke_key_rows)
+    }
+
+    /// Fetch all the tasks in the database.
+    #[cfg(test)]
+    pub(crate) async fn get_tasks(&self) -> Result<Vec<TaskParameters>, Error> {
+        use std::collections::HashMap;
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf,
+                vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
+                tolerable_clock_skew, collector_hpke_config, agg_auth_key 
+                FROM tasks",
+            )
+            .await?;
+        let task_rows = self.tx.query(&stmt, &[]);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_hpke_keys.task_id),
+                config_id, config, private_key FROM task_hpke_keys",
+            )
+            .await?;
+        let hpke_config_rows = self.tx.query(&stmt, &[]);
+
+        let (task_rows, hpke_config_rows) = try_join(task_rows, hpke_config_rows).await?;
+
+        let mut task_row_by_id = Vec::new();
+        for row in task_rows {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            task_row_by_id.push((task_id, row));
+        }
+
+        let mut hpke_config_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
+        for row in hpke_config_rows {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            hpke_config_rows_by_task_id
+                .entry(task_id)
+                .or_default()
+                .push(row);
+        }
+
+        task_row_by_id
+            .into_iter()
+            .map(|(task_id, row)| {
+                self.task_parameters_from_rows(
+                    task_id,
+                    row,
+                    hpke_config_rows_by_task_id
+                        .remove(&task_id)
+                        .unwrap_or_default(),
+                )
+            })
+            .collect::<Result<_, _>>()
     }
 
     /// Construct a [`TaskParameters`] from the contents of the provided `Row`.
     /// If `task_id` is not `None`, it is used. Otherwise the task ID is read
     /// from the row.
     #[cfg(test)]
-    fn task_parameters_from_row(
+    fn task_parameters_from_rows(
         &self,
-        task_id: Option<TaskId>,
-        row: &Row,
+        task_id: TaskId,
+        row: Row,
+        hpke_key_rows: Vec<Row>,
     ) -> Result<TaskParameters, Error> {
-        let task_id = task_id.map_or_else(
-            || {
-                let encoded_task_id: Vec<u8> = row.get("task_id");
-                TaskId::get_decoded(&encoded_task_id)
-            },
-            Ok,
-        )?;
-
+        // Scalar task parameters.
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
         let endpoints: Vec<String> = row.get("aggregator_endpoints");
         let endpoints = endpoints
@@ -210,9 +329,7 @@ impl Transaction<'_> {
         let min_batch_duration = Duration(row.get_bigint_as_u64("min_batch_duration")?);
         let tolerable_clock_skew = Duration(row.get_bigint_as_u64("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
-        let encrypted_agg_auth_keys: Vec<u8> = row.get("agg_auth_key");
-        let hpke_config = HpkeConfig::get_decoded(row.get("hpke_config"))?;
-        let encrypted_hpke_private_key: Vec<u8> = row.get("hpke_private_key");
+        let encrypted_agg_auth_key: Vec<u8> = row.get("agg_auth_key");
 
         let vdaf_verify_param = self.crypter.decrypt(
             "tasks",
@@ -224,14 +341,8 @@ impl Transaction<'_> {
             "tasks",
             task_id.as_bytes(),
             "agg_auth_key",
-            &encrypted_agg_auth_keys,
+            &encrypted_agg_auth_key,
         )?;
-        let hpke_private_key = HpkePrivateKey::new(self.crypter.decrypt(
-            "tasks",
-            task_id.as_bytes(),
-            "hpke_private_key",
-            &encrypted_hpke_private_key,
-        )?);
 
         let agg_auth_keys = encoded_agg_auth_keys
             .split(|&c| c == b',')
@@ -242,14 +353,26 @@ impl Transaction<'_> {
             })
             .collect::<Result<Vec<AggregatorAuthKey>, Error>>()?;
 
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            &hpke_config,
-            Label::InputShare,
-            Role::Client,
-            aggregator_role.as_role(),
-            &hpke_private_key,
-        );
+        // HPKE keys.
+        let mut hpke_configs = Vec::new();
+        for row in hpke_key_rows {
+            let config_id = u8::try_from(row.get::<_, i16>("config_id"))?;
+            let config = HpkeConfig::get_decoded(row.get("config"))?;
+            let encrypted_private_key: Vec<u8> = row.get("private_key");
+
+            let mut row_id = [0u8; TaskId::ENCODED_LEN + 1];
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task_id.0);
+            row_id[TaskId::ENCODED_LEN] = config_id;
+
+            let private_key = HpkePrivateKey::new(self.crypter.decrypt(
+                "task_hpke_keys",
+                &row_id,
+                "private_key",
+                &encrypted_private_key,
+            )?);
+
+            hpke_configs.push((config, private_key));
+        }
 
         Ok(TaskParameters::new(
             task_id,
@@ -261,50 +384,10 @@ impl Transaction<'_> {
             min_batch_size,
             min_batch_duration,
             tolerable_clock_skew,
-            &collector_hpke_config,
+            collector_hpke_config,
             agg_auth_keys,
-            &hpke_recipient,
-        ))
-    }
-
-    /// Fetch the task parameters corresponing to the provided `task_id`.
-    //
-    // Only available in test configs for now, but will soon be used by
-    // aggregators to discover tasks from the database.
-    #[cfg(test)]
-    pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<TaskParameters, Error> {
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
-                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
-                collector_hpke_config, agg_auth_key, hpke_config, hpke_private_key
-                FROM tasks WHERE task_id=$1",
-            )
-            .await?;
-        let row = single_row(self.tx.query(&stmt, &[&&task_id.0[..]]).await?)?;
-
-        self.task_parameters_from_row(Some(task_id), &row)
-    }
-
-    /// Fetch all the tasks in the database.
-    #[cfg(test)]
-    pub(crate) async fn get_tasks(&self) -> Result<Vec<TaskParameters>, Error> {
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf,
-                vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
-                tolerable_clock_skew, collector_hpke_config, agg_auth_key, hpke_config,
-                hpke_private_key
-                FROM tasks",
-            )
-            .await?;
-        let rows = self.tx.query(&stmt, &[]).await?;
-
-        rows.iter()
-            .map(|row| self.task_parameters_from_row(None, row))
-            .collect::<Result<_, _>>()
+            hpke_configs,
+        )?)
     }
 
     /// get_client_report retrieves a client report by ID.
@@ -1268,8 +1351,9 @@ mod tests {
             models::AggregationJobState,
             test_util::{ephemeral_datastore, generate_aead_key},
         },
+        hpke::test_util::generate_hpke_config_and_private_key,
         message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
-        task::Vdaf,
+        task::{test_util::new_dummy_task_parameters, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
@@ -1282,7 +1366,7 @@ mod tests {
             PrepareTransition,
         },
     };
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeSet, HashMap};
 
     #[tokio::test]
     async fn roundtrip_task() {
@@ -1324,15 +1408,16 @@ mod tests {
             ),
         ];
 
+        // Insert tasks, check that they can be retrieved by ID.
+        let mut want_tasks = HashMap::new();
         for (task_id, vdaf, role) in values {
-            let task_params = TaskParameters::new_dummy(
-                task_id,
-                vec![
-                    "https://example.com/".parse().unwrap(),
-                    "https://example.net/".parse().unwrap(),
-                ],
-                vdaf,
-                role,
+            let mut task_params = new_dummy_task_parameters(task_id, vdaf, role);
+            let (mut second_hpke_config, second_hpke_private_key) =
+                generate_hpke_config_and_private_key();
+            second_hpke_config.id = HpkeConfigId(u8::MAX);
+            task_params.hpke_configs.insert(
+                second_hpke_config.id,
+                (second_hpke_config, second_hpke_private_key),
             );
 
             ds.run_tx(|tx| {
@@ -1347,24 +1432,17 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(task_params, retrieved_task);
+            want_tasks.insert(task_id, task_params);
         }
 
-        let retrieved_tasks = ds
+        let got_tasks: HashMap<TaskId, TaskParameters> = ds
             .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
-            .unwrap();
-        assert_eq!(retrieved_tasks.len(), values.len());
-        let mut saw_tasks = vec![false; values.len()];
-        for task in retrieved_tasks {
-            for (idx, value) in values.iter().enumerate() {
-                if value.0 == task.id {
-                    saw_tasks[idx] = true;
-                }
-            }
-        }
-        for (idx, saw_task) in saw_tasks.iter().enumerate() {
-            assert!(saw_task, "never saw task {} in datastore", idx);
-        }
+            .unwrap()
+            .into_iter()
+            .map(|task| (task.id, task))
+            .collect();
+        assert_eq!(want_tasks, got_tasks);
     }
 
     #[tokio::test]
@@ -1405,9 +1483,8 @@ mod tests {
         ds.run_tx(|tx| {
             let report = report.clone();
             Box::pin(async move {
-                tx.put_task(&TaskParameters::new_dummy(
+                tx.put_task(&new_dummy_task_parameters(
                     report.task_id,
-                    vec![],
                     Vdaf::Prio3Aes128Count,
                     Role::Leader,
                 ))
@@ -1482,9 +1559,8 @@ mod tests {
         ds.run_tx(|tx| {
             let report_share = report_share.clone();
             Box::pin(async move {
-                tx.put_task(&TaskParameters::new_dummy(
+                tx.put_task(&new_dummy_task_parameters(
                     task_id,
-                    Vec::new(),
                     Vdaf::Prio3Aes128Count,
                     Role::Leader,
                 ))
@@ -1547,9 +1623,8 @@ mod tests {
         ds.run_tx(|tx| {
             let aggregation_job = aggregation_job.clone();
             Box::pin(async move {
-                tx.put_task(&TaskParameters::new_dummy(
+                tx.put_task(&new_dummy_task_parameters(
                     aggregation_job.task_id,
-                    Vec::new(),
                     Vdaf::Poplar1,
                     Role::Leader,
                 ))
@@ -1661,9 +1736,8 @@ mod tests {
                 .run_tx(|tx| {
                     let state = state.clone();
                     Box::pin(async move {
-                        tx.put_task(&TaskParameters::new_dummy(
+                        tx.put_task(&new_dummy_task_parameters(
                             task_id,
-                            Vec::new(),
                             Vdaf::Prio3Aes128Count,
                             Role::Leader,
                         ))
@@ -1808,9 +1882,8 @@ mod tests {
                 let output_share = output_share.clone();
 
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Leader,
                     ))

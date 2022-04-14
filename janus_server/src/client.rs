@@ -222,7 +222,9 @@ where
 mod tests {
     use super::*;
     use crate::{
-        hpke::HpkeRecipient, message::TaskId, time::tests::MockClock,
+        hpke::{test_util::generate_hpke_config_and_private_key, HpkeRecipient},
+        message::TaskId,
+        time::tests::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
@@ -240,11 +242,25 @@ mod tests {
         let task_id = TaskId::random();
 
         let clock = MockClock::default();
-        let leader_hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let (leader_hpke_config, leader_hpke_private_key) = generate_hpke_config_and_private_key();
+        let leader_hpke_recipient = HpkeRecipient::new(
+            task_id,
+            leader_hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+            leader_hpke_private_key,
+        );
         let leader_hpke_sender = HpkeSender::from_recipient(&leader_hpke_recipient);
-        let helper_hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (helper_hpke_config, helper_hpke_private_key) = generate_hpke_config_and_private_key();
+        let helper_hpke_recipient = HpkeRecipient::new(
+            task_id,
+            helper_hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            helper_hpke_private_key,
+        );
         let helper_hpke_sender = HpkeSender::from_recipient(&helper_hpke_recipient);
 
         let server_url = Url::parse(&mockito::server_url()).unwrap();

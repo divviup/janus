@@ -5,7 +5,7 @@ use janus_server::{
     aggregator::aggregator_server,
     config::AggregatorConfig,
     datastore::{self, Datastore},
-    hpke::{HpkeRecipient, Label},
+    hpke::{test_util::generate_hpke_config_and_private_key, HpkeRecipient, Label},
     message::Role,
     message::TaskId,
     time::RealClock,
@@ -150,8 +150,15 @@ async fn main() -> Result<()> {
     // TODO(timg): tasks and the corresponding HPKE configuration and private
     // keys should be loaded from the database (see discussion in #37)
     let task_id = TaskId::random();
-    let hpke_recipient =
-        HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, options.role);
+    let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+    let hpke_recipient = HpkeRecipient::new(
+        task_id,
+        hpke_config,
+        Label::InputShare,
+        Role::Client,
+        options.role,
+        hpke_private_key,
+    );
 
     let agg_auth_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new())
         .map_err(|_| anyhow!("couldn't generate agg_auth_key"))?;
@@ -173,4 +180,12 @@ async fn main() -> Result<()> {
     server.await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cli_tests() {
+        trycmd::TestCases::new().case("tests/cmd/*.trycmd").run();
+    }
 }

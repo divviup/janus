@@ -388,7 +388,7 @@ impl Decode for HpkeCiphertext {
 }
 
 /// PPM protocol message representing an identifier for a PPM task.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
 
 impl Debug for TaskId {
@@ -413,7 +413,7 @@ impl Decode for TaskId {
 
 impl TaskId {
     /// ENCODED_LEN is the length of a task ID in bytes when encoded.
-    const ENCODED_LEN: usize = 32;
+    pub(crate) const ENCODED_LEN: usize = 32;
 
     /// Get a reference to the task ID as a byte slice
     pub(crate) fn as_bytes(&self) -> &[u8] {

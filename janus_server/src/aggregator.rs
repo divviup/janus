@@ -94,6 +94,8 @@ impl From<datastore::Error> for Error {
 // TODO: refactor Aggregator to be non-task-specific (look up task-specific data based on task ID)
 // TODO: refactor Aggregator to perform indepedent batched operations (e.g. report handling in
 //       Aggregate requests) using a parallelized library like Rayon.
+// TODO: refactor Aggregator to support multiple HPKE configs, switch from storing an HpkeRecipient
+//       to storing Vec<(HpkeConfig, HpkePrivateKey>).
 #[derive(Clone, derivative::Derivative)]
 #[derivative(Debug)]
 pub struct Aggregator<A: vdaf::Aggregator, C: Clock>
@@ -1097,9 +1099,9 @@ mod tests {
     use crate::{
         aggregator::test_util::fake,
         datastore::test_util::{ephemeral_datastore, DbHandle},
-        hpke::{HpkeSender, Label},
+        hpke::{test_util::generate_hpke_config_and_private_key, HpkeSender, Label},
         message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
-        task::{TaskParameters, Vdaf},
+        task::{test_util::new_dummy_task_parameters, Vdaf},
         time::tests::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
@@ -1113,7 +1115,6 @@ mod tests {
     use rand::{thread_rng, Rng};
     use ring::{hmac::HMAC_SHA256, rand::SystemRandom};
     use std::io::Cursor;
-    use url::Url;
     use warp::reply::Reply;
 
     type PrepareTransition<V> = vdaf::PrepareTransition<
@@ -1130,11 +1131,14 @@ mod tests {
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let datastore = Arc::new(datastore);
-        let hpke_recipient = HpkeRecipient::generate(
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
             TaskId::random(),
+            hpke_config,
             Label::InputShare,
             Role::Client,
             Role::Leader,
+            hpke_private_key,
         );
 
         for invalid_role in [Role::Collector, Role::Client] {
@@ -1161,11 +1165,14 @@ mod tests {
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, _db_handle) = ephemeral_datastore().await;
-        let hpke_recipient = HpkeRecipient::generate(
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
             TaskId::random(),
+            hpke_config,
             Label::InputShare,
             Role::Client,
             Role::Leader,
+            hpke_private_key,
         );
 
         assert_matches!(
@@ -1191,8 +1198,15 @@ mod tests {
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, _db_handle) = ephemeral_datastore().await;
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+            hpke_private_key,
+        );
 
         let response = warp::test::request()
             .path("/hpke_config")
@@ -1243,21 +1257,22 @@ mod tests {
 
         datastore
             .run_tx(|tx| {
-                let fake_url = Url::parse("localhost:8080").unwrap();
-
-                let task_parameters = TaskParameters::new_dummy(
-                    task_id,
-                    vec![fake_url.clone(), fake_url],
-                    Vdaf::Prio3Aes128Count,
-                    Role::Leader,
-                );
+                let task_parameters =
+                    new_dummy_task_parameters(task_id, Vdaf::Prio3Aes128Count, Role::Leader);
                 Box::pin(async move { tx.put_task(&task_parameters).await })
             })
             .await
             .unwrap();
 
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+            hpke_private_key,
+        );
 
         let report_time = clock.now() - skew;
 
@@ -1628,8 +1643,15 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         let request = AggregateReq {
@@ -1679,8 +1701,15 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
 
         let request = AggregateReq {
             task_id,
@@ -1742,16 +1771,22 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
                     ))
@@ -1883,16 +1918,22 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
                     ))
@@ -1973,16 +2014,22 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
                     ))
@@ -2059,8 +2106,15 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         let report_share = ReportShare {
@@ -2139,8 +2193,15 @@ mod tests {
         let datastore = Arc::new(datastore);
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         // report_share_0 is a "happy path" report.
@@ -2188,9 +2249,8 @@ mod tests {
                 let (prep_step_0, prep_step_1) = (prep_step_0.clone(), prep_step_1.clone());
 
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
                     ))
@@ -2351,17 +2411,23 @@ mod tests {
         let datastore = Arc::new(datastore);
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
                     ))
@@ -2472,17 +2538,23 @@ mod tests {
         let datastore = Arc::new(datastore);
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
                     ))
@@ -2635,17 +2707,23 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
                     ))
@@ -2761,17 +2839,23 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
                     ))
@@ -2912,17 +2996,23 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let hpke_recipient =
-            HpkeRecipient::generate(task_id, Label::InputShare, Role::Client, Role::Helper);
+        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let hpke_recipient = HpkeRecipient::new(
+            task_id,
+            hpke_config,
+            Label::InputShare,
+            Role::Client,
+            Role::Helper,
+            hpke_private_key,
+        );
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&TaskParameters::new_dummy(
+                    tx.put_task(&new_dummy_task_parameters(
                         task_id,
-                        Vec::new(),
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
                     ))
