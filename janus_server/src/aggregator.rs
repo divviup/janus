@@ -5,13 +5,13 @@ use crate::{
         models::{AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState},
         Datastore,
     },
-    hpke::HpkeRecipient,
+    hpke::{self, HpkeApplicationInfo, HpkePrivateKey, Label},
     message::{
         AggregateReq,
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
         AggregateResp, AggregationJobId, AuthenticatedDecodeError, AuthenticatedEncoder,
-        AuthenticatedRequestDecoder, HpkeConfigId, Nonce, Report, ReportShare, Role, TaskId,
-        Transition, TransitionError, TransitionTypeSpecificData,
+        AuthenticatedRequestDecoder, HpkeConfig, HpkeConfigId, Nonce, Report, ReportShare, Role,
+        TaskId, Transition, TransitionError, TransitionTypeSpecificData,
     },
     time::Clock,
 };
@@ -25,8 +25,14 @@ use prio::{
 };
 use ring::hmac;
 use std::{
-    collections::HashSet, convert::Infallible, future::Future, io::Cursor, net::SocketAddr,
-    ops::Sub, pin::Pin, sync::Arc,
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+    future::Future,
+    io::Cursor,
+    net::SocketAddr,
+    ops::Sub,
+    pin::Pin,
+    sync::Arc,
 };
 use tracing::{error, warn};
 use warp::{
@@ -94,8 +100,6 @@ impl From<datastore::Error> for Error {
 // TODO: refactor Aggregator to be non-task-specific (look up task-specific data based on task ID)
 // TODO: refactor Aggregator to perform indepedent batched operations (e.g. report handling in
 //       Aggregate requests) using a parallelized library like Rayon.
-// TODO: refactor Aggregator to support multiple HPKE configs, switch from storing an HpkeRecipient
-//       to storing Vec<(HpkeConfig, HpkePrivateKey>).
 #[derive(Clone, derivative::Derivative)]
 #[derivative(Debug)]
 pub struct Aggregator<A: vdaf::Aggregator, C: Clock>
@@ -116,13 +120,11 @@ where
     role: Role,
     /// The verify parameter for the task.
     verify_param: A::VerifyParam,
-    /// Used to decrypt reports received by this aggregator.
-    // TODO: Aggregators should have multiple generations of HPKE config
-    // available to decrypt tardy reports
-    report_recipient: HpkeRecipient,
     /// The keys used to authenticate aggregation messages for this task.
     /// The first key in the list will be used when generating authentication tags.
     agg_auth_keys: Vec<hmac::Key>,
+    /// HPKE keys used to decrypt reports received by this aggregator.
+    hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
 
 impl<A: vdaf::Aggregator, C: Clock> Aggregator<A, C>
@@ -145,8 +147,8 @@ where
         tolerable_clock_skew: Duration,
         role: Role,
         verify_param: A::VerifyParam,
-        report_recipient: HpkeRecipient,
         agg_auth_keys: Vec<hmac::Key>,
+        hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
     ) -> Result<Self, Error> {
         if tolerable_clock_skew < Duration::zero() {
             return Err(Error::InvalidConfiguration(
@@ -156,6 +158,9 @@ where
         if agg_auth_keys.is_empty() {
             return Err(Error::InvalidConfiguration("agg_auth_keys is empty"));
         }
+        if hpke_keys.is_empty() {
+            return Err(Error::InvalidConfiguration("hpke_keys is empty"));
+        }
 
         Ok(Self {
             vdaf,
@@ -164,8 +169,8 @@ where
             tolerable_clock_skew,
             role,
             verify_param,
-            report_recipient,
             agg_auth_keys,
+            hpke_keys,
         })
     }
 
@@ -176,7 +181,7 @@ where
         if report.encrypted_input_shares.len() != 2 {
             warn!(
                 share_count = report.encrypted_input_shares.len(),
-                "unexpected number of encrypted shares in report"
+                "Unexpected number of encrypted shares in report"
             );
             return Err(Error::UnrecognizedMessage(
                 "unexpected number of encrypted shares in report",
@@ -186,22 +191,22 @@ where
         let leader_report = &report.encrypted_input_shares[0];
 
         // §4.2.2: verify that the report's HPKE config ID is known
-        if leader_report.config_id != self.report_recipient.config().id {
-            warn!(
-                config_id = ?leader_report.config_id,
-                "unknown HPKE config ID"
-            );
-            return Err(Error::OutdatedHpkeConfig(
-                leader_report.config_id,
-                report.task_id,
-            ));
-        }
+        let (hpke_config, hpke_private_key) = self
+            .hpke_keys
+            .get(&leader_report.config_id)
+            .ok_or_else(|| {
+                warn!(
+                    config_id = ?leader_report.config_id,
+                    "Unknown HPKE config ID"
+                );
+                Error::OutdatedHpkeConfig(leader_report.config_id, report.task_id)
+            })?;
 
         let now = self.clock.now();
 
         // §4.2.4: reject reports from too far in the future
         if report.nonce.time.as_naive_date_time().sub(now) > self.tolerable_clock_skew {
-            warn!(?report.task_id, ?report.nonce, "report timestamp exceeds tolerable clock skew");
+            warn!(?report.task_id, ?report.nonce, "Report timestamp exceeds tolerable clock skew");
             return Err(Error::ReportFromTheFuture(report.nonce, report.task_id));
         }
 
@@ -209,11 +214,14 @@ where
         // but this exercises HPKE decryption and saves us the trouble of
         // storing reports we can't use. We don't inform the client if this
         // fails.
-        if let Err(error) = self.report_recipient.open(
+        if let Err(err) = hpke::open(
+            hpke_config,
+            hpke_private_key,
+            &HpkeApplicationInfo::new(report.task_id, Label::InputShare, Role::Client, self.role),
             leader_report,
-            &Report::associated_data(report.nonce, &report.extensions),
+            &report.associated_data(),
         ) {
-            warn!(?report.task_id, ?report.nonce, ?error, "report decryption failed");
+            warn!(?report.task_id, ?report.nonce, ?err, "Report decryption failed");
             return Ok(());
         }
 
@@ -301,14 +309,25 @@ where
         let mut report_share_data = Vec::new();
         let agg_param = A::AggregationParam::get_decoded(&agg_param)?;
         for report_share in report_shares {
-            // TODO(brandon): once we have multiple config IDs in use, reject reports with an unknown config ID with `HpkeUnknownConfigId`.
+            let hpke_key = self
+                .hpke_keys
+                .get(&report_share.encrypted_input_share.config_id)
+                .ok_or_else(|| {
+                    warn!(
+                        config_id = ?report_share.encrypted_input_share.config_id,
+                        "Unknown HPKE config ID"
+                    );
+                    TransitionError::HpkeUnknownConfigId
+                });
 
             // If decryption fails, then the aggregator MUST fail with error `hpke-decrypt-error`. (§4.4.2.2)
-            let plaintext = self
-                .report_recipient
-                .open(
+            let plaintext = hpke_key.and_then(|(hpke_config, hpke_private_key)| {
+                hpke::open(
+                    hpke_config,
+                    hpke_private_key,
+                    &HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, self.role),
                     &report_share.encrypted_input_share,
-                    &Report::associated_data(report_share.nonce, &report_share.extensions),
+                    &report_share.associated_data(),
                 )
                 .map_err(|err| {
                     warn!(
@@ -318,19 +337,19 @@ where
                         "Couldn't decrypt report share"
                     );
                     TransitionError::HpkeDecryptError
-                });
+                })
+            });
 
             // `vdaf-prep-error` probably isn't the right code, but there is no better one & we
             // don't want to fail the entire aggregation job with an UnrecognizedMessage error
             // because a single client sent bad data.
             // TODO: agree on/standardize an error code for "client report data can't be decoded" & use it here
             let input_share = plaintext.and_then(|plaintext| {
-                A::InputShare::get_decoded_with_param(&self.verify_param, &plaintext).map_err(
-                    |err| {
+                A::InputShare::get_decoded_with_param(&self.verify_param, &plaintext)
+                    .map_err(|err| {
                         warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode input share from report share");
                         TransitionError::VdafPrepError
-                    },
-                )
+                    })
             });
 
             // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
@@ -787,8 +806,8 @@ fn aggregator_filter<A, C>(
     tolerable_clock_skew: Duration,
     role: Role,
     verify_param: A::VerifyParam,
-    hpke_recipient: HpkeRecipient,
     agg_auth_keys: Vec<hmac::Key>,
+    hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error>
 where
     A: 'static + vdaf::Aggregator + Send + Sync,
@@ -805,7 +824,16 @@ where
         return Err(Error::InvalidConfiguration("role is not an aggregator"));
     }
 
-    let hpke_config_encoded = hpke_recipient.config().get_encoded();
+    // TODO(brandon): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
+    // config/key -- right now it's the one with the maximal config ID, but that will run into
+    // trouble if we ever need to wrap-around, which we may since config IDs are effectively a u8.
+    let primary_hpke_config_encoded = hpke_keys
+        .iter()
+        .max_by_key(|(&id, _)| id)
+        .unwrap()
+        .1
+         .0
+        .get_encoded();
 
     let aggregator = Arc::new(Aggregator::new(
         vdaf,
@@ -814,15 +842,15 @@ where
         tolerable_clock_skew,
         role,
         verify_param,
-        hpke_recipient,
         agg_auth_keys,
+        hpke_keys,
     )?);
 
     let hpke_config_endpoint = warp::path("hpke_config")
         .and(warp::get())
         .map(move || {
             reply::with_header(
-                reply::with_status(hpke_config_encoded.clone(), StatusCode::OK),
+                reply::with_status(primary_hpke_config_encoded.clone(), StatusCode::OK),
                 CACHE_CONTROL,
                 "max-age=86400",
             )
@@ -892,8 +920,8 @@ pub fn aggregator_server<A, C>(
     tolerable_clock_skew: Duration,
     role: Role,
     verify_param: A::VerifyParam,
-    hpke_recipient: HpkeRecipient,
     agg_auth_keys: Vec<hmac::Key>,
+    hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
     listen_address: SocketAddr,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error>
 where
@@ -914,8 +942,8 @@ where
         tolerable_clock_skew,
         role,
         verify_param,
-        hpke_recipient,
         agg_auth_keys,
+        hpke_keys,
     )?)
     .bind_ephemeral(listen_address))
 }
@@ -1102,7 +1130,7 @@ mod tests {
     use crate::{
         aggregator::test_util::fake,
         datastore::test_util::{ephemeral_datastore, DbHandle},
-        hpke::{test_util::generate_hpke_config_and_private_key, HpkeSender, Label},
+        hpke::{associated_data_for, test_util::generate_hpke_config_and_private_key, Label},
         message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
         task::{test_util::new_dummy_task_parameters, Vdaf},
         time::tests::MockClock,
@@ -1134,15 +1162,8 @@ mod tests {
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let datastore = Arc::new(datastore);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            TaskId::random(),
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
 
         for invalid_role in [Role::Collector, Role::Client] {
             assert_matches!(
@@ -1153,8 +1174,8 @@ mod tests {
                     Duration::minutes(10),
                     invalid_role,
                     verify_param.clone(),
-                    hpke_recipient.clone(),
                     vec![generate_hmac_key()],
+                    hpke_keys.clone(),
                 ),
                 Err(Error::InvalidConfiguration(_))
             );
@@ -1168,15 +1189,8 @@ mod tests {
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, _db_handle) = ephemeral_datastore().await;
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            TaskId::random(),
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
 
         assert_matches!(
             Aggregator::new(
@@ -1186,8 +1200,8 @@ mod tests {
                 Duration::minutes(-10),
                 Role::Leader,
                 verify_param,
-                hpke_recipient,
                 vec![generate_hmac_key()],
+                hpke_keys,
             ),
             Err(Error::InvalidConfiguration(_))
         );
@@ -1201,15 +1215,8 @@ mod tests {
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
         let (datastore, _db_handle) = ephemeral_datastore().await;
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key.clone())]);
 
         let response = warp::test::request()
             .path("/hpke_config")
@@ -1222,8 +1229,8 @@ mod tests {
                     Duration::minutes(10),
                     Role::Leader,
                     verify_param,
-                    hpke_recipient.clone(),
                     vec![generate_hmac_key()],
+                    hpke_keys,
                 )
                 .unwrap(),
             )
@@ -1239,15 +1246,23 @@ mod tests {
 
         let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(&hpke_config, hpke_recipient.config());
-        let sender = HpkeSender::from_recipient(&hpke_recipient);
+        assert_eq!(hpke_config, hpke_key.0);
 
+        let application_info =
+            HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, Role::Leader);
         let message = b"this is a message";
         let associated_data = b"some associated data";
 
-        let ciphertext = sender.seal(message, associated_data).unwrap();
-
-        let plaintext = hpke_recipient.open(&ciphertext, associated_data).unwrap();
+        let ciphertext =
+            hpke::seal(&hpke_config, &application_info, message, associated_data).unwrap();
+        let plaintext = hpke::open(
+            &hpke_key.0,
+            &hpke_key.1,
+            &application_info,
+            &ciphertext,
+            associated_data,
+        )
+        .unwrap();
         assert_eq!(&plaintext, message);
     }
 
@@ -1255,7 +1270,7 @@ mod tests {
         datastore: &Datastore,
         clock: &MockClock,
         skew: Duration,
-    ) -> (HpkeRecipient, Report) {
+    ) -> (HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>, Report) {
         let task_id = TaskId::random();
 
         datastore
@@ -1267,31 +1282,29 @@ mod tests {
             .await
             .unwrap();
 
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-            hpke_private_key,
-        );
-
-        let report_time = clock.now() - skew;
-
+        let hpke_key = generate_hpke_config_and_private_key();
         let nonce = Nonce {
-            time: Time(report_time.timestamp() as u64),
-            rand: 0,
+            time: Time((clock.now() - skew).timestamp() as u64),
+            rand: thread_rng().gen(),
         };
         let extensions = vec![];
-        let associated_data = Report::associated_data(nonce, &extensions);
         let message = b"this is a message";
+        let associated_data = associated_data_for(nonce, &extensions);
 
-        let leader_sender = HpkeSender::from_recipient(&hpke_recipient);
-        let leader_ciphertext = leader_sender.seal(message, &associated_data).unwrap();
-
-        let helper_sender = HpkeSender::from_recipient(&hpke_recipient);
-        let helper_ciphertext = helper_sender.seal(message, &associated_data).unwrap();
+        let leader_ciphertext = hpke::seal(
+            &hpke_key.0,
+            &HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, Role::Leader),
+            message,
+            &associated_data,
+        )
+        .unwrap();
+        let helper_ciphertext = hpke::seal(
+            &hpke_key.0,
+            &HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, Role::Leader),
+            message,
+            &associated_data,
+        )
+        .unwrap();
 
         let report = Report {
             task_id,
@@ -1300,7 +1313,7 @@ mod tests {
             encrypted_input_shares: vec![leader_ciphertext, helper_ciphertext],
         };
 
-        (hpke_recipient, report)
+        (HashMap::from([(hpke_key.0.id, hpke_key)]), report)
     }
 
     /// Convenience method to handle interaction with `warp::test` for typical PPM requests.
@@ -1329,7 +1342,7 @@ mod tests {
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
 
-        let (report_recipient, report) = setup_report(&datastore, &clock, skew).await;
+        let (hpke_keys, report) = setup_report(&datastore, &clock, skew).await;
         let filter = aggregator_filter(
             vdaf,
             Arc::new(datastore),
@@ -1337,8 +1350,8 @@ mod tests {
             skew,
             Role::Leader,
             verify_param,
-            report_recipient,
             vec![generate_hmac_key()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -1473,7 +1486,7 @@ mod tests {
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
 
-        let (report_recipient, report) = setup_report(&datastore, &clock, skew).await;
+        let (hpke_keys, report) = setup_report(&datastore, &clock, skew).await;
 
         let filter = aggregator_filter(
             vdaf,
@@ -1482,8 +1495,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_param,
-            report_recipient,
             vec![generate_hmac_key()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -1516,7 +1529,7 @@ mod tests {
         let (datastore, db_handle) = ephemeral_datastore().await;
         let datastore = Arc::new(datastore);
         let clock = MockClock::default();
-        let (report_recipient, report) = setup_report(&datastore, &clock, skew).await;
+        let (hpke_keys, report) = setup_report(&datastore, &clock, skew).await;
 
         let aggregator = Aggregator::new(
             vdaf,
@@ -1525,8 +1538,8 @@ mod tests {
             skew,
             Role::Leader,
             verify_param,
-            report_recipient,
             vec![generate_hmac_key()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -1588,15 +1601,35 @@ mod tests {
         });
     }
 
-    fn reencrypt_report(report: Report, hpke_recipient: &HpkeRecipient) -> Report {
-        let associated_data = Report::associated_data(report.nonce, &report.extensions);
+    fn reencrypt_report(report: Report, hpke_config: &HpkeConfig) -> Report {
         let message = b"this is a message";
+        let associated_data = associated_data_for(report.nonce, &report.extensions);
 
-        let leader_sender = HpkeSender::from_recipient(hpke_recipient);
-        let leader_ciphertext = leader_sender.seal(message, &associated_data).unwrap();
+        let leader_ciphertext = hpke::seal(
+            hpke_config,
+            &HpkeApplicationInfo::new(
+                report.task_id,
+                Label::InputShare,
+                Role::Client,
+                Role::Leader,
+            ),
+            message,
+            &associated_data,
+        )
+        .unwrap();
 
-        let helper_sender = HpkeSender::from_recipient(hpke_recipient);
-        let helper_ciphertext = helper_sender.seal(message, &associated_data).unwrap();
+        let helper_ciphertext = hpke::seal(
+            hpke_config,
+            &HpkeApplicationInfo::new(
+                report.task_id,
+                Label::InputShare,
+                Role::Client,
+                Role::Helper,
+            ),
+            message,
+            &associated_data,
+        )
+        .unwrap();
 
         Report {
             task_id: report.task_id,
@@ -1615,7 +1648,7 @@ mod tests {
 
         // Boundary condition
         report.nonce.time = Time::from_naive_date_time(aggregator.clock.now() + skew);
-        let mut report = reencrypt_report(report, &aggregator.report_recipient);
+        let mut report = reencrypt_report(report, &aggregator.hpke_keys.values().next().unwrap().0);
         aggregator.handle_upload(&report).await.unwrap();
 
         let got_report = datastore
@@ -1629,7 +1662,7 @@ mod tests {
         // Just past the clock skew
         report.nonce.time =
             Time::from_naive_date_time(aggregator.clock.now() + skew + Duration::seconds(1));
-        let report = reencrypt_report(report, &aggregator.report_recipient);
+        let report = reencrypt_report(report, &aggregator.hpke_keys.values().next().unwrap().0);
         assert_matches!(aggregator.handle_upload(&report).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id);
             assert_eq!(report.nonce, nonce);
@@ -1640,21 +1673,13 @@ mod tests {
     async fn aggregate_leader() {
         install_test_trace_subscriber();
 
-        let task_id = TaskId::random();
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let verify_param = vdaf.setup().unwrap().1.remove(1);
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
         let hmac_key = generate_hmac_key();
 
         let request = AggregateReq {
@@ -1673,8 +1698,8 @@ mod tests {
             skew,
             Role::Leader,
             verify_param,
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -1704,15 +1729,8 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
 
         let request = AggregateReq {
             task_id,
@@ -1730,8 +1748,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_param,
-            hpke_recipient,
             vec![generate_hmac_key()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -1774,15 +1792,8 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key.clone())]);
         let hmac_key = generate_hmac_key();
 
         datastore
@@ -1814,7 +1825,7 @@ mod tests {
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_0,
-            hpke_recipient.config(),
+            &hpke_key.0,
             &input_share,
         );
 
@@ -1824,16 +1835,27 @@ mod tests {
         report_share_1.encrypted_input_share.payload[0] ^= 0xFF;
 
         // report_share_2 fails decoding.
-        let nonce = generate_nonce(&clock);
+        let nonce_2 = generate_nonce(&clock);
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
-        let associated_data = Report::associated_data(nonce, &[]);
+        let associated_data = associated_data_for(nonce_2, &[]);
         let report_share_2 = generate_helper_report_share_for_plaintext(
             task_id,
-            nonce,
-            hpke_recipient.config(),
+            nonce_2,
+            &hpke_key.0,
             &input_share_bytes,
             &associated_data,
+        );
+
+        // report_share_3 has an unknown HPKE config ID.
+        let nonce_3 = generate_nonce(&clock);
+        let mut wrong_hpke_config = hpke_key.0.clone();
+        wrong_hpke_config.id = HpkeConfigId(wrong_hpke_config.id.0 + 1);
+        let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_3,
+            &wrong_hpke_config,
+            &input_share,
         );
 
         let request = AggregateReq {
@@ -1845,6 +1867,7 @@ mod tests {
                     report_share_0.clone(),
                     report_share_1.clone(),
                     report_share_2.clone(),
+                    report_share_3.clone(),
                 ],
             },
         };
@@ -1857,8 +1880,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_params[1].clone(),
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -1879,7 +1902,7 @@ mod tests {
                 .unwrap();
 
         // Validate response.
-        assert_eq!(aggregate_resp.seq.len(), 3);
+        assert_eq!(aggregate_resp.seq.len(), 4);
 
         let transition_0 = aggregate_resp.seq.get(0).unwrap();
         assert_eq!(transition_0.nonce, report_share_0.nonce);
@@ -1905,6 +1928,15 @@ mod tests {
                 error: TransitionError::VdafPrepError
             }
         );
+
+        let transition_3 = aggregate_resp.seq.get(3).unwrap();
+        assert_eq!(transition_3.nonce, report_share_3.nonce);
+        assert_matches!(
+            transition_3.trans_data,
+            TransitionTypeSpecificData::Failed {
+                error: TransitionError::HpkeUnknownConfigId
+            }
+        );
     }
 
     #[tokio::test]
@@ -1921,15 +1953,8 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key.clone())]);
         let hmac_key = generate_hmac_key();
 
         datastore
@@ -1949,7 +1974,7 @@ mod tests {
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
             generate_nonce(&clock),
-            hpke_recipient.config(),
+            &hpke_key.0,
             &(),
         );
         let request = AggregateReq {
@@ -1969,8 +1994,8 @@ mod tests {
             skew,
             Role::Helper,
             (),
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -2017,15 +2042,8 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key.clone())]);
         let hmac_key = generate_hmac_key();
 
         datastore
@@ -2045,7 +2063,7 @@ mod tests {
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
             generate_nonce(&clock),
-            hpke_recipient.config(),
+            &hpke_key.0,
             &(),
         );
         let request = AggregateReq {
@@ -2065,8 +2083,8 @@ mod tests {
             skew,
             Role::Helper,
             (),
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -2109,15 +2127,8 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
         let hmac_key = generate_hmac_key();
 
         let report_share = ReportShare {
@@ -2150,8 +2161,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_param,
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -2196,15 +2207,8 @@ mod tests {
         let datastore = Arc::new(datastore);
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key.clone())]);
         let hmac_key = generate_hmac_key();
 
         // report_share_0 is a "happy path" report.
@@ -2223,7 +2227,7 @@ mod tests {
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_0,
-            hpke_recipient.config(),
+            &hpke_key.0,
             &transcript_0.input_shares[1],
         );
 
@@ -2241,7 +2245,7 @@ mod tests {
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_1,
-            hpke_recipient.config(),
+            &hpke_key.0,
             &transcript_1.input_shares[1],
         );
 
@@ -2312,8 +2316,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_params[1].clone(),
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -2414,15 +2418,8 @@ mod tests {
         let datastore = Arc::new(datastore);
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
@@ -2487,8 +2484,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_param,
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -2541,15 +2538,8 @@ mod tests {
         let datastore = Arc::new(datastore);
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
@@ -2616,8 +2606,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_param,
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -2710,15 +2700,8 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
@@ -2788,8 +2771,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_param,
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -2842,15 +2825,8 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
@@ -2950,8 +2926,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_param,
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -2999,15 +2975,8 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
         let skew = Duration::minutes(10);
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let hpke_recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            hpke_private_key,
-        );
+        let hpke_key = generate_hpke_config_and_private_key();
+        let hpke_keys = HashMap::from([(hpke_key.0.id, hpke_key)]);
         let hmac_key = generate_hmac_key();
 
         // Setup datastore.
@@ -3077,8 +3046,8 @@ mod tests {
             skew,
             Role::Helper,
             verify_param,
-            hpke_recipient,
             vec![hmac_key.clone()],
+            hpke_keys,
         )
         .unwrap();
 
@@ -3198,7 +3167,7 @@ mod tests {
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let associated_data = Report::associated_data(nonce, &[]);
+        let associated_data = associated_data_for(nonce, &[]);
         generate_helper_report_share_for_plaintext(
             task_id,
             nonce,
@@ -3215,18 +3184,16 @@ mod tests {
         plaintext: &[u8],
         associated_data: &[u8],
     ) -> ReportShare {
-        let helper_sender = HpkeSender::new(
-            task_id,
-            cfg.clone(),
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-        );
-        let encrypted_input_share = helper_sender.seal(plaintext, associated_data).unwrap();
         ReportShare {
             nonce,
             extensions: Vec::new(),
-            encrypted_input_share,
+            encrypted_input_share: hpke::seal(
+                cfg,
+                &HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, Role::Helper),
+                plaintext,
+                associated_data,
+            )
+            .unwrap(),
         }
     }
 

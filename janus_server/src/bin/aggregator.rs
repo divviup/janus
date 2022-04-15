@@ -5,7 +5,7 @@ use janus_server::{
     aggregator::aggregator_server,
     config::AggregatorConfig,
     datastore::{self, Datastore},
-    hpke::{test_util::generate_hpke_config_and_private_key, HpkeRecipient, Label},
+    hpke::test_util::generate_hpke_config_and_private_key,
     message::Role,
     message::TaskId,
     time::RealClock,
@@ -18,6 +18,7 @@ use ring::{
     rand::SystemRandom,
 };
 use std::{
+    collections::HashMap,
     fmt::{self, Debug, Formatter},
     fs::File,
     iter::Iterator,
@@ -150,15 +151,8 @@ async fn main() -> Result<()> {
     // TODO(timg): tasks and the corresponding HPKE configuration and private
     // keys should be loaded from the database (see discussion in #37)
     let task_id = TaskId::random();
-    let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-    let hpke_recipient = HpkeRecipient::new(
-        task_id,
-        hpke_config,
-        Label::InputShare,
-        Role::Client,
-        options.role,
-        hpke_private_key,
-    );
+    let hpke_key = generate_hpke_config_and_private_key();
+    let hpke_keys = HashMap::from([(hpke_key.0.id(), hpke_key)]);
 
     let agg_auth_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new())
         .map_err(|_| anyhow!("couldn't generate agg_auth_key"))?;
@@ -170,8 +164,8 @@ async fn main() -> Result<()> {
         Duration::minutes(10),
         options.role,
         verify_param,
-        hpke_recipient,
         vec![agg_auth_key],
+        hpke_keys,
         config.listen_address,
     )
     .context("failed to create aggregator server")?;
