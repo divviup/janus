@@ -14,7 +14,7 @@ use crate::{
     message::{
         AggregationJobId, Extension, HpkeCiphertext, Nonce, Report, ReportShare, TaskId, Time,
     },
-    task::{self, TaskParameters},
+    task::{self, Task},
 };
 use futures::try_join;
 use postgres_types::ToSql;
@@ -103,7 +103,7 @@ pub struct Transaction<'a> {
 impl Transaction<'_> {
     // This is pub to be used in integration tests
     #[doc(hidden)]
-    pub async fn put_task(&self, task: &TaskParameters) -> Result<(), Error> {
+    pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
         let aggregator_role = AggregatorRole::from_role(task.role)?;
 
         let endpoints: Vec<&str> = task
@@ -226,7 +226,7 @@ impl Transaction<'_> {
     // Only available in test configs for now, but will soon be used by
     // aggregators to discover tasks from the database.
     #[cfg(test)]
-    pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<TaskParameters, Error> {
+    pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<Task, Error> {
         let params: &[&(dyn ToSql + Sync)] = &[&&task_id.0[..]];
         let stmt = self
             .tx
@@ -261,12 +261,12 @@ impl Transaction<'_> {
             try_join!(task_row, agg_auth_key_rows, hpke_key_rows)?;
         let task_row = single_row(task_row)?;
 
-        self.task_parameters_from_rows(task_id, task_row, agg_auth_key_rows, hpke_key_rows)
+        self.task_from_rows(task_id, task_row, agg_auth_key_rows, hpke_key_rows)
     }
 
     /// Fetch all the tasks in the database.
     #[cfg(test)]
-    pub(crate) async fn get_tasks(&self) -> Result<Vec<TaskParameters>, Error> {
+    pub(crate) async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
         use std::collections::HashMap;
 
         let stmt = self
@@ -328,7 +328,7 @@ impl Transaction<'_> {
         task_row_by_id
             .into_iter()
             .map(|(task_id, row)| {
-                self.task_parameters_from_rows(
+                self.task_from_rows(
                     task_id,
                     row,
                     agg_auth_key_rows_by_task_id
@@ -342,16 +342,18 @@ impl Transaction<'_> {
             .collect::<Result<_, _>>()
     }
 
-    /// Construct a [`TaskParameters`] from the contents of the provided `Row`.
+    /// Construct a [`Task`] from the contents of the provided (tasks) `Row`,
+    /// `hpke_aggregator_auth_keys` rows, and `task_hpke_keys` rows.
+    ///
     /// agg_auth_key_rows must be sorted in ascending order by `ord`.
     #[cfg(test)]
-    fn task_parameters_from_rows(
+    fn task_from_rows(
         &self,
         task_id: TaskId,
         row: Row,
         agg_auth_key_rows: Vec<Row>,
         hpke_key_rows: Vec<Row>,
-    ) -> Result<TaskParameters, Error> {
+    ) -> Result<Task, Error> {
         // Scalar task parameters.
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
         let endpoints: Vec<String> = row.get("aggregator_endpoints");
@@ -412,7 +414,7 @@ impl Transaction<'_> {
             hpke_configs.push((config, private_key));
         }
 
-        Ok(TaskParameters::new(
+        Ok(Task::new(
             task_id,
             endpoints,
             vdaf,
@@ -1089,7 +1091,7 @@ pub enum Error {
     #[error("URL parse error: {0}")]
     Url(#[from] url::ParseError),
     #[error("invalid task parameters: {0}")]
-    TaskParameters(#[from] task::Error),
+    Task(#[from] task::Error),
     #[error("integer conversion failed: {0}")]
     TryFromInt(#[from] std::num::TryFromIntError),
 }
@@ -1147,7 +1149,7 @@ pub mod models {
             match role {
                 Role::Leader => Ok(Self::Leader),
                 Role::Helper => Ok(Self::Helper),
-                _ => Err(Error::TaskParameters(task::Error::InvalidParameter(
+                _ => Err(Error::Task(task::Error::InvalidParameter(
                     "role is not an aggregator",
                 ))),
             }
@@ -1390,7 +1392,7 @@ mod tests {
             test_util::{ephemeral_datastore, generate_aead_key},
         },
         message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
-        task::{test_util::new_dummy_task_parameters, Vdaf},
+        task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
@@ -1448,11 +1450,11 @@ mod tests {
         // Insert tasks, check that they can be retrieved by ID.
         let mut want_tasks = HashMap::new();
         for (task_id, vdaf, role) in values {
-            let task_params = new_dummy_task_parameters(task_id, vdaf, role);
+            let task = new_dummy_task(task_id, vdaf, role);
 
             ds.run_tx(|tx| {
-                let task_params = task_params.clone();
-                Box::pin(async move { tx.put_task(&task_params).await })
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
             })
             .await
             .unwrap();
@@ -1461,11 +1463,11 @@ mod tests {
                 .run_tx(|tx| Box::pin(async move { tx.get_task_by_id(task_id).await }))
                 .await
                 .unwrap();
-            assert_eq!(task_params, retrieved_task);
-            want_tasks.insert(task_id, task_params);
+            assert_eq!(task, retrieved_task);
+            want_tasks.insert(task_id, task);
         }
 
-        let got_tasks: HashMap<TaskId, TaskParameters> = ds
+        let got_tasks: HashMap<TaskId, Task> = ds
             .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap()
@@ -1513,7 +1515,7 @@ mod tests {
         ds.run_tx(|tx| {
             let report = report.clone();
             Box::pin(async move {
-                tx.put_task(&new_dummy_task_parameters(
+                tx.put_task(&new_dummy_task(
                     report.task_id,
                     Vdaf::Prio3Aes128Count,
                     Role::Leader,
@@ -1589,7 +1591,7 @@ mod tests {
         ds.run_tx(|tx| {
             let report_share = report_share.clone();
             Box::pin(async move {
-                tx.put_task(&new_dummy_task_parameters(
+                tx.put_task(&new_dummy_task(
                     task_id,
                     Vdaf::Prio3Aes128Count,
                     Role::Leader,
@@ -1653,7 +1655,7 @@ mod tests {
         ds.run_tx(|tx| {
             let aggregation_job = aggregation_job.clone();
             Box::pin(async move {
-                tx.put_task(&new_dummy_task_parameters(
+                tx.put_task(&new_dummy_task(
                     aggregation_job.task_id,
                     Vdaf::Poplar1,
                     Role::Leader,
@@ -1766,7 +1768,7 @@ mod tests {
                 .run_tx(|tx| {
                     let state = state.clone();
                     Box::pin(async move {
-                        tx.put_task(&new_dummy_task_parameters(
+                        tx.put_task(&new_dummy_task(
                             task_id,
                             Vdaf::Prio3Aes128Count,
                             Role::Leader,
@@ -1912,7 +1914,7 @@ mod tests {
                 let output_share = output_share.clone();
 
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Leader,

@@ -105,7 +105,7 @@ impl Eq for AggregatorAuthKey {}
 
 /// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TaskParameters {
+pub struct Task {
     /// Unique identifier for the task
     pub(crate) id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
@@ -136,8 +136,8 @@ pub struct TaskParameters {
     pub(crate) hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
 
-impl TaskParameters {
-    /// Create a new [`TaskParameters`] from the provided values
+impl Task {
+    /// Create a new [`Task`] from the provided values
     pub fn new<I: IntoIterator<Item = (HpkeConfig, HpkePrivateKey)>>(
         task_id: TaskId,
         aggregator_endpoints: Vec<Url>,
@@ -189,16 +189,16 @@ impl TaskParameters {
 // This is public to allow use in integration tests.
 #[doc(hidden)]
 pub mod test_util {
-    use super::{TaskParameters, Vdaf};
+    use super::{Task, Vdaf};
     use crate::{
         message::{Duration, HpkeConfigId, Role, TaskId},
         task::AggregatorAuthKey,
     };
 
-    /// Create a dummy [`TaskParameters`] from the provided [`TaskId`], with
+    /// Create a dummy [`Task`] from the provided [`TaskId`], with
     /// dummy values for the other fields. This is pub because it is needed for
     /// integration tests.
-    pub fn new_dummy_task_parameters(task_id: TaskId, vdaf: Vdaf, role: Role) -> TaskParameters {
+    pub fn new_dummy_task(task_id: TaskId, vdaf: Vdaf, role: Role) -> Task {
         use crate::hpke::test_util::generate_hpke_config_and_private_key;
 
         let (collector_config, _) = generate_hpke_config_and_private_key();
@@ -208,7 +208,7 @@ pub mod test_util {
             generate_hpke_config_and_private_key();
         aggregator_config_1.id = HpkeConfigId(u8::MAX);
 
-        TaskParameters::new(
+        Task::new(
             task_id,
             vec![
                 "http://leader_endpoint".parse().unwrap(),

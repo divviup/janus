@@ -1132,7 +1132,7 @@ mod tests {
         datastore::test_util::{ephemeral_datastore, DbHandle},
         hpke::{associated_data_for, test_util::generate_hpke_config_and_private_key, Label},
         message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
-        task::{test_util::new_dummy_task_parameters, Vdaf},
+        task::{test_util::new_dummy_task, Vdaf},
         time::tests::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
@@ -1275,9 +1275,14 @@ mod tests {
 
         datastore
             .run_tx(|tx| {
-                let task_parameters =
-                    new_dummy_task_parameters(task_id, Vdaf::Prio3Aes128Count, Role::Leader);
-                Box::pin(async move { tx.put_task(&task_parameters).await })
+                Box::pin(async move {
+                    tx.put_task(&new_dummy_task(
+                        task_id,
+                        Vdaf::Prio3Aes128Count,
+                        Role::Leader,
+                    ))
+                    .await
+                })
             })
             .await
             .unwrap();
@@ -1799,7 +1804,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
@@ -1960,7 +1965,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
@@ -2049,7 +2054,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
@@ -2256,7 +2261,7 @@ mod tests {
                 let (prep_step_0, prep_step_1) = (prep_step_0.clone(), prep_step_1.clone());
 
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
@@ -2426,7 +2431,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
@@ -2546,7 +2551,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
@@ -2708,7 +2713,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
@@ -2833,7 +2838,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,
@@ -2983,7 +2988,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_task(&new_dummy_task_parameters(
+                    tx.put_task(&new_dummy_task(
                         task_id,
                         Vdaf::Prio3Aes128Count,
                         Role::Helper,

@@ -5,7 +5,7 @@ use janus_server::{
     datastore::test_util::{ephemeral_datastore, DbHandle},
     hpke::test_util::generate_hpke_config_and_private_key,
     message::{self, Role, TaskId},
-    task::{AggregatorAuthKey, TaskParameters, Vdaf},
+    task::{AggregatorAuthKey, Task, Vdaf},
     time::RealClock,
     trace::{install_trace_subscriber, TraceConfiguration},
 };
@@ -87,7 +87,7 @@ async fn setup_test() -> TestCase {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
-    let leader_task_parameters = TaskParameters::new(
+    let leader_task = Task::new(
         task_id,
         vec![
             endpoint_from_socket_addr(&leader_address),
@@ -108,8 +108,8 @@ async fn setup_test() -> TestCase {
 
     leader_datastore
         .run_tx(|tx| {
-            let task_parameters = leader_task_parameters.clone();
-            Box::pin(async move { tx.put_task(&task_parameters).await })
+            let task = leader_task.clone();
+            Box::pin(async move { tx.put_task(&task).await })
         })
         .await
         .unwrap();
@@ -117,7 +117,7 @@ async fn setup_test() -> TestCase {
     let leader_task_handle = tokio::spawn(leader_server);
     let helper_task_handle = tokio::spawn(helper_server);
 
-    let client_parameters = ClientParameters::from_task_parameters(&leader_task_parameters);
+    let client_parameters = ClientParameters::from_task(&leader_task);
 
     let http_client = client::default_http_client().unwrap();
     let leader_report_config =
