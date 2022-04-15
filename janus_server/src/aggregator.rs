@@ -1835,16 +1835,27 @@ mod tests {
         report_share_1.encrypted_input_share.payload[0] ^= 0xFF;
 
         // report_share_2 fails decoding.
-        let nonce = generate_nonce(&clock);
+        let nonce_2 = generate_nonce(&clock);
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
-        let associated_data = associated_data_for(nonce, &[]);
+        let associated_data = associated_data_for(nonce_2, &[]);
         let report_share_2 = generate_helper_report_share_for_plaintext(
             task_id,
-            nonce,
+            nonce_2,
             &hpke_key.0,
             &input_share_bytes,
             &associated_data,
+        );
+
+        // report_share_3 has an unknown HPKE config ID.
+        let nonce_3 = generate_nonce(&clock);
+        let mut wrong_hpke_config = hpke_key.0.clone();
+        wrong_hpke_config.id = HpkeConfigId(wrong_hpke_config.id.0 + 1);
+        let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_3,
+            &wrong_hpke_config,
+            &input_share,
         );
 
         let request = AggregateReq {
@@ -1856,6 +1867,7 @@ mod tests {
                     report_share_0.clone(),
                     report_share_1.clone(),
                     report_share_2.clone(),
+                    report_share_3.clone(),
                 ],
             },
         };
@@ -1890,7 +1902,7 @@ mod tests {
                 .unwrap();
 
         // Validate response.
-        assert_eq!(aggregate_resp.seq.len(), 3);
+        assert_eq!(aggregate_resp.seq.len(), 4);
 
         let transition_0 = aggregate_resp.seq.get(0).unwrap();
         assert_eq!(transition_0.nonce, report_share_0.nonce);
@@ -1914,6 +1926,15 @@ mod tests {
             transition_2.trans_data,
             TransitionTypeSpecificData::Failed {
                 error: TransitionError::VdafPrepError
+            }
+        );
+
+        let transition_3 = aggregate_resp.seq.get(3).unwrap();
+        assert_eq!(transition_3.nonce, report_share_3.nonce);
+        assert_matches!(
+            transition_3.trans_data,
+            TransitionTypeSpecificData::Failed {
+                error: TransitionError::HpkeUnknownConfigId
             }
         );
     }

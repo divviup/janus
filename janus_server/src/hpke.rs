@@ -102,11 +102,12 @@ pub(crate) fn associated_data_for(nonce: Nonce, extensions: &[Extension]) -> Vec
     associated_data
 }
 
-/// Encrypt `plaintext` and return the HPKE ciphertext.
-///
-/// In PPM, an HPKE context can only be used once (we have no means of
-/// ensuring that sender and recipient "increment" nonces in lockstep), so
-/// this method creates a new HPKE context on each call.
+/// Encrypt `plaintext` using the provided `recipient_config` and return the HPKE ciphertext. The
+/// provided `application_info` and `associated_data` are cryptographically bound to the ciphertext
+/// and are required to successfully decrypt it.
+// In PPM, an HPKE context can only be used once (we have no means of
+// ensuring that sender and recipient "increment" nonces in lockstep), so
+// this method creates a new HPKE context on each call.
 pub(crate) fn seal(
     recipient_config: &HpkeConfig,
     application_info: &HpkeApplicationInfo,
@@ -209,11 +210,9 @@ fn seal_generic<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
     })
 }
 
-/// Decrypt `ciphertext` and return the plaintext, but with a directly-specified application
-/// information byte string. In normal operation, this is called by [open] with the
-/// PPM-specified domain separation information. Test may use this directly to provide non-PPM
-/// application information byte strings, for example to check against the HPKE RFC's test
-/// vectors.
+/// Decrypt `ciphertext` using the provided `recipient_config` & `recipient_private_key`, and return
+/// the plaintext. The `application_info` and `associated_data` must match what was provided to
+/// [`seal()`] exactly.
 pub(crate) fn open(
     recipient_config: &HpkeConfig,
     recipient_private_key: &HpkePrivateKey,
@@ -290,8 +289,7 @@ pub(crate) fn open(
     )
 }
 
-// This function exists separately from struct HpkeRecipient to abstract away its
-// generic parameters
+// This function exists separately from open() to abstract away its generic parameters.
 fn open_generic<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
     recipient_private_key: &HpkePrivateKey,
     application_info: &HpkeApplicationInfo,
