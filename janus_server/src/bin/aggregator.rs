@@ -167,6 +167,7 @@ async fn main() -> Result<()> {
         vec![agg_auth_key],
         hpke_keys,
         config.listen_address,
+        std::future::pending(),
     )
     .context("failed to create aggregator server")?;
     info!(?task_id, ?bound_address, "running aggregator");
