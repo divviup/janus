@@ -1,20 +1,22 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::{HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeKdfId, HpkeKemId, Role, TaskId};
+use crate::message::{
+    Extension, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeKdfId, HpkeKemId, Nonce, Role, TaskId,
+};
 use hpke::{
     aead::{Aead, AesGcm128, AesGcm256, ChaCha20Poly1305},
     kdf::{HkdfSha256, HkdfSha384, HkdfSha512, Kdf},
     kem::{DhP256HkdfSha256, X25519HkdfSha256},
     Deserializable, HpkeError, Kem, OpModeR, OpModeS, Serializable,
 };
+use prio::codec::{encode_u16_items, Encode};
 use rand::thread_rng;
 use std::str::FromStr;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Wrapper around errors from crate hpke. See [`hpke::HpkeError`] for more
-    /// details on possible variants.
-    #[error("HPKE error")]
+    /// An error occurred in the underlying HPKE library.
+    #[error("HPKE error: {0}")]
     Hpke(#[from] HpkeError),
     #[error("invalid HPKE configuration: {0}")]
     InvalidConfiguration(&'static str),
@@ -38,6 +40,10 @@ impl Label {
 
 /// An HPKE private key, serialized using the `SerializePrivateKey` function as
 /// described in RFC 9180, §4 and §7.1.2.
+// TODO(brandon): refactor HpkePrivateKey to carry around a decoded private key so we don't have to
+// decode on every cryptographic operation.
+// TODO(brandon): everywhere that actually uses an HpkePrivateKey also requires an HpkeConfig for
+// context. Create a type that is effectively (HpkeConfig, HpkePrivateKey) and pass that around instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HpkePrivateKey(Vec<u8>);
 
@@ -69,12 +75,12 @@ impl FromStr for HpkePrivateKey {
 
 /// Application info used in HPKE context construction
 #[derive(Clone, Debug)]
-struct HpkeApplicationInfo(Vec<u8>);
+pub struct HpkeApplicationInfo(Vec<u8>);
 
 impl HpkeApplicationInfo {
     /// Construct HPKE application info from the provided PPM task ID, label and
     /// participant roles.
-    fn new(task_id: TaskId, label: Label, sender_role: Role, recipient_role: Role) -> Self {
+    pub fn new(task_id: TaskId, label: Label, sender_role: Role, recipient_role: Role) -> Self {
         Self(
             [
                 task_id.as_bytes(),
@@ -87,144 +93,99 @@ impl HpkeApplicationInfo {
     }
 }
 
-/// A one-shot HPKE sender that encrypts messages to the public key in
-/// `recipient_config` using the AEAD, key derivation and key encapsulation
-/// mechanisms specified in `recipient_config`, and using `label`, `sender_role`
-/// and `recipient_role` to derive application info.
-//
-// This type only exists separately from Sender so that we can have a type that
-// doesn't "leak" the generic type parameters into the caller.
-#[derive(Clone, Debug)]
-pub struct HpkeSender {
-    task_id: TaskId,
-    recipient_config: HpkeConfig,
-    label: Label,
-    sender_role: Role,
-    recipient_role: Role,
+/// Construct the HPKE associated data for sealing or opening data enciphered for a report or report
+/// share, per §4.3.2 and 4.4.2.2 of draft-gpew-priv-ppm
+pub(crate) fn associated_data_for(nonce: Nonce, extensions: &[Extension]) -> Vec<u8> {
+    let mut associated_data = vec![];
+    nonce.encode(&mut associated_data);
+    encode_u16_items(&mut associated_data, &(), extensions);
+    associated_data
 }
 
-impl HpkeSender {
-    /// Create an [`HpkeSender`] with the provided parameters.
-    pub fn new(
-        task_id: TaskId,
-        recipient_config: HpkeConfig,
-        label: Label,
-        sender_role: Role,
-        recipient_role: Role,
-    ) -> Self {
-        Self {
-            task_id,
-            recipient_config,
-            label,
-            sender_role,
-            recipient_role,
-        }
-    }
-
-    /// Create an [`HpkeSender`] configured to encrypt messages to the provided
-    /// [`HpkeRecipient`].
-    #[cfg(test)]
-    pub(crate) fn from_recipient(recipient: &HpkeRecipient) -> Self {
-        Self {
-            task_id: recipient.task_id,
-            recipient_config: recipient.config.clone(),
-            label: recipient.label,
-            sender_role: recipient.sender_role,
-            recipient_role: recipient.recipient_role,
-        }
-    }
-
-    /// Encrypt `plaintext` and return the HPKE ciphertext.
-    ///
-    /// In PPM, an HPKE context can only be used once (we have no means of
-    /// ensuring that sender and recipient "increment" nonces in lockstep), so
-    /// this method creates a new HPKE context on each call.
-    pub(crate) fn seal(
-        &self,
-        plaintext: &[u8],
-        associated_data: &[u8],
-    ) -> Result<HpkeCiphertext, Error> {
-        // We must manually dispatch to each possible specialization of seal
-        let seal = match (
-            self.recipient_config.aead_id,
-            self.recipient_config.kdf_id,
-            self.recipient_config.kem_id,
-        ) {
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-                seal::<AesGcm128, HkdfSha256, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-                seal::<AesGcm256, HkdfSha256, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-                seal::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-                seal::<AesGcm128, HkdfSha384, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-                seal::<AesGcm256, HkdfSha384, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-                seal::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-                seal::<AesGcm128, HkdfSha512, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-                seal::<AesGcm256, HkdfSha512, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-                seal::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-                seal::<AesGcm128, HkdfSha256, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-                seal::<AesGcm256, HkdfSha256, X25519HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-                seal::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-                seal::<AesGcm128, HkdfSha384, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-                seal::<AesGcm256, HkdfSha384, X25519HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-                seal::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-                seal::<AesGcm128, HkdfSha512, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-                seal::<AesGcm256, HkdfSha512, X25519HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-                seal::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>
-            }
-        };
-        let application_info = HpkeApplicationInfo::new(
-            self.task_id,
-            self.label,
-            self.sender_role,
-            self.recipient_role,
-        );
-        seal(
-            &self.recipient_config,
-            application_info,
-            plaintext,
-            associated_data,
-        )
-    }
-}
-
-// This function exists separately from struct HpkeSender to abstract away its
-// generic parameters
-fn seal<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
+/// Encrypt `plaintext` and return the HPKE ciphertext.
+///
+/// In PPM, an HPKE context can only be used once (we have no means of
+/// ensuring that sender and recipient "increment" nonces in lockstep), so
+/// this method creates a new HPKE context on each call.
+pub(crate) fn seal(
     recipient_config: &HpkeConfig,
-    application_info: HpkeApplicationInfo,
+    application_info: &HpkeApplicationInfo,
+    plaintext: &[u8],
+    associated_data: &[u8],
+) -> Result<HpkeCiphertext, Error> {
+    // We must manually dispatch to each possible specialization of seal.
+    let seal = match (
+        recipient_config.aead_id,
+        recipient_config.kdf_id,
+        recipient_config.kem_id,
+    ) {
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+            seal_generic::<AesGcm128, HkdfSha256, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+            seal_generic::<AesGcm256, HkdfSha256, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+            seal_generic::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+            seal_generic::<AesGcm128, HkdfSha384, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+            seal_generic::<AesGcm256, HkdfSha384, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+            seal_generic::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+            seal_generic::<AesGcm128, HkdfSha512, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+            seal_generic::<AesGcm256, HkdfSha512, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+            seal_generic::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+            seal_generic::<AesGcm128, HkdfSha256, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+            seal_generic::<AesGcm256, HkdfSha256, X25519HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+            seal_generic::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+            seal_generic::<AesGcm128, HkdfSha384, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+            seal_generic::<AesGcm256, HkdfSha384, X25519HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+            seal_generic::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+            seal_generic::<AesGcm128, HkdfSha512, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+            seal_generic::<AesGcm256, HkdfSha512, X25519HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+            seal_generic::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>
+        }
+    };
+    seal(
+        recipient_config,
+        application_info,
+        plaintext,
+        associated_data,
+    )
+}
+
+// This function exists separately from seal() to abstract away its generic parameters.
+fn seal_generic<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
+    recipient_config: &HpkeConfig,
+    application_info: &HpkeApplicationInfo,
     plaintext: &[u8],
     associated_data: &[u8],
 ) -> Result<HpkeCiphertext, Error> {
@@ -248,160 +209,97 @@ fn seal<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
     })
 }
 
-/// An HPKE recipient that decrypts messages encrypted to the public key in
-/// `recipient_config`, using the AEAD, key derivation and key encapsulation
-/// mechanisms specified in `recipient_config`, and using `label`, `sender_role`
-/// and `recipient_role` to derive application info.
-//
-// This type only exists separately from Recipient so that we can have a type
-// that doesn't "leak" the generic type parameters into the caller.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HpkeRecipient {
-    task_id: TaskId,
-    config: HpkeConfig,
-    label: Label,
-    sender_role: Role,
-    recipient_role: Role,
-    recipient_private_key: HpkePrivateKey,
-}
-
-impl HpkeRecipient {
-    /// Create an HPKE recipient from the provided parameters.
-    pub fn new(
-        task_id: TaskId,
-        hpke_config: HpkeConfig,
-        label: Label,
-        sender_role: Role,
-        recipient_role: Role,
-        serialized_private_key: HpkePrivateKey,
-    ) -> Self {
-        Self {
-            task_id,
-            config: hpke_config,
-            label,
-            sender_role,
-            recipient_role,
-            recipient_private_key: serialized_private_key,
+/// Decrypt `ciphertext` and return the plaintext, but with a directly-specified application
+/// information byte string. In normal operation, this is called by [open] with the
+/// PPM-specified domain separation information. Test may use this directly to provide non-PPM
+/// application information byte strings, for example to check against the HPKE RFC's test
+/// vectors.
+pub(crate) fn open(
+    recipient_config: &HpkeConfig,
+    recipient_private_key: &HpkePrivateKey,
+    application_info: &HpkeApplicationInfo,
+    ciphertext: &HpkeCiphertext,
+    associated_data: &[u8],
+) -> Result<Vec<u8>, Error> {
+    // We must manually dispatch to each possible specialization of open.
+    let open = match (
+        recipient_config.aead_id,
+        recipient_config.kdf_id,
+        recipient_config.kem_id,
+    ) {
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+            open_generic::<AesGcm128, HkdfSha256, DhP256HkdfSha256>
         }
-    }
-
-    /// The HPKE configuration for this recipient.
-    pub fn config(&self) -> &HpkeConfig {
-        &self.config
-    }
-
-    /// The private key used by this recipient.
-    pub fn private_key(&self) -> &HpkePrivateKey {
-        &self.recipient_private_key
-    }
-
-    /// Decrypt `ciphertext` and return the plaintext.
-    ///
-    /// In PPM, an HPKE context can only be used once (we have no means of
-    /// ensuring that sender and recipient "increment" nonces in lockstep), so
-    /// this method creates a new HPKE context on each call.
-    pub(crate) fn open(
-        &self,
-        ciphertext: &HpkeCiphertext,
-        associated_data: &[u8],
-    ) -> Result<Vec<u8>, Error> {
-        let application_info = HpkeApplicationInfo::new(
-            self.task_id,
-            self.label,
-            self.sender_role,
-            self.recipient_role,
-        );
-        self.open_internal(ciphertext, application_info, associated_data)
-    }
-
-    /// Decrypt `ciphertext` and return the plaintext, but with a directly-specified application
-    /// information byte string. In normal operation, this is called by [open] with the
-    /// PPM-specified domain separation information. Test may use this directly to provide non-PPM
-    /// application information byte strings, for example to check against the HPKE RFC's test
-    /// vectors.
-    fn open_internal(
-        &self,
-        ciphertext: &HpkeCiphertext,
-        application_info: HpkeApplicationInfo,
-        associated_data: &[u8],
-    ) -> Result<Vec<u8>, Error> {
-        // We must manually dispatch to each possible specialization of open
-        let open = match (self.config.aead_id, self.config.kdf_id, self.config.kem_id) {
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-                open::<AesGcm128, HkdfSha256, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-                open::<AesGcm256, HkdfSha256, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-                open::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-                open::<AesGcm128, HkdfSha384, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-                open::<AesGcm256, HkdfSha384, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-                open::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-                open::<AesGcm128, HkdfSha512, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-                open::<AesGcm256, HkdfSha512, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-                open::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-                open::<AesGcm128, HkdfSha256, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-                open::<AesGcm256, HkdfSha256, X25519HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-                open::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-                open::<AesGcm128, HkdfSha384, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-                open::<AesGcm256, HkdfSha384, X25519HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-                open::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-                open::<AesGcm128, HkdfSha512, X25519HkdfSha256>
-            }
-            (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-                open::<AesGcm256, HkdfSha512, X25519HkdfSha256>
-            }
-            (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-                open::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>
-            }
-        };
-        open(
-            application_info,
-            ciphertext,
-            associated_data,
-            &self.recipient_private_key,
-        )
-    }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+            open_generic::<AesGcm256, HkdfSha256, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
+            open_generic::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+            open_generic::<AesGcm128, HkdfSha384, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+            open_generic::<AesGcm256, HkdfSha384, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
+            open_generic::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+            open_generic::<AesGcm128, HkdfSha512, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+            open_generic::<AesGcm256, HkdfSha512, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
+            open_generic::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+            open_generic::<AesGcm128, HkdfSha256, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+            open_generic::<AesGcm256, HkdfSha256, X25519HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
+            open_generic::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+            open_generic::<AesGcm128, HkdfSha384, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+            open_generic::<AesGcm256, HkdfSha384, X25519HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
+            open_generic::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+            open_generic::<AesGcm128, HkdfSha512, X25519HkdfSha256>
+        }
+        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+            open_generic::<AesGcm256, HkdfSha512, X25519HkdfSha256>
+        }
+        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
+            open_generic::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>
+        }
+    };
+    open(
+        recipient_private_key,
+        application_info,
+        ciphertext,
+        associated_data,
+    )
 }
 
 // This function exists separately from struct HpkeRecipient to abstract away its
 // generic parameters
-fn open<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
-    application_info: HpkeApplicationInfo,
+fn open_generic<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
+    recipient_private_key: &HpkePrivateKey,
+    application_info: &HpkeApplicationInfo,
     ciphertext: &HpkeCiphertext,
     associated_data: &[u8],
-    serialized_recipient_private_key: &HpkePrivateKey,
 ) -> Result<Vec<u8>, Error> {
     // Deserialize recipient priv into the appropriate PrivateKey type for the KEM.
-    let recipient_private_key =
-        Encapsulate::PrivateKey::from_bytes(&serialized_recipient_private_key.0)?;
+    let recipient_private_key = Encapsulate::PrivateKey::from_bytes(&recipient_private_key.0)?;
 
     // Deserialize sender encapsulated key into the appropriate EncappedKey for the KEM.
     let sender_encapped_key =
@@ -457,31 +355,27 @@ mod tests {
     #[test]
     fn exchange_message() {
         install_test_trace_subscriber();
-        let task_id = TaskId::random();
-        // Sender and receiver must agree on AAD for each message
-        let associated_data = b"message associated data";
-        let message = b"a message that is secret";
 
         let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
+        let application_info = HpkeApplicationInfo::new(
+            TaskId::random(),
             Label::InputShare,
             Role::Client,
             Role::Leader,
-            hpke_private_key,
         );
+        let message = b"a message that is secret";
+        let associated_data = b"message associated data";
 
-        let sender = HpkeSender {
-            task_id: recipient.task_id,
-            recipient_config: recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
+        let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
 
-        let ciphertext = sender.seal(message, associated_data).unwrap();
-        let plaintext = recipient.open(&ciphertext, associated_data).unwrap();
+        let plaintext = open(
+            &hpke_config,
+            &hpke_private_key,
+            &application_info,
+            &ciphertext,
+            associated_data,
+        )
+        .unwrap();
 
         assert_eq!(plaintext, message);
     }
@@ -489,134 +383,113 @@ mod tests {
     #[test]
     fn wrong_private_key() {
         install_test_trace_subscriber();
-        let task_id = TaskId::random();
-        // Sender and receiver must agree on AAD for each message
-        let associated_data = b"message associated data";
+
+        let (hpke_config, _) = generate_hpke_config_and_private_key();
+        let application_info = HpkeApplicationInfo::new(
+            TaskId::random(),
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+        );
         let message = b"a message that is secret";
+        let associated_data = b"message associated data";
 
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-            hpke_private_key,
-        );
+        let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
 
-        let sender = HpkeSender {
-            task_id: recipient.task_id,
-            recipient_config: recipient.config,
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
-
-        let ciphertext = sender.seal(message, associated_data).unwrap();
-
-        // Attempt to decrypt with different private key
+        // Attempt to decrypt with different private key, and verify this fails.
         let (wrong_hpke_config, wrong_hpke_private_key) = generate_hpke_config_and_private_key();
-        let wrong_recipient = HpkeRecipient::new(
-            task_id,
-            wrong_hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-            wrong_hpke_private_key,
-        );
-
-        wrong_recipient
-            .open(&ciphertext, associated_data)
-            .unwrap_err();
+        open(
+            &wrong_hpke_config,
+            &wrong_hpke_private_key,
+            &application_info,
+            &ciphertext,
+            associated_data,
+        )
+        .unwrap_err();
     }
 
     #[test]
     fn wrong_application_info() {
         install_test_trace_subscriber();
-        let task_id = TaskId::random();
-        // Sender and receiver must agree on AAD for each message
-        let associated_data = b"message associated data";
-        let message = b"a message that is secret";
 
         let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-            hpke_private_key,
-        );
+        let task_id = TaskId::random();
+        let application_info =
+            HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, Role::Leader);
+        let message = b"a message that is secret";
+        let associated_data = b"message associated data";
 
-        let sender = HpkeSender {
-            task_id: recipient.task_id,
-            recipient_config: recipient.config.clone(),
-            label: Label::AggregateShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
+        let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
 
-        let ciphertext = sender.seal(message, associated_data).unwrap();
-        recipient.open(&ciphertext, associated_data).unwrap_err();
+        let wrong_application_info =
+            HpkeApplicationInfo::new(task_id, Label::AggregateShare, Role::Client, Role::Leader);
+        open(
+            &hpke_config,
+            &hpke_private_key,
+            &wrong_application_info,
+            &ciphertext,
+            associated_data,
+        )
+        .unwrap_err();
     }
 
     #[test]
     fn wrong_associated_data() {
         install_test_trace_subscriber();
-        let task_id = TaskId::random();
-        let message = b"a message that is secret";
 
         let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let recipient = HpkeRecipient::new(
-            task_id,
-            hpke_config,
+        let application_info = HpkeApplicationInfo::new(
+            TaskId::random(),
             Label::InputShare,
             Role::Client,
             Role::Leader,
-            hpke_private_key,
         );
+        let message = b"a message that is secret";
+        let associated_data = b"message associated data";
 
-        let sender = HpkeSender {
-            task_id: recipient.task_id,
-            recipient_config: recipient.config.clone(),
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-        };
+        let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
 
-        let ciphertext = sender.seal(message, b"correct associated data").unwrap();
-        recipient
-            .open(&ciphertext, b"wrong associated data")
-            .unwrap_err();
+        // Sender and receiver must agree on AAD for each message.
+        let wrong_associated_data = b"wrong associated data";
+        open(
+            &hpke_config,
+            &hpke_private_key,
+            &application_info,
+            &ciphertext,
+            wrong_associated_data,
+        )
+        .unwrap_err();
     }
 
     fn round_trip_check<KEM: hpke::Kem, KDF: hpke::kdf::Kdf, AEAD: hpke::aead::Aead>() {
-        static ASSOCIATED_DATA: &[u8] = b"round trip test associated data";
-        static MESSAGE: &[u8] = b"round trip test message";
+        const ASSOCIATED_DATA: &[u8] = b"round trip test associated data";
+        const MESSAGE: &[u8] = b"round trip test message";
 
-        let task_id = TaskId::random();
-        let mut rng = thread_rng();
-
-        let (private_key, public_key) = KEM::gen_keypair(&mut rng);
-        let config = HpkeConfig {
+        let (private_key, public_key) = KEM::gen_keypair(&mut thread_rng());
+        let hpke_config = HpkeConfig {
             id: HpkeConfigId(0),
             kem_id: KEM::KEM_ID.try_into().unwrap(),
             kdf_id: KDF::KDF_ID.try_into().unwrap(),
             aead_id: AEAD::AEAD_ID.try_into().unwrap(),
             public_key: HpkePublicKey(public_key.to_bytes().to_vec()),
         };
-        let recipient = HpkeRecipient {
-            task_id,
-            config,
-            label: Label::InputShare,
-            sender_role: Role::Client,
-            recipient_role: Role::Leader,
-            recipient_private_key: HpkePrivateKey(private_key.to_bytes().to_vec()),
-        };
-        let sender = HpkeSender::from_recipient(&recipient);
+        let hpke_private_key = HpkePrivateKey(private_key.to_bytes().to_vec());
+        let application_info = HpkeApplicationInfo::new(
+            TaskId::random(),
+            Label::InputShare,
+            Role::Client,
+            Role::Leader,
+        );
 
-        let ciphertext = sender.seal(MESSAGE, ASSOCIATED_DATA).unwrap();
-        let plaintext = recipient.open(&ciphertext, ASSOCIATED_DATA).unwrap();
+        let ciphertext = seal(&hpke_config, &application_info, MESSAGE, ASSOCIATED_DATA).unwrap();
+        let plaintext = open(
+            &hpke_config,
+            &hpke_private_key,
+            &application_info,
+            &ciphertext,
+            ASSOCIATED_DATA,
+        )
+        .unwrap();
 
         assert_eq!(plaintext, MESSAGE);
     }
@@ -706,6 +579,7 @@ mod tests {
                 continue;
             }
             let aead_id = test_vector.aead_id.try_into().unwrap();
+
             for encryption in test_vector.encryptions {
                 if encryption.nonce != test_vector.base_nonce {
                     // PPM only performs single-shot encryption with each context, ignore any
@@ -713,34 +587,29 @@ mod tests {
                     continue;
                 }
 
-                let config_id = HpkeConfigId(0);
-                let config = HpkeConfig {
-                    id: config_id,
+                let hpke_config = HpkeConfig {
+                    id: HpkeConfigId(0),
                     kem_id,
                     kdf_id,
                     aead_id,
                     public_key: HpkePublicKey(test_vector.serialized_public_key.clone()),
                 };
-                let recipient = HpkeRecipient {
-                    task_id: TaskId([0; 32]),
-                    config,
-                    label: Label::InputShare,
-                    sender_role: Role::Client,
-                    recipient_role: Role::Leader,
-                    recipient_private_key: HpkePrivateKey(
-                        test_vector.serialized_private_key.clone(),
-                    ),
-                };
-
+                let hpke_private_key = HpkePrivateKey(test_vector.serialized_private_key.clone());
                 let application_info = HpkeApplicationInfo(test_vector.info.clone());
                 let ciphertext = HpkeCiphertext {
-                    config_id,
+                    config_id: HpkeConfigId(0),
                     encapsulated_context: test_vector.enc.clone(),
-                    payload: encryption.ct.clone(),
+                    payload: encryption.ct,
                 };
-                let plaintext = recipient
-                    .open_internal(&ciphertext, application_info, &encryption.aad)
-                    .unwrap();
+
+                let plaintext = open(
+                    &hpke_config,
+                    &hpke_private_key,
+                    &application_info,
+                    &ciphertext,
+                    &encryption.aad,
+                )
+                .unwrap();
                 assert_eq!(plaintext, encryption.pt);
 
                 algorithms_tested.insert((kem_id as u16, kdf_id as u16, aead_id as u16));

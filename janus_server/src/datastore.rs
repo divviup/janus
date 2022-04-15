@@ -185,7 +185,7 @@ impl Transaction<'_> {
         let mut hpke_config_ids: Vec<i16> = Vec::new();
         let mut hpke_configs: Vec<Vec<u8>> = Vec::new();
         let mut hpke_private_keys: Vec<Vec<u8>> = Vec::new();
-        for (hpke_config, hpke_private_key) in task.hpke_configs.values() {
+        for (hpke_config, hpke_private_key) in task.hpke_keys.values() {
             let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
             row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task.id.0);
             row_id[TaskId::ENCODED_LEN..].copy_from_slice(&hpke_config.id.0.to_be_bytes());

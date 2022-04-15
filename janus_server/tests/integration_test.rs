@@ -3,7 +3,7 @@ use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
     datastore::test_util::{ephemeral_datastore, DbHandle},
-    hpke::{test_util::generate_hpke_config_and_private_key, HpkeRecipient, Label},
+    hpke::test_util::generate_hpke_config_and_private_key,
     message::{self, Role, TaskId},
     task::{AggregatorAuthKey, TaskParameters, Vdaf},
     time::RealClock,
@@ -12,6 +12,7 @@ use janus_server::{
 use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf as VdafTrait};
 use ring::hmac;
 use std::{
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
@@ -52,25 +53,10 @@ async fn setup_test() -> TestCase {
     let hmac_key: &hmac::Key = agg_auth_key.as_ref();
 
     let (collector_hpke_config, _) = generate_hpke_config_and_private_key();
-    let (leader_hpke_config, leader_private_key) = generate_hpke_config_and_private_key();
-    let (helper_hpke_config, helper_private_key) = generate_hpke_config_and_private_key();
-
-    let leader_hpke_recipient = HpkeRecipient::new(
-        task_id,
-        leader_hpke_config.clone(),
-        Label::InputShare,
-        Role::Client,
-        Role::Leader,
-        leader_private_key.clone(),
-    );
-    let helper_hpke_recipient = HpkeRecipient::new(
-        task_id,
-        helper_hpke_config,
-        Label::InputShare,
-        Role::Client,
-        Role::Helper,
-        helper_private_key,
-    );
+    let leader_hpke_key = generate_hpke_config_and_private_key();
+    let leader_hpke_keys = HashMap::from([(leader_hpke_key.0.id(), leader_hpke_key.clone())]);
+    let helper_hpke_key = generate_hpke_config_and_private_key();
+    let helper_hpke_keys = HashMap::from([(helper_hpke_key.0.id(), helper_hpke_key)]);
 
     let (leader_datastore, _leader_db_handle) = ephemeral_datastore().await;
     let leader_datastore = Arc::new(leader_datastore);
@@ -83,8 +69,8 @@ async fn setup_test() -> TestCase {
         Duration::minutes(10),
         Role::Leader,
         leader_verify_param,
-        leader_hpke_recipient,
         vec![hmac_key.clone()],
+        leader_hpke_keys,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
@@ -96,8 +82,8 @@ async fn setup_test() -> TestCase {
         Duration::minutes(10),
         Role::Helper,
         helper_verify_param,
-        helper_hpke_recipient,
         vec![hmac_key.clone()],
+        helper_hpke_keys,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
@@ -116,7 +102,7 @@ async fn setup_test() -> TestCase {
         message::Duration::from_seconds(1), // tolerable_clock_skew,
         collector_hpke_config,
         vec![agg_auth_key.clone()],
-        vec![(leader_hpke_config, leader_private_key)],
+        vec![leader_hpke_key],
     )
     .unwrap();
 
@@ -134,13 +120,13 @@ async fn setup_test() -> TestCase {
     let client_parameters = ClientParameters::from_task_parameters(&leader_task_parameters);
 
     let http_client = client::default_http_client().unwrap();
-    let leader_report_sender =
-        client::aggregator_hpke_sender(&client_parameters, Role::Leader, &http_client)
+    let leader_report_config =
+        client::aggregator_hpke_config(&client_parameters, Role::Leader, &http_client)
             .await
             .unwrap();
 
-    let helper_report_sender =
-        client::aggregator_hpke_sender(&client_parameters, Role::Helper, &http_client)
+    let helper_report_config =
+        client::aggregator_hpke_config(&client_parameters, Role::Helper, &http_client)
             .await
             .unwrap();
 
@@ -152,8 +138,8 @@ async fn setup_test() -> TestCase {
         (), // no public parameter for prio3
         RealClock::default(),
         &http_client,
-        leader_report_sender,
-        helper_report_sender,
+        leader_report_config,
+        helper_report_config,
     );
 
     TestCase {

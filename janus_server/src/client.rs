@@ -1,7 +1,7 @@
 //! PPM protocol client
 
 use crate::{
-    hpke::{HpkeSender, Label},
+    hpke::{self, associated_data_for, HpkeApplicationInfo, Label},
     message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId, Time},
     task::TaskParameters,
     time::Clock,
@@ -84,11 +84,11 @@ impl ClientParameters {
 
 /// Fetches HPKE configuration from the specified aggregator using the
 /// aggregator endpoints in the provided [`ClientParameters`].
-pub async fn aggregator_hpke_sender(
+pub async fn aggregator_hpke_config(
     client_parameters: &ClientParameters,
     aggregator_role: Role,
     http_client: &reqwest::Client,
-) -> Result<HpkeSender, Error> {
+) -> Result<HpkeConfig, Error> {
     let hpke_config_response = http_client
         .get(client_parameters.hpke_config_endpoint(aggregator_role)?)
         .send()
@@ -98,17 +98,9 @@ pub async fn aggregator_hpke_sender(
         return Err(Error::Http(status));
     }
 
-    let hpke_config = HpkeConfig::decode(&mut Cursor::new(
+    Ok(HpkeConfig::decode(&mut Cursor::new(
         hpke_config_response.bytes().await?.as_ref(),
-    ))?;
-
-    Ok(HpkeSender::new(
-        client_parameters.task_id,
-        hpke_config,
-        Label::InputShare,
-        Role::Client,
-        Role::Leader,
-    ))
+    ))?)
 }
 
 /// Construct a [`reqwest::Client`] suitable for use in a PPM [`Client`].
@@ -129,8 +121,8 @@ where
     vdaf_public_parameter: V::PublicParam,
     clock: C,
     http_client: reqwest::Client,
-    leader_report_sender: HpkeSender,
-    helper_report_sender: HpkeSender,
+    leader_hpke_config: HpkeConfig,
+    helper_hpke_config: HpkeConfig,
 }
 
 impl<V: vdaf::Client, C: Clock> Client<V, C>
@@ -143,8 +135,8 @@ where
         vdaf_public_parameter: V::PublicParam,
         clock: C,
         http_client: &reqwest::Client,
-        leader_report_sender: HpkeSender,
-        helper_report_sender: HpkeSender,
+        leader_hpke_config: HpkeConfig,
+        helper_hpke_config: HpkeConfig,
     ) -> Self
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
@@ -155,8 +147,8 @@ where
             vdaf_public_parameter,
             clock,
             http_client: http_client.clone(),
-            leader_report_sender,
-            helper_report_sender,
+            leader_hpke_config,
+            helper_hpke_config,
         }
     }
 
@@ -168,32 +160,35 @@ where
         let input_shares = self
             .vdaf_client
             .shard(&self.vdaf_public_parameter, measurement)?;
-
-        // All supported VDAFs use two aggregators
-        assert_eq!(input_shares.len(), 2);
+        assert_eq!(input_shares.len(), 2); // PPM only supports VDAFs using two aggregators.
 
         let nonce = Nonce {
             time: Time::from_naive_date_time(self.clock.now()),
             rand: rand::random(),
         };
+        let extensions = vec![]; // No extensions supported yet
+        let associated_data = associated_data_for(nonce, &extensions);
 
-        // No extensions supported yet
-        let extensions = vec![];
-
-        let associated_data = Report::associated_data(nonce, &extensions);
-
-        // Leader's share MUST be the first in the report. We assume/guess that
-        // the first element in input_shares is the leader's. This is true for
-        // all prio3 VDAFs, but not guaranteed generically.
-        // https://github.com/cjpatton/vdaf/issues/40
-        let encrypted_input_shares: Vec<HpkeCiphertext> =
-            [&self.leader_report_sender, &self.helper_report_sender]
-                .into_iter()
-                .zip(input_shares)
-                .map(|(hpke_sender, input_share)| {
-                    Ok(hpke_sender.seal(&input_share.get_encoded(), &associated_data)?)
-                })
-                .collect::<Result<_, Error>>()?;
+        let encrypted_input_shares: Vec<HpkeCiphertext> = [
+            (&self.leader_hpke_config, Role::Leader),
+            (&self.helper_hpke_config, Role::Helper),
+        ]
+        .into_iter()
+        .zip(input_shares)
+        .map(|((hpke_config, receiver_role), input_share)| {
+            Ok(hpke::seal(
+                hpke_config,
+                &HpkeApplicationInfo::new(
+                    self.parameters.task_id,
+                    Label::InputShare,
+                    Role::Client,
+                    receiver_role,
+                ),
+                &input_share.get_encoded(),
+                &associated_data,
+            )?)
+        })
+        .collect::<Result<_, Error>>()?;
 
         let report = Report {
             task_id: self.parameters.task_id,
@@ -222,10 +217,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        hpke::{test_util::generate_hpke_config_and_private_key, HpkeRecipient},
-        message::TaskId,
-        time::tests::MockClock,
-        trace::test_util::install_test_trace_subscriber,
+        hpke::test_util::generate_hpke_config_and_private_key, message::TaskId,
+        time::tests::MockClock, trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use mockito::mock;
@@ -242,26 +235,8 @@ mod tests {
         let task_id = TaskId::random();
 
         let clock = MockClock::default();
-        let (leader_hpke_config, leader_hpke_private_key) = generate_hpke_config_and_private_key();
-        let leader_hpke_recipient = HpkeRecipient::new(
-            task_id,
-            leader_hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-            leader_hpke_private_key,
-        );
-        let leader_hpke_sender = HpkeSender::from_recipient(&leader_hpke_recipient);
-        let (helper_hpke_config, helper_hpke_private_key) = generate_hpke_config_and_private_key();
-        let helper_hpke_recipient = HpkeRecipient::new(
-            task_id,
-            helper_hpke_config,
-            Label::InputShare,
-            Role::Client,
-            Role::Helper,
-            helper_hpke_private_key,
-        );
-        let helper_hpke_sender = HpkeSender::from_recipient(&helper_hpke_recipient);
+        let (leader_hpke_config, _) = generate_hpke_config_and_private_key();
+        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
 
         let server_url = Url::parse(&mockito::server_url()).unwrap();
 
@@ -276,8 +251,8 @@ mod tests {
             public_parameter,
             clock,
             &default_http_client().unwrap(),
-            leader_hpke_sender,
-            helper_hpke_sender,
+            leader_hpke_config,
+            helper_hpke_config,
         )
     }
 

@@ -133,7 +133,7 @@ pub struct TaskParameters {
     /// aggregators.
     pub(crate) agg_auth_keys: Vec<AggregatorAuthKey>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
-    pub(crate) hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
+    pub(crate) hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
 
 impl TaskParameters {
@@ -150,7 +150,7 @@ impl TaskParameters {
         tolerable_clock_skew: Duration,
         collector_hpke_config: HpkeConfig,
         agg_auth_keys: Vec<AggregatorAuthKey>,
-        hpke_configs: I,
+        hpke_keys: I,
     ) -> Result<Self, Error> {
         // PPM currently only supports configurations of exactly two aggregators.
         if aggregator_endpoints.len() != 2 {
@@ -161,7 +161,7 @@ impl TaskParameters {
         }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
-        let hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_configs
+        let hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_keys
             .into_iter()
             .map(|(cfg, key)| (cfg.id, (cfg, key)))
             .collect();
@@ -181,7 +181,7 @@ impl TaskParameters {
             tolerable_clock_skew,
             collector_hpke_config,
             agg_auth_keys,
-            hpke_configs,
+            hpke_keys: hpke_configs,
         })
     }
 }

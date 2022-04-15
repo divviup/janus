@@ -24,6 +24,8 @@ use std::{
     str::FromStr,
 };
 
+use crate::hpke::associated_data_for;
+
 /// AuthenticatedEncoder can encode messages into the format used by authenticated PPM messages. The
 /// encoding format is the encoding format of the underlying message, followed by a 32-byte
 /// authentication tag.
@@ -333,7 +335,7 @@ impl Decode for Role {
 }
 
 /// PPM protocol message representing an identifier for an HPKE config.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HpkeConfigId(pub(crate) u8);
 
 impl Display for HpkeConfigId {
@@ -505,6 +507,8 @@ impl Decode for HpkeAeadId {
 }
 
 /// PPM protocol message representing an HPKE public key.
+// TODO(brandon): refactor HpkePublicKey to carry around a decoded public key so we don't have to
+// decode on every cryptographic operation.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkePublicKey(pub(crate) Vec<u8>);
 
@@ -535,6 +539,13 @@ pub struct HpkeConfig {
     pub(crate) kdf_id: HpkeKdfId,
     pub(crate) aead_id: HpkeAeadId,
     pub(crate) public_key: HpkePublicKey,
+}
+
+impl HpkeConfig {
+    /// Returns the HPKE config ID associated with this HPKE config.
+    pub fn id(&self) -> HpkeConfigId {
+        self.id
+    }
 }
 
 impl Encode for HpkeConfig {
@@ -575,14 +586,8 @@ pub struct Report {
 }
 
 impl Report {
-    /// Construct the HPKE associated data for sealing or opening this report,
-    /// per §4.3.2 and 4.4.2.2 of draft-gpew-priv-ppm
-    pub(crate) fn associated_data(nonce: Nonce, extensions: &[Extension]) -> Vec<u8> {
-        let mut associated_data = vec![];
-        nonce.encode(&mut associated_data);
-        encode_u16_items(&mut associated_data, &(), extensions);
-
-        associated_data
+    pub(crate) fn associated_data(&self) -> Vec<u8> {
+        associated_data_for(self.nonce, &self.extensions)
     }
 }
 
@@ -665,6 +670,12 @@ pub struct ReportShare {
     pub(crate) nonce: Nonce,
     pub(crate) extensions: Vec<Extension>,
     pub(crate) encrypted_input_share: HpkeCiphertext,
+}
+
+impl ReportShare {
+    pub(crate) fn associated_data(&self) -> Vec<u8> {
+        associated_data_for(self.nonce, &self.extensions)
+    }
 }
 
 impl Encode for ReportShare {
