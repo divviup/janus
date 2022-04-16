@@ -4,15 +4,16 @@ use janus_server::{
     client::{self, Client, ClientParameters},
     datastore::test_util::{ephemeral_datastore, DbHandle},
     hpke::test_util::generate_hpke_config_and_private_key,
-    message::{self, Role, TaskId},
+    message::{Role, TaskId},
     task::{AggregatorAuthKey, Task, Vdaf},
     time::RealClock,
     trace::{install_trace_subscriber, TraceConfiguration},
 };
-use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf as VdafTrait};
-use ring::hmac;
+use prio::{
+    codec::Encode,
+    vdaf::{prio3::Prio3Aes128Count, Vdaf as VdafTrait},
+};
 use std::{
-    collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
@@ -49,60 +50,64 @@ async fn setup_test() -> TestCase {
     let leader_verify_param = verify_params_iter.next().unwrap();
     let helper_verify_param = verify_params_iter.next().unwrap();
 
-    let agg_auth_key = AggregatorAuthKey::generate();
-    let hmac_key: &hmac::Key = agg_auth_key.as_ref();
-
     let (collector_hpke_config, _) = generate_hpke_config_and_private_key();
+    let agg_auth_key = AggregatorAuthKey::generate();
     let leader_hpke_key = generate_hpke_config_and_private_key();
-    let leader_hpke_keys = HashMap::from([(leader_hpke_key.0.id(), leader_hpke_key.clone())]);
     let helper_hpke_key = generate_hpke_config_and_private_key();
-    let helper_hpke_keys = HashMap::from([(helper_hpke_key.0.id(), helper_hpke_key)]);
 
     let (leader_datastore, _leader_db_handle) = ephemeral_datastore().await;
     let leader_datastore = Arc::new(leader_datastore);
     let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
 
+    let leader_task = Task::new(
+        task_id,
+        vec![
+            Url::parse("http://leader_endpoint").unwrap(),
+            Url::parse("http://helper_endpoint").unwrap(),
+        ],
+        Vdaf::Prio3Aes128Count,
+        Role::Leader,
+        leader_verify_param.get_encoded(),
+        1,
+        0,
+        Duration::hours(8),
+        Duration::minutes(10),
+        collector_hpke_config.clone(),
+        vec![agg_auth_key.clone()],
+        vec![leader_hpke_key],
+    )
+    .unwrap();
     let (leader_address, leader_server) = aggregator_server(
-        vdaf.clone(),
+        leader_task.clone(),
         leader_datastore.clone(),
         RealClock::default(),
-        Duration::minutes(10),
-        Role::Leader,
-        leader_verify_param,
-        vec![hmac_key.clone()],
-        leader_hpke_keys,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
 
-    let (helper_address, helper_server) = aggregator_server(
-        vdaf.clone(),
-        Arc::new(helper_datastore),
-        RealClock::default(),
-        Duration::minutes(10),
-        Role::Helper,
-        helper_verify_param,
-        vec![hmac_key.clone()],
-        helper_hpke_keys,
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
-    )
-    .unwrap();
-    let leader_task = Task::new(
+    let helper_task = Task::new(
         task_id,
         vec![
-            endpoint_from_socket_addr(&leader_address),
-            endpoint_from_socket_addr(&helper_address),
+            Url::parse("http://leader_endpoint").unwrap(),
+            Url::parse("http://helper_endpoint").unwrap(),
         ],
         Vdaf::Prio3Aes128Count,
-        Role::Leader,
-        vec![],                             // vdaf_verify_parameter
-        0,                                  // max_batch_lifetime
-        0,                                  // min_batch_size
-        message::Duration::from_seconds(1), // min_batch_duration,
-        message::Duration::from_seconds(1), // tolerable_clock_skew,
+        Role::Helper,
+        helper_verify_param.get_encoded(),
+        1,
+        0,
+        Duration::hours(8),
+        Duration::minutes(10),
         collector_hpke_config,
-        vec![agg_auth_key.clone()],
-        vec![leader_hpke_key],
+        vec![agg_auth_key],
+        vec![helper_hpke_key],
+    )
+    .unwrap();
+    let (helper_address, helper_server) = aggregator_server(
+        helper_task,
+        Arc::new(helper_datastore),
+        RealClock::default(),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
     )
     .unwrap();
 
@@ -117,7 +122,13 @@ async fn setup_test() -> TestCase {
     let leader_task_handle = tokio::spawn(leader_server);
     let helper_task_handle = tokio::spawn(helper_server);
 
-    let client_parameters = ClientParameters::from_task(&leader_task);
+    let client_parameters = ClientParameters::new(
+        task_id,
+        vec![
+            endpoint_from_socket_addr(&leader_address),
+            endpoint_from_socket_addr(&helper_address),
+        ],
+    );
 
     let http_client = client::default_http_client().unwrap();
     let leader_report_config =
@@ -170,8 +181,6 @@ async fn teardown_test(test_case: TestCase) {
 #[tokio::test]
 async fn upload() {
     let test_case = setup_test().await;
-
     test_case.client.upload(&1).await.unwrap();
-
     teardown_test(test_case).await
 }

@@ -5,11 +5,7 @@ use self::models::{
     ReportAggregationStateCode,
 };
 #[cfg(test)]
-use crate::{
-    hpke::HpkePrivateKey,
-    message::{Duration, HpkeConfig},
-    task::AggregatorAuthKey,
-};
+use crate::{hpke::HpkePrivateKey, message::HpkeConfig, task::AggregatorAuthKey};
 use crate::{
     message::{
         AggregationJobId, Extension, HpkeCiphertext, Nonce, Report, ReportShare, TaskId, Time,
@@ -114,8 +110,8 @@ impl Transaction<'_> {
 
         let max_batch_lifetime = i64::try_from(task.max_batch_lifetime)?;
         let min_batch_size = i64::try_from(task.min_batch_size)?;
-        let min_batch_duration = i64::try_from(task.min_batch_duration.0)?;
-        let tolerable_clock_skew = i64::try_from(task.tolerable_clock_skew.0)?;
+        let min_batch_duration = task.min_batch_duration.num_seconds();
+        let tolerable_clock_skew = task.tolerable_clock_skew.num_seconds();
 
         let encrypted_vdaf_verify_param = self.crypter.encrypt(
             "tasks",
@@ -138,7 +134,7 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    &&task.id.0[..],                           // id
+                    &&task.id.0[..],                           // task_id
                     &aggregator_role,                          // aggregator_role
                     &endpoints,                                // aggregator_endpoints
                     &task.vdaf,                                // vdaf
@@ -365,8 +361,8 @@ impl Transaction<'_> {
         let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
         let max_batch_lifetime = row.get_bigint_as_u64("max_batch_lifetime")?;
         let min_batch_size = row.get_bigint_as_u64("min_batch_size")?;
-        let min_batch_duration = Duration(row.get_bigint_as_u64("min_batch_duration")?);
-        let tolerable_clock_skew = Duration(row.get_bigint_as_u64("tolerable_clock_skew")?);
+        let min_batch_duration = Duration::seconds(row.get("min_batch_duration"));
+        let tolerable_clock_skew = Duration::seconds(row.get("tolerable_clock_skew"));
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
 
         let vdaf_verify_param = self.crypter.decrypt(
@@ -394,6 +390,8 @@ impl Transaction<'_> {
             )?)?);
         }
         // HPKE keys.
+
+        use chrono::Duration;
         let mut hpke_configs = Vec::new();
         for row in hpke_key_rows {
             let config_id = u8::try_from(row.get::<_, i16>("config_id"))?;
@@ -1371,6 +1369,18 @@ pub mod test_util {
         // Connect to the database & run our schema.
         let client = pool.get().await.unwrap();
         client.batch_execute(SCHEMA).await.unwrap();
+
+        // Test-only DB schema modifications.
+        #[cfg(test)]
+        client
+            .batch_execute(
+                "ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE';
+                ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE_FAILS_PREP_INIT';
+                ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE_FAILS_PREP_STEP';",
+            )
+            .await
+            .unwrap();
+
         (Datastore::new(pool, crypter), DbHandle(db_container))
     }
 

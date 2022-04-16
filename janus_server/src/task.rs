@@ -4,9 +4,10 @@ use std::collections::HashMap;
 
 use crate::{
     hpke::HpkePrivateKey,
-    message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
+    message::{HpkeConfig, HpkeConfigId, Role, TaskId},
 };
 use ::rand::{thread_rng, Rng};
+use chrono::Duration;
 use postgres_types::{FromSql, ToSql};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
@@ -45,6 +46,16 @@ pub enum Vdaf {
     /// The `poplar1` VDAF. Support for this VDAF is experimental.
     #[postgres(name = "POPLAR1")]
     Poplar1,
+
+    #[cfg(test)]
+    #[postgres(name = "FAKE")]
+    Fake,
+    #[cfg(test)]
+    #[postgres(name = "FAKE_FAILS_PREP_INIT")]
+    FakeFailsPrepInit,
+    #[cfg(test)]
+    #[postgres(name = "FAKE_FAILS_PREP_STEP")]
+    FakeFailsPrepStep,
 }
 
 /// An HMAC-SHA-256 key used to authenticate messages exchanged between
@@ -156,6 +167,15 @@ impl Task {
         if aggregator_endpoints.len() != 2 {
             return Err(Error::InvalidParameter("aggregator_endpoints"));
         }
+        if !role.is_aggregator() {
+            return Err(Error::InvalidParameter("role"));
+        }
+        if min_batch_duration < Duration::zero() {
+            return Err(Error::InvalidParameter("min_batch_duration"));
+        }
+        if tolerable_clock_skew < Duration::zero() {
+            return Err(Error::InvalidParameter("tolerable_clock_skew"));
+        }
         if agg_auth_keys.is_empty() {
             return Err(Error::InvalidParameter("agg_auth_keys"));
         }
@@ -191,22 +211,47 @@ impl Task {
 pub mod test_util {
     use super::{Task, Vdaf};
     use crate::{
-        message::{Duration, HpkeConfigId, Role, TaskId},
+        hpke::test_util::generate_hpke_config_and_private_key,
+        message::{HpkeConfigId, Role, TaskId},
         task::AggregatorAuthKey,
+    };
+    use chrono::Duration;
+    use prio::{
+        codec::Encode,
+        field::Field128,
+        vdaf::{
+            self,
+            poplar1::{Poplar1, ToyIdpf},
+            prg::PrgAes128,
+            prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
+        },
     };
 
     /// Create a dummy [`Task`] from the provided [`TaskId`], with
     /// dummy values for the other fields. This is pub because it is needed for
     /// integration tests.
     pub fn new_dummy_task(task_id: TaskId, vdaf: Vdaf, role: Role) -> Task {
-        use crate::hpke::test_util::generate_hpke_config_and_private_key;
-
         let (collector_config, _) = generate_hpke_config_and_private_key();
         let (aggregator_config_0, aggregator_private_key_0) =
             generate_hpke_config_and_private_key();
         let (mut aggregator_config_1, aggregator_private_key_1) =
             generate_hpke_config_and_private_key();
-        aggregator_config_1.id = HpkeConfigId(u8::MAX);
+        aggregator_config_1.id = HpkeConfigId(1);
+
+        let vdaf_verify_parameter = match vdaf {
+            Vdaf::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),
+            Vdaf::Prio3Aes128Sum => verify_param(Prio3Aes128Sum::new(2, 64).unwrap(), role),
+            Vdaf::Prio3Aes128Histogram => verify_param(
+                Prio3Aes128Histogram::new(2, &[0, 100, 200, 400]).unwrap(),
+                role,
+            ),
+            Vdaf::Poplar1 => {
+                verify_param(Poplar1::<ToyIdpf<Field128>, PrgAes128, 16>::new(64), role)
+            }
+
+            #[cfg(test)]
+            Vdaf::Fake | Vdaf::FakeFailsPrepInit | Vdaf::FakeFailsPrepStep => Vec::new(),
+        };
 
         Task::new(
             task_id,
@@ -216,11 +261,11 @@ pub mod test_util {
             ],
             vdaf,
             role,
-            vec![],
+            vdaf_verify_parameter,
             0,
             0,
-            Duration(1),
-            Duration(1),
+            Duration::hours(8),
+            Duration::minutes(10),
             collector_config,
             vec![AggregatorAuthKey::generate(), AggregatorAuthKey::generate()],
             vec![
@@ -229,5 +274,17 @@ pub mod test_util {
             ],
         )
         .unwrap()
+    }
+
+    fn verify_param<V: vdaf::Vdaf>(vdaf: V, role: Role) -> Vec<u8>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+        V::VerifyParam: Encode,
+    {
+        let (_, verify_params) = vdaf.setup().unwrap();
+        verify_params
+            .get(role.index().unwrap())
+            .unwrap()
+            .get_encoded()
     }
 }

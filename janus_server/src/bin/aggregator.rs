@@ -8,17 +8,16 @@ use janus_server::{
     hpke::test_util::generate_hpke_config_and_private_key,
     message::Role,
     message::TaskId,
+    task::{self, AggregatorAuthKey, Task},
     time::RealClock,
     trace::install_trace_subscriber,
 };
-use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf};
-use ring::{
-    aead::{LessSafeKey, UnboundKey, AES_128_GCM},
-    hmac::{self, HMAC_SHA256},
-    rand::SystemRandom,
+use prio::{
+    codec::Encode,
+    vdaf::{prio3::Prio3Aes128Count, Vdaf},
 };
+use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
-    collections::HashMap,
     fmt::{self, Debug, Formatter},
     fs::File,
     iter::Iterator,
@@ -106,9 +105,32 @@ async fn main() -> Result<()> {
 
     info!(?options, ?config, "starting aggregator");
 
+    // Create task.
+    // TODO(timg): tasks and the corresponding HPKE configuration and private
+    // keys should be loaded from the database (see discussion in #37)
+    let task_id = TaskId::random();
     let vdaf = Prio3Aes128Count::new(2).unwrap();
     let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
+    let (collector_hpke_config, _) = generate_hpke_config_and_private_key();
+    let agg_auth_keys = vec![AggregatorAuthKey::generate()];
+    let hpke_keys = vec![generate_hpke_config_and_private_key()];
 
+    let task = Task::new(
+        task_id,
+        vec![],
+        task::Vdaf::Prio3Aes128Count,
+        options.role,
+        verify_param.get_encoded(),
+        1,
+        0,
+        Duration::hours(10),
+        Duration::minutes(10),
+        collector_hpke_config,
+        agg_auth_keys,
+        hpke_keys,
+    )?;
+
+    // Connect to database.
     let mut database_config = tokio_postgres::Config::from_str(config.database.url.as_str())
         .with_context(|| {
             format!(
@@ -125,7 +147,6 @@ async fn main() -> Result<()> {
     let pool = Pool::builder(conn_mgr)
         .build()
         .context("failed to create database connection pool")?;
-
     let datastore_keys = options
         .datastore_keys
         .into_iter()
@@ -145,30 +166,11 @@ async fn main() -> Result<()> {
         return Err(anyhow!("datastore keys is empty"));
     }
     let crypter = datastore::Crypter::new(datastore_keys);
-
     let datastore = Arc::new(Datastore::new(pool, crypter));
 
-    // TODO(timg): tasks and the corresponding HPKE configuration and private
-    // keys should be loaded from the database (see discussion in #37)
-    let task_id = TaskId::random();
-    let hpke_key = generate_hpke_config_and_private_key();
-    let hpke_keys = HashMap::from([(hpke_key.0.id(), hpke_key)]);
-
-    let agg_auth_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new())
-        .map_err(|_| anyhow!("couldn't generate agg_auth_key"))?;
-
-    let (bound_address, server) = aggregator_server(
-        vdaf,
-        datastore,
-        RealClock::default(),
-        Duration::minutes(10),
-        options.role,
-        verify_param,
-        vec![agg_auth_key],
-        hpke_keys,
-        config.listen_address,
-    )
-    .context("failed to create aggregator server")?;
+    let (bound_address, server) =
+        aggregator_server(task, datastore, RealClock::default(), config.listen_address)
+            .context("failed to create aggregator server")?;
     info!(?task_id, ?bound_address, "running aggregator");
 
     server.await;

@@ -3,7 +3,6 @@
 use crate::{
     hpke::{self, associated_data_for, HpkeApplicationInfo, Label},
     message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId, Time},
-    task,
     time::Clock,
 };
 use http::StatusCode;
@@ -53,11 +52,11 @@ pub struct ClientParameters {
 }
 
 impl ClientParameters {
-    /// Extract the client's view of task parameters.
-    pub fn from_task(task: &task::Task) -> Self {
+    /// Creates a new set of client task parameters.
+    pub fn new(task_id: TaskId, aggregator_endpoints: Vec<Url>) -> Self {
         Self {
-            task_id: task.id,
-            aggregator_endpoints: task.aggregator_endpoints.clone(),
+            task_id,
+            aggregator_endpoints,
         }
     }
 
