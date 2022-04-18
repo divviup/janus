@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::Duration;
 use deadpool_postgres::{Manager, Pool};
+use futures::StreamExt;
 use janus_server::{
     aggregator::aggregator_server,
     config::AggregatorConfig,
@@ -16,10 +17,12 @@ use prio::{
     codec::Encode,
     vdaf::{prio3::Prio3Aes128Count, Vdaf},
 };
+use reqwest::Url;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},
     fs::File,
+    future::Future,
     iter::Iterator,
     path::PathBuf,
     str::FromStr,
@@ -87,6 +90,35 @@ impl Debug for Options {
     }
 }
 
+/// Register a signal handler for SIGTERM, and return a future that will become ready when a
+/// SIGTERM signal is received.
+fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error> {
+    let mut signal_stream = signal_hook_tokio::Signals::new([signal_hook::consts::SIGTERM])?;
+    let handle = signal_stream.handle();
+    let (sender, receiver) = futures::channel::oneshot::channel();
+    let mut sender = Some(sender);
+    tokio::spawn(async move {
+        while let Some(signal) = signal_stream.next().await {
+            if signal == signal_hook::consts::SIGTERM {
+                if let Some(sender) = sender.take() {
+                    // This may return Err(()) if the receiver has been dropped already. If
+                    // that is the case, the warp server must be shut down already, so we can
+                    // safely ignore the error case.
+                    let _ = sender.send(());
+                    handle.close();
+                    break;
+                }
+            }
+        }
+    });
+    Ok(async move {
+        // The receiver may return Err(Canceled) if the sender has been dropped. By inspection, the
+        // sender always has a message sent across it before it is dropped, and the async task it
+        // is owned by will not terminate before that happens.
+        receiver.await.unwrap_or_default()
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // The configuration file path and any secret values are provided through
@@ -117,7 +149,10 @@ async fn main() -> Result<()> {
 
     let task = Task::new(
         task_id,
-        vec![],
+        vec![
+            Url::parse("http://leader_endpoint").unwrap(),
+            Url::parse("http://helper_endpoint").unwrap(),
+        ],
         task::Vdaf::Prio3Aes128Count,
         options.role,
         verify_param.get_encoded(),
@@ -168,9 +203,17 @@ async fn main() -> Result<()> {
     let crypter = datastore::Crypter::new(datastore_keys);
     let datastore = Arc::new(Datastore::new(pool, crypter));
 
-    let (bound_address, server) =
-        aggregator_server(task, datastore, RealClock::default(), config.listen_address)
-            .context("failed to create aggregator server")?;
+    let shutdown_signal =
+        setup_signal_handler().context("failed to register SIGTERM signal handler")?;
+
+    let (bound_address, server) = aggregator_server(
+        task,
+        datastore,
+        RealClock::default(),
+        config.listen_address,
+        shutdown_signal,
+    )
+    .context("failed to create aggregator server")?;
     info!(?task_id, ?bound_address, "running aggregator");
 
     server.await;

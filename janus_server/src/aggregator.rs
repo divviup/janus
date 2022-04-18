@@ -1021,11 +1021,13 @@ pub fn aggregator_server<C>(
     datastore: Arc<Datastore>,
     clock: C,
     listen_address: SocketAddr,
+    shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error>
 where
     C: 'static + Clock,
 {
-    Ok(warp::serve(aggregator_filter(task, datastore, clock)?).bind_ephemeral(listen_address))
+    Ok(warp::serve(aggregator_filter(task, datastore, clock)?)
+        .bind_with_graceful_shutdown(listen_address, shutdown_signal))
 }
 
 #[cfg(test)]

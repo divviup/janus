@@ -1,4 +1,5 @@
 use chrono::Duration;
+use futures::channel::oneshot::Sender;
 use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
@@ -32,6 +33,8 @@ struct TestCase {
     client: Client<Prio3Aes128Count, RealClock>,
     _leader_db_handle: DbHandle,
     _helper_db_handle: DbHandle,
+    leader_shutdown_sender: Sender<()>,
+    helper_shutdown_sender: Sender<()>,
     leader_task_handle: JoinHandle<()>,
     helper_task_handle: JoinHandle<()>,
 }
@@ -59,6 +62,17 @@ async fn setup_test() -> TestCase {
     let leader_datastore = Arc::new(leader_datastore);
     let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
 
+    let (leader_shutdown_sender, leader_shutdown_receiver) = futures::channel::oneshot::channel();
+    let (helper_shutdown_sender, helper_shutdown_receiver) = futures::channel::oneshot::channel();
+    // `Receiver<T>` by itself yields a `Result<T, Cancelled>`, producing an error if the
+    // corresponding sender has been dropped. We will remap values, so that our future returns the
+    // unit type in either case. The effect of this is that the server can be cancelled by dropping
+    // the channel's sender, or sending a message over it.
+    let leader_shutdown_receiver =
+        async move { leader_shutdown_receiver.await.unwrap_or_default() };
+    let helper_shutdown_receiver =
+        async move { helper_shutdown_receiver.await.unwrap_or_default() };
+
     let leader_task = Task::new(
         task_id,
         vec![
@@ -82,6 +96,7 @@ async fn setup_test() -> TestCase {
         leader_datastore.clone(),
         RealClock::default(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+        leader_shutdown_receiver,
     )
     .unwrap();
 
@@ -108,6 +123,7 @@ async fn setup_test() -> TestCase {
         Arc::new(helper_datastore),
         RealClock::default(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+        helper_shutdown_receiver,
     )
     .unwrap();
 
@@ -157,25 +173,19 @@ async fn setup_test() -> TestCase {
         client,
         _leader_db_handle,
         _helper_db_handle,
+        leader_shutdown_sender,
+        helper_shutdown_sender,
         leader_task_handle,
         helper_task_handle,
     }
 }
 
 async fn teardown_test(test_case: TestCase) {
-    test_case.leader_task_handle.abort();
-    test_case.helper_task_handle.abort();
+    test_case.leader_shutdown_sender.send(()).unwrap();
+    test_case.helper_shutdown_sender.send(()).unwrap();
 
-    assert!(test_case
-        .leader_task_handle
-        .await
-        .unwrap_err()
-        .is_cancelled());
-    assert!(test_case
-        .helper_task_handle
-        .await
-        .unwrap_err()
-        .is_cancelled());
+    test_case.leader_task_handle.await.unwrap();
+    test_case.helper_task_handle.await.unwrap();
 }
 
 #[tokio::test]
