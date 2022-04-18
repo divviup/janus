@@ -923,6 +923,7 @@ pub fn aggregator_server<A, C>(
     agg_auth_keys: Vec<hmac::Key>,
     hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
     listen_address: SocketAddr,
+    shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error>
 where
     A: 'static + vdaf::Aggregator + Send + Sync,
@@ -945,7 +946,7 @@ where
         agg_auth_keys,
         hpke_keys,
     )?)
-    .bind_ephemeral(listen_address))
+    .bind_with_graceful_shutdown(listen_address, shutdown_signal))
 }
 
 #[cfg(test)]
