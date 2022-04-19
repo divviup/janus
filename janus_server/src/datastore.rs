@@ -65,6 +65,7 @@ impl Datastore {
         }
     }
 
+    #[tracing::instrument(skip(self, f), err)]
     async fn run_tx_once<F, T>(&self, f: &F) -> Result<T, Error>
     where
         for<'a> F:
@@ -99,6 +100,7 @@ pub struct Transaction<'a> {
 impl Transaction<'_> {
     // This is pub to be used in integration tests
     #[doc(hidden)]
+    #[tracing::instrument(skip(self), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
         let aggregator_role = AggregatorRole::from_role(task.role)?;
 
@@ -222,6 +224,7 @@ impl Transaction<'_> {
     // Only available in test configs for now, but will soon be used by
     // aggregators to discover tasks from the database.
     #[cfg(test)]
+    #[tracing::instrument(skip(self), err)]
     pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<Task, Error> {
         let params: &[&(dyn ToSql + Sync)] = &[&&task_id.0[..]];
         let stmt = self
@@ -262,6 +265,7 @@ impl Transaction<'_> {
 
     /// Fetch all the tasks in the database.
     #[cfg(test)]
+    #[tracing::instrument(skip(self), err)]
     pub(crate) async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
         use std::collections::HashMap;
 
@@ -429,6 +433,7 @@ impl Transaction<'_> {
     }
 
     /// get_client_report retrieves a client report by ID.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_client_report(&self, task_id: TaskId, nonce: Nonce) -> Result<Report, Error> {
         let stmt = self
             .tx
@@ -468,6 +473,7 @@ impl Transaction<'_> {
     }
 
     /// put_client_report stores a client report.
+    #[tracing::instrument(skip(self), err)]
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
         let nonce_time = report.nonce.time.as_naive_date_time();
         let nonce_rand = report.nonce.rand.to_be_bytes();
@@ -507,6 +513,7 @@ impl Transaction<'_> {
     /// input_shares, as these are not required to be stored for the helper workflow (and the helper
     /// never observes the entire set of encrypted input shares, so it could not record the full
     /// client report in any case).
+    #[tracing::instrument(skip(self), err)]
     pub async fn put_report_share(
         &self,
         task_id: TaskId,
@@ -536,6 +543,7 @@ impl Transaction<'_> {
     }
 
     /// get_aggregation_job retrieves an aggregation job by ID.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_aggregation_job<A: vdaf::Aggregator>(
         &self,
         task_id: TaskId,
@@ -576,6 +584,7 @@ impl Transaction<'_> {
     }
 
     /// put_aggregation_job stores an aggregation job.
+    #[tracing::instrument(skip(self), err)]
     pub async fn put_aggregation_job<A: vdaf::Aggregator>(
         &self,
         aggregation_job: &AggregationJob<A>,
@@ -602,6 +611,7 @@ impl Transaction<'_> {
     }
 
     // update_aggregation_job updates a stored aggregation job.
+    #[tracing::instrument(skip(self), err)]
     pub async fn update_aggregation_job<A: vdaf::Aggregator>(
         &self,
         aggregation_job: &AggregationJob<A>,
@@ -633,6 +643,7 @@ impl Transaction<'_> {
     }
 
     /// get_report_aggregation gets a report aggregation by ID.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_report_aggregation<A: vdaf::Aggregator>(
         &self,
         verify_param: &A::VerifyParam,
@@ -680,6 +691,7 @@ impl Transaction<'_> {
 
     /// get_report_aggregations_for_aggregation_job retrieves all report aggregations associated
     /// with a given aggregation job, ordered by their natural ordering.
+    #[tracing::instrument(skip(self), err)]
     pub async fn get_report_aggregations_for_aggregation_job<A: vdaf::Aggregator>(
         &self,
         verify_param: &A::VerifyParam,
@@ -717,6 +729,7 @@ impl Transaction<'_> {
     }
 
     /// put_report_aggregation stores aggregation data for a single report.
+    #[tracing::instrument(skip(self), err)]
     pub async fn put_report_aggregation<A: vdaf::Aggregator>(
         &self,
         report_aggregation: &ReportAggregation<A>,
@@ -764,6 +777,7 @@ impl Transaction<'_> {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self), err)]
     pub async fn update_report_aggregation<A: vdaf::Aggregator>(
         &self,
         report_aggregation: &ReportAggregation<A>,
