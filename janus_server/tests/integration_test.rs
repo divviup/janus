@@ -91,8 +91,14 @@ async fn setup_test() -> TestCase {
         vec![leader_hpke_key],
     )
     .unwrap();
+    leader_datastore
+        .run_tx(|tx| {
+            let leader_task = leader_task.clone();
+            Box::pin(async move { tx.put_task(&leader_task).await })
+        })
+        .await
+        .unwrap();
     let (leader_address, leader_server) = aggregator_server(
-        leader_task.clone(),
         leader_datastore.clone(),
         RealClock::default(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
@@ -118,22 +124,20 @@ async fn setup_test() -> TestCase {
         vec![helper_hpke_key],
     )
     .unwrap();
+    helper_datastore
+        .run_tx(|tx| {
+            let helper_task = helper_task.clone();
+            Box::pin(async move { tx.put_task(&helper_task).await })
+        })
+        .await
+        .unwrap();
     let (helper_address, helper_server) = aggregator_server(
-        helper_task,
         Arc::new(helper_datastore),
         RealClock::default(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
         helper_shutdown_receiver,
     )
     .unwrap();
-
-    leader_datastore
-        .run_tx(|tx| {
-            let task = leader_task.clone();
-            Box::pin(async move { tx.put_task(&task).await })
-        })
-        .await
-        .unwrap();
 
     let leader_task_handle = tokio::spawn(leader_server);
     let helper_task_handle = tokio::spawn(helper_server);
@@ -148,12 +152,12 @@ async fn setup_test() -> TestCase {
 
     let http_client = client::default_http_client().unwrap();
     let leader_report_config =
-        client::aggregator_hpke_config(&client_parameters, Role::Leader, &http_client)
+        client::aggregator_hpke_config(&client_parameters, Role::Leader, task_id, &http_client)
             .await
             .unwrap();
 
     let helper_report_config =
-        client::aggregator_hpke_config(&client_parameters, Role::Helper, &http_client)
+        client::aggregator_hpke_config(&client_parameters, Role::Helper, task_id, &http_client)
             .await
             .unwrap();
 

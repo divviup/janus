@@ -1,23 +1,13 @@
 use anyhow::{anyhow, Context, Result};
-use chrono::Duration;
 use deadpool_postgres::{Manager, Pool};
 use futures::StreamExt;
 use janus_server::{
     aggregator::aggregator_server,
     config::AggregatorConfig,
     datastore::{self, Datastore},
-    hpke::test_util::generate_hpke_config_and_private_key,
-    message::Role,
-    message::TaskId,
-    task::{self, AggregatorAuthKey, Task},
     time::RealClock,
     trace::install_trace_subscriber,
 };
-use prio::{
-    codec::Encode,
-    vdaf::{prio3::Prio3Aes128Count, Vdaf},
-};
-use reqwest::Url;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},
@@ -51,19 +41,6 @@ struct Options {
     )]
     config_file: PathBuf,
 
-    /// The PPM protocol role this aggregator should assume.
-    //
-    // TODO(timg): obtain the role from the task definition in the database
-    // (see discussion in #37)
-    #[structopt(
-        long,
-        takes_value = true,
-        required(true),
-        possible_values = &[Role::Leader.as_str(), Role::Helper.as_str()],
-        help = "role for this aggregator",
-    )]
-    role: Role,
-
     /// Password for the PostgreSQL database connection. (if not included in the connection
     /// string)
     #[structopt(long, env = "PGPASSWORD", help = "PostgreSQL password")]
@@ -85,7 +62,6 @@ impl Debug for Options {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Options")
             .field("config_file", &self.config_file)
-            .field("role", &self.role)
             .finish()
     }
 }
@@ -137,34 +113,6 @@ async fn main() -> Result<()> {
 
     info!(?options, ?config, "starting aggregator");
 
-    // Create task.
-    // TODO(timg): tasks and the corresponding HPKE configuration and private
-    // keys should be loaded from the database (see discussion in #37)
-    let task_id = TaskId::random();
-    let vdaf = Prio3Aes128Count::new(2).unwrap();
-    let verify_param = vdaf.setup().unwrap().1.first().unwrap().clone();
-    let (collector_hpke_config, _) = generate_hpke_config_and_private_key();
-    let agg_auth_keys = vec![AggregatorAuthKey::generate()];
-    let hpke_keys = vec![generate_hpke_config_and_private_key()];
-
-    let task = Task::new(
-        task_id,
-        vec![
-            Url::parse("http://leader_endpoint").unwrap(),
-            Url::parse("http://helper_endpoint").unwrap(),
-        ],
-        task::Vdaf::Prio3Aes128Count,
-        options.role,
-        verify_param.get_encoded(),
-        1,
-        0,
-        Duration::hours(10),
-        Duration::minutes(10),
-        collector_hpke_config,
-        agg_auth_keys,
-        hpke_keys,
-    )?;
-
     // Connect to database.
     let mut database_config = tokio_postgres::Config::from_str(config.database.url.as_str())
         .with_context(|| {
@@ -207,14 +155,13 @@ async fn main() -> Result<()> {
         setup_signal_handler().context("failed to register SIGTERM signal handler")?;
 
     let (bound_address, server) = aggregator_server(
-        task,
         datastore,
         RealClock::default(),
         config.listen_address,
         shutdown_signal,
     )
     .context("failed to create aggregator server")?;
-    info!(?task_id, ?bound_address, "running aggregator");
+    info!(?bound_address, "running aggregator");
 
     server.await;
 

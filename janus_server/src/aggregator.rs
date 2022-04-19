@@ -10,10 +10,10 @@ use crate::{
         AggregateReq,
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
         AggregateResp, AggregationJobId, AuthenticatedDecodeError, AuthenticatedEncoder,
-        AuthenticatedRequestDecoder, HpkeConfigId, Nonce, Report, ReportShare, Role, TaskId,
-        Transition, TransitionError, TransitionTypeSpecificData,
+        AuthenticatedRequestDecoder, HpkeConfig, HpkeConfigId, Nonce, Report, ReportShare, Role,
+        TaskId, Transition, TransitionError, TransitionTypeSpecificData,
     },
-    task::{self, AggregatorAuthKey, Task},
+    task::{self, Task},
     time::Clock,
 };
 use bytes::Bytes;
@@ -28,14 +28,20 @@ use prio::{
     },
 };
 use std::{
-    collections::HashSet, convert::Infallible, future::Future, io::Cursor, net::SocketAddr,
-    ops::Sub, pin::Pin, sync::Arc,
+    collections::{HashMap, HashSet},
+    convert::Infallible,
+    future::Future,
+    io::Cursor,
+    net::SocketAddr,
+    ops::Sub,
+    sync::Arc,
 };
+use tokio::sync::Mutex;
 use tracing::{error, warn};
 use warp::{
     filters::BoxedFilter,
     reply::{self, Response},
-    trace, Filter, Rejection, Reply,
+    trace, Filter, Reply,
 };
 
 #[cfg(test)]
@@ -57,7 +63,7 @@ pub enum Error {
     StaleReport(Nonce, TaskId),
     /// Corresponds to `unrecognizedMessage`, §3.1
     #[error("unrecognized message: {0} {1:?}")]
-    UnrecognizedMessage(&'static str, TaskId),
+    UnrecognizedMessage(&'static str, Option<TaskId>),
     /// Corresponds to `unrecognizedTask`, §3.1
     #[error("unrecognized task: {0:?}")]
     UnrecognizedTask(TaskId),
@@ -101,26 +107,126 @@ impl From<datastore::Error> for Error {
     }
 }
 
-/// A PPM aggregator.
-// TODO: refactor Aggregator to be non-task-specific (look up task-specific data based on task ID)
+/// Aggregator implements a PPM aggregator.
+pub struct Aggregator<C: Clock> {
+    /// Datastore used for durable storage.
+    datastore: Arc<Datastore>,
+    /// Clock used to sample time.
+    clock: C,
+    /// Cache of task aggregators.
+    task_aggregators: Mutex<HashMap<TaskId, Arc<TaskAggregator>>>,
+}
+
+impl<C: Clock> Aggregator<C> {
+    fn new(datastore: Arc<Datastore>, clock: C) -> Self {
+        Self {
+            datastore,
+            clock,
+            task_aggregators: Mutex::new(HashMap::new()),
+        }
+    }
+
+    async fn handle_hpke_config(&self, task_id_base64: &[u8]) -> Result<Vec<u8>, Error> {
+        let task_id_bytes = base64::decode_config(task_id_base64, base64::URL_SAFE_NO_PAD)
+            .map_err(|_| Error::UnrecognizedMessage("task_id", None))?;
+        let task_id = TaskId::get_decoded(&task_id_bytes)
+            .map_err(|_| Error::UnrecognizedMessage("task_id", None))?;
+        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        Ok(task_aggregator.handle_hpke_config().get_encoded())
+    }
+
+    async fn handle_upload(&self, report_bytes: &[u8]) -> Result<(), Error> {
+        let report = Report::get_decoded(report_bytes)?;
+
+        let task_aggregator = self.task_aggregator_for(report.task_id).await?;
+        // Only the leader supports upload.
+        if task_aggregator.task.role != Role::Leader {
+            return Err(Error::UnrecognizedTask(report.task_id));
+        }
+        task_aggregator
+            .handle_upload(&self.datastore, &self.clock, report)
+            .await
+    }
+
+    async fn handle_aggregate(&self, req_bytes: &[u8]) -> Result<Vec<u8>, Error> {
+        let (task_aggregator, req) = self
+            .authenticated_decode(req_bytes, Some(Role::Helper))
+            .await?;
+        let resp = task_aggregator
+            .handle_aggregate(&self.datastore, req)
+            .await?;
+        let key = task_aggregator.task.agg_auth_keys.last().unwrap();
+        Ok(AuthenticatedEncoder::new(resp).encode(key.as_ref()))
+    }
+
+    async fn authenticated_decode<T: Decode>(
+        &self,
+        buf: &[u8],
+        required_role: Option<Role>,
+    ) -> Result<(Arc<TaskAggregator>, T), Error> {
+        // TODO(brandon): avoid copying the body here (make AuthenticatedRequestDecoder operate on Bytes or &[u8] or AsRef<[u8]>, most likely)
+        let decoder: AuthenticatedRequestDecoder<T> =
+            AuthenticatedRequestDecoder::new(Vec::from(buf)).map_err(Error::from)?;
+        let task_id = decoder.task_id();
+        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if required_role.is_some() && required_role.unwrap() != task_aggregator.task.role {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
+        for key in task_aggregator.task.agg_auth_keys.iter().rev() {
+            match decoder.decode(key.as_ref()) {
+                Ok(decoded_body) => return Ok((task_aggregator, decoded_body)),
+                Err(AuthenticatedDecodeError::InvalidHmac) => continue, // try the next key
+                Err(AuthenticatedDecodeError::Codec(err)) => return Err(Error::MessageDecode(err)),
+            }
+        }
+        // If we get here, every available key returned InvalidHmac.
+        Err(Error::InvalidHmac(task_id))
+    }
+
+    async fn task_aggregator_for(&self, task_id: TaskId) -> Result<Arc<TaskAggregator>, Error> {
+        // TODO(brandon): don't cache forever (decide on & implement some cache eviction policy).
+        // This is important both to avoid ever-growing resource usage, and to allow aggregators to
+        // notice when a task changes (e.g. due to key rotation).
+
+        // Fast path: grab an existing task aggregator if one exists for this task.
+        {
+            let task_aggs = self.task_aggregators.lock().await;
+            if let Some(task_agg) = task_aggs.get(&task_id) {
+                return Ok(task_agg.clone());
+            }
+        }
+
+        // Slow path: retrieve task, create a task aggregator, store it to the cache, then return it.
+        let task = self
+            .datastore
+            .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
+            .await
+            .map_err(|err| match err {
+                datastore::Error::NotFound => Error::UnrecognizedTask(task_id),
+                err => err.into(),
+            })?;
+        let task_agg = Arc::new(TaskAggregator::new(task)?);
+        {
+            let mut task_aggs = self.task_aggregators.lock().await;
+            Ok(task_aggs.entry(task_id).or_insert(task_agg).clone())
+        }
+    }
+}
+
+/// TaskAggregator provides aggregation functionality for a single task.
 // TODO: refactor Aggregator to perform indepedent batched operations (e.g. report handling in
 //       Aggregate requests) using a parallelized library like Rayon.
-pub struct Aggregator<C: Clock> {
+pub struct TaskAggregator {
     /// The task being aggregated.
     task: Task,
-    /// The datastore used for durable storage.
-    datastore: Arc<Datastore>,
-    /// The clock to use to sample time.
-    clock: C,
-
     /// VDAF-specific operations.
     vdaf_ops: VdafOps,
 }
 
-impl<C: Clock> Aggregator<C> {
-    /// Create a new aggregator. `report_recipient` is used to decrypt reports
-    /// received by this aggregator.
-    fn new(task: Task, datastore: Arc<Datastore>, clock: C) -> Result<Self, Error> {
+impl TaskAggregator {
+    /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
+    /// aggregator.
+    fn new(task: Task) -> Result<Self, Error> {
         // TODO(brandon): include VDAF-specific configuration (like bit-length for sums, buckets for histograms) in Task
         let vdaf_ops = match task.vdaf {
             task::Vdaf::Prio3Aes128Count => {
@@ -152,51 +258,52 @@ impl<C: Clock> Aggregator<C> {
             }
 
             #[cfg(test)]
-            task::Vdaf::Fake => {
-                let vdaf = fake::Vdaf::new();
-                let verify_param =
-                    <fake::Vdaf as Vdaf>::VerifyParam::get_decoded(&task.vdaf_verify_parameter)?;
-                VdafOps::Fake(vdaf, verify_param)
-            }
+            task::Vdaf::Fake => VdafOps::Fake(fake::Vdaf::new()),
 
             #[cfg(test)]
-            task::Vdaf::FakeFailsPrepInit => {
-                let vdaf = fake::Vdaf::new().with_prep_init_fn(|| -> Result<(), VdafError> {
+            task::Vdaf::FakeFailsPrepInit => VdafOps::Fake(fake::Vdaf::new().with_prep_init_fn(
+                || -> Result<(), VdafError> {
                     Err(VdafError::Uncategorized(
                         "FakeFailsPrepInit failed at prep_init".to_string(),
                     ))
-                });
-                let verify_param =
-                    <fake::Vdaf as Vdaf>::VerifyParam::get_decoded(&task.vdaf_verify_parameter)?;
-                VdafOps::Fake(vdaf, verify_param)
-            }
+                },
+            )),
 
             #[cfg(test)]
-            task::Vdaf::FakeFailsPrepStep => {
-                let vdaf = fake::Vdaf::new().with_prep_step_fn(
-                    || -> PrepareTransition<(), (), fake::OutputShare> {
-                        PrepareTransition::Fail(VdafError::Uncategorized(
-                            "FakeFailsPrepStep failed at prep_step".to_string(),
-                        ))
-                    },
-                );
-                let verify_param =
-                    <fake::Vdaf as Vdaf>::VerifyParam::get_decoded(&task.vdaf_verify_parameter)?;
-                VdafOps::Fake(vdaf, verify_param)
-            }
+            task::Vdaf::FakeFailsPrepStep => VdafOps::Fake(fake::Vdaf::new().with_prep_step_fn(
+                || -> PrepareTransition<(), (), fake::OutputShare> {
+                    PrepareTransition::Fail(VdafError::Uncategorized(
+                        "FakeFailsPrepStep failed at prep_step".to_string(),
+                    ))
+                },
+            )),
 
             _ => panic!("VDAF {:?} is not yet supported", task.vdaf),
         };
 
-        Ok(Self {
-            task,
-            datastore,
-            clock,
-            vdaf_ops,
-        })
+        Ok(Self { task, vdaf_ops })
     }
 
-    async fn handle_upload(&self, report: &Report) -> Result<(), Error> {
+    fn handle_hpke_config(&self) -> HpkeConfig {
+        // TODO(brandon): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
+        // config/key -- right now it's the one with the maximal config ID, but that will run into
+        // trouble if we ever need to wrap-around, which we may since config IDs are effectively a u8.
+        self.task
+            .hpke_keys
+            .iter()
+            .max_by_key(|(&id, _)| id)
+            .unwrap()
+            .1
+             .0
+            .clone()
+    }
+
+    async fn handle_upload<C: Clock>(
+        &self,
+        datastore: &Datastore,
+        clock: &C,
+        report: Report,
+    ) -> Result<(), Error> {
         // §4.2.2 The leader's report is the first one
         if report.encrypted_input_shares.len() != 2 {
             warn!(
@@ -205,7 +312,7 @@ impl<C: Clock> Aggregator<C> {
             );
             return Err(Error::UnrecognizedMessage(
                 "unexpected number of encrypted shares in report",
-                report.task_id,
+                Some(report.task_id),
             ));
         }
         let leader_report = &report.encrypted_input_shares[0];
@@ -223,7 +330,7 @@ impl<C: Clock> Aggregator<C> {
                 Error::OutdatedHpkeConfig(leader_report.config_id, report.task_id)
             })?;
 
-        let now = self.clock.now();
+        let now = clock.now();
 
         // §4.2.4: reject reports from too far in the future
         if report.nonce.time.as_naive_date_time().sub(now) > self.task.tolerable_clock_skew {
@@ -251,7 +358,7 @@ impl<C: Clock> Aggregator<C> {
             return Ok(());
         }
 
-        self.datastore
+        datastore
             .run_tx(|tx| {
                 let report = report.clone();
                 Box::pin(async move {
@@ -283,12 +390,18 @@ impl<C: Clock> Aggregator<C> {
         Ok(())
     }
 
-    async fn handle_aggregate(&self, req: AggregateReq) -> Result<AggregateResp, Error> {
-        self.vdaf_ops.handle_aggregate(self, req).await
+    async fn handle_aggregate(
+        &self,
+        datastore: &Datastore,
+        req: AggregateReq,
+    ) -> Result<AggregateResp, Error> {
+        self.vdaf_ops
+            .handle_aggregate(datastore, &self.task, req)
+            .await
     }
 }
 
-/// VdafOps stores VDAF-specific operations in a non-generic way.
+/// VdafOps stores VDAF-specific operations for a TaskAggregator in a non-generic way.
 #[allow(clippy::enum_variant_names)]
 enum VdafOps {
     Prio3Aes128Count(Prio3Aes128Count, <Prio3Aes128Count as Vdaf>::VerifyParam),
@@ -299,37 +412,41 @@ enum VdafOps {
     ),
 
     #[cfg(test)]
-    Fake(fake::Vdaf, ()),
+    Fake(fake::Vdaf),
 }
 
 impl VdafOps {
     /// Implements the `/aggregate` endpoint for the helper, described in §4.4.4.1 & §4.4.4.2 of
     /// draft-gpew-priv-ppm.
-    async fn handle_aggregate<C: Clock>(
+    async fn handle_aggregate(
         &self,
-        agg: &Aggregator<C>,
+        datastore: &Datastore,
+        task: &Task,
         req: AggregateReq,
     ) -> Result<AggregateResp, Error> {
         match self {
             VdafOps::Prio3Aes128Count(vdaf, verify_param) => {
-                Self::handle_aggregate_generic(vdaf, verify_param, agg, req).await
+                Self::handle_aggregate_generic(datastore, vdaf, task, verify_param, req).await
             }
             VdafOps::Prio3Aes128Sum(vdaf, verify_param) => {
-                Self::handle_aggregate_generic(vdaf, verify_param, agg, req).await
+                Self::handle_aggregate_generic(datastore, vdaf, task, verify_param, req).await
             }
             VdafOps::Prio3Aes128Histogram(vdaf, verify_param) => {
-                Self::handle_aggregate_generic(vdaf, verify_param, agg, req).await
+                Self::handle_aggregate_generic(datastore, vdaf, task, verify_param, req).await
             }
 
             #[cfg(test)]
-            VdafOps::Fake(vdaf, _) => Self::handle_aggregate_generic(vdaf, &(), agg, req).await,
+            VdafOps::Fake(vdaf) => {
+                Self::handle_aggregate_generic(datastore, vdaf, task, &(), req).await
+            }
         }
     }
 
-    async fn handle_aggregate_generic<A: vdaf::Aggregator, C: Clock>(
+    async fn handle_aggregate_generic<A: vdaf::Aggregator>(
+        datastore: &Datastore,
         vdaf: &A,
+        task: &Task,
         verify_param: &A::VerifyParam,
-        agg: &Aggregator<C>,
         req: AggregateReq,
     ) -> Result<AggregateResp, Error>
     where
@@ -345,10 +462,10 @@ impl VdafOps {
         match req.body {
             AggregateInitReq { agg_param, seq } => {
                 Self::handle_aggregate_init_generic(
+                    datastore,
                     vdaf,
+                    task,
                     verify_param,
-                    agg,
-                    req.task_id,
                     req.job_id,
                     agg_param,
                     seq,
@@ -357,10 +474,10 @@ impl VdafOps {
             }
             AggregateContinueReq { seq } => {
                 Self::handle_aggregate_continue_generic(
+                    datastore,
                     vdaf,
+                    task,
                     verify_param,
-                    agg,
-                    req.task_id,
                     req.job_id,
                     seq,
                 )
@@ -371,11 +488,11 @@ impl VdafOps {
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
-    async fn handle_aggregate_init_generic<A: vdaf::Aggregator, C: Clock>(
+    async fn handle_aggregate_init_generic<A: vdaf::Aggregator>(
+        datastore: &Datastore,
         vdaf: &A,
+        task: &Task,
         verify_param: &A::VerifyParam,
-        agg: &Aggregator<C>,
-        task_id: TaskId,
         job_id: AggregationJobId,
         agg_param: Vec<u8>,
         report_shares: Vec<ReportShare>,
@@ -388,6 +505,8 @@ impl VdafOps {
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
+        let task_id = task.id;
+
         // If two ReportShare messages have the same nonce, then the helper MUST abort with
         // error "unrecognizedMessage". (§4.4.4.1)
         let mut seen_nonces = HashSet::with_capacity(report_shares.len());
@@ -395,7 +514,7 @@ impl VdafOps {
             if !seen_nonces.insert(share.nonce) {
                 return Err(Error::UnrecognizedMessage(
                     "aggregate request contains duplicate nonce",
-                    task_id,
+                    Some(task_id),
                 ));
             }
         }
@@ -416,8 +535,7 @@ impl VdafOps {
         let mut report_share_data = Vec::new();
         let agg_param = A::AggregationParam::get_decoded(&agg_param)?;
         for report_share in report_shares {
-            let hpke_key = agg
-                .task
+            let hpke_key = task
                 .hpke_keys
                 .get(&report_share.encrypted_input_share.config_id)
                 .ok_or_else(|| {
@@ -437,7 +555,7 @@ impl VdafOps {
                         task_id,
                         Label::InputShare,
                         Role::Client,
-                        agg.task.role,
+                        Role::Helper,
                     ),
                     &report_share.encrypted_input_share,
                     &report_share.associated_data(),
@@ -541,7 +659,7 @@ impl VdafOps {
             state: aggregation_job_state,
         });
         let report_share_data = Arc::new(report_share_data);
-        agg.datastore
+        datastore
             .run_tx(|tx| {
                 let aggregation_job = aggregation_job.clone();
                 let report_share_data = report_share_data.clone();
@@ -580,11 +698,11 @@ impl VdafOps {
         })
     }
 
-    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator, C: Clock>(
+    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator>(
+        datastore: &Datastore,
         vdaf: &A,
+        task: &Task,
         verify_param: &A::VerifyParam,
-        agg: &Aggregator<C>,
-        task_id: TaskId,
         job_id: AggregationJobId,
         transitions: Vec<Transition>,
     ) -> Result<AggregateResp, Error>
@@ -598,14 +716,14 @@ impl VdafOps {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::VerifyParam: Send + Sync,
     {
+        let task_id = task.id;
         let vdaf = Arc::new(vdaf.clone());
         let verify_param = Arc::new(verify_param.clone());
         let transitions = Arc::new(transitions);
 
         // TODO(brandon): don't hold DB transaction open while computing VDAF updates?
         // TODO(brandon): don't do O(n) network round-trips (where n is the number of transitions)
-        Ok(agg
-            .datastore
+        Ok(datastore
             .run_tx(|tx| {
                 let vdaf = vdaf.clone();
                 let verify_param = verify_param.clone();
@@ -635,7 +753,7 @@ impl VdafOps {
                                 warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent unexpected, duplicate, or out-of-order transitions");
                                 datastore::Error::User(Box::new(Error::UnrecognizedMessage(
                                     "leader sent unexpected, duplicate, or out-of-order transitions",
-                                    task_id,
+                                    Some(task_id),
                                 )))
                             })?;
                             if report_agg.nonce != transition.nonce {
@@ -658,7 +776,7 @@ impl VdafOps {
                                     return Err(datastore::Error::User(Box::new(
                                         Error::UnrecognizedMessage(
                                             "leader sent transition for non-WAITING report aggregation",
-                                            task_id,
+                                            Some(task_id),
                                         ),
                                     )));
                                 },
@@ -678,7 +796,7 @@ impl VdafOps {
                                 return Err(datastore::Error::User(Box::new(
                                     Error::UnrecognizedMessage(
                                         "leader sent non-Continued transition",
-                                        task_id,
+                                        Some(task_id),
                                     ),
                                 )));
                             }
@@ -766,51 +884,6 @@ where
     warp::any().map(move || value.clone())
 }
 
-fn with_decoded_body<T: Decode + Send + Sync>(
-) -> impl Filter<Extract = (Result<T, Error>,), Error = Rejection> + Clone {
-    warp::body::bytes().map(|body: Bytes| T::get_decoded(&body).map_err(Error::from))
-}
-
-fn with_authenticated_body<A, T, KeyFn>(
-    aggregator: Arc<A>,
-    key_fn: KeyFn,
-) -> impl Filter<Extract = (Result<T, Error>,), Error = Rejection> + Clone
-where
-    A: Send + Sync,
-    T: Decode + Send + Sync,
-    for<'a> KeyFn: Fn(
-            &'a A,
-            TaskId,
-        ) -> Pin<
-            Box<dyn Future<Output = Result<&'a [AggregatorAuthKey], Error>> + Send + Sync + 'a>,
-        > + Clone
-        + Send
-        + Sync,
-{
-    warp::body::bytes().then(move |body: Bytes| {
-        let aggregator = aggregator.clone();
-        let key_fn = key_fn.clone();
-        async move {
-            // TODO(brandon): avoid copying the body here (make AuthenticatedRequestDecoder operate on Bytes or &[u8] or AsRef<[u8]>, most likely)
-            let decoder: AuthenticatedRequestDecoder<T> =
-                AuthenticatedRequestDecoder::new(Vec::from(body.as_ref())).map_err(Error::from)?;
-            let task_id = decoder.task_id();
-            let keys = key_fn(&aggregator, task_id).await?;
-            for key in keys.iter().rev() {
-                match decoder.decode(key.as_ref()) {
-                    Ok(decoded_body) => return Ok(decoded_body),
-                    Err(AuthenticatedDecodeError::InvalidHmac) => continue, // try the next key
-                    Err(AuthenticatedDecodeError::Codec(err)) => {
-                        return Err(Error::MessageDecode(err))
-                    }
-                }
-            }
-            // If we get here, every available key returned InvalidHmac.
-            Err(Error::InvalidHmac(task_id))
-        }
-    })
-}
-
 /// Representation of the different problem types defined in Table 1 in §3.1.
 enum PpmProblemType {
     UnrecognizedMessage,
@@ -859,7 +932,7 @@ static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 //
 // TODO (issue abetterinternet/ppm-specification#209): The handling of the instance, title,
 // detail, and taskid fields are subject to change.
-fn build_problem_details_response(error_type: PpmProblemType, task_id: TaskId) -> Response {
+fn build_problem_details_response(error_type: PpmProblemType, task_id: Option<TaskId>) -> Response {
     // So far, 400 Bad Request seems to be the appropriate choice for each defined problem type.
     let status = StatusCode::BAD_REQUEST;
     warp::reply::with_status(
@@ -874,7 +947,7 @@ fn build_problem_details_response(error_type: PpmProblemType, task_id: TaskId) -
                 // the instance member, thus ".." will always refer to the aggregator's endpoint,
                 // as required by §3.1.
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": task_id.map(|tid| base64::encode(tid.as_bytes())),
             })),
             http::header::CONTENT_TYPE,
             PROBLEM_DETAILS_JSON_MEDIA_TYPE,
@@ -898,16 +971,16 @@ fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Respon
             }
             Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
             Err(Error::StaleReport(_, task_id)) => {
-                build_problem_details_response(PpmProblemType::StaleReport, task_id)
+                build_problem_details_response(PpmProblemType::StaleReport, Some(task_id))
             }
             Err(Error::UnrecognizedMessage(_, task_id)) => {
                 build_problem_details_response(PpmProblemType::UnrecognizedMessage, task_id)
             }
             Err(Error::UnrecognizedTask(task_id)) => {
-                build_problem_details_response(PpmProblemType::UnrecognizedTask, task_id)
+                build_problem_details_response(PpmProblemType::UnrecognizedTask, Some(task_id))
             }
             Err(Error::OutdatedHpkeConfig(_, task_id)) => {
-                build_problem_details_response(PpmProblemType::OutdatedConfig, task_id)
+                build_problem_details_response(PpmProblemType::OutdatedConfig, Some(task_id))
             }
             Err(Error::ReportFromTheFuture(_, _)) => {
                 // TODO: build a problem details document once an error type is defined for reports
@@ -915,7 +988,7 @@ fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Respon
                 StatusCode::BAD_REQUEST.into_response()
             }
             Err(Error::InvalidHmac(task_id)) => {
-                build_problem_details_response(PpmProblemType::InvalidHmac, task_id)
+                build_problem_details_response(PpmProblemType::InvalidHmac, Some(task_id))
             }
             Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -926,83 +999,54 @@ fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Respon
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
 fn aggregator_filter<C>(
-    task: Task,
     datastore: Arc<Datastore>,
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error>
 where
     C: 'static + Clock,
 {
-    // TODO(brandon): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
-    // config/key -- right now it's the one with the maximal config ID, but that will run into
-    // trouble if we ever need to wrap-around, which we may since config IDs are effectively a u8.
-    let primary_hpke_config_encoded = task
-        .hpke_keys
-        .iter()
-        .max_by_key(|(&id, _)| id)
-        .unwrap()
-        .1
-         .0
-        .get_encoded();
-
-    let aggregator = Arc::new(Aggregator::new(task, datastore, clock)?);
+    let aggregator = Arc::new(Aggregator::new(datastore, clock));
 
     let hpke_config_endpoint = warp::path("hpke_config")
         .and(warp::get())
-        .map(move || {
-            reply::with_header(
-                reply::with_status(primary_hpke_config_encoded.clone(), StatusCode::OK),
-                CACHE_CONTROL,
-                "max-age=86400",
-            )
-        })
+        .and(with_cloned_value(aggregator.clone()))
+        .and(warp::query::<HashMap<String, String>>())
+        .then(
+            |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
+                let task_id_b64 = query_params
+                    .get("task_id")
+                    .ok_or(Error::UnrecognizedMessage("task_id", None))?;
+                let hpke_config_bytes = aggregator.handle_hpke_config(task_id_b64.as_ref()).await?;
+                Ok(reply::with_header(
+                    reply::with_status(hpke_config_bytes, StatusCode::OK),
+                    CACHE_CONTROL,
+                    "max-age=86400",
+                )
+                .into_response())
+            },
+        )
+        .map(error_handler())
         .with(trace::named("hpke_config"));
 
     let upload_endpoint = warp::path("upload")
         .and(warp::post())
         .and(with_cloned_value(aggregator.clone()))
-        .and_then(|aggregator: Arc<Aggregator<C>>| async {
-            // Only the leader supports upload
-            if aggregator.task.role != Role::Leader {
-                return Err(warp::reject::not_found());
-            }
-            Ok(aggregator)
+        .and(warp::body::bytes())
+        .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
+            aggregator.handle_upload(&body).await?;
+            Ok(StatusCode::OK)
         })
-        .and(with_decoded_body())
-        .then(
-            |aggregator: Arc<Aggregator<C>>, report_res: Result<Report, Error>| async move {
-                aggregator.handle_upload(&report_res?).await?;
-                Ok(StatusCode::OK)
-            },
-        )
         .map(error_handler())
         .with(trace::named("upload"));
 
     let aggregate_endpoint = warp::path("aggregate")
         .and(warp::post())
-        .and(with_cloned_value(aggregator.clone()))
-        .and_then(|aggregator: Arc<Aggregator<C>>| async {
-            // Only the helper supports /aggregate.
-            if aggregator.task.role != Role::Helper {
-                return Err(warp::reject::not_found());
-            }
-            Ok(aggregator)
+        .and(with_cloned_value(aggregator))
+        .and(warp::body::bytes())
+        .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
+            let resp_bytes = aggregator.handle_aggregate(&body).await?;
+            Ok(reply::with_status(resp_bytes, StatusCode::OK))
         })
-        .and(with_authenticated_body(
-            aggregator,
-            move |aggregator, _task_id| {
-                Box::pin(async move { Ok(&aggregator.task.agg_auth_keys[..]) })
-            },
-        ))
-        .then(
-            |aggregator: Arc<Aggregator<C>>, req_rslt: Result<AggregateReq, Error>| async move {
-                let req = req_rslt?;
-                let resp = aggregator.handle_aggregate(req).await?;
-                let key = aggregator.task.agg_auth_keys.last().unwrap();
-                let resp_bytes = AuthenticatedEncoder::new(resp).encode(key.as_ref());
-                Ok(reply::with_status(resp_bytes, StatusCode::OK))
-            },
-        )
         .map(error_handler())
         .with(trace::named("aggregate"));
 
@@ -1017,7 +1061,6 @@ where
 /// `SocketAddr` representing the address and port the server are listening on
 /// and a future that can be `await`ed to begin serving requests.
 pub fn aggregator_server<C>(
-    task: Task,
     datastore: Arc<Datastore>,
     clock: C,
     listen_address: SocketAddr,
@@ -1026,7 +1069,7 @@ pub fn aggregator_server<C>(
 where
     C: 'static + Clock,
 {
-    Ok(warp::serve(aggregator_filter(task, datastore, clock)?)
+    Ok(warp::serve(aggregator_filter(datastore, clock)?)
         .bind_with_graceful_shutdown(listen_address, shutdown_signal))
 }
 
@@ -1232,7 +1275,7 @@ mod tests {
         rand::SystemRandom,
     };
     use std::{collections::HashMap, io::Cursor};
-    use warp::reply::Reply;
+    use warp::{reply::Reply, Rejection};
 
     type PrepareTransition<V> = vdaf::PrepareTransition<
         <V as vdaf::Aggregator>::PrepareStep,
@@ -1248,12 +1291,23 @@ mod tests {
         let task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Leader);
         let (datastore, _db_handle) = ephemeral_datastore().await;
 
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
         let want_hpke_key = current_hpke_key(&task.hpke_keys).clone();
 
         let response = warp::test::request()
-            .path("/hpke_config")
+            .path(&format!(
+                "/hpke_config?task_id={}",
+                base64::encode_config(&task_id.0[..], base64::URL_SAFE_NO_PAD)
+            ))
             .method("GET")
-            .filter(&aggregator_filter(task, Arc::new(datastore), MockClock::default()).unwrap())
+            .filter(&aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap())
             .await
             .unwrap()
             .into_response();
@@ -1352,7 +1406,7 @@ mod tests {
         let clock = MockClock::default();
 
         let report = setup_report(&task, &datastore, &clock).await;
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
@@ -1479,49 +1533,79 @@ mod tests {
     async fn upload_filter_helper() {
         install_test_trace_subscriber();
 
-        let task = new_dummy_task(TaskId::random(), Vdaf::Prio3Aes128Count, Role::Helper);
+        let task_id = TaskId::random();
+        let task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Helper);
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
 
         let report = setup_report(&task, &datastore, &clock).await;
 
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
-        let result = warp::test::request()
+        let (part, body) = warp::test::request()
             .method("POST")
             .path("/upload")
             .body(report.get_encoded())
             .filter(&filter)
-            .await;
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
 
-        // We can't use `Result::unwrap_err` or `assert_matches!` here because
-        //  `impl Reply` is not `Debug`
-        if let Err(rejection) = result {
-            assert!(rejection.is_not_found());
-        } else {
-            panic!("should get rejection");
-        }
+        assert!(!part.status.is_success());
+        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": 400,
+                "type": "urn:ietf:params:ppm:error:unrecognizedTask",
+                "title": "An endpoint received a message with an unknown task ID.",
+                "detail": "An endpoint received a message with an unknown task ID.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+        assert_eq!(
+            problem_details
+                .as_object()
+                .unwrap()
+                .get("status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            part.status.as_u16() as u64
+        );
     }
 
-    async fn setup_upload_test() -> (Aggregator<MockClock>, Report, Arc<Datastore>, DbHandle) {
+    async fn setup_upload_test() -> (
+        Aggregator<MockClock>,
+        Task,
+        Report,
+        Arc<Datastore>,
+        DbHandle,
+    ) {
         let task = new_dummy_task(TaskId::random(), Vdaf::Prio3Aes128Count, Role::Leader);
         let (datastore, db_handle) = ephemeral_datastore().await;
         let datastore = Arc::new(datastore);
         let clock = MockClock::default();
         let report = setup_report(&task, &datastore, &clock).await;
 
-        let aggregator = Aggregator::new(task, datastore.clone(), clock).unwrap();
+        let aggregator = Aggregator::new(datastore.clone(), clock);
 
-        (aggregator, report, datastore, db_handle)
+        (aggregator, task, report, datastore, db_handle)
     }
 
     #[tokio::test]
     async fn upload() {
         install_test_trace_subscriber();
 
-        let (aggregator, report, datastore, _db_handle) = setup_upload_test().await;
+        let (aggregator, _, report, datastore, _db_handle) = setup_upload_test().await;
 
-        aggregator.handle_upload(&report).await.unwrap();
+        aggregator
+            .handle_upload(&report.get_encoded())
+            .await
+            .unwrap();
 
         let got_report = datastore
             .run_tx(|tx| {
@@ -1533,7 +1617,7 @@ mod tests {
 
         // should reject duplicate reports.
         // TODO (issue #34): change this error type.
-        assert_matches!(aggregator.handle_upload(&report).await, Err(Error::StaleReport(stale_nonce, task_id)) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::StaleReport(stale_nonce, task_id)) => {
             assert_eq!(task_id, report.task_id);
             assert_eq!(report.nonce, stale_nonce);
         });
@@ -1543,12 +1627,12 @@ mod tests {
     async fn upload_wrong_number_of_encrypted_shares() {
         install_test_trace_subscriber();
 
-        let (aggregator, mut report, _, _db_handle) = setup_upload_test().await;
+        let (aggregator, _, mut report, _, _db_handle) = setup_upload_test().await;
 
         report.encrypted_input_shares = vec![report.encrypted_input_shares[0].clone()];
 
         assert_matches!(
-            aggregator.handle_upload(&report).await,
+            aggregator.handle_upload(&report.get_encoded()).await,
             Err(Error::UnrecognizedMessage(_, _))
         );
     }
@@ -1557,11 +1641,11 @@ mod tests {
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
-        let (aggregator, mut report, _, _db_handle) = setup_upload_test().await;
+        let (aggregator, _, mut report, _, _db_handle) = setup_upload_test().await;
 
         report.encrypted_input_shares[0].config_id = HpkeConfigId(101);
 
-        assert_matches!(aggregator.handle_upload(&report).await, Err(Error::OutdatedHpkeConfig(config_id, task_id)) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::OutdatedHpkeConfig(config_id, task_id)) => {
             assert_eq!(task_id, report.task_id);
             assert_eq!(config_id, HpkeConfigId(101));
         });
@@ -1609,16 +1693,16 @@ mod tests {
     async fn upload_report_in_the_future() {
         install_test_trace_subscriber();
 
-        let (aggregator, mut report, datastore, _db_handle) = setup_upload_test().await;
-        let skew = aggregator.task.tolerable_clock_skew;
+        let (aggregator, task, mut report, datastore, _db_handle) = setup_upload_test().await;
+        let skew = task.tolerable_clock_skew;
 
         // Boundary condition
         report.nonce.time = Time::from_naive_date_time(aggregator.clock.now() + skew);
-        let mut report = reencrypt_report(
-            report,
-            &aggregator.task.hpke_keys.values().next().unwrap().0,
-        );
-        aggregator.handle_upload(&report).await.unwrap();
+        let mut report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
+        aggregator
+            .handle_upload(&report.get_encoded())
+            .await
+            .unwrap();
 
         let got_report = datastore
             .run_tx(|tx| {
@@ -1631,11 +1715,8 @@ mod tests {
         // Just past the clock skew
         report.nonce.time =
             Time::from_naive_date_time(aggregator.clock.now() + skew + Duration::seconds(1));
-        let report = reencrypt_report(
-            report,
-            &aggregator.task.hpke_keys.values().next().unwrap().0,
-        );
-        assert_matches!(aggregator.handle_upload(&report).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
+        let report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id);
             assert_eq!(report.nonce, nonce);
         });
@@ -1645,15 +1726,24 @@ mod tests {
     async fn aggregate_leader() {
         install_test_trace_subscriber();
 
-        let task = new_dummy_task(TaskId::random(), Vdaf::Prio3Aes128Count, Role::Leader);
+        let task_id = TaskId::random();
+        let task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Leader);
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
 
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
 
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
         let request = AggregateReq {
-            task_id: TaskId::random(),
+            task_id,
             job_id: AggregationJobId::random(),
             body: AggregateInitReq {
                 agg_param: Vec::new(),
@@ -1661,22 +1751,42 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
-        let result = warp::test::request()
+        let (part, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
             .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
             .filter(&filter)
-            .await;
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
 
-        // We can't use `Result::unwrap_err` or `assert_matches!` here because
-        //  `impl Reply` is not `Debug`
-        if let Err(rejection) = result {
-            assert!(rejection.is_not_found());
-        } else {
-            panic!("Should get rejection");
-        }
+        assert!(!part.status.is_success());
+        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": 400,
+                "type": "urn:ietf:params:ppm:error:unrecognizedTask",
+                "title": "An endpoint received a message with an unknown task ID.",
+                "detail": "An endpoint received a message with an unknown task ID.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+        assert_eq!(
+            problem_details
+                .as_object()
+                .unwrap()
+                .get("status")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            part.status.as_u16() as u64
+        );
     }
 
     #[tokio::test]
@@ -1688,6 +1798,14 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
 
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
         let request = AggregateReq {
             task_id,
             job_id: AggregationJobId::random(),
@@ -1697,7 +1815,7 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -1807,7 +1925,7 @@ mod tests {
         };
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -1901,7 +2019,7 @@ mod tests {
         };
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -1970,7 +2088,7 @@ mod tests {
         };
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -2013,6 +2131,14 @@ mod tests {
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
 
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
         let report_share = ReportShare {
             nonce: Nonce {
                 time: Time(54321),
@@ -2036,7 +2162,7 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -2164,7 +2290,7 @@ mod tests {
         };
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(task, datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -2317,7 +2443,7 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(task, datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -2420,7 +2546,7 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(task, datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -2570,7 +2696,7 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -2710,7 +2836,7 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -2816,7 +2942,7 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(task, Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
