@@ -4,13 +4,13 @@ use self::models::{
     AggregationJob, AggregatorRole, ReportAggregation, ReportAggregationState,
     ReportAggregationStateCode,
 };
-#[cfg(test)]
-use crate::{hpke::HpkePrivateKey, message::HpkeConfig, task::AggregatorAuthKey};
 use crate::{
+    hpke::HpkePrivateKey,
     message::{
-        AggregationJobId, Extension, HpkeCiphertext, Nonce, Report, ReportShare, TaskId, Time,
+        AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Nonce, Report, ReportShare,
+        TaskId, Time,
     },
-    task::{self, Task},
+    task::{self, AggregatorAuthKey, Task},
 };
 use futures::try_join;
 use postgres_types::ToSql;
@@ -22,7 +22,6 @@ use rand::{thread_rng, Rng};
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of, pin::Pin};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
-#[cfg(test)]
 use url::Url;
 
 // TODO(brandon): retry network-related & other transient failures once we know what they look like
@@ -218,11 +217,7 @@ impl Transaction<'_> {
     }
 
     /// Fetch the task parameters corresponing to the provided `task_id`.
-    //
-    // Only available in test configs for now, but will soon be used by
-    // aggregators to discover tasks from the database.
-    #[cfg(test)]
-    pub(crate) async fn get_task_by_id(&self, task_id: TaskId) -> Result<Task, Error> {
+    pub(crate) async fn get_task(&self, task_id: TaskId) -> Result<Task, Error> {
         let params: &[&(dyn ToSql + Sync)] = &[&&task_id.0[..]];
         let stmt = self
             .tx
@@ -342,7 +337,6 @@ impl Transaction<'_> {
     /// `hpke_aggregator_auth_keys` rows, and `task_hpke_keys` rows.
     ///
     /// agg_auth_key_rows must be sorted in ascending order by `ord`.
-    #[cfg(test)]
     fn task_from_rows(
         &self,
         task_id: TaskId,
@@ -1154,7 +1148,6 @@ pub mod models {
         }
 
         /// Returns the [`Role`] corresponding to this value.
-        #[cfg(test)]
         pub(super) fn as_role(&self) -> Role {
             match self {
                 Self::Leader => Role::Leader,
@@ -1341,7 +1334,21 @@ pub mod test_util {
 
     /// DbHandle represents a handle to a running (ephemeral) database. Dropping this value causes
     /// the database to be shut down & cleaned up.
-    pub struct DbHandle(Container<'static, Postgres>);
+    pub struct DbHandle {
+        _db_container: Container<'static, Postgres>,
+        connection_string: String,
+        datastore_key_bytes: Vec<u8>,
+    }
+
+    impl DbHandle {
+        pub fn connection_string(&self) -> &str {
+            &self.connection_string
+        }
+
+        pub fn datastore_key_bytes(&self) -> &[u8] {
+            &self.datastore_key_bytes
+        }
+    }
 
     /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database which
     /// has the Janus schema applied but is otherwise empty.
@@ -1363,8 +1370,10 @@ pub mod test_util {
         let pool = Pool::builder(conn_mgr).build().unwrap();
 
         // Create a crypter with a random (ephemeral) key.
-        let key = generate_aead_key();
-        let crypter = Crypter::new(vec![key]);
+        let datastore_key_bytes = generate_aead_key_bytes();
+        let datastore_key =
+            LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &datastore_key_bytes).unwrap());
+        let crypter = Crypter::new(vec![datastore_key]);
 
         // Connect to the database & run our schema.
         let client = pool.get().await.unwrap();
@@ -1381,13 +1390,24 @@ pub mod test_util {
             .await
             .unwrap();
 
-        (Datastore::new(pool, crypter), DbHandle(db_container))
+        (
+            Datastore::new(pool, crypter),
+            DbHandle {
+                _db_container: db_container,
+                connection_string,
+                datastore_key_bytes,
+            },
+        )
+    }
+
+    pub fn generate_aead_key_bytes() -> Vec<u8> {
+        let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
+        thread_rng().fill(&mut key_bytes[..]);
+        key_bytes
     }
 
     pub fn generate_aead_key() -> LessSafeKey {
-        let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
-        thread_rng().fill(&mut key_bytes[..]);
-        let unbound_key = UnboundKey::new(&AES_128_GCM, &key_bytes).unwrap();
+        let unbound_key = UnboundKey::new(&AES_128_GCM, &generate_aead_key_bytes()).unwrap();
         LessSafeKey::new(unbound_key)
     }
 }
@@ -1470,7 +1490,7 @@ mod tests {
             .unwrap();
 
             let retrieved_task = ds
-                .run_tx(|tx| Box::pin(async move { tx.get_task_by_id(task_id).await }))
+                .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
                 .await
                 .unwrap();
             assert_eq!(task, retrieved_task);

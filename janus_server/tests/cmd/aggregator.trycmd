@@ -4,7 +4,7 @@ janus-aggregator 0.1.0
 PPM aggregator server
 
 USAGE:
-    aggregator [OPTIONS] --config-file <config-file> --datastore-keys <datastore-keys>... --role <role>
+    aggregator [OPTIONS] --config-file <config-file> --datastore-keys <datastore-keys>...
 
 FLAGS:
     -h, --help       Prints help information
@@ -16,6 +16,5 @@ OPTIONS:
         --datastore-keys <datastore-keys>...
             datastore encryption keys, encoded in base64 then comma-separated [env: DATASTORE_KEYS=]
 
-        --role <role>                              role for this aggregator [possible values: leader, helper]
 
 ```

@@ -418,7 +418,7 @@ impl TaskId {
     pub(crate) const ENCODED_LEN: usize = 32;
 
     /// Get a reference to the task ID as a byte slice
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 

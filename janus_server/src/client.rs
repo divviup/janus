@@ -86,12 +86,15 @@ impl ClientParameters {
 pub async fn aggregator_hpke_config(
     client_parameters: &ClientParameters,
     aggregator_role: Role,
+    task_id: TaskId,
     http_client: &reqwest::Client,
 ) -> Result<HpkeConfig, Error> {
-    let hpke_config_response = http_client
-        .get(client_parameters.hpke_config_endpoint(aggregator_role)?)
-        .send()
-        .await?;
+    let mut request_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
+    request_url.set_query(Some(&format!(
+        "task_id={}",
+        base64::encode_config(&task_id.0[..], base64::URL_SAFE_NO_PAD)
+    )));
+    let hpke_config_response = http_client.get(request_url).send().await?;
     let status = hpke_config_response.status();
     if !status.is_success() {
         return Err(Error::Http(status));
