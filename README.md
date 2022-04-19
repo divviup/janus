@@ -39,3 +39,18 @@ RUSTFLAGS="--cfg tokio_unstable" CARGO_TARGET_DIR=target/tokio_unstable cargo bu
 ```
 
 Install `tokio-console`, run the server, and run `tokio-console http://127.0.0.1:6669` to connect to it and monitor tasks.
+
+## OpenTelemetry with Jaeger
+
+There is experimental support for exporting application traces to Jaeger. When enabled, tracing spans will be mapped to OpenTelemetry spans, and trace data will be published to a local Jaeger agent via UDP. Enable this feature by compiling with the `jaeger` feature enabled, and add the following to the configuration file.
+
+```yaml
+logging_config:
+  otel_jaeger: true
+```
+
+For local development, run a containerized Jaeger deployment with the following command, and open its web interface at http://localhost:16686/.
+
+```bash
+docker run -d -p6831:6831/udp -p6832:6832/udp -p16686:16686 -p14268:14268 jaegertracing/all-in-one:latest
+```

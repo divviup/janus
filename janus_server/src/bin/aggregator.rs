@@ -6,7 +6,7 @@ use janus_server::{
     config::AggregatorConfig,
     datastore::{self, Datastore},
     time::RealClock,
-    trace::install_trace_subscriber,
+    trace::{cleanup_trace_subscriber, install_trace_subscriber},
 };
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
@@ -164,6 +164,8 @@ async fn main() -> Result<()> {
     info!(?bound_address, "running aggregator");
 
     server.await;
+
+    cleanup_trace_subscriber(&config.logging_config);
 
     Ok(())
 }

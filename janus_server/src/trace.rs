@@ -13,6 +13,9 @@ pub enum Error {
     SetGlobalTracingSubscriber(#[from] tracing::subscriber::SetGlobalDefaultError),
     #[error("logging error: {0}")]
     SetGlobalLogger(#[from] tracing_log::log_tracer::SetLoggerError),
+    #[cfg(feature = "jaeger")]
+    #[error("jaeger error: {0}")]
+    Jaeger(#[from] opentelemetry::trace::TraceError),
 }
 
 /// Configuration for the tracing subscriber.
@@ -32,6 +35,9 @@ pub struct TraceConfiguration {
     /// (optional)
     #[serde(default)]
     pub tokio_console_config: TokioConsoleConfiguration,
+    /// Configuration for OpenTelemetry traces, delivered to a Jaeger agent.
+    #[serde(default)]
+    pub otel_jaeger: bool,
 }
 
 /// Configuration related to tokio-console.
@@ -109,6 +115,25 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
         );
     }
 
+    #[cfg(feature = "jaeger")]
+    if config.otel_jaeger {
+        opentelemetry::global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
+        let tracer = opentelemetry_jaeger::new_pipeline()
+            .with_service_name("janus_server")
+            .install_batch(opentelemetry::runtime::Tokio)?;
+        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        layers.push(telemetry.boxed());
+    }
+
+    #[cfg(not(feature = "jaeger"))]
+    if config.otel_jaeger {
+        eprintln!(
+            "Warning: the OpenTelemetry Jaeger subscriber was enabled in the \
+            configuration file, but support was not enabled at compile time. \
+            Rebuild with `--features jaeger`."
+        )
+    }
+
     let subscriber = Registry::default().with(layers);
 
     tracing::subscriber::set_global_default(subscriber)?;
@@ -117,6 +142,14 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     LogTracer::init()?;
 
     Ok(())
+}
+
+pub fn cleanup_trace_subscriber(_config: &TraceConfiguration) {
+    #[cfg(feature = "jaeger")]
+    if _config.otel_jaeger {
+        // Flush buffered traces in the OpenTelemetry pipeline.
+        opentelemetry::global::shutdown_tracer_provider();
+    }
 }
 
 #[cfg(test)]
