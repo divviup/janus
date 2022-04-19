@@ -127,16 +127,11 @@ impl<C: Clock> Aggregator<C> {
     }
 
     async fn handle_hpke_config(&self, task_id_base64: &[u8]) -> Result<Vec<u8>, Error> {
-        let task_id_bytes = base64::decode_config(task_id_base64, base64::URL_SAFE_NO_PAD);
-        if task_id_bytes.is_err() {
-            return Err(Error::UnrecognizedMessage("task_id", None));
-        }
-        let task_id = TaskId::get_decoded(&task_id_bytes.unwrap());
-        if task_id.is_err() {
-            return Err(Error::UnrecognizedMessage("task_id", None));
-        }
-
-        let task_aggregator = self.task_aggregator_for(task_id.unwrap()).await?;
+        let task_id_bytes = base64::decode_config(task_id_base64, base64::URL_SAFE_NO_PAD)
+            .map_err(|_| Error::UnrecognizedMessage("task_id", None))?;
+        let task_id = TaskId::get_decoded(&task_id_bytes)
+            .map_err(|_| Error::UnrecognizedMessage("task_id", None))?;
+        let task_aggregator = self.task_aggregator_for(task_id).await?;
         Ok(task_aggregator.handle_hpke_config().get_encoded())
     }
 
@@ -189,7 +184,9 @@ impl<C: Clock> Aggregator<C> {
     }
 
     async fn task_aggregator_for(&self, task_id: TaskId) -> Result<Arc<TaskAggregator>, Error> {
-        // TODO(brandon): don't cache forever (decide on & implement some cache eviction policy)
+        // TODO(brandon): don't cache forever (decide on & implement some cache eviction policy).
+        // This is important both to avoid ever-growing resource usage, and to allow aggregators to
+        // notice when a task changes (e.g. due to key rotation).
 
         // Fast path: grab an existing task aggregator if one exists for this task.
         {
