@@ -42,7 +42,7 @@ Install `tokio-console`, run the server, and run `tokio-console http://127.0.0.1
 
 ## OpenTelemetry with Jaeger
 
-There is experimental support for exporting application traces to Jaeger. When enabled, tracing spans will be mapped to OpenTelemetry spans, and trace data will be published to a local Jaeger agent via UDP. Enable this feature by compiling with the `jaeger` feature enabled, and add the following to the configuration file.
+There is experimental support for exporting application traces to [Jaeger](https://www.jaegertracing.io/). Jaeger is an OpenTelemetry-compliant software stack that stores, indexes, and displays distributed traces. When enabled, tracing spans will be mapped to OpenTelemetry spans, and trace data will be published to a local Jaeger agent via UDP (in Jaeger's Thrift-encoded protocol). Enable this feature by compiling with the `jaeger` feature enabled, and add the following to the configuration file.
 
 ```yaml
 logging_config:
