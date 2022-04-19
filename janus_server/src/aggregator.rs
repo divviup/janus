@@ -1015,7 +1015,7 @@ where
             |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
                 let task_id_b64 = query_params
                     .get("task_id")
-                    .ok_or_else(|| Error::UnrecognizedMessage("task_id", None))?;
+                    .ok_or(Error::UnrecognizedMessage("task_id", None))?;
                 let hpke_config_bytes = aggregator.handle_hpke_config(task_id_b64.as_ref()).await?;
                 Ok(reply::with_header(
                     reply::with_status(hpke_config_bytes, StatusCode::OK),
