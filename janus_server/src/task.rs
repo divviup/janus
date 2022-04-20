@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::{
     hpke::HpkePrivateKey,
-    message::{HpkeConfig, HpkeConfigId, Role, TaskId},
+    message::{HpkeConfig, HpkeConfigId, Interval, Role, TaskId},
 };
 use ::rand::{thread_rng, Rng};
 use chrono::Duration;
@@ -204,6 +204,18 @@ impl Task {
             hpke_keys: hpke_configs,
         })
     }
+
+    /// Returns true if `batch_interval` is valid, per §4.6 of draft-gpew-priv-ppm.
+    pub(crate) fn validate_batch_interval(&self, batch_interval: Interval) -> bool {
+        let min_batch_duration = self.min_batch_duration.num_seconds() as u64;
+
+        // Batch interval should be greater than task's minimum batch duration
+        batch_interval.duration.0 >= min_batch_duration
+            // Batch interval start must be a multiple of minimum batch duration
+            && batch_interval.start.0 % min_batch_duration == 0
+            // Batch interval duration must be a multiple of minimum batch duration
+            && batch_interval.duration.0 % min_batch_duration == 0
+    }
 }
 
 // This is public to allow use in integration tests.
@@ -286,5 +298,77 @@ pub mod test_util {
             .get(role.index().unwrap())
             .unwrap()
             .get_encoded()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_util::new_dummy_task;
+    use super::*;
+    use crate::message::{self, TaskId, Time};
+
+    #[test]
+    fn validate_batch_interval() {
+        let mut task = new_dummy_task(TaskId::random(), Vdaf::Fake, Role::Leader);
+        let min_batch_duration_secs = 3600;
+        task.min_batch_duration = Duration::seconds(min_batch_duration_secs as i64);
+
+        struct TestCase {
+            name: &'static str,
+            input: Interval,
+            expected: bool,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                name: "same duration as minimum",
+                input: Interval {
+                    start: Time(min_batch_duration_secs),
+                    duration: message::Duration(min_batch_duration_secs),
+                },
+                expected: true,
+            },
+            TestCase {
+                name: "interval too short",
+                input: Interval {
+                    start: Time(min_batch_duration_secs),
+                    duration: message::Duration(min_batch_duration_secs - 1),
+                },
+                expected: false,
+            },
+            TestCase {
+                name: "interval larger than minimum",
+                input: Interval {
+                    start: Time(min_batch_duration_secs),
+                    duration: message::Duration(min_batch_duration_secs * 2),
+                },
+                expected: true,
+            },
+            TestCase {
+                name: "interval duration not aligned with minimum",
+                input: Interval {
+                    start: Time(min_batch_duration_secs),
+                    duration: message::Duration(min_batch_duration_secs + 1800),
+                },
+                expected: false,
+            },
+            TestCase {
+                name: "interval start not aligned with minimum",
+                input: Interval {
+                    start: Time(1800),
+                    duration: message::Duration(min_batch_duration_secs),
+                },
+                expected: false,
+            },
+        ];
+
+        for test_case in test_cases {
+            assert_eq!(
+                test_case.expected,
+                task.validate_batch_interval(test_case.input),
+                "test case: {}",
+                test_case.name
+            );
+        }
     }
 }
