@@ -164,9 +164,7 @@ impl<C: Clock> Aggregator<C> {
         buf: &[u8],
         required_role: Option<Role>,
     ) -> Result<(Arc<TaskAggregator>, T), Error> {
-        // TODO(brandon): avoid copying the body here (make AuthenticatedRequestDecoder operate on Bytes or &[u8] or AsRef<[u8]>, most likely)
-        let decoder: AuthenticatedRequestDecoder<T> =
-            AuthenticatedRequestDecoder::new(Vec::from(buf)).map_err(Error::from)?;
+        let decoder = AuthenticatedRequestDecoder::new(buf).map_err(Error::from)?;
         let task_id = decoder.task_id();
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if required_role.is_some() && required_role.unwrap() != task_aggregator.task.role {

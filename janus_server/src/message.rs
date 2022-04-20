@@ -57,19 +57,19 @@ impl<M: Encode> AuthenticatedEncoder<M> {
 /// bytes. (This means that the task ID is aliased as both a field interpreted by the envelope, as
 /// well as part of the opaque message bytes to be decoded; this allows us to save having to
 /// specify the task ID twice.)
-pub struct AuthenticatedRequestDecoder<M: Decode> {
-    buf: Vec<u8>,
+pub struct AuthenticatedRequestDecoder<B: AsRef<[u8]>, M: Decode> {
+    buf: B,
     _msg_type: PhantomData<M>,
 }
 
-impl<M: Decode> AuthenticatedRequestDecoder<M> {
+impl<B: AsRef<[u8]>, M: Decode> AuthenticatedRequestDecoder<B, M> {
     /// MIN_BUFFER_SIZE defines the minimum size of a decodable buffer for a request.
     pub const MIN_BUFFER_SIZE: usize = TaskId::ENCODED_LEN + SHA256_OUTPUT_LEN;
 
     /// new creates a new AuthenticatedRequestDecoder which will attempt to decode the given bytes.
     /// If the given buffer is not at least MIN_BUFFER_SIZE bytes large, an error will be returned.
-    pub fn new(buf: Vec<u8>) -> Result<AuthenticatedRequestDecoder<M>, CodecError> {
-        if buf.len() < Self::MIN_BUFFER_SIZE {
+    pub fn new(buf: B) -> Result<Self, CodecError> {
+        if buf.as_ref().len() < Self::MIN_BUFFER_SIZE {
             return Err(CodecError::Io(io::Error::new(
                 ErrorKind::InvalidData,
                 "buffer too small",
@@ -88,13 +88,13 @@ impl<M: Decode> AuthenticatedRequestDecoder<M> {
     pub fn task_id(&self) -> TaskId {
         // Retrieve task_id from the buffer bytes.
         let mut buf = [0u8; TaskId::ENCODED_LEN];
-        buf.copy_from_slice(&self.buf[..TaskId::ENCODED_LEN]);
+        buf.copy_from_slice(&self.buf.as_ref()[..TaskId::ENCODED_LEN]);
         TaskId(buf)
     }
 
     /// decode authenticates & decodes the message using the given key.
     pub fn decode(&self, key: &hmac::Key) -> Result<M, AuthenticatedDecodeError> {
-        authenticated_decode(key, &self.buf)
+        authenticated_decode(key, self.buf.as_ref())
     }
 }
 
@@ -112,19 +112,19 @@ pub enum AuthenticatedDecodeError {
 /// AuthenticatedResponseDecoder can decode messages in the "authenticated response" format used by
 /// authenticated PPM response messages. This format places the authentication tag as the last 32
 /// bytes, and all prior bytes as opaque message data.
-pub struct AuthenticatedResponseDecoder<M: Decode> {
-    buf: Vec<u8>,
+pub struct AuthenticatedResponseDecoder<B: AsRef<[u8]>, M: Decode> {
+    buf: B,
     _msg_type: PhantomData<M>,
 }
 
-impl<M: Decode> AuthenticatedResponseDecoder<M> {
+impl<B: AsRef<[u8]>, M: Decode> AuthenticatedResponseDecoder<B, M> {
     // MIN_BUFFER_SIZE defines the minimum size of a decodable buffer for a response.
     pub const MIN_BUFFER_SIZE: usize = SHA256_OUTPUT_LEN;
 
     /// new creates a new AuthenticatedResponseDecoder which will attempt to decode the given bytes.
     /// If the given buffer is not at least MIN_BUFFER_SIZE bytes large, an error will be returned.
-    pub fn new(buf: Vec<u8>) -> Result<AuthenticatedResponseDecoder<M>, CodecError> {
-        if buf.len() < Self::MIN_BUFFER_SIZE {
+    pub fn new(buf: B) -> Result<Self, CodecError> {
+        if buf.as_ref().len() < Self::MIN_BUFFER_SIZE {
             return Err(CodecError::Io(io::Error::new(
                 ErrorKind::InvalidData,
                 "buffer too small",
@@ -139,7 +139,7 @@ impl<M: Decode> AuthenticatedResponseDecoder<M> {
 
     /// decode authenticates & decodes the message using the given key.
     pub fn decode(&self, key: &hmac::Key) -> Result<M, AuthenticatedDecodeError> {
-        authenticated_decode(key, &self.buf)
+        authenticated_decode(key, self.buf.as_ref())
     }
 }
 
