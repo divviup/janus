@@ -13,6 +13,10 @@ The aggregator server requires a connection to a PostgreSQL 14 database. Prepare
 aggregator --config-file <config-file> --role <role>
 ```
 
+## Running tests
+
+To run janus tests, ensure docker is running locally and execute `cargo test`.
+
 ## Container image
 
 To build a container image, run the following command.
