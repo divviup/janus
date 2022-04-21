@@ -5,7 +5,7 @@
 
 use janus_server::{
     config::{AggregatorConfig, DbConfig},
-    datastore::test_util::ephemeral_datastore,
+    datastore::{Crypter, Datastore},
     message::{Role, TaskId},
     task::{test_util::new_dummy_task, Vdaf},
     trace::{install_trace_subscriber, TraceConfiguration},
@@ -16,6 +16,8 @@ use std::{
     process::Command,
 };
 use wait_timeout::ChildExt;
+
+test_util::define_ephemeral_datastore!(false);
 
 /// Try to find an open port by binding to an ephemeral port, saving the port
 /// number, and closing the listening socket. This may still fail due to race

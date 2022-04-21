@@ -6,6 +6,7 @@ COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
 COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test
+COPY test_util /src/test_util
 COPY db/schema.sql /src/db/schema.sql
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release --bin aggregator && cp /src/target/release/aggregator /aggregator
 
