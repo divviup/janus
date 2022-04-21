@@ -2,7 +2,7 @@
 
 use atty::{self, Stream};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::{collections::HashMap, net::SocketAddr};
 use tracing_log::LogTracer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer, Registry};
 
@@ -13,9 +13,17 @@ pub enum Error {
     SetGlobalTracingSubscriber(#[from] tracing::subscriber::SetGlobalDefaultError),
     #[error("logging error: {0}")]
     SetGlobalLogger(#[from] tracing_log::log_tracer::SetLoggerError),
-    #[cfg(feature = "jaeger")]
-    #[error("jaeger error: {0}")]
-    Jaeger(#[from] opentelemetry::trace::TraceError),
+    #[cfg(any(feature = "jaeger", feature = "otlp"))]
+    #[error(transparent)]
+    OTel(#[from] opentelemetry::trace::TraceError),
+    #[cfg(feature = "otlp")]
+    #[error(transparent)]
+    TonicMetadataKey(#[from] tonic::metadata::errors::InvalidMetadataKey),
+    #[cfg(feature = "otlp")]
+    #[error(transparent)]
+    TonicMetadataValue(#[from] tonic::metadata::errors::InvalidMetadataValue),
+    #[error(transparent)]
+    Other(anyhow::Error),
 }
 
 /// Configuration for the tracing subscriber.
@@ -35,9 +43,12 @@ pub struct TraceConfiguration {
     /// (optional)
     #[serde(default)]
     pub tokio_console_config: TokioConsoleConfiguration,
-    /// Configuration for OpenTelemetry traces, delivered to a Jaeger agent.
+    /// Enable delivering OpenTelemetry traces to a Jaeger agent.
     #[serde(default)]
     pub otel_jaeger: bool,
+    /// Configuration for OpenTelemetry traces, delivered via OTLP.
+    #[serde(default)]
+    pub otel_otlp: OtlpConfiguration,
 }
 
 /// Configuration related to tokio-console.
@@ -54,6 +65,19 @@ pub struct TokioConsoleConfiguration {
     /// default of 127.0.0.1:6669.
     #[serde(default)]
     pub listen_address: Option<SocketAddr>,
+}
+
+/// Configuration options specific to the OpenTelemetry OTLP exporter.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OtlpConfiguration {
+    /// Enable the OpenTelemetry tracing layer, with the OTLP exporter.
+    #[serde(default)]
+    pub enabled: bool,
+    /// gRPC endpoint for OTLP exporter.
+    pub endpoint: String,
+    /// Additional metadata/HTTP headers to be sent with OTLP requests.
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
 }
 
 /// Create a base tracing layer with configuration used in all subscribers
@@ -115,9 +139,14 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
         );
     }
 
+    if config.otel_jaeger && config.otel_otlp.enabled {
+        return Err(Error::Other(anyhow::anyhow!(
+            "bad configuration, both Jaeger and OTLP OpenTelemetry layers cannot be enabled at the same time"
+        )));
+    }
+
     #[cfg(feature = "jaeger")]
     if config.otel_jaeger {
-        opentelemetry::global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
         let tracer = opentelemetry_jaeger::new_pipeline()
             .with_service_name("janus_server")
             .install_batch(opentelemetry::runtime::Tokio)?;
@@ -131,7 +160,49 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
             "Warning: the OpenTelemetry Jaeger subscriber was enabled in the \
             configuration file, but support was not enabled at compile time. \
             Rebuild with `--features jaeger`."
-        )
+        );
+    }
+
+    #[cfg(feature = "otlp")]
+    if config.otel_otlp.enabled {
+        use opentelemetry::{
+            sdk::{trace, Resource},
+            KeyValue,
+        };
+        use opentelemetry_otlp::WithExportConfig;
+        use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
+        use std::str::FromStr;
+        use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
+
+        let mut map = MetadataMap::with_capacity(config.otel_otlp.metadata.len());
+        for (key, value) in config.otel_otlp.metadata.iter() {
+            map.insert(MetadataKey::from_str(key)?, MetadataValue::from_str(value)?);
+        }
+
+        let tracer =
+            opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_exporter(
+                    opentelemetry_otlp::new_exporter()
+                        .tonic()
+                        .with_endpoint(config.otel_otlp.endpoint.clone())
+                        .with_metadata(map),
+                )
+                .with_trace_config(trace::config().with_resource(Resource::new(vec![
+                    KeyValue::new(SERVICE_NAME, "janus_server"),
+                ])))
+                .install_batch(opentelemetry::runtime::Tokio)?;
+        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        layers.push(telemetry.boxed());
+    }
+
+    #[cfg(not(feature = "otlp"))]
+    if config.otel_otlp.enabled {
+        eprintln!(
+            "Warning: the OpenTelemetry OTLP subscriber was enabled in the \
+            configuration file, but support was not enabled at compile time. \
+            Rebuild with `--features otlp`."
+        );
     }
 
     let subscriber = Registry::default().with(layers);
@@ -145,8 +216,8 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
 }
 
 pub fn cleanup_trace_subscriber(_config: &TraceConfiguration) {
-    #[cfg(feature = "jaeger")]
-    if _config.otel_jaeger {
+    #[cfg(any(feature = "jaeger", feature = "otlp"))]
+    if _config.otel_jaeger || _config.otel_otlp.enabled {
         // Flush buffered traces in the OpenTelemetry pipeline.
         opentelemetry::global::shutdown_tracer_provider();
     }
