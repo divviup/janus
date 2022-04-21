@@ -175,6 +175,12 @@ impl Decode for Duration {
     }
 }
 
+impl Display for Duration {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} seconds", self.0)
+    }
+}
+
 /// PPM protocol message representing an instant in time with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Time(pub(crate) u64);
@@ -209,7 +215,7 @@ impl Decode for Time {
 
 /// PPM protocol message representing a half-open interval of time with a resolution of seconds;
 /// the start of the interval is included while the end of the interval is excluded.
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct Interval {
     /// The start of the interval.
     pub(crate) start: Time,
@@ -230,6 +236,12 @@ impl Decode for Interval {
         let duration = Duration::decode(bytes)?;
 
         Ok(Self { start, duration })
+    }
+}
+
+impl Display for Interval {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "start: {} duration: {}", self.start, self.duration)
     }
 }
 
