@@ -173,6 +173,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
         use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
         use std::str::FromStr;
         use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
+        use tracing_subscriber::filter::{LevelFilter, Targets};
 
         let mut map = MetadataMap::with_capacity(config.otel_otlp.metadata.len());
         for (key, value) in config.otel_otlp.metadata.iter() {
@@ -192,7 +193,16 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
                     KeyValue::new(SERVICE_NAME, "janus_server"),
                 ])))
                 .install_batch(opentelemetry::runtime::Tokio)?;
-        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+        let filter = Targets::new()
+            .with_default(LevelFilter::TRACE)
+            .with_target("h2::proto::streams::prioritize", LevelFilter::OFF)
+            .with_target("h2::proto::streams::store", LevelFilter::OFF)
+            .with_target("h2::codec::framed_write", LevelFilter::OFF);
+
+        let telemetry = tracing_opentelemetry::layer()
+            .with_tracer(tracer)
+            .with_filter(filter);
         layers.push(telemetry.boxed());
     }
 
