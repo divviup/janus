@@ -1,0 +1,12 @@
+[package]
+name = "monolithic_integration_test"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+chrono = "0.4.19"
+futures = "0.3.21"
+janus_server = { path = "../janus_server" }
+prio = { git = "https://github.com/divviup/libprio-rs", rev = "229cd9c45924c7dae3ba754a6eb46b2a05ca8451" }  # TODO(brandon): use a numbered version, once a release is cut >0.7.0
+tokio = { version = "^1.9", features = ["full", "tracing"] }
+url = { version = "2.2.2", features = ["serde"] }
