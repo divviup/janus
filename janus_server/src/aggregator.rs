@@ -10,15 +10,18 @@ use crate::{
         AggregateReq,
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
         AggregateResp, AggregationJobId, AuthenticatedDecodeError, AuthenticatedEncoder,
-        AuthenticatedRequestDecoder, HpkeConfig, HpkeConfigId, Nonce, Report, ReportShare, Role,
-        TaskId, Transition, TransitionError, TransitionTypeSpecificData,
+        AuthenticatedRequestDecoder, CollectReq, HpkeConfig, HpkeConfigId, Interval, Nonce, Report,
+        ReportShare, Role, TaskId, Transition, TransitionError, TransitionTypeSpecificData,
     },
     task::{self, Task},
     time::Clock,
 };
 use bytes::Bytes;
 use futures::future;
-use http::{header::CACHE_CONTROL, StatusCode};
+use http::{
+    header::{CACHE_CONTROL, LOCATION},
+    StatusCode,
+};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
@@ -38,6 +41,7 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tracing::{error, warn};
+use url::Url;
 use warp::{
     filters::BoxedFilter,
     reply::{self, Response},
@@ -85,6 +89,9 @@ pub enum Error {
     /// An error from the underlying VDAF library.
     #[error("VDAF error: {0}")]
     Vdaf(#[from] vdaf::VdafError),
+    /// A collect or aggregate share request was rejected because the interval is valid, per §4.6
+    #[error("Invalid batch interval: {0} {1:?}")]
+    InvalidBatchInterval(Interval, TaskId),
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
@@ -179,6 +186,23 @@ impl<C: Clock> Aggregator<C> {
         }
         // If we get here, every available key returned InvalidHmac.
         Err(Error::InvalidHmac(task_id))
+    }
+
+    async fn handle_collect(&self, req_bytes: &[u8]) -> Result<Url, Error> {
+        let collect_req = CollectReq::get_decoded(req_bytes)?;
+
+        let task_aggregator = self.task_aggregator_for(collect_req.task_id).await?;
+
+        // Only the leader supports collect.
+        if task_aggregator.task.role != Role::Leader {
+            // TODO (timg): We should make sure that a helper returns HTTP 404 or 403 when this
+            // happens
+            return Err(Error::UnrecognizedTask(collect_req.task_id));
+        }
+
+        task_aggregator
+            .handle_collect(&self.datastore, &self.clock, collect_req)
+            .await
     }
 
     async fn task_aggregator_for(&self, task_id: TaskId) -> Result<Arc<TaskAggregator>, Error> {
@@ -396,6 +420,26 @@ impl TaskAggregator {
         self.vdaf_ops
             .handle_aggregate(datastore, &self.task, req)
             .await
+    }
+
+    async fn handle_collect<C: Clock>(
+        &self,
+        _datastore: &Datastore,
+        _clock: &C,
+        req: CollectReq,
+    ) -> Result<Url, Error> {
+        if !self.task.validate_batch_interval(req.batch_interval) {
+            return Err(Error::InvalidBatchInterval(
+                req.batch_interval,
+                self.task.id,
+            ));
+        }
+
+        // TODO: Check database for in-flight collect job
+        // create one if necessary
+        // return collect URI
+
+        Ok(Url::parse("https://example.com/collect-job-uri").unwrap())
     }
 }
 
@@ -889,6 +933,7 @@ enum PpmProblemType {
     OutdatedConfig,
     StaleReport,
     InvalidHmac,
+    InvalidBatchInterval,
 }
 
 impl PpmProblemType {
@@ -900,6 +945,9 @@ impl PpmProblemType {
             PpmProblemType::OutdatedConfig => "urn:ietf:params:ppm:error:outdatedConfig",
             PpmProblemType::StaleReport => "urn:ietf:params:ppm:error:staleReport",
             PpmProblemType::InvalidHmac => "urn:ietf:params:ppm:error:invalidHmac",
+            PpmProblemType::InvalidBatchInterval => {
+                "urn:ietf:params:ppm:error:invalidBatchInterval"
+            }
         }
     }
 
@@ -919,6 +967,7 @@ impl PpmProblemType {
                 "Report could not be processed because it arrived too late."
             }
             PpmProblemType::InvalidHmac => "The aggregate message's HMAC was not valid.",
+            PpmProblemType::InvalidBatchInterval => "The batch interval in the collect or aggregate share request is not valid for the task.",
         }
     }
 }
@@ -988,6 +1037,9 @@ fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Respon
             Err(Error::InvalidHmac(task_id)) => {
                 build_problem_details_response(PpmProblemType::InvalidHmac, Some(task_id))
             }
+            Err(Error::InvalidBatchInterval(_, task_id)) => {
+                build_problem_details_response(PpmProblemType::InvalidBatchInterval, Some(task_id))
+            }
             Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -1039,7 +1091,7 @@ where
 
     let aggregate_endpoint = warp::path("aggregate")
         .and(warp::post())
-        .and(with_cloned_value(aggregator))
+        .and(with_cloned_value(aggregator.clone()))
         .and(warp::body::bytes())
         .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
             let resp_bytes = aggregator.handle_aggregate(&body).await?;
@@ -1048,9 +1100,26 @@ where
         .map(error_handler())
         .with(trace::named("aggregate"));
 
+    let collect_endpoint = warp::path("collect")
+        .and(warp::post())
+        .and(with_cloned_value(aggregator))
+        .and(warp::body::bytes())
+        .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
+            let collect_uri = aggregator.handle_collect(&body).await?;
+            // §4.5: Response is an HTTP 303 with the collect URI in a Location
+            // header
+            Ok(reply::with_status(
+                reply::with_header(reply::reply(), LOCATION, collect_uri.as_str()),
+                StatusCode::SEE_OTHER,
+            ))
+        })
+        .map(error_handler())
+        .with(trace::named("collect"));
+
     Ok(hpke_config_endpoint
         .or(upload_endpoint)
         .or(aggregate_endpoint)
+        .or(collect_endpoint)
         .boxed())
 }
 
@@ -1254,7 +1323,7 @@ mod tests {
         aggregator::test_util::fake,
         datastore::test_util::{ephemeral_datastore, DbHandle},
         hpke::{associated_data_for, HpkePrivateKey, Label},
-        message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
+        message::{self, AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
         task::{test_util::new_dummy_task, Vdaf},
         time::tests::MockClock,
         trace::test_util::install_test_trace_subscriber,
@@ -2967,6 +3036,166 @@ mod tests {
                 "taskid": base64::encode(task_id.as_bytes()),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn collect_request_to_helper() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+
+        let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+
+        let request = CollectReq {
+            task_id,
+            batch_interval: Interval {
+                start: Time(0),
+                duration: message::Duration(task.min_batch_duration.num_seconds() as u64),
+            },
+            agg_param: vec![],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:unrecognizedTask",
+                "title": "An endpoint received a message with an unknown task ID.",
+                "detail": "An endpoint received a message with an unknown task ID.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_request_invalid_batch_interval() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+
+        let task = new_dummy_task(task_id, Vdaf::Fake, Role::Leader);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+
+        let request = CollectReq {
+            task_id,
+            batch_interval: Interval {
+                start: Time(0),
+                // Collect request will be rejected because batch interval is too small
+                duration: message::Duration(task.min_batch_duration.num_seconds() as u64 - 1),
+            },
+            agg_param: vec![],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:invalidBatchInterval",
+                "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_request() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+
+        let task = new_dummy_task(task_id, Vdaf::Fake, Role::Leader);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+
+        let request = CollectReq {
+            task_id,
+            batch_interval: Interval {
+                start: Time(0),
+                duration: message::Duration(task.min_batch_duration.num_seconds() as u64),
+            },
+            agg_param: vec![],
+        };
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        // TODO(timg): validate collect URI
+        assert!(response.headers().get(LOCATION).is_some());
     }
 
     fn generate_nonce<C: Clock>(clock: &C) -> Nonce {
