@@ -7,8 +7,8 @@ use self::models::{
 use crate::{
     hpke::HpkePrivateKey,
     message::{
-        AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Nonce, Report, ReportShare,
-        TaskId, Time,
+        AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Report,
+        ReportShare, TaskId, Time,
     },
     task::{self, AggregatorAuthKey, Task},
 };
@@ -23,6 +23,7 @@ use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of, pin::Pin};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
+use uuid::Uuid;
 
 // TODO(brandon): retry network-related & other transient failures once we know what they look like
 
@@ -821,6 +822,82 @@ impl Transaction<'_> {
                 .await?,
         )
     }
+
+    /// If a collect job corresponding to the provided values exists, its UUID is returned, which
+    /// may then be used to construct a collect job URI. If that collect job does not exist, returns
+    /// `Ok(None)`.
+    #[tracing::instrument(skip(self, encoded_aggregation_parameter), err)]
+    pub(crate) async fn get_collect_job_uuid(
+        &self,
+        task_id: TaskId,
+        batch_interval: Interval,
+        encoded_aggregation_parameter: &[u8],
+    ) -> Result<Option<Uuid>, Error> {
+        let batch_interval_start = batch_interval.start.as_naive_date_time();
+        let batch_interval_duration = i64::try_from(batch_interval.duration.0)?;
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT collect_job_id FROM collect_jobs
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                AND batch_interval_start = $2 AND batch_interval_duration = $3
+                AND aggregation_param = $4",
+            )
+            .await?;
+        let row = self
+            .tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &&task_id.0[..],
+                    &batch_interval_start,
+                    &batch_interval_duration,
+                    /* aggregation_param */ &encoded_aggregation_parameter,
+                ],
+            )
+            .await?;
+
+        Ok(row.map(|row| row.get("collect_job_id")))
+    }
+
+    /// Constructs and stores a collect job for the provided values, and returns the UUID that was
+    /// assigned.
+    #[tracing::instrument(skip(self, encoded_aggregation_parameter), err)]
+    pub(crate) async fn put_collect_job(
+        &self,
+        task_id: TaskId,
+        batch_interval: Interval,
+        encoded_aggregation_parameter: &[u8],
+    ) -> Result<Uuid, Error> {
+        let batch_interval_start = batch_interval.start.as_naive_date_time();
+        let batch_interval_duration = i64::try_from(batch_interval.duration.0)?;
+
+        let collect_job_id = Uuid::new_v4();
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "INSERT INTO collect_jobs (collect_job_id, task_id,
+                batch_interval_start, batch_interval_duration, aggregation_param)
+                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5)",
+            )
+            .await?;
+        self.tx
+            .execute(
+                &stmt,
+                &[
+                    /* collect_job_id */ &collect_job_id,
+                    /* task_id */ &&task_id.0[..],
+                    &batch_interval_start,
+                    &batch_interval_duration,
+                    /* aggregation_param */ &encoded_aggregation_parameter,
+                ],
+            )
+            .await?;
+
+        Ok(collect_job_id)
+    }
 }
 
 fn single_row(rows: Vec<Row>) -> Result<Row, Error> {
@@ -1341,7 +1418,7 @@ mod tests {
     use crate::{
         aggregator::test_util::fake,
         datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
-        message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
+        message::{Duration, ExtensionType, HpkeConfigId, Role, Time, TransitionError},
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
@@ -1980,6 +2057,116 @@ mod tests {
         assert!(crypter
             .decrypt(TABLE, ROW, "wrong_column", &ciphertext)
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn lookup_collect_job() {
+        install_test_trace_subscriber();
+
+        let task_id = TaskId::random();
+        let batch_interval = Interval {
+            start: Time(100),
+            duration: Duration(100),
+        };
+
+        let (ds, _db_handle) = ephemeral_datastore().await;
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                tx.put_task(&new_dummy_task(
+                    task_id,
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        let collect_job_uuid = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_collect_job_uuid(task_id, batch_interval, &[0, 1, 2, 3, 4])
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        assert!(collect_job_uuid.is_none());
+
+        let collect_job_uuid = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_collect_job(task_id, batch_interval, &[0, 1, 2, 3, 4])
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let same_collect_job_uuid = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_collect_job_uuid(task_id, batch_interval, &[0, 1, 2, 3, 4])
+                        .await
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Should get the same UUID for the same values.
+        assert_eq!(collect_job_uuid, same_collect_job_uuid);
+
+        let rows = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.tx
+                        .query("SELECT id FROM collect_jobs", &[])
+                        .await
+                        .map_err(Error::from)
+                })
+            })
+            .await
+            .unwrap();
+
+        assert!(rows.len() == 1);
+
+        let different_collect_job_uuid = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_collect_job(
+                        task_id,
+                        Interval {
+                            start: Time(101),
+                            duration: Duration(100),
+                        },
+                        &[0, 1, 2, 3, 4],
+                    )
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        // New collect job should yield a new UUID.
+        assert!(different_collect_job_uuid != collect_job_uuid);
+
+        let rows = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.tx
+                        .query("SELECT id FROM collect_jobs", &[])
+                        .await
+                        .map_err(Error::from)
+                })
+            })
+            .await
+            .unwrap();
+
+        // A new row should be present.
+        assert!(rows.len() == 2);
     }
 
     /// generate_vdaf_values generates some arbitrary VDAF values for use in testing. It is cribbed
