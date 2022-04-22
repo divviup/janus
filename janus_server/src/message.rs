@@ -193,6 +193,11 @@ impl Time {
     pub(crate) fn from_naive_date_time(time: NaiveDateTime) -> Self {
         Self(time.timestamp() as u64)
     }
+
+    /// Add the provided duration to this time.
+    fn add(&self, duration: Duration) -> Time {
+        Time(self.0 + duration.0)
+    }
 }
 
 impl Display for Time {
@@ -221,6 +226,13 @@ pub struct Interval {
     pub(crate) start: Time,
     /// The length of the interval.
     pub(crate) duration: Duration,
+}
+
+impl Interval {
+    /// Returns a [`Time`] representing the excluded end of this interval.
+    pub(crate) fn end(&self) -> Time {
+        Time(self.start.add(self.duration).0)
+    }
 }
 
 impl Encode for Interval {
