@@ -92,6 +92,8 @@ pub enum Error {
     /// A collect or aggregate share request was rejected because the interval is valid, per §4.6
     #[error("Invalid batch interval: {0} {1:?}")]
     InvalidBatchInterval(Interval, TaskId),
+    #[error("URL parse error: {0}")]
+    Url(#[from] url::ParseError),
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
@@ -201,7 +203,7 @@ impl<C: Clock> Aggregator<C> {
         }
 
         task_aggregator
-            .handle_collect(&self.datastore, &self.clock, collect_req)
+            .handle_collect(&self.datastore, collect_req)
             .await
     }
 
@@ -422,12 +424,7 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_collect<C: Clock>(
-        &self,
-        _datastore: &Datastore,
-        _clock: &C,
-        req: CollectReq,
-    ) -> Result<Url, Error> {
+    async fn handle_collect(&self, datastore: &Datastore, req: CollectReq) -> Result<Url, Error> {
         if !self.task.validate_batch_interval(req.batch_interval) {
             return Err(Error::InvalidBatchInterval(
                 req.batch_interval,
@@ -435,11 +432,32 @@ impl TaskAggregator {
             ));
         }
 
-        // TODO: Check database for in-flight collect job
-        // create one if necessary
-        // return collect URI
+        let collect_job_uuid = datastore
+            .run_tx(move |tx| {
+                let aggregation_param = req.agg_param.clone();
+                Box::pin(async move {
+                    let collect_job_uuid = tx
+                        .get_collect_job_uuid(req.task_id, req.batch_interval, &aggregation_param)
+                        .await?;
 
-        Ok(Url::parse("https://example.com/collect-job-uri").unwrap())
+                    match collect_job_uuid {
+                        Some(uuid) => Ok(uuid),
+                        None => {
+                            tx.put_collect_job(req.task_id, req.batch_interval, &aggregation_param)
+                                .await
+                        }
+                    }
+                })
+            })
+            .await?;
+
+        // TODO(timg): Aggregator configuration needs to include the URL from which collect job URIs
+        // are constructed
+        let base_url = Url::parse("https://example.com").unwrap();
+
+        Ok(base_url
+            .join("collect_jobs/")?
+            .join(&collect_job_uuid.to_string())?)
     }
 }
 
@@ -1043,6 +1061,7 @@ fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Respon
             Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
 }

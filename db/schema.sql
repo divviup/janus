@@ -127,16 +127,16 @@ CREATE TABLE batch_aggregations(
 
 -- A collection request from the Collector.
 CREATE TABLE collect_jobs(
-    id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    collect_job_id        UUID NOT NULL,       -- UUID used by collector to refer to this job
-    task_id               BIGINT NOT NULL,     -- the task ID being collected
-    batch_interval_start  TIMESTAMP NOT NULL,  -- the start of the batch interval
-    batch_interval_end    TIMESTAMP NOT NULL,  -- the end of the batch interval
-    aggregation_param     BYTEA NOT NULL,      -- the aggregation parameter (opaque VDAF message)
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
+    collect_job_id          UUID NOT NULL,      -- UUID used by collector to refer to this job
+    task_id                 BIGINT NOT NULL,    -- the task ID being collected
+    batch_interval_start    TIMESTAMP NOT NULL, -- the start of the batch interval
+    batch_interval_duration BIGINT NOT NULL,    -- the length of the batch interval in seconds
+    aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
 
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
-CREATE INDEX collect_jobs_batch_interval_index ON collect_jobs(task_id, batch_interval_start, batch_interval_end);
+CREATE INDEX collect_jobs_batch_interval_index ON collect_jobs(task_id, batch_interval_start, batch_interval_duration);
 
 -- An encrypted aggregate share computed for a specific collection job.
 CREATE TABLE collect_job_encrypted_aggregate_shares(
