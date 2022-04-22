@@ -15,15 +15,15 @@ pub enum Error {
     SetGlobalLogger(#[from] tracing_log::log_tracer::SetLoggerError),
     #[cfg(any(feature = "jaeger", feature = "otlp"))]
     #[error(transparent)]
-    OTel(#[from] opentelemetry::trace::TraceError),
+    OpenTelemetry(#[from] opentelemetry::trace::TraceError),
     #[cfg(feature = "otlp")]
     #[error(transparent)]
     TonicMetadataKey(#[from] tonic::metadata::errors::InvalidMetadataKey),
     #[cfg(feature = "otlp")]
     #[error(transparent)]
     TonicMetadataValue(#[from] tonic::metadata::errors::InvalidMetadataValue),
-    #[error(transparent)]
-    Other(anyhow::Error),
+    #[error("{0}")]
+    Other(&'static str),
 }
 
 /// Configuration for the tracing subscriber.
@@ -140,9 +140,9 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     }
 
     if config.otel_jaeger && config.otel_otlp.enabled {
-        return Err(Error::Other(anyhow::anyhow!(
-            "bad configuration, both Jaeger and OTLP OpenTelemetry layers cannot be enabled at the same time"
-        )));
+        return Err(Error::Other(
+            "bad configuration (both Jaeger and OTLP OpenTelemetry layers cannot be enabled at the same time)"
+        ));
     }
 
     #[cfg(feature = "jaeger")]
@@ -194,6 +194,8 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
                 ])))
                 .install_batch(opentelemetry::runtime::Tokio)?;
 
+        // Filter out some spans from h2, internal to the OTLP exporter (via tonic). These spans
+        // would otherwise drown out root spans from the application.
         let filter = Targets::new()
             .with_default(LevelFilter::TRACE)
             .with_target("h2::proto::streams::prioritize", LevelFilter::OFF)
