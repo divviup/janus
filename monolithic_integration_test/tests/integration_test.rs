@@ -3,7 +3,7 @@ use futures::channel::oneshot::Sender;
 use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
-    datastore::test_util::{ephemeral_datastore, DbHandle},
+    datastore::{Crypter, Datastore},
     hpke::test_util::generate_hpke_config_and_private_key,
     message::{Role, TaskId},
     task::{AggregatorAuthKey, Task, Vdaf},
@@ -20,6 +20,8 @@ use std::{
 };
 use tokio::task::JoinHandle;
 use url::Url;
+
+test_util::define_ephemeral_datastore!(false);
 
 fn endpoint_from_socket_addr(addr: &SocketAddr) -> Url {
     assert!(addr.ip().is_loopback());

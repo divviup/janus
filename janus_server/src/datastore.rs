@@ -1328,102 +1328,11 @@ pub mod models {
     }
 }
 
-// This is public to allow use in integration tests.
-#[doc(hidden)]
+#[cfg(test)]
 pub mod test_util {
-    use super::*;
-    use deadpool_postgres::{Manager, Pool};
-    use lazy_static::lazy_static;
-    use ring::aead::UnboundKey;
-    use std::str::{self, FromStr};
-    use testcontainers::{clients::Cli, images::postgres::Postgres, Container, RunnableImage};
-    use tokio_postgres::{Config, NoTls};
+    use super::{Crypter, Datastore};
 
-    const SCHEMA: &str = include_str!("../../db/schema.sql");
-
-    // TODO(brandon): use podman instead of docker for container management once testcontainers supports it
-    lazy_static! {
-        static ref CONTAINER_CLIENT: Cli = Cli::default();
-    }
-
-    /// DbHandle represents a handle to a running (ephemeral) database. Dropping this value causes
-    /// the database to be shut down & cleaned up.
-    pub struct DbHandle {
-        _db_container: Container<'static, Postgres>,
-        connection_string: String,
-        datastore_key_bytes: Vec<u8>,
-    }
-
-    impl DbHandle {
-        pub fn connection_string(&self) -> &str {
-            &self.connection_string
-        }
-
-        pub fn datastore_key_bytes(&self) -> &[u8] {
-            &self.datastore_key_bytes
-        }
-    }
-
-    /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database which
-    /// has the Janus schema applied but is otherwise empty.
-    ///
-    /// Dropping the second return value causes the database to be shut down & cleaned up.
-    pub async fn ephemeral_datastore() -> (Datastore, DbHandle) {
-        // Start an instance of Postgres running in a container.
-        let db_container =
-            CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
-
-        // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
-        const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let connection_string = format!(
-            "postgres://postgres:postgres@localhost:{}/postgres",
-            db_container.get_host_port(POSTGRES_DEFAULT_PORT)
-        );
-        let cfg = Config::from_str(&connection_string).unwrap();
-        let conn_mgr = Manager::new(cfg, NoTls);
-        let pool = Pool::builder(conn_mgr).build().unwrap();
-
-        // Create a crypter with a random (ephemeral) key.
-        let datastore_key_bytes = generate_aead_key_bytes();
-        let datastore_key =
-            LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &datastore_key_bytes).unwrap());
-        let crypter = Crypter::new(vec![datastore_key]);
-
-        // Connect to the database & run our schema.
-        let client = pool.get().await.unwrap();
-        client.batch_execute(SCHEMA).await.unwrap();
-
-        // Test-only DB schema modifications.
-        #[cfg(test)]
-        client
-            .batch_execute(
-                "ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE';
-                ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE_FAILS_PREP_INIT';
-                ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE_FAILS_PREP_STEP';",
-            )
-            .await
-            .unwrap();
-
-        (
-            Datastore::new(pool, crypter),
-            DbHandle {
-                _db_container: db_container,
-                connection_string,
-                datastore_key_bytes,
-            },
-        )
-    }
-
-    pub fn generate_aead_key_bytes() -> Vec<u8> {
-        let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
-        thread_rng().fill(&mut key_bytes[..]);
-        key_bytes
-    }
-
-    pub fn generate_aead_key() -> LessSafeKey {
-        let unbound_key = UnboundKey::new(&AES_128_GCM, &generate_aead_key_bytes()).unwrap();
-        LessSafeKey::new(unbound_key)
-    }
+    test_util::define_ephemeral_datastore!(true);
 }
 
 #[cfg(test)]
@@ -1431,14 +1340,12 @@ mod tests {
     use super::*;
     use crate::{
         aggregator::test_util::fake,
-        datastore::{
-            models::AggregationJobState,
-            test_util::{ephemeral_datastore, generate_aead_key},
-        },
+        datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
         message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
+    use ::test_util::generate_aead_key;
     use assert_matches::assert_matches;
     use prio::{
         field::Field128,

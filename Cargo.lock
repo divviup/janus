@@ -1240,6 +1240,7 @@ dependencies = [
  "signal-hook-tokio",
  "structopt",
  "tempfile",
+ "test_util",
  "testcontainers",
  "thiserror",
  "tokio",
@@ -1431,10 +1432,16 @@ name = "monolithic_integration_test"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "deadpool-postgres",
  "futures",
  "janus_server",
+ "lazy_static",
  "prio",
+ "ring",
+ "test_util",
+ "testcontainers",
  "tokio",
+ "tokio-postgres",
  "url",
 ]
 
@@ -2441,6 +2448,14 @@ dependencies = [
  "redox_syscall",
  "remove_dir_all",
  "winapi",
+]
+
+[[package]]
+name = "test_util"
+version = "0.1.0"
+dependencies = [
+ "rand",
+ "ring",
 ]
 
 [[package]]
