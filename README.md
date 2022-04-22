@@ -71,3 +71,5 @@ logging_config:
     metadata:
       x-honeycomb-team: "YOUR_API_KEY"
 ```
+
+The gRPC metadata can also be specified on the command line, with `--otlp-metadata x-honeycomb-team=YOUR_API_KEY`.
