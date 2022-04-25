@@ -7,8 +7,8 @@ use self::models::{
 use crate::{
     hpke::HpkePrivateKey,
     message::{
-        AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Nonce, Report, ReportShare,
-        TaskId, Time,
+        AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Report,
+        ReportShare, TaskId, Time,
     },
     task::{self, AggregatorAuthKey, Task},
 };
@@ -23,6 +23,7 @@ use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of, pin::Pin};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
+use uuid::Uuid;
 
 // TODO(brandon): retry network-related & other transient failures once we know what they look like
 
@@ -821,6 +822,82 @@ impl Transaction<'_> {
                 .await?,
         )
     }
+
+    /// If a collect job corresponding to the provided values exists, its UUID is returned, which
+    /// may then be used to construct a collect job URI. If that collect job does not exist, returns
+    /// `Ok(None)`.
+    #[tracing::instrument(skip(self, encoded_aggregation_parameter), err)]
+    pub(crate) async fn get_collect_job_uuid(
+        &self,
+        task_id: TaskId,
+        batch_interval: Interval,
+        encoded_aggregation_parameter: &[u8],
+    ) -> Result<Option<Uuid>, Error> {
+        let batch_interval_start = batch_interval.start.as_naive_date_time();
+        let batch_interval_duration = i64::try_from(batch_interval.duration.0)?;
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT collect_job_id FROM collect_jobs
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                AND batch_interval_start = $2 AND batch_interval_duration = $3
+                AND aggregation_param = $4",
+            )
+            .await?;
+        let row = self
+            .tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &&task_id.0[..],
+                    &batch_interval_start,
+                    &batch_interval_duration,
+                    /* aggregation_param */ &encoded_aggregation_parameter,
+                ],
+            )
+            .await?;
+
+        Ok(row.map(|row| row.get("collect_job_id")))
+    }
+
+    /// Constructs and stores a collect job for the provided values, and returns the UUID that was
+    /// assigned.
+    #[tracing::instrument(skip(self, encoded_aggregation_parameter), err)]
+    pub(crate) async fn put_collect_job(
+        &self,
+        task_id: TaskId,
+        batch_interval: Interval,
+        encoded_aggregation_parameter: &[u8],
+    ) -> Result<Uuid, Error> {
+        let batch_interval_start = batch_interval.start.as_naive_date_time();
+        let batch_interval_duration = i64::try_from(batch_interval.duration.0)?;
+
+        let collect_job_id = Uuid::new_v4();
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "INSERT INTO collect_jobs (collect_job_id, task_id,
+                batch_interval_start, batch_interval_duration, aggregation_param)
+                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5)",
+            )
+            .await?;
+        self.tx
+            .execute(
+                &stmt,
+                &[
+                    /* collect_job_id */ &collect_job_id,
+                    /* task_id */ &&task_id.0[..],
+                    &batch_interval_start,
+                    &batch_interval_duration,
+                    /* aggregation_param */ &encoded_aggregation_parameter,
+                ],
+            )
+            .await?;
+
+        Ok(collect_job_id)
+    }
 }
 
 fn single_row(rows: Vec<Row>) -> Result<Row, Error> {
@@ -1328,102 +1405,11 @@ pub mod models {
     }
 }
 
-// This is public to allow use in integration tests.
-#[doc(hidden)]
+#[cfg(test)]
 pub mod test_util {
-    use super::*;
-    use deadpool_postgres::{Manager, Pool};
-    use lazy_static::lazy_static;
-    use ring::aead::UnboundKey;
-    use std::str::{self, FromStr};
-    use testcontainers::{clients::Cli, images::postgres::Postgres, Container, RunnableImage};
-    use tokio_postgres::{Config, NoTls};
+    use super::{Crypter, Datastore};
 
-    const SCHEMA: &str = include_str!("../../db/schema.sql");
-
-    // TODO(brandon): use podman instead of docker for container management once testcontainers supports it
-    lazy_static! {
-        static ref CONTAINER_CLIENT: Cli = Cli::default();
-    }
-
-    /// DbHandle represents a handle to a running (ephemeral) database. Dropping this value causes
-    /// the database to be shut down & cleaned up.
-    pub struct DbHandle {
-        _db_container: Container<'static, Postgres>,
-        connection_string: String,
-        datastore_key_bytes: Vec<u8>,
-    }
-
-    impl DbHandle {
-        pub fn connection_string(&self) -> &str {
-            &self.connection_string
-        }
-
-        pub fn datastore_key_bytes(&self) -> &[u8] {
-            &self.datastore_key_bytes
-        }
-    }
-
-    /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database which
-    /// has the Janus schema applied but is otherwise empty.
-    ///
-    /// Dropping the second return value causes the database to be shut down & cleaned up.
-    pub async fn ephemeral_datastore() -> (Datastore, DbHandle) {
-        // Start an instance of Postgres running in a container.
-        let db_container =
-            CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
-
-        // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
-        const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let connection_string = format!(
-            "postgres://postgres:postgres@localhost:{}/postgres",
-            db_container.get_host_port(POSTGRES_DEFAULT_PORT)
-        );
-        let cfg = Config::from_str(&connection_string).unwrap();
-        let conn_mgr = Manager::new(cfg, NoTls);
-        let pool = Pool::builder(conn_mgr).build().unwrap();
-
-        // Create a crypter with a random (ephemeral) key.
-        let datastore_key_bytes = generate_aead_key_bytes();
-        let datastore_key =
-            LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &datastore_key_bytes).unwrap());
-        let crypter = Crypter::new(vec![datastore_key]);
-
-        // Connect to the database & run our schema.
-        let client = pool.get().await.unwrap();
-        client.batch_execute(SCHEMA).await.unwrap();
-
-        // Test-only DB schema modifications.
-        #[cfg(test)]
-        client
-            .batch_execute(
-                "ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE';
-                ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE_FAILS_PREP_INIT';
-                ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE_FAILS_PREP_STEP';",
-            )
-            .await
-            .unwrap();
-
-        (
-            Datastore::new(pool, crypter),
-            DbHandle {
-                _db_container: db_container,
-                connection_string,
-                datastore_key_bytes,
-            },
-        )
-    }
-
-    pub fn generate_aead_key_bytes() -> Vec<u8> {
-        let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
-        thread_rng().fill(&mut key_bytes[..]);
-        key_bytes
-    }
-
-    pub fn generate_aead_key() -> LessSafeKey {
-        let unbound_key = UnboundKey::new(&AES_128_GCM, &generate_aead_key_bytes()).unwrap();
-        LessSafeKey::new(unbound_key)
-    }
+    test_util::define_ephemeral_datastore!(true);
 }
 
 #[cfg(test)]
@@ -1431,14 +1417,12 @@ mod tests {
     use super::*;
     use crate::{
         aggregator::test_util::fake,
-        datastore::{
-            models::AggregationJobState,
-            test_util::{ephemeral_datastore, generate_aead_key},
-        },
-        message::{ExtensionType, HpkeConfigId, Role, Time, TransitionError},
+        datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
+        message::{Duration, ExtensionType, HpkeConfigId, Role, Time, TransitionError},
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
+    use ::test_util::generate_aead_key;
     use assert_matches::assert_matches;
     use prio::{
         field::Field128,
@@ -2073,6 +2057,116 @@ mod tests {
         assert!(crypter
             .decrypt(TABLE, ROW, "wrong_column", &ciphertext)
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn lookup_collect_job() {
+        install_test_trace_subscriber();
+
+        let task_id = TaskId::random();
+        let batch_interval = Interval {
+            start: Time(100),
+            duration: Duration(100),
+        };
+
+        let (ds, _db_handle) = ephemeral_datastore().await;
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                tx.put_task(&new_dummy_task(
+                    task_id,
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        let collect_job_uuid = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_collect_job_uuid(task_id, batch_interval, &[0, 1, 2, 3, 4])
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        assert!(collect_job_uuid.is_none());
+
+        let collect_job_uuid = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_collect_job(task_id, batch_interval, &[0, 1, 2, 3, 4])
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let same_collect_job_uuid = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_collect_job_uuid(task_id, batch_interval, &[0, 1, 2, 3, 4])
+                        .await
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Should get the same UUID for the same values.
+        assert_eq!(collect_job_uuid, same_collect_job_uuid);
+
+        let rows = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.tx
+                        .query("SELECT id FROM collect_jobs", &[])
+                        .await
+                        .map_err(Error::from)
+                })
+            })
+            .await
+            .unwrap();
+
+        assert!(rows.len() == 1);
+
+        let different_collect_job_uuid = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_collect_job(
+                        task_id,
+                        Interval {
+                            start: Time(101),
+                            duration: Duration(100),
+                        },
+                        &[0, 1, 2, 3, 4],
+                    )
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        // New collect job should yield a new UUID.
+        assert!(different_collect_job_uuid != collect_job_uuid);
+
+        let rows = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.tx
+                        .query("SELECT id FROM collect_jobs", &[])
+                        .await
+                        .map_err(Error::from)
+                })
+            })
+            .await
+            .unwrap();
+
+        // A new row should be present.
+        assert!(rows.len() == 2);
     }
 
     /// generate_vdaf_values generates some arbitrary VDAF values for use in testing. It is cribbed

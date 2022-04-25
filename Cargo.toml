@@ -1,2 +1,2 @@
 [workspace]
-members = ["janus_server", "monolithic_integration_test"]
+members = ["janus_server", "monolithic_integration_test", "test_util"]

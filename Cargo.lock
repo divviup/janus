@@ -1256,6 +1256,7 @@ dependencies = [
  "signal-hook-tokio",
  "structopt",
  "tempfile",
+ "test_util",
  "testcontainers",
  "thiserror",
  "tokio",
@@ -1267,6 +1268,7 @@ dependencies = [
  "tracing-subscriber",
  "trycmd",
  "url",
+ "uuid",
  "wait-timeout",
  "warp",
 ]
@@ -1449,10 +1451,16 @@ name = "monolithic_integration_test"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "deadpool-postgres",
  "futures",
  "janus_server",
+ "lazy_static",
  "prio",
+ "ring",
+ "test_util",
+ "testcontainers",
  "tokio",
+ "tokio-postgres",
  "url",
 ]
 
@@ -1841,6 +1849,7 @@ dependencies = [
  "fallible-iterator",
  "postgres-derive",
  "postgres-protocol",
+ "uuid",
 ]
 
 [[package]]
@@ -2603,6 +2612,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "test_util"
+version = "0.1.0"
+dependencies = [
+ "rand",
+ "ring",
+]
+
+[[package]]
 name = "testcontainers"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3224,6 +3241,15 @@ name = "utf-8"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
+
+[[package]]
+name = "uuid"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
+dependencies = [
+ "getrandom",
+]
 
 [[package]]
 name = "valuable"
