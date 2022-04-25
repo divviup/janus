@@ -251,8 +251,7 @@ impl TaskAggregator {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
     fn new(task: Task) -> Result<Self, Error> {
-        // TODO(brandon): include VDAF-specific configuration (like bit-length for sums, buckets for histograms) in Task
-        let vdaf_ops = match task.vdaf {
+        let vdaf_ops = match &task.vdaf {
             task::Vdaf::Prio3Aes128Count => {
                 let vdaf = Prio3Aes128Count::new(2)?;
                 let verify_param = <Prio3Aes128Count as Vdaf>::VerifyParam::get_decoded_with_param(
@@ -262,8 +261,8 @@ impl TaskAggregator {
                 VdafOps::Prio3Aes128Count(vdaf, verify_param)
             }
 
-            task::Vdaf::Prio3Aes128Sum => {
-                let vdaf = Prio3Aes128Sum::new(2, 64)?;
+            task::Vdaf::Prio3Aes128Sum { bits } => {
+                let vdaf = Prio3Aes128Sum::new(2, *bits)?;
                 let verify_param = <Prio3Aes128Sum as Vdaf>::VerifyParam::get_decoded_with_param(
                     &vdaf,
                     &task.vdaf_verify_parameter,
@@ -271,8 +270,8 @@ impl TaskAggregator {
                 VdafOps::Prio3Aes128Sum(vdaf, verify_param)
             }
 
-            task::Vdaf::Prio3Aes128Histogram => {
-                let vdaf = Prio3Aes128Histogram::new(2, &[0, 100, 200, 400])?;
+            task::Vdaf::Prio3Aes128Histogram { buckets } => {
+                let vdaf = Prio3Aes128Histogram::new(2, &*buckets)?;
                 let verify_param =
                     <Prio3Aes128Histogram as Vdaf>::VerifyParam::get_decoded_with_param(
                         &vdaf,
