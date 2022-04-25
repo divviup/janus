@@ -6,7 +6,7 @@ use janus_server::{
     config::AggregatorConfig,
     datastore::{self, Datastore},
     time::RealClock,
-    trace::{cleanup_trace_subscriber, install_trace_subscriber},
+    trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
@@ -132,11 +132,13 @@ async fn main() -> Result<()> {
     let mut config: AggregatorConfig = serde_yaml::from_reader(&config_file)
         .with_context(|| format!("failed to parse config file: {:?}", options.config_file))?;
 
-    config
-        .logging_config
-        .otel_otlp
-        .metadata
-        .extend(options.otlp_metadata.iter().cloned());
+    if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) =
+        &mut config.logging_config.open_telemetry_config
+    {
+        otlp_config
+            .metadata
+            .extend(options.otlp_metadata.iter().cloned());
+    }
 
     install_trace_subscriber(&config.logging_config)
         .context("failed to install tracing subscriber")?;

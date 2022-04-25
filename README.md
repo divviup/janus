@@ -56,7 +56,9 @@ For local testing, start Jaeger by running `docker run -d -p6831:6831/udp -p6832
 
 ```yaml
 logging_config:
-  otel_jaeger: true
+  open_telemetry_config:
+    jaeger:
+      enabled: true
 ```
 
 ### Honeycomb
@@ -65,11 +67,12 @@ logging_config:
 
 ```yaml
 logging_config:
-  otel_otlp:
-    enabled: true
-    endpoint: "https://api.honeycomb.io:443"
-    metadata:
-      x-honeycomb-team: "YOUR_API_KEY"
+  open_telemetry_config:
+    otlp:
+      enabled: true
+      endpoint: "https://api.honeycomb.io:443"
+      metadata:
+        x-honeycomb-team: "YOUR_API_KEY"
 ```
 
 The gRPC metadata can also be specified on the command line, with `--otlp-metadata x-honeycomb-team=YOUR_API_KEY`.
