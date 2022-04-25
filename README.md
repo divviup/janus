@@ -58,7 +58,6 @@ For local testing, start Jaeger by running `docker run -d -p6831:6831/udp -p6832
 logging_config:
   open_telemetry_config:
     jaeger:
-      enabled: true
 ```
 
 ### Honeycomb
@@ -69,7 +68,6 @@ logging_config:
 logging_config:
   open_telemetry_config:
     otlp:
-      enabled: true
       endpoint: "https://api.honeycomb.io:443"
       metadata:
         x-honeycomb-team: "YOUR_API_KEY"
