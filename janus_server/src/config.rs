@@ -41,7 +41,33 @@ pub struct AggregatorConfig {
     pub listen_address: SocketAddr,
     /// The aggregator's database configuration.
     pub database: DbConfig,
-    /// Logging configuration
+    /// Logging configuration.
+    #[serde(default)]
+    pub logging_config: TraceConfiguration,
+}
+
+/// Non-secret configuration options for the Janus Aggregation Job Creator job.
+///
+/// # Examples
+///
+/// ```
+/// use janus_server::config::AggregationJobCreatorConfig;
+///
+/// let yaml_config = r#"
+/// ---
+/// database:
+///   url: "postgres://postgres:postgres@localhost:5432/postgres"
+/// logging_config: # logging_config is optional
+///   force_json_output: true
+/// "#;
+///
+/// let _decoded: AggregationJobCreatorConfig = serde_yaml::from_str(yaml_config).unwrap();
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregationJobCreatorConfig {
+    /// Configuration for the database backend to connect to.
+    pub database: DbConfig,
+    /// Logging configuration.
     #[serde(default)]
     pub logging_config: TraceConfiguration,
 }
@@ -76,5 +102,17 @@ mod tests {
         let encoded = serde_yaml::to_string(&aggregator_config).unwrap();
         let decoded: AggregatorConfig = serde_yaml::from_str(&encoded).unwrap();
         assert_eq!(aggregator_config, decoded);
+    }
+
+    #[test]
+    fn roundtrip_aggregation_job_creator_config() {
+        let config = AggregationJobCreatorConfig {
+            database: generate_db_config(),
+            logging_config: TraceConfiguration::default(),
+        };
+
+        let encoded = serde_yaml::to_string(&config).unwrap();
+        let decoded_config: AggregationJobCreatorConfig = serde_yaml::from_str(&encoded).unwrap();
+        assert_eq!(config, decoded_config);
     }
 }

@@ -259,9 +259,8 @@ impl Transaction<'_> {
     }
 
     /// Fetch all the tasks in the database.
-    #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
+    pub async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
         use std::collections::HashMap;
 
         let stmt = self
@@ -387,8 +386,8 @@ impl Transaction<'_> {
                 &encrypted_agg_auth_key,
             )?)?);
         }
-        // HPKE keys.
 
+        // HPKE keys.
         use chrono::Duration;
         let mut hpke_configs = Vec::new();
         for row in hpke_key_rows {
@@ -450,6 +449,43 @@ impl Transaction<'_> {
                 .await?,
         )?;
 
+        Self::report_from_row(task_id, nonce, row)
+    }
+
+    /// get_unaggregated_client_reports_for_task returns some unaggregated client reports for the
+    /// task identified by the given task ID. The resulting reports will be ordered by the nonce
+    /// timestamp.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_unaggregated_client_reports_for_task(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Vec<Report>, Error> {
+        // We choose to return the oldest client reports first, including the nonce randomness to
+        // ensure a total ordering.
+        // TODO(brandon): allow the number of returned results to be controlled?
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT nonce_time, nonce_rand, extensions, input_shares FROM client_reports
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                AND (SELECT COUNT(*) FROM report_aggregations WHERE client_report_id = client_reports.id) = 0
+                ORDER BY nonce_time, nonce_rand LIMIT 5000",
+            )
+            .await?;
+        let rows = self.tx.query(&stmt, &[&&task_id.0[..]]).await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let nonce = Nonce {
+                    time: Time::from_naive_date_time(row.get("nonce_time")),
+                    rand: u64::get_decoded(row.get("nonce_rand"))?,
+                };
+                Self::report_from_row(task_id, nonce, row)
+            })
+            .collect::<Result<Vec<Report>, Error>>()
+    }
+
+    fn report_from_row(task_id: TaskId, nonce: Nonce, row: Row) -> Result<Report, Error> {
         let encoded_extensions: Vec<u8> = row.get("extensions");
         let extensions: Vec<Extension> =
             decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
@@ -470,7 +506,7 @@ impl Transaction<'_> {
     #[tracing::instrument(skip(self), err)]
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
         let nonce_time = report.nonce.time.as_naive_date_time();
-        let nonce_rand = report.nonce.rand.to_be_bytes();
+        let nonce_rand = report.nonce.rand.get_encoded();
 
         let mut encoded_extensions = Vec::new();
         encode_u16_items(&mut encoded_extensions, &(), &report.extensions);
@@ -1509,6 +1545,119 @@ mod tests {
             .await;
 
         assert_matches!(rslt, Err(Error::NotFound));
+    }
+
+    #[tokio::test]
+    async fn get_unaggregated_client_reports_for_task() {
+        install_test_trace_subscriber();
+        let (ds, _db_handle) = ephemeral_datastore().await;
+
+        let task_id = TaskId::random();
+        let unrelated_task_id = TaskId::random();
+
+        let first_unaggregated_report = Report {
+            task_id,
+            nonce: Nonce {
+                time: Time(12345),
+                rand: 0,
+            },
+            extensions: vec![],
+            encrypted_input_shares: vec![],
+        };
+        let second_unaggregated_report = Report {
+            task_id,
+            nonce: Nonce {
+                time: Time(12346),
+                rand: 0,
+            },
+            extensions: vec![],
+            encrypted_input_shares: vec![],
+        };
+        let aggregated_report = Report {
+            task_id,
+            nonce: Nonce {
+                time: Time(12347),
+                rand: 0,
+            },
+            extensions: vec![],
+            encrypted_input_shares: vec![],
+        };
+        let unrelated_report = Report {
+            task_id: unrelated_task_id,
+            nonce: Nonce {
+                time: Time(12348),
+                rand: 0,
+            },
+            extensions: vec![],
+            encrypted_input_shares: vec![],
+        };
+
+        // Set up state.
+        ds.run_tx(|tx| {
+            let (
+                first_unaggregated_report,
+                second_unaggregated_report,
+                aggregated_report,
+                unrelated_report,
+            ) = (
+                first_unaggregated_report.clone(),
+                second_unaggregated_report.clone(),
+                aggregated_report.clone(),
+                unrelated_report.clone(),
+            );
+
+            Box::pin(async move {
+                tx.put_task(&new_dummy_task(
+                    task_id,
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
+                tx.put_task(&new_dummy_task(
+                    unrelated_task_id,
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
+
+                tx.put_client_report(&first_unaggregated_report).await?;
+                tx.put_client_report(&second_unaggregated_report).await?;
+                tx.put_client_report(&aggregated_report).await?;
+                tx.put_client_report(&unrelated_report).await?;
+
+                let aggregation_job_id = AggregationJobId::random();
+                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                    aggregation_job_id: aggregation_job_id,
+                    task_id: unrelated_task_id,
+                    aggregation_param: (),
+                    state: AggregationJobState::InProgress,
+                })
+                .await?;
+                tx.put_report_aggregation(&ReportAggregation {
+                    aggregation_job_id,
+                    task_id,
+                    nonce: aggregated_report.nonce,
+                    ord: 0,
+                    state: ReportAggregationState::<Prio3Aes128Count>::Start,
+                })
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run query & verify results.
+        let got_reports = ds
+            .run_tx(|tx| {
+                Box::pin(async move { tx.get_unaggregated_client_reports_for_task(task_id).await })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            got_reports,
+            vec![first_unaggregated_report, second_unaggregated_report]
+        );
     }
 
     #[tokio::test]

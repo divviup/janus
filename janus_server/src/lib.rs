@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod aggregator;
+pub mod binary_utils;
 pub mod client;
 pub mod config;
 pub mod datastore;

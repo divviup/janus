@@ -1245,6 +1245,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-postgres",
+ "tokio-stream",
  "tracing",
  "tracing-log",
  "tracing-subscriber",

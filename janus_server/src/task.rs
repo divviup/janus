@@ -58,6 +58,16 @@ pub enum Vdaf {
     FakeFailsPrepStep,
 }
 
+impl Vdaf {
+    /// Determines whether the VDAF has a non-empty aggregation parameter.
+    pub fn has_aggregation_param(&self) -> bool {
+        match self {
+            Vdaf::Poplar1 => true,
+            _ => false,
+        }
+    }
+}
+
 /// An HMAC-SHA-256 key used to authenticate messages exchanged between
 /// aggregators. See `agg_auth_key` in draft-gpew-priv-ppm §4.2.
 // We define the type this way because while we can use `ring::hmac::Key::new`
@@ -117,13 +127,13 @@ impl Eq for AggregatorAuthKey {}
 /// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task {
-    /// Unique identifier for the task
-    pub(crate) id: TaskId,
+    /// Unique identifier for the task.
+    pub id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
     pub(crate) aggregator_endpoints: Vec<Url>,
     /// The VDAF this task executes.
-    pub(crate) vdaf: Vdaf,
+    pub vdaf: Vdaf,
     /// The role performed by the aggregator.
     pub(crate) role: Role,
     /// Secret verification parameter shared by the aggregators.
