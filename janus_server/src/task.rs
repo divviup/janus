@@ -8,11 +8,11 @@ use crate::{
 };
 use ::rand::{thread_rng, Rng};
 use chrono::Duration;
-use postgres_types::{FromSql, ToSql};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
 };
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 /// Errors that methods and functions in this module may return.
@@ -31,30 +31,22 @@ pub enum Error {
 /// [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-patton-cfrg-vdaf/
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ToSql, FromSql)]
-#[postgres(name = "vdaf_identifier")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Vdaf {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
-    #[postgres(name = "PRIO3_AES128_COUNT")]
     Prio3Aes128Count,
     /// A `prio3` sum using the AES 128 pseudorandom generator.
-    #[postgres(name = "PRIO3_AES128_SUM")]
-    Prio3Aes128Sum,
+    Prio3Aes128Sum { bits: u32 },
     /// A `prio3` histogram using the AES 128 pseudorandom generator.
-    #[postgres(name = "PRIO3_AES128_HISTOGRAM")]
-    Prio3Aes128Histogram,
+    Prio3Aes128Histogram { buckets: Vec<u64> },
     /// The `poplar1` VDAF. Support for this VDAF is experimental.
-    #[postgres(name = "POPLAR1")]
-    Poplar1,
+    Poplar1 { bits: usize },
 
     #[cfg(test)]
-    #[postgres(name = "FAKE")]
     Fake,
     #[cfg(test)]
-    #[postgres(name = "FAKE_FAILS_PREP_INIT")]
     FakeFailsPrepInit,
     #[cfg(test)]
-    #[postgres(name = "FAKE_FAILS_PREP_STEP")]
     FakeFailsPrepStep,
 }
 
@@ -250,16 +242,18 @@ pub mod test_util {
             generate_hpke_config_and_private_key();
         aggregator_config_1.id = HpkeConfigId(1);
 
-        let vdaf_verify_parameter = match vdaf {
+        let vdaf_verify_parameter = match &vdaf {
             Vdaf::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),
-            Vdaf::Prio3Aes128Sum => verify_param(Prio3Aes128Sum::new(2, 64).unwrap(), role),
-            Vdaf::Prio3Aes128Histogram => verify_param(
-                Prio3Aes128Histogram::new(2, &[0, 100, 200, 400]).unwrap(),
+            Vdaf::Prio3Aes128Sum { bits } => {
+                verify_param(Prio3Aes128Sum::new(2, *bits).unwrap(), role)
+            }
+            Vdaf::Prio3Aes128Histogram { buckets } => {
+                verify_param(Prio3Aes128Histogram::new(2, &*buckets).unwrap(), role)
+            }
+            Vdaf::Poplar1 { bits } => verify_param(
+                Poplar1::<ToyIdpf<Field128>, PrgAes128, 16>::new(*bits),
                 role,
             ),
-            Vdaf::Poplar1 => {
-                verify_param(Poplar1::<ToyIdpf<Field128>, PrgAes128, 16>::new(64), role)
-            }
 
             #[cfg(test)]
             Vdaf::Fake | Vdaf::FakeFailsPrepInit | Vdaf::FakeFailsPrepStep => Vec::new(),
@@ -303,6 +297,8 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
+    use serde_test::{assert_tokens, Token};
+
     use super::test_util::new_dummy_task;
     use super::*;
     use crate::message::{self, TaskId, Time};
@@ -370,5 +366,85 @@ mod tests {
                 test_case.name
             );
         }
+    }
+
+    #[test]
+    fn vdaf_serialization() {
+        // The `Vdaf` type must have a stable serialization, as it gets stored in a JSON database
+        // column.
+        assert_tokens(
+            &Vdaf::Prio3Aes128Count,
+            &[Token::UnitVariant {
+                name: "Vdaf",
+                variant: "Prio3Aes128Count",
+            }],
+        );
+        assert_tokens(
+            &Vdaf::Prio3Aes128Sum { bits: 64 },
+            &[
+                Token::StructVariant {
+                    name: "Vdaf",
+                    variant: "Prio3Aes128Sum",
+                    len: 1,
+                },
+                Token::Str("bits"),
+                Token::U32(64),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &Vdaf::Prio3Aes128Histogram {
+                buckets: vec![0, 100, 200, 400],
+            },
+            &[
+                Token::StructVariant {
+                    name: "Vdaf",
+                    variant: "Prio3Aes128Histogram",
+                    len: 1,
+                },
+                Token::Str("buckets"),
+                Token::Seq { len: Some(4) },
+                Token::U64(0),
+                Token::U64(100),
+                Token::U64(200),
+                Token::U64(400),
+                Token::SeqEnd,
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &Vdaf::Poplar1 { bits: 64 },
+            &[
+                Token::StructVariant {
+                    name: "Vdaf",
+                    variant: "Poplar1",
+                    len: 1,
+                },
+                Token::Str("bits"),
+                Token::U64(64),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &Vdaf::Fake,
+            &[Token::UnitVariant {
+                name: "Vdaf",
+                variant: "Fake",
+            }],
+        );
+        assert_tokens(
+            &Vdaf::FakeFailsPrepInit,
+            &[Token::UnitVariant {
+                name: "Vdaf",
+                variant: "FakeFailsPrepInit",
+            }],
+        );
+        assert_tokens(
+            &Vdaf::FakeFailsPrepStep,
+            &[Token::UnitVariant {
+                name: "Vdaf",
+                variant: "FakeFailsPrepStep",
+            }],
+        );
     }
 }
