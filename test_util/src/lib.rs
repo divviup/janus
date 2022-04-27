@@ -51,7 +51,7 @@ macro_rules! define_ephemeral_datastore {
 
             // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
             const POSTGRES_DEFAULT_PORT: u16 = 5432;
-            // Workaround: `get_host_port` does not specify what host IP address the port is
+            // TODO (issue #109): `get_host_port` does not specify what host IP address the port is
             // associated with, but empirically we see it is the port for 127.0.0.1, and not
             // [::1]. We will hardcode 127.0.0.1 (instead of localhost) until a host IP is
             // exposed via the API.
