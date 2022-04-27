@@ -33,6 +33,8 @@ jobs:
     - name: build
       run: cargo build --verbose
     - name: test
+      env:
+        RUST_LOG: trace
       run: cargo test --verbose
   janus_server_docker:
     runs-on: ubuntu-latest
