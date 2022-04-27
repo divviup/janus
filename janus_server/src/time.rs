@@ -1,12 +1,13 @@
 //! Utilities for timestamps and durations.
 
+use crate::message::Time;
 use chrono::{naive::NaiveDateTime, Utc};
 use std::fmt::{Debug, Formatter};
 
 /// A clock knows what time it currently is.
 pub trait Clock: Clone + Debug + Sync + Send {
     /// Get the current time.
-    fn now(&self) -> NaiveDateTime;
+    fn now(&self) -> Time;
 }
 
 /// A real clock returns the current time relative to the Unix epoch.
@@ -14,8 +15,8 @@ pub trait Clock: Clone + Debug + Sync + Send {
 pub struct RealClock {}
 
 impl Clock for RealClock {
-    fn now(&self) -> NaiveDateTime {
-        NaiveDateTime::from_timestamp(Utc::now().timestamp(), 0)
+    fn now(&self) -> Time {
+        Time::from_naive_date_time(NaiveDateTime::from_timestamp(Utc::now().timestamp(), 0))
     }
 }
 
@@ -38,8 +39,8 @@ pub(crate) mod tests {
     }
 
     impl Clock for MockClock {
-        fn now(&self) -> NaiveDateTime {
-            self.current_time
+        fn now(&self) -> Time {
+            Time::from_naive_date_time(self.current_time)
         }
     }
 

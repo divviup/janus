@@ -38,7 +38,6 @@ use std::{
     future::Future,
     io::Cursor,
     net::SocketAddr,
-    ops::Sub,
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -64,6 +63,9 @@ pub enum Error {
     /// Error decoding an incoming message.
     #[error("message decoding failed: {0}")]
     MessageDecode(#[from] prio::codec::CodecError),
+    /// Error handling a message.
+    #[error("invalid message: {0}")]
+    Message(#[from] crate::message::Error),
     /// Corresponds to `staleReport`, §3.1
     #[error("stale report: {0} {1:?}")]
     StaleReport(Nonce, TaskId),
@@ -405,10 +407,10 @@ impl TaskAggregator {
                 Error::OutdatedHpkeConfig(leader_report.config_id, report.task_id)
             })?;
 
-        let now = clock.now();
+        let report_deadline = clock.now().add(self.task.tolerable_clock_skew)?;
 
         // §4.2.4: reject reports from too far in the future
-        if report.nonce.time.as_naive_date_time().sub(now) > self.task.tolerable_clock_skew {
+        if report.nonce.time.is_after(report_deadline) {
             warn!(?report.task_id, ?report.nonce, "Report timestamp exceeds tolerable clock skew");
             return Err(Error::ReportFromTheFuture(report.nonce, report.task_id));
         }
@@ -1330,6 +1332,7 @@ fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Respon
             Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
 }
@@ -1630,13 +1633,14 @@ mod tests {
             associated_data_for, test_util::generate_hpke_config_and_private_key, HpkePrivateKey,
             Label,
         },
-        message::{self, AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
+        message::{
+            AuthenticatedResponseDecoder, Duration, HpkeCiphertext, HpkeConfig, TaskId, Time,
+        },
         task::{test_util::new_dummy_task, Vdaf},
         time::tests::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
-    use chrono::Duration;
     use http::Method;
     use prio::{
         codec::Decode,
@@ -1726,7 +1730,7 @@ mod tests {
 
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let nonce = Nonce {
-            time: Time((clock.now() - task.tolerable_clock_skew).timestamp() as u64),
+            time: clock.now().sub(task.tolerable_clock_skew).unwrap(),
             rand: thread_rng().gen(),
         };
         let extensions = vec![];
@@ -1891,9 +1895,12 @@ mod tests {
 
         // reports from the future should be rejected.
         let mut bad_report = report.clone();
-        bad_report.nonce.time = Time::from_naive_date_time(
-            MockClock::default().now() + Duration::minutes(10) + Duration::seconds(1),
-        );
+        bad_report.nonce.time = MockClock::default()
+            .now()
+            .add(Duration::from_minutes(10).unwrap())
+            .unwrap()
+            .add(Duration::from_seconds(1))
+            .unwrap();
         let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
             .await
             .unwrap();
@@ -2069,10 +2076,13 @@ mod tests {
         install_test_trace_subscriber();
 
         let (aggregator, task, mut report, datastore, _db_handle) = setup_upload_test().await;
-        let skew = task.tolerable_clock_skew;
 
         // Boundary condition
-        report.nonce.time = Time::from_naive_date_time(aggregator.clock.now() + skew);
+        report.nonce.time = aggregator
+            .clock
+            .now()
+            .add(task.tolerable_clock_skew)
+            .unwrap();
         let mut report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
         aggregator
             .handle_upload(&report.get_encoded())
@@ -2088,8 +2098,13 @@ mod tests {
         assert_eq!(report, got_report);
 
         // Just past the clock skew
-        report.nonce.time =
-            Time::from_naive_date_time(aggregator.clock.now() + skew + Duration::seconds(1));
+        report.nonce.time = aggregator
+            .clock
+            .now()
+            .add(task.tolerable_clock_skew)
+            .unwrap()
+            .add(Duration::from_seconds(1))
+            .unwrap();
         let report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id);
@@ -3370,10 +3385,7 @@ mod tests {
 
         let request = CollectReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
-                duration: message::Duration(task.min_batch_duration.num_seconds() as u64),
-            },
+            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
             agg_param: vec![],
         };
 
@@ -3427,11 +3439,12 @@ mod tests {
 
         let request = CollectReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
+            batch_interval: Interval::new(
+                Time(0),
                 // Collect request will be rejected because batch interval is too small
-                duration: message::Duration(task.min_batch_duration.num_seconds() as u64 - 1),
-            },
+                Duration(task.min_batch_duration.0 - 1),
+            )
+            .unwrap(),
             agg_param: vec![],
         };
 
@@ -3484,10 +3497,7 @@ mod tests {
 
         let request = CollectReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
-                duration: message::Duration(task.min_batch_duration.num_seconds() as u64),
-            },
+            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
             agg_param: vec![],
         };
 
@@ -3529,10 +3539,7 @@ mod tests {
 
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
-                duration: message::Duration(task.min_batch_duration.num_seconds() as u64),
-            },
+            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
             report_count: 0,
             checksum: [0; 32],
         };
@@ -3587,11 +3594,12 @@ mod tests {
 
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
+            batch_interval: Interval::new(
+                Time(0),
                 // Collect request will be rejected because batch interval is too small
-                duration: message::Duration(task.min_batch_duration.num_seconds() as u64 - 1),
-            },
+                Duration(task.min_batch_duration.0 - 1),
+            )
+            .unwrap(),
             report_count: 0,
             checksum: [0; 32],
         };
@@ -3632,7 +3640,7 @@ mod tests {
 
         let mut task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Helper);
         task.max_batch_lifetime = 1;
-        task.min_batch_duration = chrono::Duration::seconds(500);
+        task.min_batch_duration = Duration::from_seconds(500);
         task.min_batch_size = 10;
         task.collector_hpke_config = collector_hpke_config.clone();
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
@@ -3654,10 +3662,7 @@ mod tests {
         // There are no batch_aggregations in the datastore yet
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
-                duration: message::Duration(task.min_batch_duration.num_seconds() as u64),
-            },
+            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
             report_count: 0,
             checksum: [0; 32],
         };
@@ -3727,10 +3732,7 @@ mod tests {
         // Specified interval includes too few reports
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
-                duration: message::Duration(1000),
-            },
+            batch_interval: Interval::new(Time(0), Duration(1000)).unwrap(),
             report_count: 5,
             checksum: [0; 32],
         };
@@ -3763,10 +3765,7 @@ mod tests {
         // Interval is big enough, but checksum doesn't match
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
-                duration: message::Duration(2500),
-            },
+            batch_interval: Interval::new(Time(0), Duration(2500)).unwrap(),
             report_count: 10,
             checksum: [3; 32],
         };
@@ -3799,10 +3798,7 @@ mod tests {
         // Interval is big enough, but report count doesn't match
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
-                duration: message::Duration(2500),
-            },
+            batch_interval: Interval::new(Time(0), Duration(2500)).unwrap(),
             report_count: 20,
             checksum: [3 ^ 2; 32],
         };
@@ -3833,10 +3829,7 @@ mod tests {
         );
 
         // Interval is big enough, checksum and report count are good
-        let batch_interval = Interval {
-            start: Time(0),
-            duration: message::Duration(2500),
-        };
+        let batch_interval = Interval::new(Time(0), Duration(2500)).unwrap();
         let request = AggregateShareReq {
             task_id,
             batch_interval,
@@ -3918,7 +3911,7 @@ mod tests {
 
     fn generate_nonce<C: Clock>(clock: &C) -> Nonce {
         Nonce {
-            time: Time::from_naive_date_time(clock.now()),
+            time: clock.now(),
             rand: thread_rng().gen(),
         }
     }

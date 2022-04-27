@@ -7,7 +7,7 @@ use self::models::{
 use crate::{
     hpke::HpkePrivateKey,
     message::{
-        AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Report,
+        AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Report,
         ReportShare, TaskId, Time,
     },
     task::{self, AggregatorAuthKey, Task, Vdaf},
@@ -112,8 +112,8 @@ impl Transaction<'_> {
 
         let max_batch_lifetime = i64::try_from(task.max_batch_lifetime)?;
         let min_batch_size = i64::try_from(task.min_batch_size)?;
-        let min_batch_duration = task.min_batch_duration.num_seconds();
-        let tolerable_clock_skew = task.tolerable_clock_skew.num_seconds();
+        let min_batch_duration = i64::try_from(task.min_batch_duration.0)?;
+        let tolerable_clock_skew = i64::try_from(task.tolerable_clock_skew.0)?;
 
         let encrypted_vdaf_verify_param = self.crypter.encrypt(
             "tasks",
@@ -360,8 +360,10 @@ impl Transaction<'_> {
         let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
         let max_batch_lifetime = row.get_bigint_as_u64("max_batch_lifetime")?;
         let min_batch_size = row.get_bigint_as_u64("min_batch_size")?;
-        let min_batch_duration = Duration::seconds(row.get("min_batch_duration"));
-        let tolerable_clock_skew = Duration::seconds(row.get("tolerable_clock_skew"));
+        let min_batch_duration =
+            Duration::from_seconds(row.get_bigint_as_u64("min_batch_duration")?);
+        let tolerable_clock_skew =
+            Duration::from_seconds(row.get_bigint_as_u64("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
 
         let vdaf_verify_param = self.crypter.decrypt(
@@ -390,7 +392,6 @@ impl Transaction<'_> {
         }
         // HPKE keys.
 
-        use chrono::Duration;
         let mut hpke_configs = Vec::new();
         for row in hpke_key_rows {
             let config_id = u8::try_from(row.get::<_, i16>("config_id"))?;
@@ -833,8 +834,8 @@ impl Transaction<'_> {
         batch_interval: Interval,
         encoded_aggregation_parameter: &[u8],
     ) -> Result<Option<Uuid>, Error> {
-        let batch_interval_start = batch_interval.start.as_naive_date_time();
-        let batch_interval_duration = i64::try_from(batch_interval.duration.0)?;
+        let batch_interval_start = batch_interval.start().as_naive_date_time();
+        let batch_interval_duration = i64::try_from(batch_interval.duration().0)?;
 
         let stmt = self
             .tx
@@ -870,8 +871,8 @@ impl Transaction<'_> {
         batch_interval: Interval,
         encoded_aggregation_parameter: &[u8],
     ) -> Result<Uuid, Error> {
-        let batch_interval_start = batch_interval.start.as_naive_date_time();
-        let batch_interval_duration = i64::try_from(batch_interval.duration.0)?;
+        let batch_interval_start = batch_interval.start().as_naive_date_time();
+        let batch_interval_duration = i64::try_from(batch_interval.duration().0)?;
 
         let collect_job_id = Uuid::new_v4();
 
@@ -950,7 +951,7 @@ impl Transaction<'_> {
         E: std::fmt::Display,
         for<'a> A: TryFrom<&'a [u8], Error = E>,
     {
-        let batch_interval_start = interval.start.as_naive_date_time();
+        let batch_interval_start = interval.start().as_naive_date_time();
         let batch_interval_end = interval.end().as_naive_date_time();
 
         let stmt = self
@@ -2223,10 +2224,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
-        let batch_interval = Interval {
-            start: Time(100),
-            duration: Duration(100),
-        };
+        let batch_interval = Interval::new(Time(100), Duration(100)).unwrap();
 
         let (ds, _db_handle) = ephemeral_datastore().await;
 
@@ -2297,10 +2295,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_collect_job(
                         task_id,
-                        Interval {
-                            start: Time(101),
-                            duration: Duration(100),
-                        },
+                        Interval::new(Time(101), Duration(100)).unwrap(),
                         &[0, 1, 2, 3, 4],
                     )
                     .await
@@ -2343,7 +2338,7 @@ mod tests {
                 let aggregate_share = aggregate_share.clone();
                 Box::pin(async move {
                     let mut task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Leader);
-                    task.min_batch_duration = chrono::Duration::seconds(100);
+                    task.min_batch_duration = Duration::from_seconds(100);
                     tx.put_task(&task).await?;
 
                     tx.put_task(&new_dummy_task(
@@ -2416,10 +2411,7 @@ mod tests {
 
                     tx.get_batch_aggregations_for_task_in_interval(
                         task_id,
-                        Interval {
-                            start: Time(50),
-                            duration: Duration(250),
-                        },
+                        Interval::new(Time(50), Duration(250)).unwrap(),
                     )
                     .await
                 })
