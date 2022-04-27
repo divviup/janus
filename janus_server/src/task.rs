@@ -56,7 +56,10 @@ pub enum Vdaf {
 // to get a `ring::hmac::Key` from a slice of bytes, we can't get the bytes
 // back out of the key.
 #[derive(Clone, Debug)]
-pub struct AggregatorAuthKey(Vec<u8>, hmac::Key);
+pub struct AggregatorAuthKey {
+    bytes: Vec<u8>,
+    hmac_key: hmac::Key,
+}
 
 // TODO(brandon): use a ring constant once one is exposed. This is the correct value per ring:
 //   https://docs.rs/ring/0.16.20/src/ring/digest.rs.html#339
@@ -68,10 +71,10 @@ impl AggregatorAuthKey {
         if key_bytes.len() < SHA256_OUTPUT_LEN || key_bytes.len() > SHA256_BLOCK_LEN {
             return Err(Error::AggregatorAuthKeySize);
         }
-        Ok(Self(
-            Vec::from(key_bytes),
-            hmac::Key::new(HMAC_SHA256, key_bytes),
-        ))
+        Ok(Self {
+            bytes: Vec::from(key_bytes),
+            hmac_key: hmac::Key::new(HMAC_SHA256, key_bytes),
+        })
     }
 
     /// Randomly generate an [`AggregatorAuthKey`].
@@ -86,13 +89,13 @@ impl AggregatorAuthKey {
 
 impl AsRef<[u8]> for AggregatorAuthKey {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        &self.bytes
     }
 }
 
 impl AsRef<hmac::Key> for AggregatorAuthKey {
     fn as_ref(&self) -> &hmac::Key {
-        &self.1
+        &self.hmac_key
     }
 }
 
@@ -100,7 +103,7 @@ impl PartialEq for AggregatorAuthKey {
     fn eq(&self, other: &Self) -> bool {
         // The key is ignored because it is derived from the key bytes.
         // (also, ring::hmac::Key doesn't implement PartialEq)
-        self.0 == other.0
+        self.bytes == other.bytes
     }
 }
 
