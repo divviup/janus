@@ -10,10 +10,10 @@ use crate::{
         AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Report,
         ReportShare, TaskId, Time,
     },
-    task::{self, AggregatorAuthKey, Task},
+    task::{self, AggregatorAuthKey, Task, Vdaf},
 };
 use futures::try_join;
-use postgres_types::ToSql;
+use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     vdaf,
@@ -139,7 +139,7 @@ impl Transaction<'_> {
                     &&task.id.0[..],                           // task_id
                     &aggregator_role,                          // aggregator_role
                     &endpoints,                                // aggregator_endpoints
-                    &task.vdaf,                                // vdaf
+                    &Json(&task.vdaf),                         // vdaf
                     &encrypted_vdaf_verify_param,              // verify param
                     &max_batch_lifetime,                       // max batch lifetime
                     &min_batch_size,                           // min batch size
@@ -356,7 +356,7 @@ impl Transaction<'_> {
             .into_iter()
             .map(|endpoint| Ok(Url::parse(&endpoint)?))
             .collect::<Result<_, Error>>()?;
-        let vdaf = row.get("vdaf");
+        let vdaf = row.try_get::<_, Json<Vdaf>>("vdaf")?.0;
         let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
         let max_batch_lifetime = row.get_bigint_as_u64("max_batch_lifetime")?;
         let min_batch_size = row.get_bigint_as_u64("min_batch_size")?;
@@ -1409,7 +1409,7 @@ pub mod models {
 pub mod test_util {
     use super::{Crypter, Datastore};
 
-    test_util::define_ephemeral_datastore!(true);
+    test_util::define_ephemeral_datastore!();
 }
 
 #[cfg(test)]
@@ -1454,7 +1454,7 @@ mod tests {
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 2,
                 ]),
-                Vdaf::Prio3Aes128Sum,
+                Vdaf::Prio3Aes128Sum { bits: 64 },
                 Role::Helper,
             ),
             (
@@ -1462,15 +1462,43 @@ mod tests {
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 3,
                 ]),
-                Vdaf::Prio3Aes128Histogram,
-                Role::Leader,
+                Vdaf::Prio3Aes128Sum { bits: 32 },
+                Role::Helper,
             ),
             (
                 TaskId([
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                     0, 0, 0, 0, 0, 4,
                 ]),
-                Vdaf::Poplar1,
+                Vdaf::Prio3Aes128Histogram {
+                    buckets: vec![0, 100, 200, 400],
+                },
+                Role::Leader,
+            ),
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 5,
+                ]),
+                Vdaf::Prio3Aes128Histogram {
+                    buckets: vec![0, 25, 50, 75, 100],
+                },
+                Role::Leader,
+            ),
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 6,
+                ]),
+                Vdaf::Poplar1 { bits: 8 },
+                Role::Helper,
+            ),
+            (
+                TaskId([
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 7,
+                ]),
+                Vdaf::Poplar1 { bits: 64 },
                 Role::Helper,
             ),
         ];
@@ -1685,7 +1713,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     aggregation_job.task_id,
-                    Vdaf::Poplar1,
+                    Vdaf::Poplar1 { bits: 64 },
                     Role::Leader,
                 ))
                 .await?;

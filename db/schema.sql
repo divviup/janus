@@ -1,11 +1,3 @@
--- Identifies a particular VDAF.
-CREATE TYPE VDAF_IDENTIFIER AS ENUM(
-    'PRIO3_AES128_COUNT',
-    'PRIO3_AES128_SUM',
-    'PRIO3_AES128_HISTOGRAM',
-    'POPLAR1'
-);
-
 -- Identifies which aggregator role is being played for this task.
 CREATE TYPE AGGREGATOR_ROLE AS ENUM(
     'LEADER',
@@ -18,7 +10,7 @@ CREATE TABLE tasks(
     task_id                BYTEA UNIQUE NOT NULL,     -- 32-byte TaskID as defined by the PPM specification
     aggregator_role        AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator for this task
     aggregator_endpoints   TEXT[] NOT NULL,           -- aggregator HTTPS endpoints, leader first
-    vdaf                   VDAF_IDENTIFIER NOT NULL,  -- the VDAF in use for this task
+    vdaf                   JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
     vdaf_verify_param      BYTEA NOT NULL,            -- the VDAF verify parameter (opaque VDAF message, encrypted)
     max_batch_lifetime     BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected

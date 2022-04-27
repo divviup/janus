@@ -7,13 +7,9 @@ use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 /// and `janus_server::datastore::Crypter` already being imported into scope, and it expects the
 /// following crates to be available: `deadpool_postgres`, `lazy_static`, `ring`, `testcontainers`,
 /// and `tokio_postgres`.
-///
-/// If invoking from within `janus_server`, with `--cfg=test`, use
-/// `define_ephemeral_datastore!(true)`, and the VDAF enum in Postgres will be updated with
-/// unit test-only variants. Otherwise, use `define_ephemeral_datastore!(false)`.
 #[macro_export]
 macro_rules! define_ephemeral_datastore {
-    ($with_fake_vdaf:literal) => {
+    () => {
         const SCHEMA: &str = include_str!("../../db/schema.sql");
 
         ::lazy_static::lazy_static! {
@@ -66,18 +62,6 @@ macro_rules! define_ephemeral_datastore {
             // Connect to the database & run our schema.
             let client = pool.get().await.unwrap();
             client.batch_execute(SCHEMA).await.unwrap();
-
-            // Test-only DB schema modifications.
-            if $with_fake_vdaf {
-                client
-                    .batch_execute(
-                        "ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE';
-                        ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE_FAILS_PREP_INIT';
-                        ALTER TYPE VDAF_IDENTIFIER ADD VALUE 'FAKE_FAILS_PREP_STEP';",
-                    )
-                    .await
-                    .unwrap();
-            }
 
             (
                 Datastore::new(pool, crypter),
