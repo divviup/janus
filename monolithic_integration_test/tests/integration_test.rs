@@ -1,11 +1,10 @@
-use chrono::Duration;
 use futures::channel::oneshot::Sender;
 use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
     datastore::{Crypter, Datastore},
     hpke::test_util::generate_hpke_config_and_private_key,
-    message::{Role, TaskId},
+    message::{Duration, Role, TaskId},
     task::{AggregatorAuthKey, Task, Vdaf},
     time::RealClock,
     trace::{install_trace_subscriber, TraceConfiguration},
@@ -21,7 +20,7 @@ use std::{
 use tokio::task::JoinHandle;
 use url::Url;
 
-test_util::define_ephemeral_datastore!(false);
+test_util::define_ephemeral_datastore!();
 
 fn endpoint_from_socket_addr(addr: &SocketAddr) -> Url {
     assert!(addr.ip().is_loopback());
@@ -86,8 +85,8 @@ async fn setup_test() -> TestCase {
         leader_verify_param.get_encoded(),
         1,
         0,
-        Duration::hours(8),
-        Duration::minutes(10),
+        Duration::from_hours(8).unwrap(),
+        Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
         vec![agg_auth_key.clone()],
         vec![leader_hpke_key],
@@ -119,8 +118,8 @@ async fn setup_test() -> TestCase {
         helper_verify_param.get_encoded(),
         1,
         0,
-        Duration::hours(8),
-        Duration::minutes(10),
+        Duration::from_hours(8).unwrap(),
+        Duration::from_minutes(10).unwrap(),
         collector_hpke_config,
         vec![agg_auth_key],
         vec![helper_hpke_key],

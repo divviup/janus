@@ -12,12 +12,13 @@ use janus_server::{
 };
 use reqwest::{Client, Url};
 use std::{
+    io::Read,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream},
-    process::Command,
+    process::{Command, Stdio},
 };
 use wait_timeout::ChildExt;
 
-test_util::define_ephemeral_datastore!(false);
+test_util::define_ephemeral_datastore!();
 
 /// Try to find an open port by binding to an ephemeral port, saving the port
 /// number, and closing the listening socket. This may still fail due to race
@@ -60,10 +61,7 @@ async fn server_shutdown() {
         database: DbConfig {
             url: db_handle.connection_string().parse().unwrap(),
         },
-        logging_config: TraceConfiguration {
-            use_test_writer: true,
-            ..Default::default()
-        },
+        logging_config: Default::default(),
     };
 
     let task_id = TaskId::random();
@@ -89,8 +87,28 @@ async fn server_shutdown() {
             "DATASTORE_KEYS",
             base64::encode_config(&db_handle.datastore_key_bytes(), base64::STANDARD_NO_PAD),
         )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+
+    // Kick off tasks to read from piped stdout/stderr
+    let stdout_join_handle = tokio::task::spawn_blocking({
+        let mut stdout = child.stdout.take().unwrap();
+        move || {
+            let mut output = String::new();
+            stdout.read_to_string(&mut output).unwrap();
+            output
+        }
+    });
+    let stderr_join_handle = tokio::task::spawn_blocking({
+        let mut stderr = child.stderr.take().unwrap();
+        move || {
+            let mut output = String::new();
+            stderr.read_to_string(&mut output).unwrap();
+            output
+        }
+    });
 
     // Try to connect to the server in a loop, until it's ready.
     wait_for_server(config.listen_address).expect("could not connect to server after starting it");
@@ -120,6 +138,11 @@ async fn server_shutdown() {
         // We timed out waiting after sending a SIGTERM. Send a SIGKILL to clean up.
         child.kill().unwrap();
         child.wait().unwrap();
+        println!("===== child process stdout =====");
+        println!("{}", stdout_join_handle.await.unwrap());
+        println!("===== child process stderr =====");
+        println!("{}", stderr_join_handle.await.unwrap());
+        println!("===== end =====");
     }
     child_exit_status_opt.unwrap();
 }

@@ -4,15 +4,14 @@ use std::collections::HashMap;
 
 use crate::{
     hpke::HpkePrivateKey,
-    message::{HpkeConfig, HpkeConfigId, Interval, Role, TaskId},
+    message::{Duration, HpkeConfig, HpkeConfigId, Interval, Role, TaskId},
 };
 use ::rand::{thread_rng, Rng};
-use chrono::Duration;
-use postgres_types::{FromSql, ToSql};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
 };
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 /// Errors that methods and functions in this module may return.
@@ -31,30 +30,22 @@ pub enum Error {
 /// [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-patton-cfrg-vdaf/
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ToSql, FromSql)]
-#[postgres(name = "vdaf_identifier")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Vdaf {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
-    #[postgres(name = "PRIO3_AES128_COUNT")]
     Prio3Aes128Count,
     /// A `prio3` sum using the AES 128 pseudorandom generator.
-    #[postgres(name = "PRIO3_AES128_SUM")]
-    Prio3Aes128Sum,
+    Prio3Aes128Sum { bits: u32 },
     /// A `prio3` histogram using the AES 128 pseudorandom generator.
-    #[postgres(name = "PRIO3_AES128_HISTOGRAM")]
-    Prio3Aes128Histogram,
+    Prio3Aes128Histogram { buckets: Vec<u64> },
     /// The `poplar1` VDAF. Support for this VDAF is experimental.
-    #[postgres(name = "POPLAR1")]
-    Poplar1,
+    Poplar1 { bits: usize },
 
     #[cfg(test)]
-    #[postgres(name = "FAKE")]
     Fake,
     #[cfg(test)]
-    #[postgres(name = "FAKE_FAILS_PREP_INIT")]
     FakeFailsPrepInit,
     #[cfg(test)]
-    #[postgres(name = "FAKE_FAILS_PREP_STEP")]
     FakeFailsPrepStep,
 }
 
@@ -62,7 +53,7 @@ impl Vdaf {
     /// Determines whether the VDAF has a non-empty aggregation parameter.
     pub fn has_aggregation_param(&self) -> bool {
         match self {
-            Vdaf::Poplar1 => true,
+            Vdaf::Poplar1 { .. } => true,
             _ => false,
         }
     }
@@ -74,7 +65,10 @@ impl Vdaf {
 // to get a `ring::hmac::Key` from a slice of bytes, we can't get the bytes
 // back out of the key.
 #[derive(Clone, Debug)]
-pub struct AggregatorAuthKey(Vec<u8>, hmac::Key);
+pub struct AggregatorAuthKey {
+    bytes: Vec<u8>,
+    hmac_key: hmac::Key,
+}
 
 // TODO(brandon): use a ring constant once one is exposed. This is the correct value per ring:
 //   https://docs.rs/ring/0.16.20/src/ring/digest.rs.html#339
@@ -86,10 +80,10 @@ impl AggregatorAuthKey {
         if key_bytes.len() < SHA256_OUTPUT_LEN || key_bytes.len() > SHA256_BLOCK_LEN {
             return Err(Error::AggregatorAuthKeySize);
         }
-        Ok(Self(
-            Vec::from(key_bytes),
-            hmac::Key::new(HMAC_SHA256, key_bytes),
-        ))
+        Ok(Self {
+            bytes: Vec::from(key_bytes),
+            hmac_key: hmac::Key::new(HMAC_SHA256, key_bytes),
+        })
     }
 
     /// Randomly generate an [`AggregatorAuthKey`].
@@ -104,13 +98,13 @@ impl AggregatorAuthKey {
 
 impl AsRef<[u8]> for AggregatorAuthKey {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        &self.bytes
     }
 }
 
 impl AsRef<hmac::Key> for AggregatorAuthKey {
     fn as_ref(&self) -> &hmac::Key {
-        &self.1
+        &self.hmac_key
     }
 }
 
@@ -118,7 +112,7 @@ impl PartialEq for AggregatorAuthKey {
     fn eq(&self, other: &Self) -> bool {
         // The key is ignored because it is derived from the key bytes.
         // (also, ring::hmac::Key doesn't implement PartialEq)
-        self.0 == other.0
+        self.bytes == other.bytes
     }
 }
 
@@ -180,12 +174,6 @@ impl Task {
         if !role.is_aggregator() {
             return Err(Error::InvalidParameter("role"));
         }
-        if min_batch_duration < Duration::zero() {
-            return Err(Error::InvalidParameter("min_batch_duration"));
-        }
-        if tolerable_clock_skew < Duration::zero() {
-            return Err(Error::InvalidParameter("tolerable_clock_skew"));
-        }
         if agg_auth_keys.is_empty() {
             return Err(Error::InvalidParameter("agg_auth_keys"));
         }
@@ -217,14 +205,12 @@ impl Task {
 
     /// Returns true if `batch_interval` is valid, per §4.6 of draft-gpew-priv-ppm.
     pub(crate) fn validate_batch_interval(&self, batch_interval: Interval) -> bool {
-        let min_batch_duration = self.min_batch_duration.num_seconds() as u64;
-
         // Batch interval should be greater than task's minimum batch duration
-        batch_interval.duration.0 >= min_batch_duration
+        batch_interval.duration().0 >= self.min_batch_duration.0
             // Batch interval start must be a multiple of minimum batch duration
-            && batch_interval.start.0 % min_batch_duration == 0
+            && batch_interval.start().0 % self.min_batch_duration.0 == 0
             // Batch interval duration must be a multiple of minimum batch duration
-            && batch_interval.duration.0 % min_batch_duration == 0
+            && batch_interval.duration().0 % self.min_batch_duration.0 == 0
     }
 }
 
@@ -234,10 +220,9 @@ pub mod test_util {
     use super::{Task, Vdaf};
     use crate::{
         hpke::test_util::generate_hpke_config_and_private_key,
-        message::{HpkeConfigId, Role, TaskId},
+        message::{Duration, HpkeConfigId, Role, TaskId},
         task::AggregatorAuthKey,
     };
-    use chrono::Duration;
     use prio::{
         codec::Encode,
         field::Field128,
@@ -260,16 +245,18 @@ pub mod test_util {
             generate_hpke_config_and_private_key();
         aggregator_config_1.id = HpkeConfigId(1);
 
-        let vdaf_verify_parameter = match vdaf {
+        let vdaf_verify_parameter = match &vdaf {
             Vdaf::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),
-            Vdaf::Prio3Aes128Sum => verify_param(Prio3Aes128Sum::new(2, 64).unwrap(), role),
-            Vdaf::Prio3Aes128Histogram => verify_param(
-                Prio3Aes128Histogram::new(2, &[0, 100, 200, 400]).unwrap(),
+            Vdaf::Prio3Aes128Sum { bits } => {
+                verify_param(Prio3Aes128Sum::new(2, *bits).unwrap(), role)
+            }
+            Vdaf::Prio3Aes128Histogram { buckets } => {
+                verify_param(Prio3Aes128Histogram::new(2, &*buckets).unwrap(), role)
+            }
+            Vdaf::Poplar1 { bits } => verify_param(
+                Poplar1::<ToyIdpf<Field128>, PrgAes128, 16>::new(*bits),
                 role,
             ),
-            Vdaf::Poplar1 => {
-                verify_param(Poplar1::<ToyIdpf<Field128>, PrgAes128, 16>::new(64), role)
-            }
 
             #[cfg(test)]
             Vdaf::Fake | Vdaf::FakeFailsPrepInit | Vdaf::FakeFailsPrepStep => Vec::new(),
@@ -286,8 +273,8 @@ pub mod test_util {
             vdaf_verify_parameter,
             0,
             0,
-            Duration::hours(8),
-            Duration::minutes(10),
+            Duration::from_hours(8).unwrap(),
+            Duration::from_minutes(10).unwrap(),
             collector_config,
             vec![AggregatorAuthKey::generate(), AggregatorAuthKey::generate()],
             vec![
@@ -313,15 +300,17 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
+    use serde_test::{assert_tokens, Token};
+
     use super::test_util::new_dummy_task;
     use super::*;
-    use crate::message::{self, TaskId, Time};
+    use crate::message::{Duration, TaskId, Time};
 
     #[test]
     fn validate_batch_interval() {
         let mut task = new_dummy_task(TaskId::random(), Vdaf::Fake, Role::Leader);
         let min_batch_duration_secs = 3600;
-        task.min_batch_duration = Duration::seconds(min_batch_duration_secs as i64);
+        task.min_batch_duration = Duration::from_seconds(min_batch_duration_secs);
 
         struct TestCase {
             name: &'static str,
@@ -332,42 +321,44 @@ mod tests {
         let test_cases = vec![
             TestCase {
                 name: "same duration as minimum",
-                input: Interval {
-                    start: Time(min_batch_duration_secs),
-                    duration: message::Duration(min_batch_duration_secs),
-                },
+                input: Interval::new(
+                    Time(min_batch_duration_secs),
+                    Duration::from_seconds(min_batch_duration_secs),
+                )
+                .unwrap(),
                 expected: true,
             },
             TestCase {
                 name: "interval too short",
-                input: Interval {
-                    start: Time(min_batch_duration_secs),
-                    duration: message::Duration(min_batch_duration_secs - 1),
-                },
+                input: Interval::new(
+                    Time(min_batch_duration_secs),
+                    Duration::from_seconds(min_batch_duration_secs - 1),
+                )
+                .unwrap(),
                 expected: false,
             },
             TestCase {
                 name: "interval larger than minimum",
-                input: Interval {
-                    start: Time(min_batch_duration_secs),
-                    duration: message::Duration(min_batch_duration_secs * 2),
-                },
+                input: Interval::new(
+                    Time(min_batch_duration_secs),
+                    Duration::from_seconds(min_batch_duration_secs * 2),
+                )
+                .unwrap(),
                 expected: true,
             },
             TestCase {
                 name: "interval duration not aligned with minimum",
-                input: Interval {
-                    start: Time(min_batch_duration_secs),
-                    duration: message::Duration(min_batch_duration_secs + 1800),
-                },
+                input: Interval::new(
+                    Time(min_batch_duration_secs),
+                    Duration::from_seconds(min_batch_duration_secs + 1800),
+                )
+                .unwrap(),
                 expected: false,
             },
             TestCase {
                 name: "interval start not aligned with minimum",
-                input: Interval {
-                    start: Time(1800),
-                    duration: message::Duration(min_batch_duration_secs),
-                },
+                input: Interval::new(Time(1800), Duration::from_seconds(min_batch_duration_secs))
+                    .unwrap(),
                 expected: false,
             },
         ];
@@ -380,5 +371,85 @@ mod tests {
                 test_case.name
             );
         }
+    }
+
+    #[test]
+    fn vdaf_serialization() {
+        // The `Vdaf` type must have a stable serialization, as it gets stored in a JSON database
+        // column.
+        assert_tokens(
+            &Vdaf::Prio3Aes128Count,
+            &[Token::UnitVariant {
+                name: "Vdaf",
+                variant: "Prio3Aes128Count",
+            }],
+        );
+        assert_tokens(
+            &Vdaf::Prio3Aes128Sum { bits: 64 },
+            &[
+                Token::StructVariant {
+                    name: "Vdaf",
+                    variant: "Prio3Aes128Sum",
+                    len: 1,
+                },
+                Token::Str("bits"),
+                Token::U32(64),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &Vdaf::Prio3Aes128Histogram {
+                buckets: vec![0, 100, 200, 400],
+            },
+            &[
+                Token::StructVariant {
+                    name: "Vdaf",
+                    variant: "Prio3Aes128Histogram",
+                    len: 1,
+                },
+                Token::Str("buckets"),
+                Token::Seq { len: Some(4) },
+                Token::U64(0),
+                Token::U64(100),
+                Token::U64(200),
+                Token::U64(400),
+                Token::SeqEnd,
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &Vdaf::Poplar1 { bits: 64 },
+            &[
+                Token::StructVariant {
+                    name: "Vdaf",
+                    variant: "Poplar1",
+                    len: 1,
+                },
+                Token::Str("bits"),
+                Token::U64(64),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &Vdaf::Fake,
+            &[Token::UnitVariant {
+                name: "Vdaf",
+                variant: "Fake",
+            }],
+        );
+        assert_tokens(
+            &Vdaf::FakeFailsPrepInit,
+            &[Token::UnitVariant {
+                name: "Vdaf",
+                variant: "FakeFailsPrepInit",
+            }],
+        );
+        assert_tokens(
+            &Vdaf::FakeFailsPrepStep,
+            &[Token::UnitVariant {
+                name: "Vdaf",
+                variant: "FakeFailsPrepStep",
+            }],
+        );
     }
 }

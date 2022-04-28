@@ -2,7 +2,7 @@
 
 use crate::{
     hpke::{self, associated_data_for, HpkeApplicationInfo, Label},
-    message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId, Time},
+    message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
     time::Clock,
 };
 use http::StatusCode;
@@ -165,7 +165,7 @@ where
         assert_eq!(input_shares.len(), 2); // PPM only supports VDAFs using two aggregators.
 
         let nonce = Nonce {
-            time: Time::from_naive_date_time(self.clock.now()),
+            time: self.clock.now(),
             rand: rand::random(),
         };
         let extensions = vec![]; // No extensions supported yet

@@ -1,11 +1,3 @@
--- Identifies a particular VDAF.
-CREATE TYPE VDAF_IDENTIFIER AS ENUM(
-    'PRIO3_AES128_COUNT',
-    'PRIO3_AES128_SUM',
-    'PRIO3_AES128_HISTOGRAM',
-    'POPLAR1'
-);
-
 -- Identifies which aggregator role is being played for this task.
 CREATE TYPE AGGREGATOR_ROLE AS ENUM(
     'LEADER',
@@ -18,7 +10,7 @@ CREATE TABLE tasks(
     task_id                BYTEA UNIQUE NOT NULL,     -- 32-byte TaskID as defined by the PPM specification
     aggregator_role        AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator for this task
     aggregator_endpoints   TEXT[] NOT NULL,           -- aggregator HTTPS endpoints, leader first
-    vdaf                   VDAF_IDENTIFIER NOT NULL,  -- the VDAF in use for this task
+    vdaf                   JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
     vdaf_verify_param      BYTEA NOT NULL,            -- the VDAF verify parameter (opaque VDAF message, encrypted)
     max_batch_lifetime     BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
@@ -112,32 +104,33 @@ CREATE TABLE report_aggregations(
 CREATE INDEX report_aggregations_aggregation_job_id_index ON report_aggregations(aggregation_job_id);
 CREATE INDEX report_aggregations_client_report_id_index ON report_aggregations(client_report_id);
 
--- Information on aggregation for a single batch. This information may be incremental if the VDAF
--- supports incremental aggregation.
-CREATE TABLE batch_aggregations(
+-- Information on aggregation for a single batch unit. This information may be incremental if the
+-- VDAF supports incremental aggregation.
+CREATE TABLE batch_unit_aggregations(
     id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id               BIGINT NOT NULL,     -- the task ID
-    batch_interval_start  TIMESTAMP NOT NULL,  -- the start of the batch interval
+    unit_interval_start   TIMESTAMP NOT NULL,  -- the start of the batch unit
+    aggregation_param     BYTEA NOT NULL,      -- the aggregation parameter (opaque VDAF message)
     aggregate_share       BYTEA NOT NULL,      -- the (possibly-incremental) aggregate share
     report_count          BIGINT NOT NULL,     -- the (possibly-incremental) client report count
     checksum              BYTEA NOT NULL,      -- the (possibly-incremental) checksum
 
-    CONSTRAINT unique_task_id_interval UNIQUE(task_id, batch_interval_start),
+    CONSTRAINT unique_task_id_interval_aggregation_param UNIQUE(task_id, unit_interval_start, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
 -- A collection request from the Collector.
 CREATE TABLE collect_jobs(
-    id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    collect_job_id        UUID NOT NULL,       -- UUID used by collector to refer to this job
-    task_id               BIGINT NOT NULL,     -- the task ID being collected
-    batch_interval_start  TIMESTAMP NOT NULL,  -- the start of the batch interval
-    batch_interval_end    TIMESTAMP NOT NULL,  -- the end of the batch interval
-    aggregation_param     BYTEA NOT NULL,      -- the aggregation parameter (opaque VDAF message)
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
+    collect_job_id          UUID NOT NULL,      -- UUID used by collector to refer to this job
+    task_id                 BIGINT NOT NULL,    -- the task ID being collected
+    batch_interval_start    TIMESTAMP NOT NULL, -- the start of the batch interval
+    batch_interval_duration BIGINT NOT NULL,    -- the length of the batch interval in seconds
+    aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
 
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
-CREATE INDEX collect_jobs_batch_interval_index ON collect_jobs(task_id, batch_interval_start, batch_interval_end);
+CREATE INDEX collect_jobs_batch_interval_index ON collect_jobs(task_id, batch_interval_start, batch_interval_duration);
 
 -- An encrypted aggregate share computed for a specific collection job.
 CREATE TABLE collect_job_encrypted_aggregate_shares(

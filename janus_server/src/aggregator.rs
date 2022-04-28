@@ -9,11 +9,12 @@ use crate::{
     message::{
         AggregateReq,
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
-        AggregateResp, AggregationJobId, AuthenticatedDecodeError, AuthenticatedEncoder,
-        AuthenticatedRequestDecoder, CollectReq, HpkeConfig, HpkeConfigId, Interval, Nonce, Report,
-        ReportShare, Role, TaskId, Transition, TransitionError, TransitionTypeSpecificData,
+        AggregateResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
+        AuthenticatedDecodeError, AuthenticatedEncoder, AuthenticatedRequestDecoder, CollectReq,
+        HpkeConfig, HpkeConfigId, Interval, Nonce, Report, ReportShare, Role, TaskId, Transition,
+        TransitionError, TransitionTypeSpecificData,
     },
-    task::{self, Task},
+    task::{self, AggregatorAuthKey, Task},
     time::Clock,
 };
 use bytes::Bytes;
@@ -24,10 +25,11 @@ use http::{
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
+    field::FieldError,
     vdaf::{
         self,
         prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
-        PrepareTransition, Vdaf,
+        Aggregatable, PrepareTransition, Vdaf,
     },
 };
 use std::{
@@ -36,7 +38,6 @@ use std::{
     future::Future,
     io::Cursor,
     net::SocketAddr,
-    ops::Sub,
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -62,6 +63,9 @@ pub enum Error {
     /// Error decoding an incoming message.
     #[error("message decoding failed: {0}")]
     MessageDecode(#[from] prio::codec::CodecError),
+    /// Error handling a message.
+    #[error("invalid message: {0}")]
+    Message(#[from] crate::message::Error),
     /// Corresponds to `staleReport`, §3.1
     #[error("stale report: {0} {1:?}")]
     StaleReport(Nonce, TaskId),
@@ -92,6 +96,30 @@ pub enum Error {
     /// A collect or aggregate share request was rejected because the interval is valid, per §4.6
     #[error("Invalid batch interval: {0} {1:?}")]
     InvalidBatchInterval(Interval, TaskId),
+    /// There are not enough reports in the batch interval to meet the task's minimum batch size.
+    #[error("Insufficient number of reports ({0}) for task {1:?}")]
+    InsufficientBatchSize(u64, TaskId),
+    #[error("URL parse error: {0}")]
+    Url(#[from] url::ParseError),
+    /// The checksum or report count in one aggregator's aggregate share does not match the other
+    /// aggregator's aggregate share, suggesting different sets of reports were aggregated.
+    #[error(
+        "Batch misalignment: own checksum: {own_checksum:?} own report count: {own_report_count} \
+peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
+    )]
+    BatchMisalignment {
+        task_id: TaskId,
+        own_checksum: [u8; 32],
+        own_report_count: u64,
+        peer_checksum: [u8; 32],
+        peer_report_count: u64,
+    },
+    /// Too many queries against a single batch.
+    #[error("Maxiumum batch lifetime for task {0:?} exceeded")]
+    BatchLifetimeExceeded(TaskId),
+    /// HPKE failure.
+    #[error("HPKE error: {0}")]
+    Hpke(#[from] crate::hpke::Error),
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
@@ -162,7 +190,7 @@ impl<C: Clock> Aggregator<C> {
         let resp = task_aggregator
             .handle_aggregate(&self.datastore, req)
             .await?;
-        let key = task_aggregator.task.agg_auth_keys.last().unwrap();
+        let key = task_aggregator.current_aggregator_auth_key();
         Ok(AuthenticatedEncoder::new(resp).encode(key.as_ref()))
     }
 
@@ -193,7 +221,7 @@ impl<C: Clock> Aggregator<C> {
 
         let task_aggregator = self.task_aggregator_for(collect_req.task_id).await?;
 
-        // Only the leader supports collect.
+        // Only the leader supports /collect.
         if task_aggregator.task.role != Role::Leader {
             // TODO (timg): We should make sure that a helper returns HTTP 404 or 403 when this
             // happens
@@ -201,8 +229,30 @@ impl<C: Clock> Aggregator<C> {
         }
 
         task_aggregator
-            .handle_collect(&self.datastore, &self.clock, collect_req)
+            .handle_collect(&self.datastore, collect_req)
             .await
+    }
+
+    /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded,
+    /// authenticated [`AggregateShareReq`]. Returns an encoded, authenticated
+    /// [`AggregateShareResp`].
+    async fn handle_aggregate_share(&self, req_bytes: &[u8]) -> Result<Vec<u8>, Error> {
+        let (task_aggregator, req): (_, AggregateShareReq) = self
+            .authenticated_decode(req_bytes, Some(Role::Helper))
+            .await?;
+
+        // Only the helper supports /aggregate_share.
+        if task_aggregator.task.role != Role::Helper {
+            // TODO (timg): We should make sure that a leader returns HTTP 404 or 403 when this
+            // happens
+            return Err(Error::UnrecognizedTask(req.task_id));
+        }
+
+        let resp = task_aggregator
+            .handle_aggregate_share(&self.datastore, &req)
+            .await?;
+        Ok(AuthenticatedEncoder::new(resp)
+            .encode(task_aggregator.current_aggregator_auth_key().as_ref()))
     }
 
     async fn task_aggregator_for(&self, task_id: TaskId) -> Result<Arc<TaskAggregator>, Error> {
@@ -249,8 +299,7 @@ impl TaskAggregator {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
     fn new(task: Task) -> Result<Self, Error> {
-        // TODO(brandon): include VDAF-specific configuration (like bit-length for sums, buckets for histograms) in Task
-        let vdaf_ops = match task.vdaf {
+        let vdaf_ops = match &task.vdaf {
             task::Vdaf::Prio3Aes128Count => {
                 let vdaf = Prio3Aes128Count::new(2)?;
                 let verify_param = <Prio3Aes128Count as Vdaf>::VerifyParam::get_decoded_with_param(
@@ -260,8 +309,8 @@ impl TaskAggregator {
                 VdafOps::Prio3Aes128Count(vdaf, verify_param)
             }
 
-            task::Vdaf::Prio3Aes128Sum => {
-                let vdaf = Prio3Aes128Sum::new(2, 64)?;
+            task::Vdaf::Prio3Aes128Sum { bits } => {
+                let vdaf = Prio3Aes128Sum::new(2, *bits)?;
                 let verify_param = <Prio3Aes128Sum as Vdaf>::VerifyParam::get_decoded_with_param(
                     &vdaf,
                     &task.vdaf_verify_parameter,
@@ -269,8 +318,8 @@ impl TaskAggregator {
                 VdafOps::Prio3Aes128Sum(vdaf, verify_param)
             }
 
-            task::Vdaf::Prio3Aes128Histogram => {
-                let vdaf = Prio3Aes128Histogram::new(2, &[0, 100, 200, 400])?;
+            task::Vdaf::Prio3Aes128Histogram { buckets } => {
+                let vdaf = Prio3Aes128Histogram::new(2, &*buckets)?;
                 let verify_param =
                     <Prio3Aes128Histogram as Vdaf>::VerifyParam::get_decoded_with_param(
                         &vdaf,
@@ -304,6 +353,12 @@ impl TaskAggregator {
         };
 
         Ok(Self { task, vdaf_ops })
+    }
+
+    /// Returns the [`AggregatorAuthKey`] currently used by this aggregator's task to authenticate
+    /// aggregate messages.
+    fn current_aggregator_auth_key(&self) -> &AggregatorAuthKey {
+        self.task.agg_auth_keys.last().unwrap()
     }
 
     fn handle_hpke_config(&self) -> HpkeConfig {
@@ -352,10 +407,10 @@ impl TaskAggregator {
                 Error::OutdatedHpkeConfig(leader_report.config_id, report.task_id)
             })?;
 
-        let now = clock.now();
+        let report_deadline = clock.now().add(self.task.tolerable_clock_skew)?;
 
         // §4.2.4: reject reports from too far in the future
-        if report.nonce.time.as_naive_date_time().sub(now) > self.task.tolerable_clock_skew {
+        if report.nonce.time.is_after(report_deadline) {
             warn!(?report.task_id, ?report.nonce, "Report timestamp exceeds tolerable clock skew");
             return Err(Error::ReportFromTheFuture(report.nonce, report.task_id));
         }
@@ -422,12 +477,8 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_collect<C: Clock>(
-        &self,
-        _datastore: &Datastore,
-        _clock: &C,
-        req: CollectReq,
-    ) -> Result<Url, Error> {
+    async fn handle_collect(&self, datastore: &Datastore, req: CollectReq) -> Result<Url, Error> {
+        // §4.5: check that the batch interval meets the requirements from §4.6
         if !self.task.validate_batch_interval(req.batch_interval) {
             return Err(Error::InvalidBatchInterval(
                 req.batch_interval,
@@ -435,11 +486,50 @@ impl TaskAggregator {
             ));
         }
 
-        // TODO: Check database for in-flight collect job
-        // create one if necessary
-        // return collect URI
+        let collect_job_uuid = datastore
+            .run_tx(move |tx| {
+                let aggregation_param = req.agg_param.clone();
+                Box::pin(async move {
+                    let collect_job_uuid = tx
+                        .get_collect_job_uuid(req.task_id, req.batch_interval, &aggregation_param)
+                        .await?;
 
-        Ok(Url::parse("https://example.com/collect-job-uri").unwrap())
+                    match collect_job_uuid {
+                        Some(uuid) => Ok(uuid),
+                        None => {
+                            tx.put_collect_job(req.task_id, req.batch_interval, &aggregation_param)
+                                .await
+                        }
+                    }
+                })
+            })
+            .await?;
+
+        // TODO(timg): Aggregator configuration needs to include the URL from which collect job URIs
+        // are constructed
+        let base_url = Url::parse("https://example.com").unwrap();
+
+        Ok(base_url
+            .join("collect_jobs/")?
+            .join(&collect_job_uuid.to_string())?)
+    }
+
+    async fn handle_aggregate_share(
+        &self,
+        datastore: &Datastore,
+        req: &AggregateShareReq,
+    ) -> Result<AggregateShareResp, Error> {
+        // §4.4.4.3: check that the batch interval meets the requirements from §4.6
+        if !self.task.validate_batch_interval(req.batch_interval) {
+            return Err(Error::InvalidBatchInterval(
+                req.batch_interval,
+                self.task.id,
+            ));
+        }
+
+        self.vdaf_ops
+            .handle_aggregate_share(datastore, &self.task, req)
+            .await
     }
 }
 
@@ -765,6 +855,9 @@ impl VdafOps {
 
         // TODO(brandon): don't hold DB transaction open while computing VDAF updates?
         // TODO(brandon): don't do O(n) network round-trips (where n is the number of transitions)
+        // TODO(timg): We have to reject reports in batches that have completed an aggregate-share
+        // request with `batch-collected` here as well as in the init case. Suppose that an
+        // AggregateShareReq arrives in between the AggregateInitReq and AggregateContinueReq.
         Ok(datastore
             .run_tx(|tx| {
                 let vdaf = vdaf.clone();
@@ -867,6 +960,9 @@ impl VdafOps {
                                     nonce: transition.nonce,
                                     trans_data: TransitionTypeSpecificData::Finished,
                                 });
+
+                                // TODO(timg): when a report's preparation is done, its value should
+                                // be accumulated into a batch_unit_aggregations row
                             }
 
                             PrepareTransition::Fail(err) => {
@@ -915,6 +1011,183 @@ impl VdafOps {
             })
             .await?)
     }
+
+    /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
+    async fn handle_aggregate_share(
+        &self,
+        datastore: &Datastore,
+        task: &Task,
+        aggregate_share_req: &AggregateShareReq,
+    ) -> Result<AggregateShareResp, Error> {
+        match self {
+            VdafOps::Prio3Aes128Count(_, _) => {
+                Self::handle_aggregate_share_generic::<Prio3Aes128Count, FieldError>(
+                    datastore,
+                    task,
+                    aggregate_share_req,
+                )
+                .await
+            }
+            VdafOps::Prio3Aes128Sum(_, _) => {
+                Self::handle_aggregate_share_generic::<Prio3Aes128Sum, FieldError>(
+                    datastore,
+                    task,
+                    aggregate_share_req,
+                )
+                .await
+            }
+            VdafOps::Prio3Aes128Histogram(_, _) => {
+                Self::handle_aggregate_share_generic::<Prio3Aes128Histogram, FieldError>(
+                    datastore,
+                    task,
+                    aggregate_share_req,
+                )
+                .await
+            }
+
+            #[cfg(test)]
+            VdafOps::Fake(_) => {
+                Self::handle_aggregate_share_generic::<fake::Vdaf, Infallible>(
+                    datastore,
+                    task,
+                    aggregate_share_req,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn handle_aggregate_share_generic<A, E>(
+        datastore: &Datastore,
+        task: &Task,
+        aggregate_share_req: &AggregateShareReq,
+    ) -> Result<AggregateShareResp, Error>
+    where
+        A: vdaf::Vdaf,
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+        E: std::fmt::Display,
+        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+    {
+        // TODO(timg): What should we do if any of the aggregation jobs handling reports relevant to
+        // the aggregate share request aren't finished yet? Helper could return an error like
+        // "EAGAIN" to leader, or could trust leader not to issue an AggregateShareReq until all of
+        // leader's aggregate jobs are done (which should imply that helper's are done).
+        // See issue #104.
+
+        let total_aggregate_share = datastore
+            .run_tx(move |tx| {
+                let task = task.clone();
+                let aggregate_share_req = aggregate_share_req.clone();
+                Box::pin(async move {
+                    // TODO(timg) Look up the aggregate share req in the relevant table. If we've
+                    // already computed that aggregate share, just serve it up.
+
+                    // TODO(timg) For each batch unit in the request, check how many rows in
+                    // aggregate_share_requests contain that unit, regardless of agg_param. Each
+                    // such row consumes one of batch lifetime and we can check that against
+                    // task.max_batch_lifetime.
+
+                    let aggregation_param =
+                        A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
+                    let batch_unit_aggregations = tx
+                        .get_batch_unit_aggregations_for_task_in_interval::<_, A::AggregateShare, E>(
+                            task.id,
+                            aggregate_share_req.batch_interval,
+                            &aggregation_param,
+                        )
+                        .await?;
+
+                    let mut total_report_count = 0;
+                    let mut total_checksum = [0u8; 32];
+                    let mut total_aggregate_share: Option<A::AggregateShare> = None;
+
+                    for batch_unit_aggregation in &batch_unit_aggregations {
+                        // TODO(timg): enforce the max lifetime requirement from §4.6. We need to
+                        // make sure that this minimum batch interval's aggregate share has not
+                        // previously been included in a collect request with a different batch
+                        // interval. This requires the helper to store the aggregate share requests
+                        // it has serviced, perhaps in the collect_jobs table used by the leader.
+
+                        // §4.4.4.3: XOR this batch interval's checksum into the overall checksum
+                        total_checksum
+                            .iter_mut()
+                            .zip(batch_unit_aggregation.checksum)
+                            .for_each(|(x, y)| *x ^= y);
+
+                        // §4.4.4.3: Sum all the report counts
+                        total_report_count += batch_unit_aggregation.report_count;
+
+                        match &mut total_aggregate_share {
+                            Some(share) => {
+                                if let Err(err) =
+                                    share.merge(&batch_unit_aggregation.aggregate_share)
+                                {
+                                    return Ok(Err(Error::from(err)));
+                                }
+                            }
+                            None => {
+                                total_aggregate_share =
+                                    Some(batch_unit_aggregation.aggregate_share.clone())
+                            }
+                        }
+                    }
+
+                    // §4.6: refuse to service aggregate share requests if there are too few reports
+                    // included.
+                    if total_report_count < task.min_batch_size {
+                        return Ok(Err(Error::InsufficientBatchSize(
+                            total_report_count,
+                            task.id,
+                        )));
+                    }
+
+                    let total_aggregate_share = match total_aggregate_share {
+                        Some(share) => share,
+                        None => return Ok(Err(Error::InsufficientBatchSize(0, task.id))),
+                    };
+
+                    // §4.4.4.3: verify total report count and the checksum we computed against
+                    // those reported by the leader.
+                    if total_report_count != aggregate_share_req.report_count
+                        || total_checksum != aggregate_share_req.checksum
+                    {
+                        return Ok(Err(Error::BatchMisalignment {
+                            task_id: task.id,
+                            own_checksum: total_checksum,
+                            own_report_count: total_report_count,
+                            peer_checksum: aggregate_share_req.checksum,
+                            peer_report_count: aggregate_share_req.report_count,
+                        }));
+                    }
+
+                    // TODO(timg): Once we are satisfied the request is serviceable, consume batch
+                    // lifetime by storing the aggregate share request parameters. Make sure to do
+                    // so in the same database txn where we queried the batch aggregations.
+
+                    Ok(Ok(total_aggregate_share))
+                })
+            })
+            .await??;
+
+        // §4.4.4.3: HPKE encrypt aggregate share to the collector.
+        let encrypted_aggregate_share = hpke::seal(
+            &task.collector_hpke_config,
+            &HpkeApplicationInfo::new(
+                task.id,
+                Label::AggregateShare,
+                Role::Helper,
+                Role::Collector,
+            ),
+            &<Vec<u8>>::from(&total_aggregate_share),
+            &aggregate_share_req.batch_interval.get_encoded(),
+        )?;
+
+        Ok(AggregateShareResp {
+            encrypted_aggregate_share,
+        })
+    }
 }
 
 /// Injects a clone of the provided value into the warp filter, making it
@@ -934,6 +1207,9 @@ enum PpmProblemType {
     StaleReport,
     InvalidHmac,
     InvalidBatchInterval,
+    InsufficientBatchSize,
+    BatchMisaligned,
+    BatchLifetimeExceeded,
 }
 
 impl PpmProblemType {
@@ -947,6 +1223,13 @@ impl PpmProblemType {
             PpmProblemType::InvalidHmac => "urn:ietf:params:ppm:error:invalidHmac",
             PpmProblemType::InvalidBatchInterval => {
                 "urn:ietf:params:ppm:error:invalidBatchInterval"
+            }
+            PpmProblemType::InsufficientBatchSize => {
+                "urn:ietf:params:ppm:error:insufficientBatchSize"
+            }
+            PpmProblemType::BatchMisaligned => "urn:ietf:params:ppm:error:batchMisaligned",
+            PpmProblemType::BatchLifetimeExceeded => {
+                "urn:ietf:params:ppm:error:batchLifetimeExceeded"
             }
         }
     }
@@ -967,7 +1250,18 @@ impl PpmProblemType {
                 "Report could not be processed because it arrived too late."
             }
             PpmProblemType::InvalidHmac => "The aggregate message's HMAC was not valid.",
-            PpmProblemType::InvalidBatchInterval => "The batch interval in the collect or aggregate share request is not valid for the task.",
+            PpmProblemType::InvalidBatchInterval => {
+                "The batch interval in the collect or aggregate share request is not valid for the task."
+            }
+            PpmProblemType::InsufficientBatchSize => {
+                "There are not enough reports in the batch interval."
+            }
+            PpmProblemType::BatchMisaligned => {
+                "The checksums or report counts in the two aggregator's aggregate shares do not match."
+            }
+            PpmProblemType::BatchLifetimeExceeded => {
+                "The batch lifetime has been exceeded for one or more reports included in the batch interval."
+            }
         }
     }
 }
@@ -1040,9 +1334,21 @@ fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Respon
             Err(Error::InvalidBatchInterval(_, task_id)) => {
                 build_problem_details_response(PpmProblemType::InvalidBatchInterval, Some(task_id))
             }
+            Err(Error::InsufficientBatchSize(_, task_id)) => {
+                build_problem_details_response(PpmProblemType::InsufficientBatchSize, Some(task_id))
+            }
+            Err(Error::BatchMisalignment { task_id, .. }) => {
+                build_problem_details_response(PpmProblemType::BatchMisaligned, Some(task_id))
+            }
+            Err(Error::BatchLifetimeExceeded(task_id)) => {
+                build_problem_details_response(PpmProblemType::BatchLifetimeExceeded, Some(task_id))
+            }
+            Err(Error::Hpke(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
 }
@@ -1102,7 +1408,7 @@ where
 
     let collect_endpoint = warp::path("collect")
         .and(warp::post())
-        .and(with_cloned_value(aggregator))
+        .and(with_cloned_value(aggregator.clone()))
         .and(warp::body::bytes())
         .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
             let collect_uri = aggregator.handle_collect(&body).await?;
@@ -1116,10 +1422,24 @@ where
         .map(error_handler())
         .with(trace::named("collect"));
 
+    let aggregate_share_endpoint = warp::path("aggregate_share")
+        .and(warp::post())
+        .and(with_cloned_value(aggregator))
+        .and(warp::body::bytes())
+        .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
+            let resp_bytes = aggregator.handle_aggregate_share(&body).await?;
+
+            // §4.4.4.3: Response is HTTP 200 OK
+            Ok(reply::with_status(resp_bytes, StatusCode::OK))
+        })
+        .map(error_handler())
+        .with(trace::named("aggregate_share"));
+
     Ok(hpke_config_endpoint
         .or(upload_endpoint)
         .or(aggregate_endpoint)
         .or(collect_endpoint)
+        .or(aggregate_share_endpoint)
         .boxed())
 }
 
@@ -1321,19 +1641,27 @@ mod tests {
     use super::*;
     use crate::{
         aggregator::test_util::fake,
-        datastore::test_util::{ephemeral_datastore, DbHandle},
-        hpke::{associated_data_for, HpkePrivateKey, Label},
-        message::{self, AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig, TaskId, Time},
+        datastore::{
+            models::BatchUnitAggregation,
+            test_util::{ephemeral_datastore, DbHandle},
+        },
+        hpke::{
+            associated_data_for, test_util::generate_hpke_config_and_private_key, HpkePrivateKey,
+            Label,
+        },
+        message::{
+            AuthenticatedResponseDecoder, Duration, HpkeCiphertext, HpkeConfig, TaskId, Time,
+        },
         task::{test_util::new_dummy_task, Vdaf},
         time::tests::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
-    use chrono::Duration;
     use http::Method;
     use prio::{
         codec::Decode,
-        vdaf::prio3::Prio3Aes128Count,
+        field::Field64,
+        vdaf::{prio3::Prio3Aes128Count, AggregateShare},
         vdaf::{Vdaf as VdafTrait, VdafError},
     };
     use rand::{thread_rng, Rng};
@@ -1418,7 +1746,7 @@ mod tests {
 
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let nonce = Nonce {
-            time: Time((clock.now() - task.tolerable_clock_skew).timestamp() as u64),
+            time: clock.now().sub(task.tolerable_clock_skew).unwrap(),
             rand: thread_rng().gen(),
         };
         let extensions = vec![];
@@ -1583,9 +1911,12 @@ mod tests {
 
         // reports from the future should be rejected.
         let mut bad_report = report.clone();
-        bad_report.nonce.time = Time::from_naive_date_time(
-            MockClock::default().now() + Duration::minutes(10) + Duration::seconds(1),
-        );
+        bad_report.nonce.time = MockClock::default()
+            .now()
+            .add(Duration::from_minutes(10).unwrap())
+            .unwrap()
+            .add(Duration::from_seconds(1))
+            .unwrap();
         let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
             .await
             .unwrap();
@@ -1761,10 +2092,13 @@ mod tests {
         install_test_trace_subscriber();
 
         let (aggregator, task, mut report, datastore, _db_handle) = setup_upload_test().await;
-        let skew = task.tolerable_clock_skew;
 
         // Boundary condition
-        report.nonce.time = Time::from_naive_date_time(aggregator.clock.now() + skew);
+        report.nonce.time = aggregator
+            .clock
+            .now()
+            .add(task.tolerable_clock_skew)
+            .unwrap();
         let mut report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
         aggregator
             .handle_upload(&report.get_encoded())
@@ -1780,8 +2114,13 @@ mod tests {
         assert_eq!(report, got_report);
 
         // Just past the clock skew
-        report.nonce.time =
-            Time::from_naive_date_time(aggregator.clock.now() + skew + Duration::seconds(1));
+        report.nonce.time = aggregator
+            .clock
+            .now()
+            .add(task.tolerable_clock_skew)
+            .unwrap()
+            .add(Duration::from_seconds(1))
+            .unwrap();
         let report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id);
@@ -3062,10 +3401,7 @@ mod tests {
 
         let request = CollectReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
-                duration: message::Duration(task.min_batch_duration.num_seconds() as u64),
-            },
+            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
             agg_param: vec![],
         };
 
@@ -3119,11 +3455,12 @@ mod tests {
 
         let request = CollectReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
+            batch_interval: Interval::new(
+                Time(0),
                 // Collect request will be rejected because batch interval is too small
-                duration: message::Duration(task.min_batch_duration.num_seconds() as u64 - 1),
-            },
+                Duration(task.min_batch_duration.0 - 1),
+            )
+            .unwrap(),
             agg_param: vec![],
         };
 
@@ -3159,10 +3496,9 @@ mod tests {
 
         // Prepare parameters.
         let task_id = TaskId::random();
-
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Leader);
+
         let (datastore, _db_handle) = ephemeral_datastore().await;
-        let clock = MockClock::default();
 
         datastore
             .run_tx(|tx| {
@@ -3173,14 +3509,11 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
 
         let request = CollectReq {
             task_id,
-            batch_interval: Interval {
-                start: Time(0),
-                duration: message::Duration(task.min_batch_duration.num_seconds() as u64),
-            },
+            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
             agg_param: vec![],
         };
 
@@ -3198,9 +3531,414 @@ mod tests {
         assert!(response.headers().get(LOCATION).is_some());
     }
 
+    #[tokio::test]
+    async fn aggregate_share_request_to_leader() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+        let task = new_dummy_task(task_id, Vdaf::Fake, Role::Leader);
+        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
+
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+
+        let request = AggregateShareReq {
+            task_id,
+            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
+            aggregation_param: vec![],
+            report_count: 0,
+            checksum: [0; 32],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:unrecognizedTask",
+                "title": "An endpoint received a message with an unknown task ID.",
+                "detail": "An endpoint received a message with an unknown task ID.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_share_request_invalid_batch_interval() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+        let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
+        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
+
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+
+        let request = AggregateShareReq {
+            task_id,
+            batch_interval: Interval::new(
+                Time(0),
+                // Collect request will be rejected because batch interval is too small
+                Duration(task.min_batch_duration.0 - 1),
+            )
+            .unwrap(),
+            aggregation_param: vec![],
+            report_count: 0,
+            checksum: [0; 32],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:invalidBatchInterval",
+                "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_share_request() {
+        install_test_trace_subscriber();
+
+        let task_id = TaskId::random();
+        let (collector_hpke_config, collector_hpke_recipient) =
+            generate_hpke_config_and_private_key();
+
+        let mut task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Helper);
+        task.max_batch_lifetime = 1;
+        task.min_batch_duration = Duration::from_seconds(500);
+        task.min_batch_size = 10;
+        task.collector_hpke_config = collector_hpke_config.clone();
+        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
+        let aggregation_param = ();
+
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let datastore = Arc::new(datastore);
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(datastore.clone(), MockClock::default()).unwrap();
+
+        // There are no batch unit_aggregations in the datastore yet
+        let request = AggregateShareReq {
+            task_id,
+            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
+            aggregation_param: vec![],
+            report_count: 0,
+            checksum: [0; 32],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:insufficientBatchSize",
+                "title": "There are not enough reports in the batch interval.",
+                "detail": "There are not enough reports in the batch interval.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+
+        // Put some batch unit aggregations in the DB
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                        task_id,
+                        unit_interval_start: Time(500),
+                        aggregation_param,
+                        aggregate_share: AggregateShare::from(vec![Field64::from(64)]),
+                        report_count: 5,
+                        checksum: [3; 32],
+                    })
+                    .await?;
+
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                        task_id,
+                        unit_interval_start: Time(1500),
+                        aggregation_param,
+                        aggregate_share: AggregateShare::from(vec![Field64::from(128)]),
+                        report_count: 5,
+                        checksum: [2; 32],
+                    })
+                    .await?;
+
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                        task_id,
+                        unit_interval_start: Time(2000),
+                        aggregation_param,
+                        aggregate_share: AggregateShare::from(vec![Field64::from(256)]),
+                        report_count: 5,
+                        checksum: [2; 32],
+                    })
+                    .await?;
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        // Specified interval includes too few reports
+        let request = AggregateShareReq {
+            task_id,
+            batch_interval: Interval::new(Time(0), Duration(1000)).unwrap(),
+            aggregation_param: vec![],
+            report_count: 5,
+            checksum: [0; 32],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:insufficientBatchSize",
+                "title": "There are not enough reports in the batch interval.",
+                "detail": "There are not enough reports in the batch interval.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+
+        // Interval is big enough, but checksum doesn't match
+        let request = AggregateShareReq {
+            task_id,
+            batch_interval: Interval::new(Time(0), Duration(2500)).unwrap(),
+            aggregation_param: vec![],
+            report_count: 10,
+            checksum: [3; 32],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:batchMisaligned",
+                "title": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
+                "detail": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+
+        // Interval is big enough, but report count doesn't match
+        let request = AggregateShareReq {
+            task_id,
+            batch_interval: Interval::new(Time(0), Duration(2500)).unwrap(),
+            aggregation_param: vec![],
+            report_count: 20,
+            checksum: [3 ^ 2; 32],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:batchMisaligned",
+                "title": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
+                "detail": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
+                "instance": "..",
+                "taskid": base64::encode(task_id.as_bytes()),
+            })
+        );
+
+        // Interval is big enough, checksum and report count are good
+        let batch_interval = Interval::new(Time(0), Duration(2500)).unwrap();
+        let request = AggregateShareReq {
+            task_id,
+            batch_interval,
+            aggregation_param: vec![],
+            report_count: 10,
+            checksum: [3 ^ 2; 32],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .body(AuthenticatedEncoder::new(request.clone()).encode(hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::OK);
+        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+
+        let aggregate_share_resp: AggregateShareResp =
+            AuthenticatedResponseDecoder::new(body_bytes.as_ref())
+                .unwrap()
+                .decode(hmac_key)
+                .unwrap();
+
+        let aggregate_share = hpke::open(
+            &collector_hpke_config,
+            &collector_hpke_recipient,
+            &HpkeApplicationInfo::new(
+                task_id,
+                Label::AggregateShare,
+                Role::Helper,
+                Role::Collector,
+            ),
+            &aggregate_share_resp.encrypted_aggregate_share,
+            &batch_interval.get_encoded(),
+        )
+        .unwrap();
+
+        // Should get the sum over the first and second aggregate shares
+        let decoded_aggregate_share =
+            <AggregateShare<Field64>>::try_from(aggregate_share.as_ref()).unwrap();
+        assert_eq!(
+            decoded_aggregate_share,
+            AggregateShare::from(vec![Field64::from(64 + 128)])
+        );
+
+        // TODO(timg): re-enable this test once handle_aggregate_share_generic handles
+        // max_batch_lifetime
+        #[cfg(disabled)]
+        {
+            // Attempt to collect the same interval again.
+            let (parts, body) = warp::test::request()
+                .method("POST")
+                .path("/aggregate_share")
+                .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+                .filter(&filter)
+                .await
+                .unwrap()
+                .into_response()
+                .into_parts();
+            assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+            let problem_details: serde_json::Value =
+                serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            assert_eq!(
+                problem_details,
+                serde_json::json!({
+                    "status": StatusCode::BAD_REQUEST.as_u16(),
+                    "type": "urn:ietf:params:ppm:error:batchLifetimeExceeded",
+                    "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                    "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                    "instance": "..",
+                    "taskid": base64::encode(task_id.as_bytes()),
+                })
+            );
+        }
+    }
+
     fn generate_nonce<C: Clock>(clock: &C) -> Nonce {
         Nonce {
-            time: Time::from_naive_date_time(clock.now()),
+            time: clock.now(),
             rand: thread_rng().gen(),
         }
     }
