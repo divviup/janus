@@ -962,7 +962,7 @@ impl VdafOps {
                                 });
 
                                 // TODO(timg): when a report's preparation is done, its value should
-                                // be accumulated into a batch_aggregations row
+                                // be accumulated into a batch_unit_aggregations row
                             }
 
                             PrepareTransition::Fail(err) => {
@@ -1021,33 +1021,37 @@ impl VdafOps {
     ) -> Result<AggregateShareResp, Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
-                Self::handle_aggregate_share_generic::<
-                    <Prio3Aes128Count as Vdaf>::AggregateShare,
-                    FieldError,
-                >(datastore, task, aggregate_share_req)
+                Self::handle_aggregate_share_generic::<Prio3Aes128Count, FieldError>(
+                    datastore,
+                    task,
+                    aggregate_share_req,
+                )
                 .await
             }
             VdafOps::Prio3Aes128Sum(_, _) => {
-                Self::handle_aggregate_share_generic::<
-                    <Prio3Aes128Sum as Vdaf>::AggregateShare,
-                    FieldError,
-                >(datastore, task, aggregate_share_req)
+                Self::handle_aggregate_share_generic::<Prio3Aes128Sum, FieldError>(
+                    datastore,
+                    task,
+                    aggregate_share_req,
+                )
                 .await
             }
             VdafOps::Prio3Aes128Histogram(_, _) => {
-                Self::handle_aggregate_share_generic::<
-                    <Prio3Aes128Histogram as Vdaf>::AggregateShare,
-                    FieldError,
-                >(datastore, task, aggregate_share_req)
+                Self::handle_aggregate_share_generic::<Prio3Aes128Histogram, FieldError>(
+                    datastore,
+                    task,
+                    aggregate_share_req,
+                )
                 .await
             }
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_aggregate_share_generic::<
-                    <fake::Vdaf as Vdaf>::AggregateShare,
-                    Infallible,
-                >(datastore, task, aggregate_share_req)
+                Self::handle_aggregate_share_generic::<fake::Vdaf, Infallible>(
+                    datastore,
+                    task,
+                    aggregate_share_req,
+                )
                 .await
             }
         }
@@ -1059,10 +1063,12 @@ impl VdafOps {
         aggregate_share_req: &AggregateShareReq,
     ) -> Result<AggregateShareResp, Error>
     where
-        A: Aggregatable + Send + Sync,
+        A: vdaf::Vdaf,
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         E: std::fmt::Display,
-        Vec<u8>: for<'a> From<&'a A>,
-        for<'a> A: TryFrom<&'a [u8], Error = E>,
+        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
     {
         // TODO(timg): What should we do if any of the aggregation jobs handling reports relevant to
         // the aggregate share request aren't finished yet? Helper could return an error like
@@ -1075,21 +1081,29 @@ impl VdafOps {
                 let task = task.clone();
                 let aggregate_share_req = aggregate_share_req.clone();
                 Box::pin(async move {
-                    // TODO(timg): this query should involve the aggregation parameter, since the
-                    // same (task_id, batch_interval) pair could be aggregated multiple times with
-                    // different parameters.
-                    let batch_aggregations = tx
-                        .get_batch_aggregations_for_task_in_interval::<A, E>(
+                    // TODO(timg) Look up the aggregate share req in the relevant table. If we've
+                    // already computed that aggregate share, just serve it up.
+
+                    // TODO(timg) For each batch unit in the request, check how many rows in
+                    // aggregate_share_requests contain that unit, regardless of agg_param. Each
+                    // such row consumes one of batch lifetime and we can check that against
+                    // task.max_batch_lifetime.
+
+                    let aggregation_param =
+                        A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
+                    let batch_unit_aggregations = tx
+                        .get_batch_unit_aggregations_for_task_in_interval::<_, A::AggregateShare, E>(
                             task.id,
                             aggregate_share_req.batch_interval,
+                            &aggregation_param,
                         )
                         .await?;
 
                     let mut total_report_count = 0;
                     let mut total_checksum = [0u8; 32];
-                    let mut total_aggregate_share: Option<A> = None;
+                    let mut total_aggregate_share: Option<A::AggregateShare> = None;
 
-                    for batch_aggregation in &batch_aggregations {
+                    for batch_unit_aggregation in &batch_unit_aggregations {
                         // TODO(timg): enforce the max lifetime requirement from §4.6. We need to
                         // make sure that this minimum batch interval's aggregate share has not
                         // previously been included in a collect request with a different batch
@@ -1099,21 +1113,23 @@ impl VdafOps {
                         // §4.4.4.3: XOR this batch interval's checksum into the overall checksum
                         total_checksum
                             .iter_mut()
-                            .zip(batch_aggregation.checksum)
+                            .zip(batch_unit_aggregation.checksum)
                             .for_each(|(x, y)| *x ^= y);
 
                         // §4.4.4.3: Sum all the report counts
-                        total_report_count += batch_aggregation.report_count;
+                        total_report_count += batch_unit_aggregation.report_count;
 
                         match &mut total_aggregate_share {
                             Some(share) => {
-                                if let Err(err) = share.merge(&batch_aggregation.aggregate_share) {
+                                if let Err(err) =
+                                    share.merge(&batch_unit_aggregation.aggregate_share)
+                                {
                                     return Ok(Err(Error::from(err)));
                                 }
                             }
                             None => {
                                 total_aggregate_share =
-                                    Some(batch_aggregation.aggregate_share.clone())
+                                    Some(batch_unit_aggregation.aggregate_share.clone())
                             }
                         }
                     }
@@ -1626,7 +1642,7 @@ mod tests {
     use crate::{
         aggregator::test_util::fake,
         datastore::{
-            models::BatchAggregation,
+            models::BatchUnitAggregation,
             test_util::{ephemeral_datastore, DbHandle},
         },
         hpke::{
@@ -3540,6 +3556,7 @@ mod tests {
         let request = AggregateShareReq {
             task_id,
             batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
+            aggregation_param: vec![],
             report_count: 0,
             checksum: [0; 32],
         };
@@ -3600,6 +3617,7 @@ mod tests {
                 Duration(task.min_batch_duration.0 - 1),
             )
             .unwrap(),
+            aggregation_param: vec![],
             report_count: 0,
             checksum: [0; 32],
         };
@@ -3644,6 +3662,7 @@ mod tests {
         task.min_batch_size = 10;
         task.collector_hpke_config = collector_hpke_config.clone();
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
+        let aggregation_param = ();
 
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let datastore = Arc::new(datastore);
@@ -3659,10 +3678,11 @@ mod tests {
 
         let filter = aggregator_filter(datastore.clone(), MockClock::default()).unwrap();
 
-        // There are no batch_aggregations in the datastore yet
+        // There are no batch unit_aggregations in the datastore yet
         let request = AggregateShareReq {
             task_id,
             batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
+            aggregation_param: vec![],
             report_count: 0,
             checksum: [0; 32],
         };
@@ -3692,31 +3712,34 @@ mod tests {
             })
         );
 
-        // Put some batch aggregations in the DB
+        // Put some batch unit aggregations in the DB
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_batch_aggregation(&BatchAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
                         task_id,
-                        batch_interval_start: Time(500),
+                        unit_interval_start: Time(500),
+                        aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(64)]),
                         report_count: 5,
                         checksum: [3; 32],
                     })
                     .await?;
 
-                    tx.put_batch_aggregation(&BatchAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
                         task_id,
-                        batch_interval_start: Time(1500),
+                        unit_interval_start: Time(1500),
+                        aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(128)]),
                         report_count: 5,
                         checksum: [2; 32],
                     })
                     .await?;
 
-                    tx.put_batch_aggregation(&BatchAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
                         task_id,
-                        batch_interval_start: Time(2000),
+                        unit_interval_start: Time(2000),
+                        aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(256)]),
                         report_count: 5,
                         checksum: [2; 32],
@@ -3733,6 +3756,7 @@ mod tests {
         let request = AggregateShareReq {
             task_id,
             batch_interval: Interval::new(Time(0), Duration(1000)).unwrap(),
+            aggregation_param: vec![],
             report_count: 5,
             checksum: [0; 32],
         };
@@ -3766,6 +3790,7 @@ mod tests {
         let request = AggregateShareReq {
             task_id,
             batch_interval: Interval::new(Time(0), Duration(2500)).unwrap(),
+            aggregation_param: vec![],
             report_count: 10,
             checksum: [3; 32],
         };
@@ -3799,6 +3824,7 @@ mod tests {
         let request = AggregateShareReq {
             task_id,
             batch_interval: Interval::new(Time(0), Duration(2500)).unwrap(),
+            aggregation_param: vec![],
             report_count: 20,
             checksum: [3 ^ 2; 32],
         };
@@ -3833,6 +3859,7 @@ mod tests {
         let request = AggregateShareReq {
             task_id,
             batch_interval,
+            aggregation_param: vec![],
             report_count: 10,
             checksum: [3 ^ 2; 32],
         };

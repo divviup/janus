@@ -103,17 +103,18 @@ CREATE TABLE report_aggregations(
 );
 CREATE INDEX report_aggregations_aggregation_job_id_index ON report_aggregations(aggregation_job_id);
 
--- Information on aggregation for a single batch. This information may be incremental if the VDAF
--- supports incremental aggregation.
-CREATE TABLE batch_aggregations(
+-- Information on aggregation for a single batch unit. This information may be incremental if the
+-- VDAF supports incremental aggregation.
+CREATE TABLE batch_unit_aggregations(
     id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id               BIGINT NOT NULL,     -- the task ID
-    batch_interval_start  TIMESTAMP NOT NULL,  -- the start of the batch interval
+    unit_interval_start   TIMESTAMP NOT NULL,  -- the start of the batch unit
+    aggregation_param     BYTEA NOT NULL,      -- the aggregation parameter (opaque VDAF message)
     aggregate_share       BYTEA NOT NULL,      -- the (possibly-incremental) aggregate share
     report_count          BIGINT NOT NULL,     -- the (possibly-incremental) client report count
     checksum              BYTEA NOT NULL,      -- the (possibly-incremental) checksum
 
-    CONSTRAINT unique_task_id_interval UNIQUE(task_id, batch_interval_start),
+    CONSTRAINT unique_task_id_interval_aggregation_param UNIQUE(task_id, unit_interval_start, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 

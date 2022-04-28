@@ -1008,6 +1008,7 @@ impl Decode for AggregateResp {
 pub struct AggregateShareReq {
     pub(crate) task_id: TaskId,
     pub(crate) batch_interval: Interval,
+    pub(crate) aggregation_param: Vec<u8>,
     pub(crate) report_count: u64,
     pub(crate) checksum: [u8; 32],
 }
@@ -1016,6 +1017,7 @@ impl Encode for AggregateShareReq {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.batch_interval.encode(bytes);
+        encode_u16_items(bytes, &(), &self.aggregation_param);
         self.report_count.encode(bytes);
         bytes.extend_from_slice(&self.checksum);
     }
@@ -1025,6 +1027,7 @@ impl Decode for AggregateShareReq {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let batch_interval = Interval::decode(bytes)?;
+        let agg_param = decode_u16_items(&(), bytes)?;
         let report_count = u64::decode(bytes)?;
         let mut checksum = [0u8; 32];
         bytes.read_exact(&mut checksum)?;
@@ -1032,6 +1035,7 @@ impl Decode for AggregateShareReq {
         Ok(Self {
             task_id,
             batch_interval,
+            aggregation_param: agg_param,
             report_count,
             checksum,
         })
@@ -2047,6 +2051,7 @@ mod tests {
                         start: Time(54321),
                         duration: Duration(12345),
                     },
+                    aggregation_param: vec![],
                     report_count: 439,
                     checksum: [u8::MIN; 32],
                 },
@@ -2056,6 +2061,11 @@ mod tests {
                         // batch_interval
                         "000000000000D431", // start
                         "0000000000003039", // duration
+                    ),
+                    concat!(
+                        // agg_param
+                        "0000", // length
+                        "",     // opaque data
                     ),
                     "00000000000001B7", // report_count
                     "0000000000000000000000000000000000000000000000000000000000000000", // checksum
@@ -2068,6 +2078,7 @@ mod tests {
                         start: Time(50821),
                         duration: Duration(84354),
                     },
+                    aggregation_param: Vec::from("012345"),
                     report_count: 8725,
                     checksum: [u8::MAX; 32],
                 },
@@ -2077,6 +2088,11 @@ mod tests {
                         // batch_interval
                         "000000000000C685", // start
                         "0000000000014982", // duration
+                    ),
+                    concat!(
+                        // agg_param
+                        "0006",         // length
+                        "303132333435", // opaque data
                     ),
                     "0000000000002215", // report_count
                     "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // checksum

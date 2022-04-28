@@ -1,8 +1,8 @@
 //! Janus datastore (durable storage) implementation.
 
 use self::models::{
-    AggregationJob, AggregatorRole, BatchAggregation, ReportAggregation, ReportAggregationState,
-    ReportAggregationStateCode,
+    AggregationJob, AggregatorRole, BatchUnitAggregation, ReportAggregation,
+    ReportAggregationState, ReportAggregationStateCode,
 };
 use crate::{
     hpke::HpkePrivateKey,
@@ -900,27 +900,29 @@ impl Transaction<'_> {
         Ok(collect_job_id)
     }
 
-    /// Store a new `batch_aggregations` row in the datastore.
+    /// Store a new `batch_unit_aggregations` row in the datastore.
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn put_batch_aggregation<A>(
+    pub(crate) async fn put_batch_unit_aggregation<P, A>(
         &self,
-        batch_aggregation: &BatchAggregation<A>,
+        batch_aggregation: &BatchUnitAggregation<P, A>,
     ) -> Result<(), Error>
     where
+        P: Encode + std::fmt::Debug,
         A: std::fmt::Debug,
         for<'a> &'a A: Into<Vec<u8>>,
     {
-        let batch_interval_start = batch_aggregation.batch_interval_start.as_naive_date_time();
+        let unit_interval_start = batch_aggregation.unit_interval_start.as_naive_date_time();
+        let encoded_aggregation_param = batch_aggregation.aggregation_param.get_encoded();
         let encoded_aggregate_share: Vec<u8> = (&batch_aggregation.aggregate_share).into();
         let report_count = i64::try_from(batch_aggregation.report_count)?;
 
         let stmt = self
             .tx
             .prepare_cached(
-                "INSERT INTO batch_aggregations (task_id, batch_interval_start,
-                aggregate_share, report_count, checksum)
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5)",
+                "INSERT INTO batch_unit_aggregations (task_id, unit_interval_start,
+                aggregation_param, aggregate_share, report_count, checksum)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)",
             )
             .await?;
         self.tx
@@ -928,7 +930,8 @@ impl Transaction<'_> {
                 &stmt,
                 &[
                     /* task_id */ &&batch_aggregation.task_id.0[..],
-                    &batch_interval_start,
+                    &unit_interval_start,
+                    /* aggregation_param */ &encoded_aggregation_param,
                     /* aggregate_share */ &encoded_aggregate_share,
                     &report_count,
                     /* checksum */ &&batch_aggregation.checksum[..],
@@ -939,30 +942,35 @@ impl Transaction<'_> {
         Ok(())
     }
 
-    /// Fetch all the `batch_aggregations` rows whose `batch_interval_start` describes an interval
-    /// that falls within the provided `interval`.
-    #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn get_batch_aggregations_for_task_in_interval<A, E>(
+    /// Fetch all the `batch_unit_aggregations` rows whose `unit_interval_start` describes an
+    /// interval that falls within the provided `interval` and whose `aggregation_param` matches.
+    #[tracing::instrument(skip(self, aggregation_param), err)]
+    pub(crate) async fn get_batch_unit_aggregations_for_task_in_interval<P, A, E>(
         &self,
         task_id: TaskId,
         interval: Interval,
-    ) -> Result<Vec<BatchAggregation<A>>, Error>
+        aggregation_param: &P,
+    ) -> Result<Vec<BatchUnitAggregation<P, A>>, Error>
     where
-        E: std::fmt::Display,
+        P: Encode + Clone,
         for<'a> A: TryFrom<&'a [u8], Error = E>,
+        E: std::fmt::Display,
     {
-        let batch_interval_start = interval.start().as_naive_date_time();
-        let batch_interval_end = interval.end().as_naive_date_time();
+        let unit_interval_start = interval.start().as_naive_date_time();
+        let unit_interval_end = interval.end().as_naive_date_time();
+        let encoded_aggregation_param = aggregation_param.get_encoded();
 
         let stmt = self
             .tx
             .prepare_cached(
                 "WITH tasks AS (SELECT id, min_batch_duration FROM tasks WHERE task_id = $1)
-                SELECT batch_interval_start, aggregate_share, report_count, checksum FROM batch_aggregations
+                SELECT unit_interval_start, aggregate_share, report_count, checksum
+                FROM batch_unit_aggregations
                 WHERE
                     task_id = (SELECT id FROM tasks)
-                    AND batch_interval_start >= $2
-                    AND (batch_interval_start + (SELECT min_batch_duration FROM tasks) * interval '1 second') < $3",
+                    AND unit_interval_start >= $2
+                    AND (unit_interval_start + (SELECT min_batch_duration FROM tasks) * interval '1 second') < $3
+                    AND aggregation_param = $4",
             )
             .await?;
         let rows = self
@@ -971,15 +979,16 @@ impl Transaction<'_> {
                 &stmt,
                 &[
                     /* task_id */ &&task_id.0[..],
-                    &batch_interval_start,
-                    &batch_interval_end,
+                    &unit_interval_start,
+                    &unit_interval_end,
+                    /* aggregation_param */ &encoded_aggregation_param,
                 ],
             )
             .await?
             .iter()
             .map(|row| {
-                let batch_interval_start =
-                    Time::from_naive_date_time(row.get("batch_interval_start"));
+                let unit_interval_start =
+                    Time::from_naive_date_time(row.get("unit_interval_start"));
                 let aggregate_share_encoded: Vec<u8> = row.get("aggregate_share");
                 let aggregate_share = A::try_from(&aggregate_share_encoded).map_err(|e| {
                     Error::DbState(format!(
@@ -996,9 +1005,10 @@ impl Transaction<'_> {
                     ))
                 })?;
 
-                Ok(BatchAggregation {
+                Ok(BatchUnitAggregation {
                     task_id,
-                    batch_interval_start,
+                    unit_interval_start,
+                    aggregation_param: aggregation_param.clone(),
                     aggregate_share,
                     report_count,
                     checksum,
@@ -1514,18 +1524,23 @@ pub mod models {
     {
     }
 
-    /// BatchAggregation corresponds to a row in the `batch_aggregations` table and represents the
-    /// possibly-ongoing aggregation of the set of input shares. This is the finest-grained possible
-    /// aggregate share we can emit for this task. Servicing a collect request or an aggregate share
-    /// request may require summing together multiple rows.
+    /// BatchUnitAggregation corresponds to a row in the `batch_unit_aggregations` table and
+    /// represents the possibly-ongoing aggregation of the set of input shares that fall within the
+    /// interval defined by `unit_interval_start` and the relevant task's `min_batch_duration`.
+    /// This is the finest-grained possible aggregate share we can emit for this task, hence "batch
+    /// unit". The aggregate share constructed to service a collect or aggregate share request
+    /// consists of one or more `BatchUnitAggregation`s merged together.
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(crate) struct BatchAggregation<A> {
+    pub(crate) struct BatchUnitAggregation<P, A> {
         /// The task ID for this aggregation result.
         pub(crate) task_id: TaskId,
         /// This is an aggregation over report shares whose timestamp falls within the interval
         /// starting at this time and of duration equal to the corresponding task's
-        /// `min_batch_duration`. `batch_interval_start` is aligned to `min_batch_duration`.
-        pub(crate) batch_interval_start: Time,
+        /// `min_batch_duration`. `unit_interval_start` is aligned to `min_batch_duration`.
+        pub(crate) unit_interval_start: Time,
+        /// The VDAF aggregation parameter used to prepare and accumulate input shares. `P` is the
+        /// `AggregationParam` associated type for some implementation of [`prio::vdaf::Vdaf`].
+        pub(crate) aggregation_param: P,
         /// The aggregate over all the input shares that have been prepared so far by this
         /// aggregator. `A` is the `AggregateShare` associated type for some implementation of
         /// [`prio::vdaf::Vdaf`].
@@ -2324,16 +2339,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn roundtrip_batch_aggregation() {
+    async fn roundtrip_batch_unit_aggregation() {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let other_task_id = TaskId::random();
         let aggregate_share = AggregateShare::from(vec![Field64::from(17)]);
+        let aggregation_param = ();
 
         let (ds, _db_handle) = ephemeral_datastore().await;
 
-        let batch_aggregations: Vec<BatchAggregation<AggregateShare<Field64>>> = ds
+        let batch_unit_aggregations: Vec<BatchUnitAggregation<_, AggregateShare<Field64>>> = ds
             .run_tx(|tx| {
                 let aggregate_share = aggregate_share.clone();
                 Box::pin(async move {
@@ -2348,70 +2364,86 @@ mod tests {
                     ))
                     .await?;
 
-                    // Start of this aggregation's interval is before the interval passed to
-                    // get_batch_aggregations below.
-                    tx.put_batch_aggregation(&BatchAggregation {
+                    // Start of this aggregation's interval is before the interval queried below.
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
                         task_id,
-                        batch_interval_start: Time(25),
+                        unit_interval_start: Time(25),
+                        aggregation_param,
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
                     })
                     .await?;
 
-                    tx.put_batch_aggregation(&BatchAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
                         task_id,
-                        batch_interval_start: Time(100),
+                        unit_interval_start: Time(100),
+                        aggregation_param,
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
                     })
                     .await?;
 
-                    tx.put_batch_aggregation(&BatchAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
                         task_id,
-                        batch_interval_start: Time(150),
+                        unit_interval_start: Time(150),
+                        aggregation_param,
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
                     })
                     .await?;
 
-                    // End of this aggregation's interval is after the interval passed to
-                    // get_batch_aggregations below.
-                    tx.put_batch_aggregation(&BatchAggregation {
+                    // Aggregation parameter differs from the one queried below.
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
                         task_id,
-                        batch_interval_start: Time(200),
+                        unit_interval_start: Time(100),
+                        // any value that is Encode + Debug will do, even a nonsense one
+                        aggregation_param: Time(100),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
                     })
                     .await?;
 
-                    // Start of this aggregation's interval is after the interval passed to
-                    // get_batch_aggregations below.
-                    tx.put_batch_aggregation(&BatchAggregation {
+                    // End of this aggregation's interval is after the interval queried below.
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
                         task_id,
-                        batch_interval_start: Time(400),
+                        unit_interval_start: Time(200),
+                        aggregation_param,
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
                     })
                     .await?;
 
-                    // Task ID differs from that passed to get_batch_aggregations below.
-                    tx.put_batch_aggregation(&BatchAggregation {
+                    // Start of this aggregation's interval is after the interval queried below.
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                        task_id,
+                        unit_interval_start: Time(400),
+                        aggregation_param,
+                        aggregate_share: aggregate_share.clone(),
+                        report_count: 0,
+                        checksum: [0; 32],
+                    })
+                    .await?;
+
+                    // Task ID differs from that queried below.
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
                         task_id: other_task_id,
-                        batch_interval_start: Time(200),
+                        unit_interval_start: Time(200),
+                        aggregation_param,
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
                     })
                     .await?;
 
-                    tx.get_batch_aggregations_for_task_in_interval(
+                    tx.get_batch_unit_aggregations_for_task_in_interval(
                         task_id,
                         Interval::new(Time(50), Duration(250)).unwrap(),
+                        &aggregation_param,
                     )
                     .await
                 })
@@ -2419,17 +2451,19 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(batch_aggregations.len(), 2);
-        assert!(batch_aggregations.contains(&BatchAggregation {
+        assert_eq!(batch_unit_aggregations.len(), 2);
+        assert!(batch_unit_aggregations.contains(&BatchUnitAggregation {
             task_id,
-            batch_interval_start: Time(100),
+            unit_interval_start: Time(100),
+            aggregation_param,
             aggregate_share: aggregate_share.clone(),
             report_count: 0,
             checksum: [0u8; 32],
         }));
-        assert!(batch_aggregations.contains(&BatchAggregation {
+        assert!(batch_unit_aggregations.contains(&BatchUnitAggregation {
             task_id,
-            batch_interval_start: Time(150),
+            unit_interval_start: Time(150),
+            aggregation_param,
             aggregate_share: aggregate_share.clone(),
             report_count: 0,
             checksum: [0u8; 32],
