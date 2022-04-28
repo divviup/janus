@@ -26,6 +26,14 @@ use std::{
 
 use crate::hpke::associated_data_for;
 
+/// Errors returned by functions and methods in this module
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// An illegal arithmetic operation on a [`Time`] or [`Duration`].
+    #[error("operation would {0}flow")]
+    IllegalTimeArithmetic(&'static str),
+}
+
 /// AuthenticatedEncoder can encode messages into the format used by authenticated PPM messages. The
 /// encoding format is the encoding format of the underlying message, followed by a 32-byte
 /// authentication tag.
@@ -158,8 +166,25 @@ fn authenticated_decode<M: Decode>(
 pub struct Duration(pub(crate) u64);
 
 impl Duration {
+    /// Create a duration representing the provided number of seconds.
     pub fn from_seconds(seconds: u64) -> Self {
         Self(seconds)
+    }
+
+    /// Create a duration representing the provided number of minutes.
+    pub fn from_minutes(minutes: u64) -> Result<Self, Error> {
+        60u64
+            .checked_mul(minutes)
+            .map(Self::from_seconds)
+            .ok_or(Error::IllegalTimeArithmetic("over"))
+    }
+
+    /// Create a duration representing the provided number of hours.
+    pub fn from_hours(hours: u64) -> Result<Self, Error> {
+        3600u64
+            .checked_mul(hours)
+            .map(Self::from_seconds)
+            .ok_or(Error::IllegalTimeArithmetic("over"))
     }
 }
 
@@ -193,6 +218,28 @@ impl Time {
     pub(crate) fn from_naive_date_time(time: NaiveDateTime) -> Self {
         Self(time.timestamp() as u64)
     }
+
+    /// Add the provided duration to this time.
+    pub(crate) fn add(&self, duration: Duration) -> Result<Self, Error> {
+        self.0
+            .checked_add(duration.0)
+            .map(Self)
+            .ok_or(Error::IllegalTimeArithmetic("over"))
+    }
+
+    /// Substract the provided duration from this time.
+    #[cfg(test)]
+    pub(crate) fn sub(&self, duration: Duration) -> Result<Self, Error> {
+        self.0
+            .checked_sub(duration.0)
+            .map(Self)
+            .ok_or(Error::IllegalTimeArithmetic("under"))
+    }
+
+    /// Returns true if this [`Time`] occurs after `time`.
+    pub(crate) fn is_after(&self, time: Time) -> bool {
+        self.0 > time.0
+    }
 }
 
 impl Display for Time {
@@ -218,9 +265,33 @@ impl Decode for Time {
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct Interval {
     /// The start of the interval.
-    pub(crate) start: Time,
+    start: Time,
     /// The length of the interval.
-    pub(crate) duration: Duration,
+    duration: Duration,
+}
+
+impl Interval {
+    /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end
+    /// of the interval cannot be represented as a [`Time`].
+    pub(crate) fn new(start: Time, duration: Duration) -> Result<Self, Error> {
+        start.add(duration)?;
+
+        Ok(Self { start, duration })
+    }
+
+    pub(crate) fn start(&self) -> Time {
+        self.start
+    }
+
+    pub(crate) fn duration(&self) -> Duration {
+        self.duration
+    }
+
+    /// Returns a [`Time`] representing the excluded end of this interval.
+    pub(crate) fn end(&self) -> Time {
+        // [`Self::new`] verified that this addition doesn't overflow.
+        self.start.add(self.duration).unwrap()
+    }
 }
 
 impl Encode for Interval {
@@ -235,7 +306,7 @@ impl Decode for Interval {
         let start = Time::decode(bytes)?;
         let duration = Duration::decode(bytes)?;
 
-        Ok(Self { start, duration })
+        Self::new(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
     }
 }
 
@@ -1241,6 +1312,24 @@ mod tests {
 
     #[test]
     fn roundtrip_interval() {
+        Interval::new(Time(1), Duration(u64::MAX)).unwrap_err();
+
+        let encoded = Interval {
+            start: Time(1),
+            duration: Duration(u64::MAX),
+        }
+        .get_encoded();
+        assert_eq!(
+            encoded,
+            hex::decode(concat!(
+                "0000000000000001", // start
+                "FFFFFFFFFFFFFFFF", // duration))
+            ))
+            .unwrap()
+        );
+
+        assert_matches!(Interval::get_decoded(&encoded), Err(CodecError::Other(_)));
+
         roundtrip_encoding(&[
             (
                 Interval {

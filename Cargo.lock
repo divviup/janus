@@ -1462,6 +1462,7 @@ dependencies = [
  "testcontainers",
  "tokio",
  "tokio-postgres",
+ "tracing",
  "url",
 ]
 

@@ -6,7 +6,7 @@ use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 /// to set up a database for test purposes. This depends on `janus_server::datastore::Datastore`
 /// and `janus_server::datastore::Crypter` already being imported into scope, and it expects the
 /// following crates to be available: `deadpool_postgres`, `lazy_static`, `ring`, `testcontainers`,
-/// and `tokio_postgres`.
+/// `tokio_postgres`, and `tracing`.
 #[macro_export]
 macro_rules! define_ephemeral_datastore {
     () => {
@@ -34,6 +34,12 @@ macro_rules! define_ephemeral_datastore {
             }
         }
 
+        impl Drop for DbHandle {
+            fn drop(&mut self) {
+                ::tracing::trace!("dropping Postgres container with URL {}", self.connection_string);
+            }
+        }
+
         /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database which
         /// has the Janus schema applied but is otherwise empty.
         ///
@@ -45,10 +51,15 @@ macro_rules! define_ephemeral_datastore {
 
             // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
             const POSTGRES_DEFAULT_PORT: u16 = 5432;
+            // TODO (issue #109): `get_host_port` does not specify what host IP address the port is
+            // associated with, but empirically we see it is the port for 127.0.0.1, and not
+            // [::1]. We will hardcode 127.0.0.1 (instead of localhost) until a host IP is
+            // exposed via the API.
             let connection_string = format!(
-                "postgres://postgres:postgres@localhost:{}/postgres",
+                "postgres://postgres:postgres@127.0.0.1:{}/postgres",
                 db_container.get_host_port(POSTGRES_DEFAULT_PORT)
             );
+            ::tracing::trace!("Postgres container is up with URL {}", connection_string);
             let cfg = <::tokio_postgres::Config as std::str::FromStr>::from_str(&connection_string).unwrap();
             let conn_mgr = ::deadpool_postgres::Manager::new(cfg, ::tokio_postgres::NoTls);
             let pool = ::deadpool_postgres::Pool::builder(conn_mgr).build().unwrap();
