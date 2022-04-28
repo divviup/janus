@@ -51,8 +51,12 @@ macro_rules! define_ephemeral_datastore {
 
             // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
             const POSTGRES_DEFAULT_PORT: u16 = 5432;
+            // TODO (issue #109): `get_host_port` does not specify what host IP address the port is
+            // associated with, but empirically we see it is the port for 127.0.0.1, and not
+            // [::1]. We will hardcode 127.0.0.1 (instead of localhost) until a host IP is
+            // exposed via the API.
             let connection_string = format!(
-                "postgres://postgres:postgres@localhost:{}/postgres",
+                "postgres://postgres:postgres@127.0.0.1:{}/postgres",
                 db_container.get_host_port(POSTGRES_DEFAULT_PORT)
             );
             ::tracing::trace!("Postgres container is up with URL {}", connection_string);
