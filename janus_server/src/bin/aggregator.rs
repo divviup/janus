@@ -6,7 +6,7 @@ use janus_server::{
     config::AggregatorConfig,
     datastore::{self, Datastore},
     time::RealClock,
-    trace::install_trace_subscriber,
+    trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
@@ -56,6 +56,30 @@ struct Options {
         help = "datastore encryption keys, encoded in base64 then comma-separated"
     )]
     datastore_keys: Vec<String>,
+
+    /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the logging
+    /// configuration)
+    #[structopt(
+        long,
+        env = "OTLP_METADATA",
+        parse(try_from_str = parse_metadata_entry),
+        help = "additional OTLP/gRPC metadata key/value pairs",
+        value_name = "KEY=value",
+        use_delimiter = true,
+    )]
+    otlp_metadata: Vec<(String, String)>,
+}
+
+fn parse_metadata_entry(input: &str) -> Result<(String, String)> {
+    if let Some(equals) = input.find('=') {
+        let (key, rest) = input.split_at(equals);
+        let value = &rest[1..];
+        Ok((key.to_string(), value.to_string()))
+    } else {
+        Err(anyhow!(
+            "`--otlp-metadata` must be provided a key and value, joined with an `=`"
+        ))
+    }
 }
 
 impl Debug for Options {
@@ -105,8 +129,16 @@ async fn main() -> Result<()> {
     let config_file = File::open(&options.config_file)
         .with_context(|| format!("failed to open config file: {:?}", options.config_file))?;
 
-    let config: AggregatorConfig = serde_yaml::from_reader(&config_file)
+    let mut config: AggregatorConfig = serde_yaml::from_reader(&config_file)
         .with_context(|| format!("failed to parse config file: {:?}", options.config_file))?;
+
+    if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) =
+        &mut config.logging_config.open_telemetry_config
+    {
+        otlp_config
+            .metadata
+            .extend(options.otlp_metadata.iter().cloned());
+    }
 
     install_trace_subscriber(&config.logging_config)
         .context("failed to install tracing subscriber")?;
@@ -165,13 +197,7 @@ async fn main() -> Result<()> {
 
     server.await;
 
-    Ok(())
-}
+    cleanup_trace_subscriber(&config.logging_config);
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn cli_tests() {
-        trycmd::TestCases::new().case("tests/cmd/*.trycmd").run();
-    }
+    Ok(())
 }
