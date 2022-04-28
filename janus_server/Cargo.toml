@@ -49,7 +49,7 @@ tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt", 
 url = { version = "2.2.2", features = ["serde"] }
 # TODO(timg) move up to uuid 1.0 once a released postgres-types supports it:
 # https://github.com/sfackler/rust-postgres/commit/1d9c93d2aeff5dbb93f9d6e0d59c5f817a6162b6
-uuid = {version = "0.8.0", features = ["v4"] }
+uuid = {version = "1.0.0", features = ["v4"] }
 warp = { version = "^0.3", features = ["tls"] }
 
 [dev-dependencies]
