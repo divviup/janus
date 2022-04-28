@@ -49,16 +49,6 @@ pub enum Vdaf {
     FakeFailsPrepStep,
 }
 
-impl Vdaf {
-    /// Determines whether the VDAF has a non-empty aggregation parameter.
-    pub fn has_aggregation_param(&self) -> bool {
-        match self {
-            Vdaf::Poplar1 { .. } => true,
-            _ => false,
-        }
-    }
-}
-
 /// An HMAC-SHA-256 key used to authenticate messages exchanged between
 /// aggregators. See `agg_auth_key` in draft-gpew-priv-ppm §4.2.
 // We define the type this way because while we can use `ring::hmac::Key::new`
@@ -138,7 +128,7 @@ pub struct Task {
     pub(crate) min_batch_size: u64,
     /// The minimum batch interval for a collect request. Batch intervals must
     /// be multiples of this duration.
-    pub(crate) min_batch_duration: Duration,
+    pub min_batch_duration: Duration,
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
     pub(crate) tolerable_clock_skew: Duration,

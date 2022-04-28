@@ -20,6 +20,7 @@ futures = "0.3.21"
 hex = "0.4.3"
 hpke = { version = "0.8.0", features = ["default", "std"] }
 http = "0.2.6"
+itertools = "0.10.3"
 num_enum = "0.5.6"
 postgres-types = { version = "0.2.2", features = ["derive"] }
 prio = { git = "https://github.com/divviup/libprio-rs", rev = "229cd9c45924c7dae3ba754a6eb46b2a05ca8451" }  # TODO(brandon): use a numbered version, once a release is cut >0.7.0

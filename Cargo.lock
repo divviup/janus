@@ -1224,6 +1224,7 @@ dependencies = [
  "hpke",
  "http",
  "hyper",
+ "itertools",
  "lazy_static",
  "libc",
  "mockito",

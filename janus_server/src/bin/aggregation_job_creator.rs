@@ -1,12 +1,19 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context};
 use futures::future::Fuse;
 use futures::stream::{FuturesUnordered, StreamExt};
 use futures::FutureExt;
+use itertools::Itertools;
 use janus_server::binary_utils::datastore;
 use janus_server::config::AggregationJobCreatorConfig;
-use janus_server::datastore::Datastore;
+use janus_server::datastore::models::{
+    AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
+};
+use janus_server::datastore::{self, Datastore};
+use janus_server::message::{AggregationJobId, Nonce, Report, Time};
 use janus_server::task::Task;
 use janus_server::trace::install_trace_subscriber;
+use prio::vdaf;
+use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum};
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
 use std::fmt::Formatter;
@@ -65,7 +72,7 @@ impl Debug for Options {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     // Read arguments, read & parse config.
     let options = Options::from_args();
     let config: AggregationJobCreatorConfig = {
@@ -90,7 +97,7 @@ async fn main() -> Result<()> {
     run_aggregation_job_creator(Arc::new(datastore)).await
 }
 
-async fn run_aggregation_job_creator(datastore: Arc<Datastore>) -> Result<()> {
+async fn run_aggregation_job_creator(datastore: Arc<Datastore>) -> anyhow::Result<()> {
     // TODO(brandon): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
     // XXX: throw all of this away, and just loop finding all tasks -> generate future per task to generate new agg jobs -> joining all futures? *sigh*
@@ -153,7 +160,10 @@ async fn run_aggregation_job_creator(datastore: Arc<Datastore>) -> Result<()> {
     }
 }
 
-async fn run_aggregation_job_creator_for_task(datastore: Arc<Datastore>, task: Task) -> Result<()> {
+async fn run_aggregation_job_creator_for_task(
+    datastore: Arc<Datastore>,
+    task: Task,
+) -> anyhow::Result<()> {
     // Create a ticker to allow us to periodically create new aggregation jobs for the given task.
     // We randomize when in the update period we start in order to avoid a thundering herd problem
     // on startup.
@@ -171,21 +181,83 @@ async fn run_aggregation_job_creator_for_task(datastore: Arc<Datastore>, task: T
 async fn run_aggregation_job_creator_for_task_once(
     datastore: &Datastore,
     task: &Task,
-) -> Result<()> {
-    if task.vdaf.has_aggregation_param() {
-        create_aggregation_jobs_no_collect_job(datastore, task).await
-    } else {
-        panic!("VDAF {:?} is not yet supported", task.vdaf)
+) -> anyhow::Result<()> {
+    match task.vdaf {
+        janus_server::task::Vdaf::Prio3Aes128Count => {
+            create_aggregation_jobs_no_param::<Prio3Aes128Count>(datastore, task).await
+        }
+
+        janus_server::task::Vdaf::Prio3Aes128Sum { .. } => {
+            create_aggregation_jobs_no_param::<Prio3Aes128Sum>(datastore, task).await
+        }
+
+        janus_server::task::Vdaf::Prio3Aes128Histogram { .. } => {
+            create_aggregation_jobs_no_param::<Prio3Aes128Histogram>(datastore, task).await
+        }
+
+        _ => panic!("VDAF {:?} is not yet supported", task.vdaf),
     }
 }
 
-async fn create_aggregation_jobs_no_collect_job(datastore: &Datastore, task: &Task) -> Result<()> {
+async fn create_aggregation_jobs_no_param<A: vdaf::Aggregator>(
+    datastore: &Datastore,
+    task: &Task,
+) -> anyhow::Result<()>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    A::AggregationParam: Default,
+{
     let task_id = task.id;
+    let min_batch_duration = task.min_batch_duration;
+
+    // XXX: make configurable
+    const MIN_BATCH_SIZE: usize = 100; // only for "current" batch unit
+    const MAX_BATCH_SIZE: usize = 1000;
+
     Ok(datastore
         .run_tx(|tx| {
             Box::pin(async move {
-                // Find some unaggregated client reports, and partition them by their batch unit.
-                let reports = tx.get_unaggregated_client_reports_for_task(task_id).await?;
+                // Find some unaggregated client reports, and group them by their batch unit.
+                let nonces_by_batch_unit = tx
+                    .get_unaggregated_client_report_nonces_for_task(task_id)
+                    .await?
+                    .into_iter()
+                    .map(|nonce| {
+                        nonce
+                            .time
+                            .to_batch_unit_interval_start(min_batch_duration)
+                            .map(|s| (s, nonce))
+                            .map_err(datastore::Error::from)
+                    })
+                    .collect::<Result<Vec<(Time, Nonce)>, _>>()?
+                    .into_iter()
+                    .into_group_map();
+
+                let mut agg_jobs = Vec::new();
+                let mut report_aggs = Vec::new();
+                for (unit_interval_start, nonces) in nonces_by_batch_unit {
+                    for agg_job_nonces in nonces.chunks(MAX_BATCH_SIZE) {
+                        // XXX: don't create job if we're in the "current" batch unit & there are too few nonces
+
+                        let aggregation_job_id = AggregationJobId::random();
+                        agg_jobs.push(AggregationJob::<A> {
+                            aggregation_job_id,
+                            task_id,
+                            aggregation_param: A::AggregationParam::default(),
+                            state: AggregationJobState::InProgress,
+                        });
+
+                        for (ord, nonce) in agg_job_nonces.iter().enumerate() {
+                            report_aggs.push(ReportAggregation::<A> {
+                                aggregation_job_id,
+                                task_id,
+                                nonce: *nonce,
+                                ord: i64::try_from(ord)?,
+                                state: ReportAggregationState::Start,
+                            });
+                        }
+                    }
+                }
 
                 // XXX
                 Ok(())

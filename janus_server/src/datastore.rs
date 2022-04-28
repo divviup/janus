@@ -7,8 +7,8 @@ use self::models::{
 use crate::{
     hpke::HpkePrivateKey,
     message::{
-        AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Report,
-        ReportShare, TaskId, Time,
+        self, AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce,
+        Report, ReportShare, TaskId, Time,
     },
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
@@ -451,43 +451,6 @@ impl Transaction<'_> {
                 .await?,
         )?;
 
-        Self::report_from_row(task_id, nonce, row)
-    }
-
-    /// get_unaggregated_client_reports_for_task returns some unaggregated client reports for the
-    /// task identified by the given task ID. The resulting reports will be ordered by the nonce
-    /// timestamp.
-    #[tracing::instrument(skip(self), err)]
-    pub async fn get_unaggregated_client_reports_for_task(
-        &self,
-        task_id: TaskId,
-    ) -> Result<Vec<Report>, Error> {
-        // We choose to return the oldest client reports first, including the nonce randomness to
-        // ensure a total ordering.
-        // TODO(brandon): allow the number of returned results to be controlled?
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "SELECT nonce_time, nonce_rand, extensions, input_shares FROM client_reports
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND (SELECT COUNT(*) FROM report_aggregations WHERE client_report_id = client_reports.id) = 0
-                ORDER BY nonce_time, nonce_rand LIMIT 5000",
-            )
-            .await?;
-        let rows = self.tx.query(&stmt, &[&&task_id.0[..]]).await?;
-
-        rows.into_iter()
-            .map(|row| {
-                let nonce = Nonce {
-                    time: Time::from_naive_date_time(row.get("nonce_time")),
-                    rand: u64::get_decoded(row.get("nonce_rand"))?,
-                };
-                Self::report_from_row(task_id, nonce, row)
-            })
-            .collect::<Result<Vec<Report>, Error>>()
-    }
-
-    fn report_from_row(task_id: TaskId, nonce: Nonce, row: Row) -> Result<Report, Error> {
         let encoded_extensions: Vec<u8> = row.get("extensions");
         let extensions: Vec<Extension> =
             decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
@@ -502,6 +465,38 @@ impl Transaction<'_> {
             extensions,
             encrypted_input_shares: input_shares,
         })
+    }
+
+    /// get_unaggregated_client_report_nonces_for_task returns some nonces corresponding to
+    /// unaggregated client reports for the task identified by the given task ID.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_unaggregated_client_report_nonces_for_task(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Vec<Nonce>, Error> {
+        // We choose to return the oldest client reports first, including the nonce randomness to
+        // ensure a total ordering. The goal is to aggregate the oldest reports first.
+        // TODO(brandon): allow the number of returned results to be controlled?
+        // XXX: LIFO instead of FIFO? (need to worry about truncated older batch units?) [https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.376.5966&rep=rep1&type=pdf]
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT nonce_time, nonce_rand FROM client_reports
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                AND (SELECT COUNT(*) FROM report_aggregations WHERE client_report_id = client_reports.id) = 0
+                ORDER BY nonce_time, nonce_rand LIMIT 5000",
+            )
+            .await?;
+        let rows = self.tx.query(&stmt, &[&&task_id.0[..]]).await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(Nonce {
+                    time: Time::from_naive_date_time(row.get("nonce_time")),
+                    rand: u64::get_decoded(row.get("nonce_rand"))?,
+                })
+            })
+            .collect::<Result<Vec<Nonce>, Error>>()
     }
 
     /// put_client_report stores a client report.
@@ -1333,6 +1328,8 @@ pub enum Error {
     Task(#[from] task::Error),
     #[error("integer conversion failed: {0}")]
     TryFromInt(#[from] std::num::TryFromIntError),
+    #[error(transparent)]
+    Message(#[from] message::Error),
 }
 
 impl Error {
@@ -1409,10 +1406,10 @@ pub mod models {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        pub(crate) aggregation_job_id: AggregationJobId,
-        pub(crate) task_id: TaskId,
-        pub(crate) aggregation_param: A::AggregationParam,
-        pub(crate) state: AggregationJobState,
+        pub aggregation_job_id: AggregationJobId,
+        pub task_id: TaskId,
+        pub aggregation_param: A::AggregationParam,
+        pub state: AggregationJobState,
     }
 
     impl<A: vdaf::Aggregator> PartialEq for AggregationJob<A>
@@ -1452,11 +1449,11 @@ pub mod models {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        pub(crate) aggregation_job_id: AggregationJobId,
-        pub(crate) task_id: TaskId,
-        pub(crate) nonce: Nonce,
-        pub(crate) ord: i64,
-        pub(crate) state: ReportAggregationState<A>,
+        pub aggregation_job_id: AggregationJobId,
+        pub task_id: TaskId,
+        pub nonce: Nonce,
+        pub ord: i64,
+        pub state: ReportAggregationState<A>,
     }
 
     impl<A: vdaf::Aggregator> PartialEq for ReportAggregation<A>
@@ -1616,7 +1613,7 @@ mod tests {
             AggregateShare, PrepareTransition,
         },
     };
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeSet, HashMap, HashSet};
 
     #[tokio::test]
     async fn roundtrip_task() {
@@ -1800,7 +1797,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_unaggregated_client_reports_for_task() {
+    async fn get_unaggregated_client_report_nonces_for_task() {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
@@ -1899,16 +1896,23 @@ mod tests {
         .unwrap();
 
         // Run query & verify results.
-        let got_reports = ds
-            .run_tx(|tx| {
-                Box::pin(async move { tx.get_unaggregated_client_reports_for_task(task_id).await })
+        let got_reports = HashSet::from_iter(
+            ds.run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_unaggregated_client_report_nonces_for_task(task_id)
+                        .await
+                })
             })
             .await
-            .unwrap();
+            .unwrap(),
+        );
 
         assert_eq!(
             got_reports,
-            vec![first_unaggregated_report, second_unaggregated_report]
+            HashSet::from([
+                first_unaggregated_report.nonce,
+                second_unaggregated_report.nonce
+            ]),
         );
     }
 
