@@ -70,12 +70,12 @@ pub enum OpenTelemetryTraceConfiguration {
     #[serde(rename = "jaeger")]
     Jaeger,
     #[serde(rename = "otlp")]
-    Otlp(OtlpConfiguration),
+    Otlp(OtlpTraceConfiguration),
 }
 
 /// Configuration options specific to the OpenTelemetry OTLP exporter.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OtlpConfiguration {
+pub struct OtlpTraceConfiguration {
     /// gRPC endpoint for OTLP exporter.
     pub endpoint: String,
     /// Additional metadata/HTTP headers to be sent with OTLP requests.

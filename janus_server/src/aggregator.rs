@@ -23,6 +23,7 @@ use http::{
     header::{CACHE_CONTROL, LOCATION},
     StatusCode,
 };
+use opentelemetry::{metrics::Counter, KeyValue};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     field::FieldError,
@@ -1298,12 +1299,28 @@ fn build_problem_details_response(error_type: PpmProblemType, task_id: Option<Ta
     .into_response()
 }
 
-/// Produces a closure that will transform applicable errors into a problem details JSON object.
-/// (See RFC 7807) The returned closure is meant to be used in a warp `map` filter.
-fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Response + Clone {
-    |result| {
+/// Produces a closure that will transform applicable errors into a problem details JSON object
+/// (See RFC 7807) and update a metrics counter. The returned closure is meant to be used in a warp
+/// `map` filter.
+fn error_handler<R: Reply>(
+    request_status_counter: &Counter<u64>,
+    name: &'static str,
+) -> impl Fn(Result<R, Error>) -> warp::reply::Response + Clone {
+    let bound_counter_success = request_status_counter.bind(&[
+        KeyValue::new("endpoint", name),
+        KeyValue::new("status", "success"),
+    ]);
+    let bound_counter_error = request_status_counter.bind(&[
+        KeyValue::new("endpoint", name),
+        KeyValue::new("status", "error"),
+    ]);
+
+    move |result| {
         if let Err(error) = &result {
             error!(%error);
+            bound_counter_error.add(1);
+        } else {
+            bound_counter_success.add(1);
         }
         match result {
             Ok(reply) => reply.into_response(),
@@ -1363,6 +1380,9 @@ where
 {
     let aggregator = Arc::new(Aggregator::new(datastore, clock));
 
+    let meter = opentelemetry::global::meter("janus_server");
+    let counter = meter.u64_counter("aggregator_response").init();
+
     let hpke_config_endpoint = warp::path("hpke_config")
         .and(warp::get())
         .and(with_cloned_value(aggregator.clone()))
@@ -1381,7 +1401,7 @@ where
                 .into_response())
             },
         )
-        .map(error_handler())
+        .map(error_handler(&counter, "hpke_config"))
         .with(trace::named("hpke_config"));
 
     let upload_endpoint = warp::path("upload")
@@ -1392,7 +1412,7 @@ where
             aggregator.handle_upload(&body).await?;
             Ok(StatusCode::OK)
         })
-        .map(error_handler())
+        .map(error_handler(&counter, "upload"))
         .with(trace::named("upload"));
 
     let aggregate_endpoint = warp::path("aggregate")
@@ -1403,7 +1423,7 @@ where
             let resp_bytes = aggregator.handle_aggregate(&body).await?;
             Ok(reply::with_status(resp_bytes, StatusCode::OK))
         })
-        .map(error_handler())
+        .map(error_handler(&counter, "aggregate"))
         .with(trace::named("aggregate"));
 
     let collect_endpoint = warp::path("collect")
@@ -1419,7 +1439,7 @@ where
                 StatusCode::SEE_OTHER,
             ))
         })
-        .map(error_handler())
+        .map(error_handler(&counter, "collect"))
         .with(trace::named("collect"));
 
     let aggregate_share_endpoint = warp::path("aggregate_share")
@@ -1432,7 +1452,7 @@ where
             // §4.4.4.3: Response is HTTP 200 OK
             Ok(reply::with_status(resp_bytes, StatusCode::OK))
         })
-        .map(error_handler())
+        .map(error_handler(&counter, "aggregate_share"))
         .with(trace::named("aggregate_share"));
 
     Ok(hpke_config_endpoint

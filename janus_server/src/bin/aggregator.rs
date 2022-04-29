@@ -5,6 +5,7 @@ use janus_server::{
     aggregator::aggregator_server,
     config::AggregatorConfig,
     datastore::{self, Datastore},
+    metrics::{install_metrics_exporter, MetricsExporterConfiguration},
     time::RealClock,
     trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
@@ -58,7 +59,7 @@ struct Options {
     datastore_keys: Vec<String>,
 
     /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the logging
-    /// configuration)
+    /// and metrics configuration sections)
     #[structopt(
         long,
         env = "OTLP_METADATA",
@@ -139,9 +140,18 @@ async fn main() -> Result<()> {
             .metadata
             .extend(options.otlp_metadata.iter().cloned());
     }
+    if let Some(MetricsExporterConfiguration::Otlp(otlp_config)) =
+        &mut config.metrics_config.exporter
+    {
+        otlp_config
+            .metadata
+            .extend(options.otlp_metadata.iter().cloned());
+    }
 
     install_trace_subscriber(&config.logging_config)
         .context("failed to install tracing subscriber")?;
+    let _metrics_exporter = install_metrics_exporter(&config.metrics_config)
+        .context("failed to install metrics exporter")?;
 
     info!(?options, ?config, "starting aggregator");
 
