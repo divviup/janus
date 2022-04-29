@@ -1,7 +1,11 @@
 //! Collection and exporting of application-level metrics for Janus.
 
+use opentelemetry::{
+    metrics::Descriptor,
+    sdk::export::metrics::{Aggregator, AggregatorSelector},
+};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::AddrParseError};
+use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 
 /// Errors from initializing metrics provider, registry, and exporter.
 #[derive(Debug, thiserror::Error)]
@@ -59,6 +63,30 @@ pub enum MetricsExporterHandle {
     Noop,
 }
 
+#[derive(Debug)]
+struct CustomAggregatorSelector;
+
+impl AggregatorSelector for CustomAggregatorSelector {
+    fn aggregator_for(&self, descriptor: &Descriptor) -> Option<Arc<dyn Aggregator + Send + Sync>> {
+        match descriptor.instrument_kind() {
+            opentelemetry::metrics::InstrumentKind::ValueRecorder => {
+                // The following boundaries are copied from the Ruby and Go Prometheus clients.
+                // Buckets could be specialized per-metric by matching on `descriptor.name()`.
+                let boundaries = &[
+                    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+                ][..];
+                Some(Arc::new(
+                    opentelemetry::sdk::metrics::aggregators::histogram(descriptor, boundaries),
+                ))
+            }
+            opentelemetry::metrics::InstrumentKind::ValueObserver => Some(Arc::new(
+                opentelemetry::sdk::metrics::aggregators::last_value(),
+            )),
+            _ => Some(Arc::new(opentelemetry::sdk::metrics::aggregators::sum())),
+        }
+    }
+}
+
 /// Install a metrics provider and exporter, per the given configuration. The OpenTelemetry global
 /// API can be used to create and update meters, and they will be sent through this exporter. The
 /// returned handle should not be dropped until the application shuts down.
@@ -74,7 +102,9 @@ pub fn install_metrics_exporter(
             use std::net::SocketAddr;
             use warp::{Filter, Reply};
 
-            let exporter = opentelemetry_prometheus::exporter().try_init()?;
+            let exporter = opentelemetry_prometheus::exporter()
+                .with_aggregator_selector(CustomAggregatorSelector)
+                .try_init()?;
 
             let filter = warp::path("metrics").and(warp::get()).map({
                 let exporter = exporter.clone();
@@ -123,6 +153,7 @@ pub fn install_metrics_exporter(
 
             let push_controller = opentelemetry_otlp::new_pipeline()
                 .metrics(tokio::spawn, tokio_interval_stream)
+                .with_aggregator_selector(CustomAggregatorSelector)
                 .with_resource([KeyValue::new(SERVICE_NAME, "janus_server")])
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()

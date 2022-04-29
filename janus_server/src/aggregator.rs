@@ -23,7 +23,10 @@ use http::{
     header::{CACHE_CONTROL, LOCATION},
     StatusCode,
 };
-use opentelemetry::{metrics::Counter, KeyValue};
+use opentelemetry::{
+    metrics::{Counter, Unit, ValueRecorder},
+    KeyValue,
+};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     field::FieldError,
@@ -47,7 +50,7 @@ use url::Url;
 use warp::{
     filters::BoxedFilter,
     reply::{self, Response},
-    trace, Filter, Reply,
+    trace, Filter, Rejection, Reply,
 };
 
 #[cfg(test)]
@@ -1370,6 +1373,33 @@ fn error_handler<R: Reply>(
     }
 }
 
+/// Factory that produces a closure that will wrap a `warp::Filter`, measuring the time that it
+/// takes to run, and recording it in metrics.
+fn timing_wrapper<F, T>(
+    value_recorder: &ValueRecorder<f64>,
+    name: &'static str,
+) -> impl Fn(F) -> BoxedFilter<(T,)>
+where
+    F: Filter<Extract = (T,), Error = Rejection> + Clone + Send + Sync + 'static,
+    T: Reply,
+{
+    let bound_value_recorder = value_recorder.bind(&[KeyValue::new("endpoint", name)]);
+    move |filter| {
+        warp::any()
+            .map(std::time::Instant::now)
+            .and(filter)
+            .map({
+                let bound_value_recorder = bound_value_recorder.clone();
+                move |start: std::time::Instant, reply| {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    bound_value_recorder.record(elapsed);
+                    reply
+                }
+            })
+            .boxed()
+    }
+}
+
 /// Constructs a Warp filter with endpoints common to all aggregators.
 fn aggregator_filter<C>(
     datastore: Arc<Datastore>,
@@ -1381,7 +1411,15 @@ where
     let aggregator = Arc::new(Aggregator::new(datastore, clock));
 
     let meter = opentelemetry::global::meter("janus_server");
-    let counter = meter.u64_counter("aggregator_response").init();
+    let response_counter = meter
+        .u64_counter("aggregator_response")
+        .with_description("Success and failure responses to incoming requests.")
+        .init();
+    let time_value_recorder = meter
+        .f64_value_recorder("aggregator_response_time")
+        .with_description("Elapsed time handling incoming requests.")
+        .with_unit(Unit::new("seconds"))
+        .init();
 
     let hpke_config_endpoint = warp::path("hpke_config")
         .and(warp::get())
@@ -1401,7 +1439,11 @@ where
                 .into_response())
             },
         )
-        .map(error_handler(&counter, "hpke_config"))
+        .map(error_handler(&response_counter, "hpke_config"))
+        .with(warp::wrap_fn(timing_wrapper(
+            &time_value_recorder,
+            "hpke_config",
+        )))
         .with(trace::named("hpke_config"));
 
     let upload_endpoint = warp::path("upload")
@@ -1412,7 +1454,11 @@ where
             aggregator.handle_upload(&body).await?;
             Ok(StatusCode::OK)
         })
-        .map(error_handler(&counter, "upload"))
+        .map(error_handler(&response_counter, "upload"))
+        .with(warp::wrap_fn(timing_wrapper(
+            &time_value_recorder,
+            "upload",
+        )))
         .with(trace::named("upload"));
 
     let aggregate_endpoint = warp::path("aggregate")
@@ -1423,7 +1469,11 @@ where
             let resp_bytes = aggregator.handle_aggregate(&body).await?;
             Ok(reply::with_status(resp_bytes, StatusCode::OK))
         })
-        .map(error_handler(&counter, "aggregate"))
+        .map(error_handler(&response_counter, "aggregate"))
+        .with(warp::wrap_fn(timing_wrapper(
+            &time_value_recorder,
+            "aggregate",
+        )))
         .with(trace::named("aggregate"));
 
     let collect_endpoint = warp::path("collect")
@@ -1439,7 +1489,11 @@ where
                 StatusCode::SEE_OTHER,
             ))
         })
-        .map(error_handler(&counter, "collect"))
+        .map(error_handler(&response_counter, "collect"))
+        .with(warp::wrap_fn(timing_wrapper(
+            &time_value_recorder,
+            "collect",
+        )))
         .with(trace::named("collect"));
 
     let aggregate_share_endpoint = warp::path("aggregate_share")
@@ -1452,7 +1506,11 @@ where
             // §4.4.4.3: Response is HTTP 200 OK
             Ok(reply::with_status(resp_bytes, StatusCode::OK))
         })
-        .map(error_handler(&counter, "aggregate_share"))
+        .map(error_handler(&response_counter, "aggregate_share"))
+        .with(warp::wrap_fn(timing_wrapper(
+            &time_value_recorder,
+            "aggregate_share",
+        )))
         .with(trace::named("aggregate_share"));
 
     Ok(hpke_config_endpoint
