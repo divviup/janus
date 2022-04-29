@@ -1,14 +1,14 @@
 //! Janus datastore (durable storage) implementation.
 
 use self::models::{
-    AggregationJob, AggregatorRole, BatchUnitAggregation, ReportAggregation,
+    AggregateShareJob, AggregationJob, AggregatorRole, BatchUnitAggregation, ReportAggregation,
     ReportAggregationState, ReportAggregationStateCode,
 };
 use crate::{
     hpke::HpkePrivateKey,
     message::{
-        self, AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce,
-        Report, ReportShare, TaskId, Time,
+        self, AggregateShareReq, AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
+        Interval, Nonce, Report, ReportShare, TaskId, Time,
     },
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
@@ -988,19 +988,22 @@ impl Transaction<'_> {
     /// Store a new `batch_unit_aggregations` row in the datastore.
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn put_batch_unit_aggregation<A: vdaf::Aggregator>(
+    pub(crate) async fn put_batch_unit_aggregation<A>(
         &self,
-        batch_aggregation: &BatchUnitAggregation<A>,
+        batch_unit_aggregation: &BatchUnitAggregation<A>,
     ) -> Result<(), Error>
     where
+        A: vdaf::Aggregator,
         A::AggregationParam: Encode + std::fmt::Debug,
         A::AggregateShare: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let unit_interval_start = batch_aggregation.unit_interval_start.as_naive_date_time();
-        let encoded_aggregation_param = batch_aggregation.aggregation_param.get_encoded();
-        let encoded_aggregate_share: Vec<u8> = (&batch_aggregation.aggregate_share).into();
-        let report_count = i64::try_from(batch_aggregation.report_count)?;
+        let unit_interval_start = batch_unit_aggregation
+            .unit_interval_start
+            .as_naive_date_time();
+        let encoded_aggregation_param = batch_unit_aggregation.aggregation_param.get_encoded();
+        let encoded_aggregate_share: Vec<u8> = (&batch_unit_aggregation.aggregate_share).into();
+        let report_count = i64::try_from(batch_unit_aggregation.report_count)?;
 
         let stmt = self
             .tx
@@ -1014,12 +1017,12 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &batch_aggregation.task_id.as_bytes(),
+                    /* task_id */ &batch_unit_aggregation.task_id.as_bytes(),
                     &unit_interval_start,
                     /* aggregation_param */ &encoded_aggregation_param,
                     /* aggregate_share */ &encoded_aggregate_share,
                     &report_count,
-                    /* checksum */ &&batch_aggregation.checksum[..],
+                    /* checksum */ &&batch_unit_aggregation.checksum[..],
                 ],
             )
             .await?;
@@ -1030,16 +1033,17 @@ impl Transaction<'_> {
     /// Fetch all the `batch_unit_aggregations` rows whose `unit_interval_start` describes an
     /// interval that falls within the provided `interval` and whose `aggregation_param` matches.
     #[tracing::instrument(skip(self, aggregation_param), err)]
-    pub(crate) async fn get_batch_unit_aggregations_for_task_in_interval<A: vdaf::Aggregator>(
+    pub(crate) async fn get_batch_unit_aggregations_for_task_in_interval<A, E>(
         &self,
         task_id: TaskId,
         interval: Interval,
         aggregation_param: &A::AggregationParam,
     ) -> Result<Vec<BatchUnitAggregation<A>>, Error>
     where
+        A: vdaf::Aggregator,
         A::AggregationParam: Encode + Clone,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8]>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        E: std::fmt::Display,
+        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let unit_interval_start = interval.start().as_naive_date_time();
@@ -1075,14 +1079,7 @@ impl Transaction<'_> {
             .map(|row| {
                 let unit_interval_start =
                     Time::from_naive_date_time(row.get("unit_interval_start"));
-                let aggregate_share_encoded: Vec<u8> = row.get("aggregate_share");
-                let aggregate_share = A::AggregateShare::try_from(&aggregate_share_encoded)
-                    .map_err(|e| {
-                        Error::DbState(format!(
-                            "aggregate share stored in database is invalid: {}",
-                            e
-                        ))
-                    })?;
+                let aggregate_share = row.get_bytea_and_convert("aggregate_share")?;
                 let report_count = row.get_bigint_as_u64("report_count")?;
                 let checksum: &[u8] = row.get("checksum");
                 let checksum: [u8; 32] = checksum.try_into().map_err(|e| {
@@ -1104,6 +1101,112 @@ impl Transaction<'_> {
             .collect::<Result<_, Error>>()?;
 
         Ok(rows)
+    }
+
+    /// Fetch an `aggregate_share_jobs` row from the datastore corresponding to the provided
+    /// [`AggregateShareRequest`], or `None` if no such job exists.
+    #[tracing::instrument(skip(self), err)]
+    pub(crate) async fn get_aggregate_share_job_by_request<A, E>(
+        &self,
+        request: &AggregateShareReq,
+    ) -> Result<Option<AggregateShareJob<A>>, Error>
+    where
+        A: vdaf::Aggregator,
+        E: std::fmt::Display,
+        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let batch_interval_start = request.batch_interval.start().as_naive_date_time();
+        let batch_interval_duration =
+            i64::try_from(request.batch_interval.duration().as_seconds())?;
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT helper_aggregate_share, report_count, checksum FROM aggregate_share_jobs
+                WHERE
+                    task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND batch_interval_start = $2
+                    AND batch_interval_duration = $3
+                    AND aggregation_param = $4",
+            )
+            .await?;
+        let row = match self
+            .tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &request.task_id.as_bytes(),
+                    &batch_interval_start,
+                    &batch_interval_duration,
+                    /* aggregation_param */ &request.aggregation_param,
+                ],
+            )
+            .await?
+        {
+            Some(row) => row,
+            None => return Ok(None),
+        };
+
+        let aggregation_param = A::AggregationParam::get_decoded(&request.aggregation_param)?;
+        let helper_aggregate_share = row.get_bytea_and_convert("helper_aggregate_share")?;
+        let report_count = row.get_bigint_as_u64("report_count")?;
+        let checksum: [u8; 32] = row.get_bytea_and_convert("checksum")?;
+
+        Ok(Some(AggregateShareJob {
+            task_id: request.task_id,
+            batch_interval: request.batch_interval,
+            aggregation_param,
+            helper_aggregate_share,
+            report_count,
+            checksum,
+        }))
+    }
+
+    /// Put an `aggregate_share_job` row into the datastore.
+    #[tracing::instrument(skip(self), err)]
+    pub(crate) async fn put_aggregate_share_job<A, E>(
+        &self,
+        job: &AggregateShareJob<A>,
+    ) -> Result<(), Error>
+    where
+        A: vdaf::Aggregator,
+        E: std::fmt::Display,
+        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let batch_interval_start = job.batch_interval.start().as_naive_date_time();
+        let batch_interval_duration = i64::try_from(job.batch_interval.duration().as_seconds())?;
+        let encoded_aggregation_param = job.aggregation_param.get_encoded();
+        let encoded_aggregate_share: Vec<u8> = (&job.helper_aggregate_share).into();
+        let report_count = i64::try_from(job.report_count)?;
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "INSERT INTO aggregate_share_jobs (
+                    task_id, batch_interval_start, batch_interval_duration, aggregation_param,
+                    helper_aggregate_share, report_count, checksum
+                )
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
+            )
+            .await?;
+        self.tx
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ &job.task_id.as_bytes(),
+                    &batch_interval_start,
+                    &batch_interval_duration,
+                    /* aggregation_param */ &encoded_aggregation_param,
+                    /* aggregate_share */ &encoded_aggregate_share,
+                    &report_count,
+                    /* checksum */ &&job.checksum[..],
+                ],
+            )
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -1207,6 +1310,12 @@ trait RowExt {
     fn get_bytea_as_u64<I>(&self, idx: I) -> Result<u64, Error>
     where
         I: RowIndex + Display;
+
+    /// Get a PostgreSQL `BYTEA` from the row and attempt to convert it to `T`.
+    fn get_bytea_and_convert<T, E>(&self, idx: &'static str) -> Result<T, Error>
+    where
+        E: Display,
+        for<'a> T: TryFrom<&'a [u8], Error = E>;
 }
 
 impl RowExt for Row {
@@ -1232,6 +1341,17 @@ impl RowExt for Row {
             // The error is just the vector that was rejected
             |_| Error::DbState("byte array in database does not have expected length".to_string()),
         )?))
+    }
+
+    fn get_bytea_and_convert<T, E>(&self, idx: &'static str) -> Result<T, Error>
+    where
+        E: Display,
+        for<'a> T: TryFrom<&'a [u8], Error = E>,
+    {
+        let encoded: Vec<u8> = self.get(idx);
+        let decoded = T::try_from(&encoded)
+            .map_err(|e| Error::DbState(format!("{} stored in database is invalid: {}", idx, e)))?;
+        Ok(decoded)
     }
 }
 
@@ -1405,9 +1525,10 @@ impl From<ring::error::Unspecified> for Error {
 pub mod models {
     use super::Error;
     use crate::{
-        message::{AggregationJobId, Nonce, Role, TaskId, Time, TransitionError},
+        message::{AggregationJobId, Interval, Nonce, Role, TaskId, Time, TransitionError},
         task,
     };
+    use derivative::Derivative;
     use postgres_types::{FromSql, ToSql};
     use prio::vdaf;
 
@@ -1610,7 +1731,8 @@ pub mod models {
     /// This is the finest-grained possible aggregate share we can emit for this task, hence "batch
     /// unit". The aggregate share constructed to service a collect or aggregate share request
     /// consists of one or more `BatchUnitAggregation`s merged together.
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Derivative)]
+    #[derivative(Debug)]
     pub(crate) struct BatchUnitAggregation<A: vdaf::Aggregator>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -1621,16 +1743,17 @@ pub mod models {
         /// starting at this time and of duration equal to the corresponding task's
         /// `min_batch_duration`. `unit_interval_start` is aligned to `min_batch_duration`.
         pub(crate) unit_interval_start: Time,
-        /// The VDAF aggregation parameter used to prepare and accumulate input shares. `P` is the
-        /// `AggregationParam` associated type for some implementation of [`prio::vdaf::Vdaf`].
+        /// The VDAF aggregation parameter used to prepare and accumulate input shares.
+        #[derivative(Debug = "ignore")]
         pub(crate) aggregation_param: A::AggregationParam,
         /// The aggregate over all the input shares that have been prepared so far by this
-        /// aggregator. `A` is the `AggregateShare` associated type for some implementation of
-        /// [`prio::vdaf::Vdaf`].
+        /// aggregator.
+        #[derivative(Debug = "ignore")]
         pub(crate) aggregate_share: A::AggregateShare,
         /// The number of reports currently included in this aggregate sahre.
         pub(crate) report_count: u64,
         /// Checksum over the aggregated report shares, as described in §4.4.4.3.
+        #[derivative(Debug = "ignore")]
         pub(crate) checksum: [u8; 32],
     }
 
@@ -1651,6 +1774,55 @@ pub mod models {
     }
 
     impl<A: vdaf::Aggregator> Eq for BatchUnitAggregation<A>
+    where
+        A::AggregationParam: Eq,
+        A::AggregateShare: Eq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+    }
+
+    /// AggregateShareJob represents a row in the `aggregate_share_jobs` table, used by helpers to
+    /// store the results of handling an AggregateShareReq from the leader.
+    #[derive(Clone, Derivative)]
+    #[derivative(Debug)]
+    pub(crate) struct AggregateShareJob<A: vdaf::Aggregator>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        /// The task ID for this aggregate share .
+        pub(crate) task_id: TaskId,
+        /// The batch interval covered by the aggregate share.
+        pub(crate) batch_interval: Interval,
+        /// The VDAF aggregation parameter used to prepare and aggregate input shares.
+        #[derivative(Debug = "ignore")]
+        pub(crate) aggregation_param: A::AggregationParam,
+        /// The aggregate share over the input shares in the interval.
+        #[derivative(Debug = "ignore")]
+        pub(crate) helper_aggregate_share: A::AggregateShare,
+        /// The number of reports included in the aggregate share.
+        pub(crate) report_count: u64,
+        /// Checksum over the aggregated report shares, as described in §4.4.4.3.
+        #[derivative(Debug = "ignore")]
+        pub(crate) checksum: [u8; 32],
+    }
+
+    impl<A: vdaf::Aggregator> PartialEq for AggregateShareJob<A>
+    where
+        A::AggregationParam: PartialEq,
+        A::AggregateShare: PartialEq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        fn eq(&self, other: &Self) -> bool {
+            self.task_id == other.task_id
+                && self.batch_interval == other.batch_interval
+                && self.aggregation_param == other.aggregation_param
+                && self.helper_aggregate_share == other.helper_aggregate_share
+                && self.report_count == other.report_count
+                && self.checksum == other.checksum
+        }
+    }
+
+    impl<A: vdaf::Aggregator> Eq for AggregateShareJob<A>
     where
         A::AggregationParam: Eq,
         A::AggregateShare: Eq,
@@ -2736,7 +2908,7 @@ mod tests {
                     })
                     .await?;
 
-                    tx.get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1>(
+                    tx.get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1, _>(
                         task_id,
                         Interval::new(
                             Time::from_seconds_since_epoch(50),
@@ -2768,6 +2940,77 @@ mod tests {
             report_count: 0,
             checksum: [0u8; 32],
         }));
+    }
+
+    #[tokio::test]
+    async fn roundtrip_aggregate_share_job() {
+        install_test_trace_subscriber();
+
+        let (ds, _db_handle) = ephemeral_datastore().await;
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                let task_id = TaskId::random();
+                let aggregate_share = AggregateShare::from(vec![Field64::from(17)]);
+                let task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Helper);
+                tx.put_task(&task).await?;
+                let batch_interval = Interval::new(
+                    Time::from_seconds_since_epoch(100),
+                    Duration::from_seconds(100),
+                )
+                .unwrap();
+                let other_batch_interval = Interval::new(
+                    Time::from_seconds_since_epoch(101),
+                    Duration::from_seconds(101),
+                )
+                .unwrap();
+                let report_count = 10;
+                let checksum = [1; 32];
+
+                let aggregate_share_job = AggregateShareJob {
+                    task_id,
+                    batch_interval,
+                    aggregation_param: (),
+                    helper_aggregate_share: aggregate_share.clone(),
+                    report_count,
+                    checksum,
+                };
+
+                tx.put_aggregate_share_job(&aggregate_share_job)
+                    .await
+                    .unwrap();
+
+                let aggregate_share_job_again = tx
+                    .get_aggregate_share_job_by_request::<Prio3Aes128Count, _>(&AggregateShareReq {
+                        task_id,
+                        batch_interval,
+                        aggregation_param: ().get_encoded(),
+                        report_count,
+                        checksum,
+                    })
+                    .await
+                    .unwrap()
+                    .unwrap();
+
+                assert_eq!(aggregate_share_job, aggregate_share_job_again);
+
+                assert!(tx
+                    .get_aggregate_share_job_by_request::<Prio3Aes128Count, _>(&AggregateShareReq {
+                        task_id,
+                        batch_interval: other_batch_interval,
+                        aggregation_param: ().get_encoded(),
+                        report_count,
+                        checksum,
+                    },)
+                    .await
+                    .unwrap()
+                    .is_none());
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 
     /// generate_vdaf_values generates some arbitrary VDAF values for use in testing. It is cribbed

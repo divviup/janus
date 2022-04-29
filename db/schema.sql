@@ -119,7 +119,7 @@ CREATE TABLE batch_unit_aggregations(
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
--- A collection request from the Collector.
+-- The leader's view of collect requests from the Collector.
 CREATE TABLE collect_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     collect_job_id          UUID NOT NULL,      -- UUID used by collector to refer to this job
@@ -127,18 +127,26 @@ CREATE TABLE collect_jobs(
     batch_interval_start    TIMESTAMP NOT NULL, -- the start of the batch interval
     batch_interval_duration BIGINT NOT NULL,    -- the length of the batch interval in seconds
     aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
+    helper_aggregate_share  BYTEA,              -- the helper's encrypted aggregate share; null until the helper has serviced the AggregateShareReq
+    leader_aggregate_share  BYTEA,              -- the leader's unencrypted aggregate share; null until the leader has performed its aggregation for a CollectReq
+    report_count            BIGINT,             -- the count of reports included in the leader's aggregate share; null until the leader has performed its aggregation for a CollectReq
+    checksum                BYTEA,              -- the checksum over the reports included in the leader's aggregate share; null until the leader has performed its aggregation for a CollectReq
 
+    CONSTRAINT unique_collect_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval_start, batch_interval_duration, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
-CREATE INDEX collect_jobs_batch_interval_index ON collect_jobs(task_id, batch_interval_start, batch_interval_duration);
 
--- An encrypted aggregate share computed for a specific collection job.
-CREATE TABLE collect_job_encrypted_aggregate_shares(
-    id                         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    collect_job_id             BIGINT NOT NULL,  -- the ID of the collect job this encrypted aggregate share is associated with
-    ord                        BIGINT NOT NULL,  -- the order of the aggregator associated with this encrypted_aggregate_share; 0 is leader, 1 or larger is helper
-    encrypted_aggregate_share  BYTEA NOT NULL,   -- the encrypted aggregate share (an encoded HpkeCiphertext message)
+-- The helper's view of aggregate share jobs.
+CREATE TABLE aggregate_share_jobs(
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
+    task_id                 BIGINT NOT NULL,    -- the task ID being collected
+    batch_interval_start    TIMESTAMP NOT NULL, -- the start of the batch interval
+    batch_interval_duration BIGINT NOT NULL,    -- the length of the batch interval in seconds
+    aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
+    helper_aggregate_share  BYTEA NOT NULL,     -- the helper's unencrypted aggregate share
+    report_count            BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share
+    checksum                BYTEA NOT NULL,     -- the checksum over the reports included in helper_aggregate_share
 
-    CONSTRAINT unique_collect_job_and_ord UNIQUE(collect_job_id, ord),
-    CONSTRAINT fk_collect_job_id FOREIGN KEY(collect_job_id) REFERENCES collect_jobs(id)
+    CONSTRAINT unique_aggregate_share_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval_start, batch_interval_duration, aggregation_param),
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
