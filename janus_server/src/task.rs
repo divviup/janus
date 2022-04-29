@@ -119,7 +119,7 @@ pub struct Task {
     /// The VDAF this task executes.
     pub vdaf: Vdaf,
     /// The role performed by the aggregator.
-    pub(crate) role: Role,
+    pub role: Role,
     /// Secret verification parameter shared by the aggregators.
     pub(crate) vdaf_verify_parameter: Vec<u8>,
     /// The maximum number of times a given batch may be collected.

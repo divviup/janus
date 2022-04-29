@@ -59,6 +59,10 @@ pub struct AggregatorConfig {
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
 /// logging_config: # logging_config is optional
 ///   force_json_output: true
+/// tasks_update_frequency_secs: 3600
+/// aggregation_job_creation_interval_secs: 60
+/// min_aggregation_job_size: 100
+/// max_aggregation_job_size: 1000
 /// "#;
 ///
 /// let _decoded: AggregationJobCreatorConfig = serde_yaml::from_str(yaml_config).unwrap();
@@ -70,6 +74,16 @@ pub struct AggregationJobCreatorConfig {
     /// Logging configuration.
     #[serde(default)]
     pub logging_config: TraceConfiguration,
+    /// How frequently we look for new tasks to start creating aggregation jobs for, in seconds.
+    pub tasks_update_frequency_secs: u64,
+    /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
+    pub aggregation_job_creation_interval_secs: u64,
+    /// The minimum number of client reports to include in an aggregation job. Applies to the
+    /// "current" batch unit only; historical batch units will create aggregation jobs of any size,
+    /// on the theory that almost all reports will have be received for these batch units already.
+    pub min_aggregation_job_size: usize,
+    /// The maximum number of client reports to include in an aggregation job.
+    pub max_aggregation_job_size: usize,
 }
 
 #[cfg(test)]
@@ -109,6 +123,10 @@ mod tests {
         let config = AggregationJobCreatorConfig {
             database: generate_db_config(),
             logging_config: TraceConfiguration::default(),
+            tasks_update_frequency_secs: 3600,
+            aggregation_job_creation_interval_secs: 60,
+            min_aggregation_job_size: 100,
+            max_aggregation_job_size: 1000,
         };
 
         let encoded = serde_yaml::to_string(&config).unwrap();

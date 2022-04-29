@@ -37,8 +37,8 @@ struct Options {
     )]
     config_file: PathBuf,
 
-    /// Password for the PostgreSQL database connection. (if not included in the connection
-    /// string)
+    /// Password for the PostgreSQL database connection. If specified, must not be specified in the
+    /// connection string.
     #[structopt(long, env = "PGPASSWORD", help = "PostgreSQL password")]
     database_password: Option<String>,
 
