@@ -14,6 +14,6 @@ ring = "0.16.20"
 testcontainers = "0.13.0"
 test_util = { path = "../test_util" }
 tokio = { version = "^1.9", features = ["full", "tracing"] }
-tokio-postgres = { version = "0.7.5", features = ["with-chrono-0_4"] }
+tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
 tracing = "0.1.34"
 url = { version = "2.2.2", features = ["serde"] }
