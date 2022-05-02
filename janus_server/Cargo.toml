@@ -21,7 +21,7 @@ deadpool-postgres = "0.10.1"
 futures = "0.3.21"
 hex = "0.4.3"
 hpke = { version = "0.8.0", features = ["default", "std"] }
-http = "0.2.6"
+http = "0.2.7"
 num_enum = "0.5.6"
 opentelemetry = { version = "0.17.0", optional = true, features = ["rt-tokio"] }
 opentelemetry-jaeger = { version = "0.16.0", optional = true, features = ["rt-tokio"] }
