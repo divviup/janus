@@ -221,7 +221,7 @@ impl Transaction<'_> {
 
     /// Fetch the task parameters corresponing to the provided `task_id`.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn get_task(&self, task_id: TaskId) -> Result<Task, Error> {
+    pub(crate) async fn get_task(&self, task_id: TaskId) -> Result<Option<Task>, Error> {
         let params: &[&(dyn ToSql + Sync)] = &[&&task_id.0[..]];
         let stmt = self
             .tx
@@ -232,7 +232,7 @@ impl Transaction<'_> {
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
-        let task_row = self.tx.query(&stmt, params);
+        let task_row = self.tx.query_opt(&stmt, params);
 
         let stmt = self
             .tx
@@ -254,9 +254,11 @@ impl Transaction<'_> {
 
         let (task_row, agg_auth_key_rows, hpke_key_rows) =
             try_join!(task_row, agg_auth_key_rows, hpke_key_rows)?;
-        let task_row = single_row(task_row)?;
-
-        self.task_from_rows(task_id, task_row, agg_auth_key_rows, hpke_key_rows)
+        task_row
+            .map(|task_row| {
+                self.task_from_rows(task_id, task_row, agg_auth_key_rows, hpke_key_rows)
+            })
+            .transpose()
     }
 
     /// Fetch all the tasks in the database.
@@ -430,7 +432,11 @@ impl Transaction<'_> {
 
     /// get_client_report retrieves a client report by ID.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_client_report(&self, task_id: TaskId, nonce: Nonce) -> Result<Report, Error> {
+    pub async fn get_client_report(
+        &self,
+        task_id: TaskId,
+        nonce: Nonce,
+    ) -> Result<Option<Report>, Error> {
         let stmt = self
             .tx
             .prepare_cached(
@@ -439,33 +445,33 @@ impl Transaction<'_> {
                 WHERE tasks.task_id = $1 AND client_reports.nonce_time = $2 AND client_reports.nonce_rand = $3",
             )
             .await?;
-        let row = single_row(
-            self.tx
-                .query(
-                    &stmt,
-                    &[
-                        /* task_id */ &&task_id.0[..],
-                        /* nonce_time */ &nonce.time.as_naive_date_time(),
-                        /* nonce_rand */ &&nonce.rand.to_be_bytes()[..],
-                    ],
-                )
-                .await?,
-        )?;
+        self.tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &&task_id.0[..],
+                    /* nonce_time */ &nonce.time.as_naive_date_time(),
+                    /* nonce_rand */ &&nonce.rand.to_be_bytes()[..],
+                ],
+            )
+            .await?
+            .map(|row| {
+                let encoded_extensions: Vec<u8> = row.get("extensions");
+                let extensions: Vec<Extension> =
+                    decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
 
-        let encoded_extensions: Vec<u8> = row.get("extensions");
-        let extensions: Vec<Extension> =
-            decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
+                let encoded_input_shares: Vec<u8> = row.get("input_shares");
+                let input_shares: Vec<HpkeCiphertext> =
+                    decode_u16_items(&(), &mut Cursor::new(&encoded_input_shares))?;
 
-        let encoded_input_shares: Vec<u8> = row.get("input_shares");
-        let input_shares: Vec<HpkeCiphertext> =
-            decode_u16_items(&(), &mut Cursor::new(&encoded_input_shares))?;
-
-        Ok(Report {
-            task_id,
-            nonce,
-            extensions,
-            encrypted_input_shares: input_shares,
-        })
+                Ok(Report {
+                    task_id,
+                    nonce,
+                    extensions,
+                    encrypted_input_shares: input_shares,
+                })
+            })
+            .transpose()
     }
 
     /// put_client_report stores a client report.
@@ -544,7 +550,7 @@ impl Transaction<'_> {
         &self,
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
-    ) -> Result<AggregationJob<A>, Error>
+    ) -> Result<Option<AggregationJob<A>>, Error>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
@@ -556,27 +562,28 @@ impl Transaction<'_> {
                 WHERE tasks.task_id = $1 AND aggregation_jobs.aggregation_job_id = $2",
             )
             .await?;
-        let row = single_row(
-            self.tx
-                .query(
-                    &stmt,
-                    &[
-                        /* task_id */ &&task_id.0[..],
-                        /* aggregation_job_id */ &&aggregation_job_id.0[..],
-                    ],
-                )
-                .await?,
-        )?;
+        self.tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &&task_id.0[..],
+                    /* aggregation_job_id */ &&aggregation_job_id.0[..],
+                ],
+            )
+            .await?
+            .map(|row| {
+                let aggregation_param =
+                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+                let state = row.get("state");
 
-        let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-        let state = row.get("state");
-
-        Ok(AggregationJob {
-            aggregation_job_id,
-            task_id,
-            aggregation_param,
-            state,
-        })
+                Ok(AggregationJob {
+                    aggregation_job_id,
+                    task_id,
+                    aggregation_param,
+                    state,
+                })
+            })
+            .transpose()
     }
 
     /// put_aggregation_job stores an aggregation job.
@@ -619,7 +626,7 @@ impl Transaction<'_> {
             .tx
             .prepare_cached(
                 "UPDATE aggregation_jobs SET aggregation_param = $1, state = $2
-            WHERE aggregation_job_id = $3 AND task_id = (SELECT id FROM tasks WHERE task_id = $4)",
+                WHERE aggregation_job_id = $3 AND task_id = (SELECT id FROM tasks WHERE task_id = $4)",
             )
             .await?;
         check_update(
@@ -646,7 +653,7 @@ impl Transaction<'_> {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
         nonce: Nonce,
-    ) -> Result<ReportAggregation<A>, Error>
+    ) -> Result<Option<ReportAggregation<A>>, Error>
     where
         A::PrepareStep: ParameterizedDecode<A::VerifyParam>,
         A::OutputShare: for<'a> TryFrom<&'a [u8]>,
@@ -668,7 +675,7 @@ impl Transaction<'_> {
             )
             .await?;
         self.tx
-            .query(
+            .query_opt(
                 &stmt,
                 &[
                     /* aggregation_job_id */ &&aggregation_job_id.0[..],
@@ -677,12 +684,9 @@ impl Transaction<'_> {
                     /* nonce_rand */ &nonce_rand,
                 ],
             )
-            .await
-            .map_err(Error::from)
-            .and_then(single_row)
-            .and_then(|row| {
-                report_aggregation_from_row(verify_param, task_id, aggregation_job_id, row)
-            })
+            .await?
+            .map(|row| report_aggregation_from_row(verify_param, task_id, aggregation_job_id, row))
+            .transpose()
     }
 
     /// get_report_aggregations_for_aggregation_job retrieves all report aggregations associated
@@ -1020,17 +1024,9 @@ impl Transaction<'_> {
     }
 }
 
-fn single_row(rows: Vec<Row>) -> Result<Row, Error> {
-    match rows.len() {
-        0 => Err(Error::NotFound),
-        1 => Ok(rows.into_iter().next().unwrap()),
-        _ => Err(Error::TooManyRows),
-    }
-}
-
 fn check_update(row_count: u64) -> Result<(), Error> {
     match row_count {
-        0 => Err(Error::NotFound),
+        0 => Err(Error::MutationTargetNotFound),
         1 => Ok(()),
         _ => panic!(
             "update which should have affected at most one row instead affected {} rows",
@@ -1272,13 +1268,9 @@ pub enum Error {
     Pool(#[from] deadpool_postgres::PoolError),
     #[error("crypter error")]
     Crypt,
-    /// An entity requested from the datastore was not found.
+    /// An attempt was made to mutate a row that does not exist.
     #[error("not found in datastore")]
-    NotFound,
-    /// A query that was expected to return or affect at most one row unexpectedly returned more
-    /// than one row.
-    #[error("multiple rows returned where only one row expected")]
-    TooManyRows,
+    MutationTargetNotFound,
     /// The database was in an unexpected state.
     #[error("inconsistent database state: {0}")]
     DbState(String),
@@ -1666,7 +1658,7 @@ mod tests {
                 .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
                 .await
                 .unwrap();
-            assert_eq!(task, retrieved_task);
+            assert_eq!(Some(&task), retrieved_task.as_ref());
             want_tasks.insert(task_id, task);
         }
 
@@ -1737,7 +1729,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(report, retrieved_report);
+        assert_eq!(Some(report), retrieved_report);
     }
 
     #[tokio::test]
@@ -1758,9 +1750,10 @@ mod tests {
                     .await
                 })
             })
-            .await;
+            .await
+            .unwrap();
 
-        assert_matches!(rslt, Err(Error::NotFound));
+        assert_eq!(rslt, None);
     }
 
     #[tokio::test]
@@ -1882,7 +1875,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(aggregation_job, got_aggregation_job);
+        assert_eq!(Some(&aggregation_job), got_aggregation_job.as_ref());
 
         let mut new_aggregation_job = aggregation_job.clone();
         new_aggregation_job.state = AggregationJobState::Finished;
@@ -1905,7 +1898,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(new_aggregation_job, got_aggregation_job);
+        assert_eq!(Some(new_aggregation_job), got_aggregation_job);
     }
 
     #[tokio::test]
@@ -1923,8 +1916,9 @@ mod tests {
                     .await
                 })
             })
-            .await;
-        assert_matches!(rslt, Err(Error::NotFound));
+            .await
+            .unwrap();
+        assert_eq!(rslt, None);
 
         let rslt = ds
             .run_tx(|tx| {
@@ -1939,7 +1933,7 @@ mod tests {
                 })
             })
             .await;
-        assert_matches!(rslt, Err(Error::NotFound));
+        assert_matches!(rslt, Err(Error::MutationTargetNotFound));
     }
 
     #[tokio::test]
@@ -2027,7 +2021,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert_eq!(report_aggregation, got_report_aggregation);
+            assert_eq!(Some(&report_aggregation), got_report_aggregation.as_ref());
 
             let mut new_report_aggregation = report_aggregation.clone();
             new_report_aggregation.ord += 10;
@@ -2053,7 +2047,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert_eq!(new_report_aggregation, got_report_aggregation);
+            assert_eq!(Some(new_report_aggregation), got_report_aggregation);
         }
     }
 
@@ -2077,8 +2071,9 @@ mod tests {
                     .await
                 })
             })
-            .await;
-        assert_matches!(rslt, Err(Error::NotFound));
+            .await
+            .unwrap();
+        assert_eq!(rslt, None);
 
         let rslt = ds
             .run_tx(|tx| {
@@ -2097,7 +2092,7 @@ mod tests {
                 })
             })
             .await;
-        assert_matches!(rslt, Err(Error::NotFound));
+        assert_matches!(rslt, Err(Error::MutationTargetNotFound));
     }
 
     #[tokio::test]
