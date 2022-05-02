@@ -63,5 +63,5 @@ serde_test = "1.0.136"
 tempfile = "3.3.0"
 testcontainers = "0.13.0"
 test_util = { path = "../test_util" }
-trycmd = "0.13.3"
+trycmd = "0.13.4"
 wait-timeout = "0.2.0"
