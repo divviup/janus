@@ -585,7 +585,7 @@ impl Decode for HpkeAeadId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
         Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeKemId value {}", val).into()))
+            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeAeadId value {}", val).into()))
     }
 }
 
