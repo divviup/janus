@@ -26,15 +26,16 @@ impl Debug for RealClock {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
-    use chrono::naive::NaiveDate;
+#[doc(hidden)]
+pub mod test_util {
+    use super::Clock;
+    use crate::message::Time;
+    use chrono::{NaiveDate, NaiveDateTime};
 
     /// A mock clock for use in testing.
     #[derive(Clone, Debug)]
-    pub(crate) struct MockClock {
-        /// The fake time that this clock will always return from [`Self::now`]
+    pub struct MockClock {
+        /// The time that this clock will always return from [`Self::now`]
         pub(crate) current_time: NaiveDateTime,
     }
 

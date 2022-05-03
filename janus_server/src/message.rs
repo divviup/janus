@@ -30,7 +30,7 @@ use crate::hpke::associated_data_for;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// An illegal arithmetic operation on a [`Time`] or [`Duration`].
-    #[error("operation would {0}flow")]
+    #[error("{0}")]
     IllegalTimeArithmetic(&'static str),
 }
 
@@ -176,7 +176,7 @@ impl Duration {
         60u64
             .checked_mul(minutes)
             .map(Self::from_seconds)
-            .ok_or(Error::IllegalTimeArithmetic("over"))
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
     /// Create a duration representing the provided number of hours.
@@ -184,7 +184,7 @@ impl Duration {
         3600u64
             .checked_mul(hours)
             .map(Self::from_seconds)
-            .ok_or(Error::IllegalTimeArithmetic("over"))
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 }
 
@@ -215,7 +215,7 @@ impl Time {
         NaiveDateTime::from_timestamp(self.0 as i64, 0)
     }
 
-    pub(crate) fn from_naive_date_time(time: NaiveDateTime) -> Self {
+    pub fn from_naive_date_time(time: NaiveDateTime) -> Self {
         Self(time.timestamp() as u64)
     }
 
@@ -224,16 +224,32 @@ impl Time {
         self.0
             .checked_add(duration.0)
             .map(Self)
-            .ok_or(Error::IllegalTimeArithmetic("over"))
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
-    /// Substract the provided duration from this time.
-    #[cfg(test)]
-    pub(crate) fn sub(&self, duration: Duration) -> Result<Self, Error> {
+    /// Subtract the provided duration from this time.
+    pub fn sub(&self, duration: Duration) -> Result<Self, Error> {
         self.0
             .checked_sub(duration.0)
             .map(Self)
-            .ok_or(Error::IllegalTimeArithmetic("under"))
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
+    /// Compute the start of the batch interval containing this Time, given the batch unit duration.
+    pub fn to_batch_unit_interval_start(
+        &self,
+        min_batch_duration: Duration,
+    ) -> Result<Self, Error> {
+        let rem = self
+            .0
+            .checked_rem(min_batch_duration.0)
+            .ok_or(Error::IllegalTimeArithmetic(
+                "remainder would overflow/underflow",
+            ))?;
+        self.0
+            .checked_sub(rem)
+            .map(Self)
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
     }
 
     /// Returns true if this [`Time`] occurs after `time`.
@@ -320,7 +336,7 @@ impl Display for Interval {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Nonce {
     /// The time at which the report was generated.
-    pub(crate) time: Time,
+    pub time: Time,
     /// A randomly generated value.
     pub(crate) rand: [u8; 8],
 }
@@ -678,7 +694,7 @@ impl Decode for HpkeConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
     pub(crate) task_id: TaskId,
-    pub(crate) nonce: Nonce,
+    pub nonce: Nonce,
     pub(crate) extensions: Vec<Extension>,
     pub(crate) encrypted_input_shares: Vec<HpkeCiphertext>,
 }
@@ -897,12 +913,18 @@ impl Decode for TransitionError {
 }
 
 /// PPM protocol message representing an identifier for an aggregation job.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AggregationJobId([u8; Self::ENCODED_LEN]);
 
 impl AggregationJobId {
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl Debug for AggregationJobId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
     }
 }
 
@@ -1137,6 +1159,24 @@ impl Decode for CollectResp {
         Ok(Self {
             encrypted_agg_shares,
         })
+    }
+}
+
+#[doc(hidden)]
+pub mod test_util {
+    use super::{Nonce, Report, TaskId, Time};
+    use rand::{thread_rng, Rng};
+
+    pub fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
+        Report {
+            task_id,
+            nonce: Nonce {
+                time: when,
+                rand: thread_rng().gen(),
+            },
+            extensions: Vec::new(),
+            encrypted_input_shares: Vec::new(),
+        }
     }
 }
 

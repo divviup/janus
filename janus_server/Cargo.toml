@@ -22,6 +22,7 @@ futures = "0.3.21"
 hex = "0.4.3"
 hpke = { version = "0.8.0", features = ["default", "std"] }
 http = "0.2.7"
+itertools = "0.10.3"
 num_enum = "0.5.6"
 opentelemetry = { version = "0.17.0", optional = true, features = ["rt-tokio"] }
 opentelemetry-jaeger = { version = "0.16.0", optional = true, features = ["rt-tokio"] }
@@ -61,5 +62,6 @@ serde_test = "1.0.137"
 tempfile = "3.3.0"
 testcontainers = "0.13.0"
 test_util = { path = "../test_util" }
+tokio = { version = "*", features = ["test-util"] }
 trycmd = "0.13.4"
 wait-timeout = "0.2.0"

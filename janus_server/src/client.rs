@@ -217,7 +217,7 @@ mod tests {
     use super::*;
     use crate::{
         hpke::test_util::generate_hpke_config_and_private_key, message::TaskId,
-        time::tests::MockClock, trace::test_util::install_test_trace_subscriber,
+        time::test_util::MockClock, trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use mockito::mock;

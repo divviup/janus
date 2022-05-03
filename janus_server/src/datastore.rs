@@ -7,8 +7,8 @@ use self::models::{
 use crate::{
     hpke::HpkePrivateKey,
     message::{
-        AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Report,
-        ReportShare, TaskId, Time,
+        self, AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce,
+        Report, ReportShare, TaskId, Time,
     },
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
@@ -262,9 +262,8 @@ impl Transaction<'_> {
     }
 
     /// Fetch all the tasks in the database.
-    #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
+    pub async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
         use std::collections::HashMap;
 
         let stmt = self
@@ -392,8 +391,8 @@ impl Transaction<'_> {
                 &encrypted_agg_auth_key,
             )?)?);
         }
-        // HPKE keys.
 
+        // HPKE keys.
         let mut hpke_configs = Vec::new();
         for row in hpke_key_rows {
             let config_id = u8::try_from(row.get::<_, i16>("config_id"))?;
@@ -472,6 +471,47 @@ impl Transaction<'_> {
                 })
             })
             .transpose()
+    }
+
+    /// get_unaggregated_client_report_nonces_for_task returns some nonces corresponding to
+    /// unaggregated client reports for the task identified by the given task ID.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_unaggregated_client_report_nonces_for_task(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Vec<Nonce>, Error> {
+        // We choose to return the newest client reports first (LIFO). The goal is to maintain
+        // throughput even if we begin to fall behind enough that reports are too old to be
+        // aggregated.
+        //
+        // See https://medium.com/swlh/fifo-considered-harmful-793b76f98374 &
+        // https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.376.5966&rep=rep1&type=pdf.
+
+        // TODO(brandon): allow the number of returned results to be controlled?
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT nonce_time, nonce_rand FROM client_reports
+                LEFT JOIN report_aggregations ON report_aggregations.client_report_id = client_reports.id
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                AND report_aggregations.id IS NULL
+                ORDER BY nonce_time DESC LIMIT 5000",
+            )
+            .await?;
+        let rows = self.tx.query(&stmt, &[&task_id.as_bytes()]).await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let nonce_rand: Vec<u8> = row.get("nonce_rand");
+                Ok(Nonce {
+                    time: Time::from_naive_date_time(row.get("nonce_time")),
+                    rand: nonce_rand.try_into().map_err(|err| {
+                        Error::DbState(format!("couldn't convert nonce_rand value: {0:?}", err))
+                    })?,
+                })
+            })
+            .collect::<Result<Vec<Nonce>, Error>>()
     }
 
     /// put_client_report stores a client report.
@@ -571,19 +611,58 @@ impl Transaction<'_> {
                 ],
             )
             .await?
-            .map(|row| {
-                let aggregation_param =
-                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                let state = row.get("state");
-
-                Ok(AggregationJob {
-                    aggregation_job_id,
-                    task_id,
-                    aggregation_param,
-                    state,
-                })
-            })
+            .map(|row| Self::aggregation_job_from_row(task_id, aggregation_job_id, row))
             .transpose()
+    }
+
+    /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID. It is
+    /// intended for use in tests.
+    #[tracing::instrument(skip(self), err)]
+    #[doc(hidden)]
+    pub async fn get_aggregation_jobs_for_task_id<A: vdaf::Aggregator>(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Vec<AggregationJob<A>>, Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT aggregation_job_id, aggregation_param, state
+                FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
+                WHERE tasks.task_id = $1",
+            )
+            .await?;
+        self.tx
+            .query(&stmt, &[/* task_id */ &task_id.as_bytes()])
+            .await?
+            .into_iter()
+            .map(|row| {
+                let aggregation_job_id =
+                    AggregationJobId::get_decoded(row.get("aggregation_job_id"))?;
+                Self::aggregation_job_from_row(task_id, aggregation_job_id, row)
+            })
+            .collect()
+    }
+
+    fn aggregation_job_from_row<A: vdaf::Aggregator>(
+        task_id: TaskId,
+        aggregation_job_id: AggregationJobId,
+        row: Row,
+    ) -> Result<AggregationJob<A>, Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+        let state = row.get("state");
+
+        Ok(AggregationJob {
+            aggregation_job_id,
+            task_id,
+            aggregation_param,
+            state,
+        })
     }
 
     /// put_aggregation_job stores an aggregation job.
@@ -1296,6 +1375,8 @@ pub enum Error {
     Task(#[from] task::Error),
     #[error("integer conversion failed: {0}")]
     TryFromInt(#[from] std::num::TryFromIntError),
+    #[error(transparent)]
+    Message(#[from] message::Error),
 }
 
 impl Error {
@@ -1372,10 +1453,10 @@ pub mod models {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        pub(crate) aggregation_job_id: AggregationJobId,
-        pub(crate) task_id: TaskId,
-        pub(crate) aggregation_param: A::AggregationParam,
-        pub(crate) state: AggregationJobState,
+        pub aggregation_job_id: AggregationJobId,
+        pub task_id: TaskId,
+        pub aggregation_param: A::AggregationParam,
+        pub state: AggregationJobState,
     }
 
     impl<A: vdaf::Aggregator> PartialEq for AggregationJob<A>
@@ -1415,11 +1496,11 @@ pub mod models {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        pub(crate) aggregation_job_id: AggregationJobId,
-        pub(crate) task_id: TaskId,
-        pub(crate) nonce: Nonce,
-        pub(crate) ord: i64,
-        pub(crate) state: ReportAggregationState<A>,
+        pub aggregation_job_id: AggregationJobId,
+        pub task_id: TaskId,
+        pub nonce: Nonce,
+        pub ord: i64,
+        pub state: ReportAggregationState<A>,
     }
 
     impl<A: vdaf::Aggregator> PartialEq for ReportAggregation<A>
@@ -1606,7 +1687,7 @@ mod tests {
             AggregateShare, PrepareTransition,
         },
     };
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeSet, HashMap, HashSet};
 
     #[tokio::test]
     async fn roundtrip_task() {
@@ -1755,6 +1836,126 @@ mod tests {
             .unwrap();
 
         assert_eq!(rslt, None);
+    }
+
+    #[tokio::test]
+    async fn get_unaggregated_client_report_nonces_for_task() {
+        install_test_trace_subscriber();
+        let (ds, _db_handle) = ephemeral_datastore().await;
+
+        let task_id = TaskId::random();
+        let unrelated_task_id = TaskId::random();
+
+        let first_unaggregated_report = Report {
+            task_id,
+            nonce: Nonce {
+                time: Time(12345),
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
+            },
+            extensions: vec![],
+            encrypted_input_shares: vec![],
+        };
+        let second_unaggregated_report = Report {
+            task_id,
+            nonce: Nonce {
+                time: Time(12346),
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
+            },
+            extensions: vec![],
+            encrypted_input_shares: vec![],
+        };
+        let aggregated_report = Report {
+            task_id,
+            nonce: Nonce {
+                time: Time(12347),
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
+            },
+            extensions: vec![],
+            encrypted_input_shares: vec![],
+        };
+        let unrelated_report = Report {
+            task_id: unrelated_task_id,
+            nonce: Nonce {
+                time: Time(12348),
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
+            },
+            extensions: vec![],
+            encrypted_input_shares: vec![],
+        };
+
+        // Set up state.
+        ds.run_tx(|tx| {
+            let (
+                first_unaggregated_report,
+                second_unaggregated_report,
+                aggregated_report,
+                unrelated_report,
+            ) = (
+                first_unaggregated_report.clone(),
+                second_unaggregated_report.clone(),
+                aggregated_report.clone(),
+                unrelated_report.clone(),
+            );
+
+            Box::pin(async move {
+                tx.put_task(&new_dummy_task(
+                    task_id,
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
+                tx.put_task(&new_dummy_task(
+                    unrelated_task_id,
+                    Vdaf::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
+
+                tx.put_client_report(&first_unaggregated_report).await?;
+                tx.put_client_report(&second_unaggregated_report).await?;
+                tx.put_client_report(&aggregated_report).await?;
+                tx.put_client_report(&unrelated_report).await?;
+
+                let aggregation_job_id = AggregationJobId::random();
+                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                    aggregation_job_id,
+                    task_id: unrelated_task_id,
+                    aggregation_param: (),
+                    state: AggregationJobState::InProgress,
+                })
+                .await?;
+                tx.put_report_aggregation(&ReportAggregation {
+                    aggregation_job_id,
+                    task_id,
+                    nonce: aggregated_report.nonce,
+                    ord: 0,
+                    state: ReportAggregationState::<Prio3Aes128Count>::Start,
+                })
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run query & verify results.
+        let got_reports = HashSet::from_iter(
+            ds.run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_unaggregated_client_report_nonces_for_task(task_id)
+                        .await
+                })
+            })
+            .await
+            .unwrap(),
+        );
+
+        assert_eq!(
+            got_reports,
+            HashSet::from([
+                first_unaggregated_report.nonce,
+                second_unaggregated_report.nonce
+            ]),
+        );
     }
 
     #[tokio::test]
@@ -1935,6 +2136,89 @@ mod tests {
             })
             .await;
         assert_matches!(rslt, Err(Error::MutationTargetNotFound));
+    }
+
+    #[tokio::test]
+    async fn get_aggregation_jobs_for_task_id() {
+        // Setup.
+        install_test_trace_subscriber();
+        let (ds, _db_handle) = ephemeral_datastore().await;
+
+        // We use Poplar1 for this test as it has a non-trivial aggregation parameter, to allow
+        // better exercising the serialization/deserialization roundtrip of the aggregation_param.
+        type ToyPoplar1 = Poplar1<ToyIdpf<Field128>, PrgAes128, 16>;
+        let task_id = TaskId::random();
+        let first_aggregation_job = AggregationJob::<ToyPoplar1> {
+            aggregation_job_id: AggregationJobId::random(),
+            task_id,
+            aggregation_param: BTreeSet::from([
+                IdpfInput::new("abc".as_bytes(), 0).unwrap(),
+                IdpfInput::new("def".as_bytes(), 1).unwrap(),
+            ]),
+            state: AggregationJobState::InProgress,
+        };
+        let second_aggregation_job = AggregationJob::<ToyPoplar1> {
+            aggregation_job_id: AggregationJobId::random(),
+            task_id,
+            aggregation_param: BTreeSet::from([
+                IdpfInput::new("ghi".as_bytes(), 2).unwrap(),
+                IdpfInput::new("jkl".as_bytes(), 3).unwrap(),
+            ]),
+            state: AggregationJobState::InProgress,
+        };
+
+        ds.run_tx(|tx| {
+            let (first_aggregation_job, second_aggregation_job) = (
+                first_aggregation_job.clone(),
+                second_aggregation_job.clone(),
+            );
+            Box::pin(async move {
+                tx.put_task(&new_dummy_task(
+                    task_id,
+                    Vdaf::Poplar1 { bits: 64 },
+                    Role::Leader,
+                ))
+                .await?;
+                tx.put_aggregation_job(&first_aggregation_job).await?;
+                tx.put_aggregation_job(&second_aggregation_job).await?;
+
+                // Also write an unrelated aggregation job with a different task ID to check that it
+                // is not returned.
+                let unrelated_task_id = TaskId::random();
+                tx.put_task(&new_dummy_task(
+                    unrelated_task_id,
+                    Vdaf::Poplar1 { bits: 64 },
+                    Role::Leader,
+                ))
+                .await?;
+                tx.put_aggregation_job(&AggregationJob::<ToyPoplar1> {
+                    aggregation_job_id: AggregationJobId::random(),
+                    task_id: unrelated_task_id,
+                    aggregation_param: BTreeSet::from([
+                        IdpfInput::new("foo".as_bytes(), 10).unwrap(),
+                        IdpfInput::new("bar".as_bytes(), 20).unwrap(),
+                    ]),
+                    state: AggregationJobState::InProgress,
+                })
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run.
+        let mut want_agg_jobs = vec![first_aggregation_job, second_aggregation_job];
+        want_agg_jobs.sort_by_key(|agg_job| agg_job.aggregation_job_id);
+        let mut got_agg_jobs = ds
+            .run_tx(|tx| {
+                Box::pin(async move { tx.get_aggregation_jobs_for_task_id(task_id).await })
+            })
+            .await
+            .unwrap();
+        got_agg_jobs.sort_by_key(|agg_job| agg_job.aggregation_job_id);
+
+        // Verify.
+        assert_eq!(want_agg_jobs, got_agg_jobs);
     }
 
     #[tokio::test]

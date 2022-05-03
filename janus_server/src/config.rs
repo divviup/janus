@@ -41,9 +41,49 @@ pub struct AggregatorConfig {
     pub listen_address: SocketAddr,
     /// The aggregator's database configuration.
     pub database: DbConfig,
-    /// Logging configuration
+    /// Logging configuration.
     #[serde(default)]
     pub logging_config: TraceConfiguration,
+}
+
+/// Non-secret configuration options for the Janus Aggregation Job Creator job.
+///
+/// # Examples
+///
+/// ```
+/// use janus_server::config::AggregationJobCreatorConfig;
+///
+/// let yaml_config = r#"
+/// ---
+/// database:
+///   url: "postgres://postgres:postgres@localhost:5432/postgres"
+/// logging_config: # logging_config is optional
+///   force_json_output: true
+/// tasks_update_frequency_secs: 3600
+/// aggregation_job_creation_interval_secs: 60
+/// min_aggregation_job_size: 100
+/// max_aggregation_job_size: 500
+/// "#;
+///
+/// let _decoded: AggregationJobCreatorConfig = serde_yaml::from_str(yaml_config).unwrap();
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregationJobCreatorConfig {
+    /// Configuration for the database backend to connect to.
+    pub database: DbConfig,
+    /// Logging configuration.
+    #[serde(default)]
+    pub logging_config: TraceConfiguration,
+    /// How frequently we look for new tasks to start creating aggregation jobs for, in seconds.
+    pub tasks_update_frequency_secs: u64,
+    /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
+    pub aggregation_job_creation_interval_secs: u64,
+    /// The minimum number of client reports to include in an aggregation job. Applies to the
+    /// "current" batch unit only; historical batch units will create aggregation jobs of any size,
+    /// on the theory that almost all reports will have be received for these batch units already.
+    pub min_aggregation_job_size: usize,
+    /// The maximum number of client reports to include in an aggregation job.
+    pub max_aggregation_job_size: usize,
 }
 
 #[cfg(test)]
@@ -76,5 +116,21 @@ mod tests {
         let encoded = serde_yaml::to_string(&aggregator_config).unwrap();
         let decoded: AggregatorConfig = serde_yaml::from_str(&encoded).unwrap();
         assert_eq!(aggregator_config, decoded);
+    }
+
+    #[test]
+    fn roundtrip_aggregation_job_creator_config() {
+        let config = AggregationJobCreatorConfig {
+            database: generate_db_config(),
+            logging_config: TraceConfiguration::default(),
+            tasks_update_frequency_secs: 3600,
+            aggregation_job_creation_interval_secs: 60,
+            min_aggregation_job_size: 100,
+            max_aggregation_job_size: 500,
+        };
+
+        let encoded = serde_yaml::to_string(&config).unwrap();
+        let decoded_config: AggregationJobCreatorConfig = serde_yaml::from_str(&encoded).unwrap();
+        assert_eq!(config, decoded_config);
     }
 }

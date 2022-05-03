@@ -1662,7 +1662,7 @@ mod tests {
             AuthenticatedResponseDecoder, Duration, HpkeCiphertext, HpkeConfig, TaskId, Time,
         },
         task::{test_util::new_dummy_task, Vdaf},
-        time::tests::MockClock,
+        time::test_util::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;

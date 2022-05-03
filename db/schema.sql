@@ -102,6 +102,7 @@ CREATE TABLE report_aggregations(
     CONSTRAINT fk_client_report_id FOREIGN KEY(client_report_id) REFERENCES client_reports(id)
 );
 CREATE INDEX report_aggregations_aggregation_job_id_index ON report_aggregations(aggregation_job_id);
+CREATE INDEX report_aggregations_client_report_id_index ON report_aggregations(client_report_id);
 
 -- Information on aggregation for a single batch unit. This information may be incremental if the
 -- VDAF supports incremental aggregation.

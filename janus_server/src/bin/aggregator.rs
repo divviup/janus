@@ -1,25 +1,21 @@
 use anyhow::{anyhow, Context, Result};
-use deadpool_postgres::{Manager, Pool};
 use futures::StreamExt;
 use janus_server::{
     aggregator::aggregator_server,
+    binary_utils::datastore,
     config::AggregatorConfig,
-    datastore::{self, Datastore},
     time::RealClock,
     trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
-use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},
     fs::File,
     future::Future,
     iter::Iterator,
     path::PathBuf,
-    str::FromStr,
     sync::Arc,
 };
 use structopt::StructOpt;
-use tokio_postgres::NoTls;
 use tracing::info;
 
 #[derive(StructOpt)]
@@ -41,8 +37,8 @@ struct Options {
     )]
     config_file: PathBuf,
 
-    /// Password for the PostgreSQL database connection. (if not included in the connection
-    /// string)
+    /// Password for the PostgreSQL database connection. If specified, must not be specified in the
+    /// connection string.
     #[structopt(long, env = "PGPASSWORD", help = "PostgreSQL password")]
     database_password: Option<String>,
 
@@ -146,42 +142,14 @@ async fn main() -> Result<()> {
     info!(?options, ?config, "starting aggregator");
 
     // Connect to database.
-    let mut database_config = tokio_postgres::Config::from_str(config.database.url.as_str())
-        .with_context(|| {
-            format!(
-                "failed to parse database connect string: {:?}",
-                config.database.url
-            )
-        })?;
-    if database_config.get_password().is_none() {
-        if let Some(password) = options.database_password {
-            database_config.password(password);
-        }
-    }
-    let conn_mgr = Manager::new(database_config, NoTls);
-    let pool = Pool::builder(conn_mgr)
-        .build()
-        .context("failed to create database connection pool")?;
-    let datastore_keys = options
-        .datastore_keys
-        .into_iter()
-        .filter(|k| !k.is_empty())
-        .map(|k| {
-            base64::decode_config(k, base64::STANDARD_NO_PAD)
-                .context("couldn't base64-decode datastore keys")
-                .and_then(|k| {
-                    Ok(LessSafeKey::new(
-                        UnboundKey::new(&AES_128_GCM, &k)
-                            .map_err(|_| anyhow!("coulnd't parse datastore keys as keys"))?,
-                    ))
-                })
-        })
-        .collect::<Result<Vec<LessSafeKey>>>()?;
-    if datastore_keys.is_empty() {
-        return Err(anyhow!("datastore keys is empty"));
-    }
-    let crypter = datastore::Crypter::new(datastore_keys);
-    let datastore = Arc::new(Datastore::new(pool, crypter));
+    let datastore = Arc::new(
+        datastore(
+            config.database,
+            options.database_password,
+            options.datastore_keys,
+        )
+        .context("couldn't connect to database")?,
+    );
 
     let shutdown_signal =
         setup_signal_handler().context("failed to register SIGTERM signal handler")?;
