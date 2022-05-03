@@ -119,8 +119,7 @@ async fn server_shutdown() {
     let client = Client::new();
     let url = Url::parse(&format!(
         "http://{}/hpke_config?task_id={}",
-        &config.listen_address,
-        base64::encode_config(task_id.as_bytes(), base64::URL_SAFE_NO_PAD)
+        &config.listen_address, task_id,
     ))
     .unwrap();
     assert!(client.get(url).send().await.unwrap().status().is_success());

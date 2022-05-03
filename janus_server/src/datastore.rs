@@ -221,7 +221,7 @@ impl Transaction<'_> {
 
     /// Fetch the task parameters corresponing to the provided `task_id`.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn get_task(&self, task_id: TaskId) -> Result<Task, Error> {
+    pub(crate) async fn get_task(&self, task_id: TaskId) -> Result<Option<Task>, Error> {
         let params: &[&(dyn ToSql + Sync)] = &[&&task_id.0[..]];
         let stmt = self
             .tx
@@ -232,7 +232,7 @@ impl Transaction<'_> {
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
-        let task_row = self.tx.query(&stmt, params);
+        let task_row = self.tx.query_opt(&stmt, params);
 
         let stmt = self
             .tx
@@ -254,9 +254,11 @@ impl Transaction<'_> {
 
         let (task_row, agg_auth_key_rows, hpke_key_rows) =
             try_join!(task_row, agg_auth_key_rows, hpke_key_rows)?;
-        let task_row = single_row(task_row)?;
-
-        self.task_from_rows(task_id, task_row, agg_auth_key_rows, hpke_key_rows)
+        task_row
+            .map(|task_row| {
+                self.task_from_rows(task_id, task_row, agg_auth_key_rows, hpke_key_rows)
+            })
+            .transpose()
     }
 
     /// Fetch all the tasks in the database.
@@ -429,7 +431,11 @@ impl Transaction<'_> {
 
     /// get_client_report retrieves a client report by ID.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_client_report(&self, task_id: TaskId, nonce: Nonce) -> Result<Report, Error> {
+    pub async fn get_client_report(
+        &self,
+        task_id: TaskId,
+        nonce: Nonce,
+    ) -> Result<Option<Report>, Error> {
         let stmt = self
             .tx
             .prepare_cached(
@@ -438,33 +444,33 @@ impl Transaction<'_> {
                 WHERE tasks.task_id = $1 AND client_reports.nonce_time = $2 AND client_reports.nonce_rand = $3",
             )
             .await?;
-        let row = single_row(
-            self.tx
-                .query(
-                    &stmt,
-                    &[
-                        /* task_id */ &&task_id.0[..],
-                        /* nonce_time */ &nonce.time.as_naive_date_time(),
-                        /* nonce_rand */ &&nonce.rand.to_be_bytes()[..],
-                    ],
-                )
-                .await?,
-        )?;
+        self.tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &&task_id.0[..],
+                    /* nonce_time */ &nonce.time.as_naive_date_time(),
+                    /* nonce_rand */ &&nonce.rand[..],
+                ],
+            )
+            .await?
+            .map(|row| {
+                let encoded_extensions: Vec<u8> = row.get("extensions");
+                let extensions: Vec<Extension> =
+                    decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
 
-        let encoded_extensions: Vec<u8> = row.get("extensions");
-        let extensions: Vec<Extension> =
-            decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
+                let encoded_input_shares: Vec<u8> = row.get("input_shares");
+                let input_shares: Vec<HpkeCiphertext> =
+                    decode_u16_items(&(), &mut Cursor::new(&encoded_input_shares))?;
 
-        let encoded_input_shares: Vec<u8> = row.get("input_shares");
-        let input_shares: Vec<HpkeCiphertext> =
-            decode_u16_items(&(), &mut Cursor::new(&encoded_input_shares))?;
-
-        Ok(Report {
-            task_id,
-            nonce,
-            extensions,
-            encrypted_input_shares: input_shares,
-        })
+                Ok(Report {
+                    task_id,
+                    nonce,
+                    extensions,
+                    encrypted_input_shares: input_shares,
+                })
+            })
+            .transpose()
     }
 
     /// get_unaggregated_client_report_nonces_for_task returns some nonces corresponding to
@@ -495,9 +501,12 @@ impl Transaction<'_> {
 
         rows.into_iter()
             .map(|row| {
+                let nonce_rand: Vec<u8> = row.get("nonce_rand");
                 Ok(Nonce {
                     time: Time::from_naive_date_time(row.get("nonce_time")),
-                    rand: u64::get_decoded(row.get("nonce_rand"))?,
+                    rand: nonce_rand.try_into().map_err(|err| {
+                        Error::DbState(format!("couldn't convert nonce_rand value: {0:?}", err))
+                    })?,
                 })
             })
             .collect::<Result<Vec<Nonce>, Error>>()
@@ -507,7 +516,7 @@ impl Transaction<'_> {
     #[tracing::instrument(skip(self), err)]
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
         let nonce_time = report.nonce.time.as_naive_date_time();
-        let nonce_rand = report.nonce.rand.get_encoded();
+        let nonce_rand = report.nonce.rand;
 
         let mut encoded_extensions = Vec::new();
         encode_u16_items(&mut encoded_extensions, &(), &report.extensions);
@@ -551,7 +560,7 @@ impl Transaction<'_> {
         report_share: &ReportShare,
     ) -> Result<(), Error> {
         let nonce_time = report_share.nonce.time.as_naive_date_time();
-        let nonce_rand = report_share.nonce.rand.to_be_bytes();
+        let nonce_rand = report_share.nonce.rand;
 
         let stmt = self
             .tx
@@ -579,7 +588,7 @@ impl Transaction<'_> {
         &self,
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
-    ) -> Result<AggregationJob<A>, Error>
+    ) -> Result<Option<AggregationJob<A>>, Error>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
@@ -591,19 +600,17 @@ impl Transaction<'_> {
                 WHERE tasks.task_id = $1 AND aggregation_jobs.aggregation_job_id = $2",
             )
             .await?;
-        let row = single_row(
-            self.tx
-                .query(
-                    &stmt,
-                    &[
-                        /* task_id */ &&task_id.0[..],
-                        /* aggregation_job_id */ &&aggregation_job_id.0[..],
-                    ],
-                )
-                .await?,
-        )?;
-
-        Self::aggregation_job_from_row(task_id, aggregation_job_id, row)
+        self.tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &&task_id.0[..],
+                    /* aggregation_job_id */ &&aggregation_job_id.0[..],
+                ],
+            )
+            .await?
+            .map(|row| Self::aggregation_job_from_row(task_id, aggregation_job_id, row))
+            .transpose()
     }
 
     /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID. It is
@@ -723,14 +730,14 @@ impl Transaction<'_> {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
         nonce: Nonce,
-    ) -> Result<ReportAggregation<A>, Error>
+    ) -> Result<Option<ReportAggregation<A>>, Error>
     where
         A::PrepareStep: ParameterizedDecode<A::VerifyParam>,
         A::OutputShare: for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let nonce_time = nonce.time.as_naive_date_time();
-        let nonce_rand = &nonce.rand.to_be_bytes()[..];
+        let nonce_rand = &nonce.rand[..];
 
         let stmt = self
             .tx
@@ -745,7 +752,7 @@ impl Transaction<'_> {
             )
             .await?;
         self.tx
-            .query(
+            .query_opt(
                 &stmt,
                 &[
                     /* aggregation_job_id */ &&aggregation_job_id.0[..],
@@ -754,12 +761,9 @@ impl Transaction<'_> {
                     /* nonce_rand */ &nonce_rand,
                 ],
             )
-            .await
-            .map_err(Error::from)
-            .and_then(single_row)
-            .and_then(|row| {
-                report_aggregation_from_row(verify_param, task_id, aggregation_job_id, row)
-            })
+            .await?
+            .map(|row| report_aggregation_from_row(verify_param, task_id, aggregation_job_id, row))
+            .transpose()
     }
 
     /// get_report_aggregations_for_aggregation_job retrieves all report aggregations associated
@@ -813,7 +817,7 @@ impl Transaction<'_> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let nonce_time = report_aggregation.nonce.time.as_naive_date_time();
-        let nonce_rand = &report_aggregation.nonce.rand.to_be_bytes()[..];
+        let nonce_rand = &report_aggregation.nonce.rand[..];
         let state_code = report_aggregation.state.state_code();
         let (vdaf_message, error_code) = match &report_aggregation.state {
             ReportAggregationState::Start => (None, None),
@@ -861,7 +865,7 @@ impl Transaction<'_> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let nonce_time = report_aggregation.nonce.time.as_naive_date_time();
-        let nonce_rand = &report_aggregation.nonce.rand.to_be_bytes()[..];
+        let nonce_rand = &report_aggregation.nonce.rand[..];
         let state_code = report_aggregation.state.state_code();
         let (vdaf_message, error_code) = match &report_aggregation.state {
             ReportAggregationState::Start => (None, None),
@@ -980,14 +984,14 @@ impl Transaction<'_> {
     /// Store a new `batch_unit_aggregations` row in the datastore.
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn put_batch_unit_aggregation<P, A>(
+    pub(crate) async fn put_batch_unit_aggregation<A: vdaf::Aggregator>(
         &self,
-        batch_aggregation: &BatchUnitAggregation<P, A>,
+        batch_aggregation: &BatchUnitAggregation<A>,
     ) -> Result<(), Error>
     where
-        P: Encode + std::fmt::Debug,
-        A: std::fmt::Debug,
-        for<'a> &'a A: Into<Vec<u8>>,
+        A::AggregationParam: Encode + std::fmt::Debug,
+        A::AggregateShare: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let unit_interval_start = batch_aggregation.unit_interval_start.as_naive_date_time();
         let encoded_aggregation_param = batch_aggregation.aggregation_param.get_encoded();
@@ -1022,16 +1026,17 @@ impl Transaction<'_> {
     /// Fetch all the `batch_unit_aggregations` rows whose `unit_interval_start` describes an
     /// interval that falls within the provided `interval` and whose `aggregation_param` matches.
     #[tracing::instrument(skip(self, aggregation_param), err)]
-    pub(crate) async fn get_batch_unit_aggregations_for_task_in_interval<P, A, E>(
+    pub(crate) async fn get_batch_unit_aggregations_for_task_in_interval<A: vdaf::Aggregator>(
         &self,
         task_id: TaskId,
         interval: Interval,
-        aggregation_param: &P,
-    ) -> Result<Vec<BatchUnitAggregation<P, A>>, Error>
+        aggregation_param: &A::AggregationParam,
+    ) -> Result<Vec<BatchUnitAggregation<A>>, Error>
     where
-        P: Encode + Clone,
-        for<'a> A: TryFrom<&'a [u8], Error = E>,
-        E: std::fmt::Display,
+        A::AggregationParam: Encode + Clone,
+        for<'a> A::AggregateShare: TryFrom<&'a [u8]>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let unit_interval_start = interval.start().as_naive_date_time();
         let unit_interval_end = interval.end().as_naive_date_time();
@@ -1067,12 +1072,13 @@ impl Transaction<'_> {
                 let unit_interval_start =
                     Time::from_naive_date_time(row.get("unit_interval_start"));
                 let aggregate_share_encoded: Vec<u8> = row.get("aggregate_share");
-                let aggregate_share = A::try_from(&aggregate_share_encoded).map_err(|e| {
-                    Error::DbState(format!(
-                        "aggregate share stored in database is invalid: {}",
-                        e
-                    ))
-                })?;
+                let aggregate_share = A::AggregateShare::try_from(&aggregate_share_encoded)
+                    .map_err(|e| {
+                        Error::DbState(format!(
+                            "aggregate share stored in database is invalid: {}",
+                            e
+                        ))
+                    })?;
                 let report_count = row.get_bigint_as_u64("report_count")?;
                 let checksum: &[u8] = row.get("checksum");
                 let checksum: [u8; 32] = checksum.try_into().map_err(|e| {
@@ -1097,17 +1103,9 @@ impl Transaction<'_> {
     }
 }
 
-fn single_row(rows: Vec<Row>) -> Result<Row, Error> {
-    match rows.len() {
-        0 => Err(Error::NotFound),
-        1 => Ok(rows.into_iter().next().unwrap()),
-        _ => Err(Error::TooManyRows),
-    }
-}
-
 fn check_update(row_count: u64) -> Result<(), Error> {
     match row_count {
-        0 => Err(Error::NotFound),
+        0 => Err(Error::MutationTargetNotFound),
         1 => Ok(()),
         _ => panic!(
             "update which should have affected at most one row instead affected {} rows",
@@ -1127,9 +1125,12 @@ where
     A::OutputShare: for<'a> TryFrom<&'a [u8]>,
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
+    let nonce_rand: Vec<u8> = row.get("nonce_rand");
     let nonce = Nonce {
         time: Time::from_naive_date_time(row.get("nonce_time")),
-        rand: row.get_bytea_as_u64("nonce_rand")?,
+        rand: nonce_rand.try_into().map_err(|err| {
+            Error::DbState(format!("couldn't convert nonce_rand value: {0:?}", err))
+        })?,
     };
     let ord: i64 = row.get("ord");
     let state: ReportAggregationStateCode = row.get("state");
@@ -1349,13 +1350,9 @@ pub enum Error {
     Pool(#[from] deadpool_postgres::PoolError),
     #[error("crypter error")]
     Crypt,
-    /// An entity requested from the datastore was not found.
+    /// An attempt was made to mutate a row that does not exist.
     #[error("not found in datastore")]
-    NotFound,
-    /// A query that was expected to return or affect at most one row unexpectedly returned more
-    /// than one row.
-    #[error("multiple rows returned where only one row expected")]
-    TooManyRows,
+    MutationTargetNotFound,
     /// The database was in an unexpected state.
     #[error("inconsistent database state: {0}")]
     DbState(String),
@@ -1609,8 +1606,11 @@ pub mod models {
     /// This is the finest-grained possible aggregate share we can emit for this task, hence "batch
     /// unit". The aggregate share constructed to service a collect or aggregate share request
     /// consists of one or more `BatchUnitAggregation`s merged together.
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(crate) struct BatchUnitAggregation<P, A> {
+    #[derive(Clone, Debug)]
+    pub(crate) struct BatchUnitAggregation<A: vdaf::Aggregator>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         /// The task ID for this aggregation result.
         pub(crate) task_id: TaskId,
         /// This is an aggregation over report shares whose timestamp falls within the interval
@@ -1619,15 +1619,39 @@ pub mod models {
         pub(crate) unit_interval_start: Time,
         /// The VDAF aggregation parameter used to prepare and accumulate input shares. `P` is the
         /// `AggregationParam` associated type for some implementation of [`prio::vdaf::Vdaf`].
-        pub(crate) aggregation_param: P,
+        pub(crate) aggregation_param: A::AggregationParam,
         /// The aggregate over all the input shares that have been prepared so far by this
         /// aggregator. `A` is the `AggregateShare` associated type for some implementation of
         /// [`prio::vdaf::Vdaf`].
-        pub(crate) aggregate_share: A,
+        pub(crate) aggregate_share: A::AggregateShare,
         /// The number of reports currently included in this aggregate sahre.
         pub(crate) report_count: u64,
         /// Checksum over the aggregated report shares, as described in §4.4.4.3.
         pub(crate) checksum: [u8; 32],
+    }
+
+    impl<A: vdaf::Aggregator> PartialEq for BatchUnitAggregation<A>
+    where
+        A::AggregationParam: PartialEq,
+        A::AggregateShare: PartialEq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        fn eq(&self, other: &Self) -> bool {
+            self.task_id == other.task_id
+                && self.unit_interval_start == other.unit_interval_start
+                && self.aggregation_param == other.aggregation_param
+                && self.aggregate_share == other.aggregate_share
+                && self.report_count == other.report_count
+                && self.checksum == other.checksum
+        }
+    }
+
+    impl<A: vdaf::Aggregator> Eq for BatchUnitAggregation<A>
+    where
+        A::AggregationParam: Eq,
+        A::AggregateShare: Eq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
     }
 }
 
@@ -1745,7 +1769,7 @@ mod tests {
                 .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
                 .await
                 .unwrap();
-            assert_eq!(task, retrieved_task);
+            assert_eq!(Some(&task), retrieved_task.as_ref());
             want_tasks.insert(task_id, task);
         }
 
@@ -1768,7 +1792,7 @@ mod tests {
             task_id: TaskId::random(),
             nonce: Nonce {
                 time: Time(12345),
-                rand: 54321,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![
                 Extension {
@@ -1816,7 +1840,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(report, retrieved_report);
+        assert_eq!(Some(report), retrieved_report);
     }
 
     #[tokio::test]
@@ -1831,15 +1855,16 @@ mod tests {
                         TaskId::random(),
                         Nonce {
                             time: Time(12345),
-                            rand: 54321,
+                            rand: [1, 2, 3, 4, 5, 6, 7, 8],
                         },
                     )
                     .await
                 })
             })
-            .await;
+            .await
+            .unwrap();
 
-        assert_matches!(rslt, Err(Error::NotFound));
+        assert_eq!(rslt, None);
     }
 
     #[tokio::test]
@@ -1854,7 +1879,7 @@ mod tests {
             task_id,
             nonce: Nonce {
                 time: Time(12345),
-                rand: 0,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![],
             encrypted_input_shares: vec![],
@@ -1863,7 +1888,7 @@ mod tests {
             task_id,
             nonce: Nonce {
                 time: Time(12346),
-                rand: 0,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![],
             encrypted_input_shares: vec![],
@@ -1872,7 +1897,7 @@ mod tests {
             task_id,
             nonce: Nonce {
                 time: Time(12347),
-                rand: 0,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![],
             encrypted_input_shares: vec![],
@@ -1881,7 +1906,7 @@ mod tests {
             task_id: unrelated_task_id,
             nonce: Nonce {
                 time: Time(12348),
-                rand: 0,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![],
             encrypted_input_shares: vec![],
@@ -1971,7 +1996,7 @@ mod tests {
         let report_share = ReportShare {
             nonce: Nonce {
                 time: Time(12345),
-                rand: 54321,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![
                 Extension {
@@ -2009,7 +2034,7 @@ mod tests {
             .run_tx(|tx| {
                 Box::pin(async move {
                     let nonce_time = report_share.nonce.time.as_naive_date_time();
-                    let nonce_rand = report_share.nonce.rand.to_be_bytes();
+                    let nonce_rand = report_share.nonce.rand;
                     let row = tx
                         .tx
                         .query_one(
@@ -2081,7 +2106,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(aggregation_job, got_aggregation_job);
+        assert_eq!(Some(&aggregation_job), got_aggregation_job.as_ref());
 
         let mut new_aggregation_job = aggregation_job.clone();
         new_aggregation_job.state = AggregationJobState::Finished;
@@ -2104,7 +2129,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(new_aggregation_job, got_aggregation_job);
+        assert_eq!(Some(new_aggregation_job), got_aggregation_job);
     }
 
     #[tokio::test]
@@ -2122,8 +2147,9 @@ mod tests {
                     .await
                 })
             })
-            .await;
-        assert_matches!(rslt, Err(Error::NotFound));
+            .await
+            .unwrap();
+        assert_eq!(rslt, None);
 
         let rslt = ds
             .run_tx(|tx| {
@@ -2138,7 +2164,7 @@ mod tests {
                 })
             })
             .await;
-        assert_matches!(rslt, Err(Error::NotFound));
+        assert_matches!(rslt, Err(Error::MutationTargetNotFound));
     }
 
     #[tokio::test]
@@ -2246,7 +2272,7 @@ mod tests {
             let aggregation_job_id = AggregationJobId::random();
             let nonce = Nonce {
                 time: Time(12345),
-                rand: 54321,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             };
 
             let report_aggregation = ds
@@ -2309,7 +2335,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert_eq!(report_aggregation, got_report_aggregation);
+            assert_eq!(Some(&report_aggregation), got_report_aggregation.as_ref());
 
             let mut new_report_aggregation = report_aggregation.clone();
             new_report_aggregation.ord += 10;
@@ -2335,7 +2361,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert_eq!(new_report_aggregation, got_report_aggregation);
+            assert_eq!(Some(new_report_aggregation), got_report_aggregation);
         }
     }
 
@@ -2353,14 +2379,15 @@ mod tests {
                         AggregationJobId::random(),
                         Nonce {
                             time: Time(12345),
-                            rand: 54321,
+                            rand: [1, 2, 3, 4, 5, 6, 7, 8],
                         },
                     )
                     .await
                 })
             })
-            .await;
-        assert_matches!(rslt, Err(Error::NotFound));
+            .await
+            .unwrap();
+        assert_eq!(rslt, None);
 
         let rslt = ds
             .run_tx(|tx| {
@@ -2370,7 +2397,7 @@ mod tests {
                         task_id: TaskId::random(),
                         nonce: Nonce {
                             time: Time(12345),
-                            rand: 54321,
+                            rand: [1, 2, 3, 4, 5, 6, 7, 8],
                         },
                         ord: 0,
                         state: ReportAggregationState::Invalid,
@@ -2379,7 +2406,7 @@ mod tests {
                 })
             })
             .await;
-        assert_matches!(rslt, Err(Error::NotFound));
+        assert_matches!(rslt, Err(Error::MutationTargetNotFound));
     }
 
     #[tokio::test]
@@ -2426,7 +2453,7 @@ mod tests {
                     {
                         let nonce = Nonce {
                             time: Time(12345),
-                            rand: ord as u64,
+                            rand: (ord as u64).to_be_bytes(),
                         };
                         tx.put_report_share(
                             task_id,
@@ -2624,16 +2651,22 @@ mod tests {
     async fn roundtrip_batch_unit_aggregation() {
         install_test_trace_subscriber();
 
+        type ToyPoplar1 = Poplar1<ToyIdpf<Field64>, PrgAes128, 16>;
+
         let task_id = TaskId::random();
         let other_task_id = TaskId::random();
         let aggregate_share = AggregateShare::from(vec![Field64::from(17)]);
-        let aggregation_param = ();
+        let aggregation_param = BTreeSet::from([
+            IdpfInput::new("abc".as_bytes(), 0).unwrap(),
+            IdpfInput::new("def".as_bytes(), 1).unwrap(),
+        ]);
 
         let (ds, _db_handle) = ephemeral_datastore().await;
 
-        let batch_unit_aggregations: Vec<BatchUnitAggregation<_, AggregateShare<Field64>>> = ds
+        let batch_unit_aggregations: Vec<BatchUnitAggregation<ToyPoplar1>> = ds
             .run_tx(|tx| {
-                let aggregate_share = aggregate_share.clone();
+                let (aggregate_share, aggregation_param) =
+                    (aggregate_share.clone(), aggregation_param.clone());
                 Box::pin(async move {
                     let mut task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Leader);
                     task.min_batch_duration = Duration::from_seconds(100);
@@ -2647,30 +2680,30 @@ mod tests {
                     .await?;
 
                     // Start of this aggregation's interval is before the interval queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
                         unit_interval_start: Time(25),
-                        aggregation_param,
+                        aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
                     })
                     .await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
                         unit_interval_start: Time(100),
-                        aggregation_param,
+                        aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
                     })
                     .await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
                         unit_interval_start: Time(150),
-                        aggregation_param,
+                        aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
@@ -2678,11 +2711,13 @@ mod tests {
                     .await?;
 
                     // Aggregation parameter differs from the one queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
                         unit_interval_start: Time(100),
-                        // any value that is Encode + Debug will do, even a nonsense one
-                        aggregation_param: Time(100),
+                        aggregation_param: BTreeSet::from([
+                            IdpfInput::new("gh".as_bytes(), 2).unwrap(),
+                            IdpfInput::new("jk".as_bytes(), 3).unwrap(),
+                        ]),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
@@ -2690,10 +2725,10 @@ mod tests {
                     .await?;
 
                     // End of this aggregation's interval is after the interval queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
                         unit_interval_start: Time(200),
-                        aggregation_param,
+                        aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
@@ -2701,10 +2736,10 @@ mod tests {
                     .await?;
 
                     // Start of this aggregation's interval is after the interval queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
                         unit_interval_start: Time(400),
-                        aggregation_param,
+                        aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
@@ -2712,17 +2747,17 @@ mod tests {
                     .await?;
 
                     // Task ID differs from that queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id: other_task_id,
                         unit_interval_start: Time(200),
-                        aggregation_param,
+                        aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
                         checksum: [0; 32],
                     })
                     .await?;
 
-                    tx.get_batch_unit_aggregations_for_task_in_interval(
+                    tx.get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1>(
                         task_id,
                         Interval::new(Time(50), Duration(250)).unwrap(),
                         &aggregation_param,
@@ -2737,7 +2772,7 @@ mod tests {
         assert!(batch_unit_aggregations.contains(&BatchUnitAggregation {
             task_id,
             unit_interval_start: Time(100),
-            aggregation_param,
+            aggregation_param: aggregation_param.clone(),
             aggregate_share: aggregate_share.clone(),
             report_count: 0,
             checksum: [0u8; 32],
@@ -2745,7 +2780,7 @@ mod tests {
         assert!(batch_unit_aggregations.contains(&BatchUnitAggregation {
             task_id,
             unit_interval_start: Time(150),
-            aggregation_param,
+            aggregation_param: aggregation_param.clone(),
             aggregate_share: aggregate_share.clone(),
             report_count: 0,
             checksum: [0u8; 32],
