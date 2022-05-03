@@ -18,7 +18,7 @@ use crate::{
     time::Clock,
 };
 use bytes::Bytes;
-use futures::future;
+use futures::try_join;
 use http::{
     header::{CACHE_CONTROL, LOCATION},
     StatusCode,
@@ -75,6 +75,9 @@ pub enum Error {
     /// Corresponds to `unrecognizedTask`, §3.1
     #[error("unrecognized task: {0:?}")]
     UnrecognizedTask(TaskId),
+    /// An attempt was made to act on an unknown aggregation job.
+    #[error("unrecognized aggregation job: {0:?}")]
+    UnrecognizedAggregationJob(AggregationJobId, TaskId),
     /// Corresponds to `outdatedHpkeConfig`, §3.1
     #[error("outdated HPKE config: {0} {1:?}")]
     OutdatedHpkeConfig(HpkeConfigId, TaskId),
@@ -272,11 +275,8 @@ impl<C: Clock> Aggregator<C> {
         let task = self
             .datastore
             .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
-            .await
-            .map_err(|err| match err {
-                datastore::Error::NotFound => Error::UnrecognizedTask(task_id),
-                err => err.into(),
-            })?;
+            .await?
+            .ok_or(Error::UnrecognizedTask(task_id))?;
         let task_agg = Arc::new(TaskAggregator::new(task)?);
         {
             let mut task_aggs = self.task_aggregators.lock().await;
@@ -439,20 +439,18 @@ impl TaskAggregator {
             .run_tx(|tx| {
                 let report = report.clone();
                 Box::pin(async move {
-                    // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before
-                    match tx.get_client_report(report.task_id, report.nonce).await {
-                        Ok(_) => {
-                            warn!(?report.task_id, ?report.nonce, "report replayed");
-                            // TODO (issue #34): change this error type.
-                            return Err(datastore::Error::User(
-                                Error::StaleReport(report.nonce, report.task_id).into(),
-                            ));
-                        }
-
-                        Err(datastore::Error::NotFound) => (), // happy path
-
-                        Err(err) => return Err(err),
-                    };
+                    // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before.
+                    if tx
+                        .get_client_report(report.task_id, report.nonce)
+                        .await?
+                        .is_some()
+                    {
+                        warn!(?report.task_id, ?report.nonce, "Report replayed");
+                        // TODO (issue #34): change this error type.
+                        return Err(datastore::Error::User(
+                            Error::StaleReport(report.nonce, report.task_id).into(),
+                        ));
+                    }
 
                     // TODO: reject with `staleReport` reports whose timestamps fall in a
                     // batch interval that has already been collected (§4.3.2). We don't
@@ -866,15 +864,15 @@ impl VdafOps {
 
                 Box::pin(async move {
                     // Read existing state.
-                    let (mut aggregation_job, report_aggregations) = future::try_join(
+                    let (aggregation_job, report_aggregations) = try_join!(
                         tx.get_aggregation_job::<A>(task_id, job_id),
                         tx.get_report_aggregations_for_aggregation_job::<A>(
                             &verify_param,
                             task_id,
                             job_id,
                         ),
-                    )
-                    .await?;
+                    )?;
+                    let mut aggregation_job = aggregation_job.ok_or_else(|| datastore::Error::User(Error::UnrecognizedAggregationJob(job_id, task_id).into()))?;
 
                     // Handle each transition in the request.
                     let mut report_aggregations = report_aggregations.into_iter();
@@ -886,10 +884,10 @@ impl VdafOps {
                         let mut report_aggregation = loop {
                             let mut report_agg = report_aggregations.next().ok_or_else(|| {
                                 warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent unexpected, duplicate, or out-of-order transitions");
-                                datastore::Error::User(Box::new(Error::UnrecognizedMessage(
+                                datastore::Error::User(Error::UnrecognizedMessage(
                                     "leader sent unexpected, duplicate, or out-of-order transitions",
                                     Some(task_id),
-                                )))
+                                ).into())
                             })?;
                             if report_agg.nonce != transition.nonce {
                                 // This report was omitted by the leader because of a prior failure.
@@ -908,12 +906,12 @@ impl VdafOps {
                                 ReportAggregationState::Waiting(prep_step) => prep_step,
                                 _ => {
                                     warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent transition for non-WAITING report aggregation");
-                                    return Err(datastore::Error::User(Box::new(
+                                    return Err(datastore::Error::User(
                                         Error::UnrecognizedMessage(
                                             "leader sent transition for non-WAITING report aggregation",
                                             Some(task_id),
-                                        ),
-                                    )));
+                                        ).into()
+                                    ));
                                 },
                             };
 
@@ -928,12 +926,12 @@ impl VdafOps {
                             _ => {
                                 // TODO(brandon): should we record a state change in this case?
                                 warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent non-Continued transition");
-                                return Err(datastore::Error::User(Box::new(
+                                return Err(datastore::Error::User(
                                     Error::UnrecognizedMessage(
                                         "leader sent non-Continued transition",
                                         Some(task_id),
-                                    ),
-                                )));
+                                    ).into()
+                                ));
                             }
                         };
 
@@ -996,10 +994,10 @@ impl VdafOps {
                         (true, false) => AggregationJobState::InProgress,
                         (false, true) => AggregationJobState::Finished,
                         (true, true) => {
-                            return Err(datastore::Error::User(Box::new(Error::Internal(
+                            return Err(datastore::Error::User(Error::Internal(
                                 "VDAF took an inconsistent number of rounds to reach Finish state"
                                     .to_string(),
-                            ))))
+                            ).into()))
                         }
                     };
                     tx.update_aggregation_job(&aggregation_job).await?;
@@ -1203,6 +1201,7 @@ where
 enum PpmProblemType {
     UnrecognizedMessage,
     UnrecognizedTask,
+    UnrecognizedAggregationJob, // TODO: standardize this value
     OutdatedConfig,
     StaleReport,
     InvalidHmac,
@@ -1218,6 +1217,9 @@ impl PpmProblemType {
         match self {
             PpmProblemType::UnrecognizedMessage => "urn:ietf:params:ppm:error:unrecognizedMessage",
             PpmProblemType::UnrecognizedTask => "urn:ietf:params:ppm:error:unrecognizedTask",
+            PpmProblemType::UnrecognizedAggregationJob => {
+                "urn:ietf:params:ppm:error:unrecognizedAggregationJob"
+            }
             PpmProblemType::OutdatedConfig => "urn:ietf:params:ppm:error:outdatedConfig",
             PpmProblemType::StaleReport => "urn:ietf:params:ppm:error:staleReport",
             PpmProblemType::InvalidHmac => "urn:ietf:params:ppm:error:invalidHmac",
@@ -1242,6 +1244,9 @@ impl PpmProblemType {
             }
             PpmProblemType::UnrecognizedTask => {
                 "An endpoint received a message with an unknown task ID."
+            }
+            PpmProblemType::UnrecognizedAggregationJob => {
+                "An endpoint received a message with an unknown aggregation job ID."
             }
             PpmProblemType::OutdatedConfig => {
                 "The message was generated using an outdated configuration."
@@ -1320,6 +1325,10 @@ fn error_handler<R: Reply>() -> impl Fn(Result<R, Error>) -> warp::reply::Respon
             Err(Error::UnrecognizedTask(task_id)) => {
                 build_problem_details_response(PpmProblemType::UnrecognizedTask, Some(task_id))
             }
+            Err(Error::UnrecognizedAggregationJob(_, task_id)) => build_problem_details_response(
+                PpmProblemType::UnrecognizedAggregationJob,
+                Some(task_id),
+            ),
             Err(Error::OutdatedHpkeConfig(_, task_id)) => {
                 build_problem_details_response(PpmProblemType::OutdatedConfig, Some(task_id))
             }
@@ -2008,7 +2017,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(report, got_report);
+        assert_eq!(Some(&report), got_report.as_ref());
 
         // should reject duplicate reports.
         // TODO (issue #34): change this error type.
@@ -2108,7 +2117,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(report, got_report);
+        assert_eq!(Some(&report), got_report.as_ref());
 
         // Just past the clock skew
         report.nonce.time = aggregator
@@ -2746,12 +2755,12 @@ mod tests {
 
         assert_eq!(
             aggregation_job,
-            AggregationJob {
+            Some(AggregationJob {
                 aggregation_job_id,
                 task_id,
                 aggregation_param: (),
                 state: AggregationJobState::Finished,
-            }
+            })
         );
         assert_eq!(
             report_aggregations,
@@ -3004,22 +3013,22 @@ mod tests {
 
         assert_eq!(
             aggregation_job,
-            AggregationJob {
+            Some(AggregationJob {
                 aggregation_job_id,
                 task_id,
                 aggregation_param: (),
                 state: AggregationJobState::Finished,
-            }
+            })
         );
         assert_eq!(
             report_aggregation,
-            ReportAggregation {
+            Some(ReportAggregation {
                 aggregation_job_id,
                 task_id,
                 nonce,
                 ord: 0,
                 state: ReportAggregationState::Failed(TransitionError::VdafPrepError),
-            }
+            })
         );
     }
 
