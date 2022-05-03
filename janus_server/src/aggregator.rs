@@ -2548,7 +2548,7 @@ mod tests {
         let report_share = ReportShare {
             nonce: Nonce {
                 time: Time(54321),
-                rand: 314,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: Vec::new(),
             encrypted_input_share: HpkeCiphertext {
@@ -2787,7 +2787,7 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce {
             time: Time(54321),
-            rand: 314,
+            rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
         let (datastore, _db_handle) = ephemeral_datastore().await;
@@ -2888,7 +2888,7 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce {
             time: Time(54321),
-            rand: 314,
+            rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
         let task = new_dummy_task(task_id, Vdaf::FakeFailsPrepStep, Role::Helper);
         let (datastore, _db_handle) = ephemeral_datastore().await;
@@ -3036,7 +3036,7 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce {
             time: Time(54321),
-            rand: 314,
+            rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
         let (datastore, _db_handle) = ephemeral_datastore().await;
@@ -3093,7 +3093,7 @@ mod tests {
                 seq: vec![Transition {
                     nonce: Nonce {
                         time: Time(54321),
-                        rand: 315, // not the same as above
+                        rand: [8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
                     },
                     trans_data: TransitionTypeSpecificData::Continued {
                         payload: Vec::new(),
@@ -3141,11 +3141,11 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce_0 = Nonce {
             time: Time(54321),
-            rand: 314,
+            rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
         let nonce_1 = Nonce {
             time: Time(54321),
-            rand: 315,
+            rand: [8, 7, 6, 5, 4, 3, 2, 1],
         };
 
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
@@ -3281,7 +3281,7 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce {
             time: Time(54321),
-            rand: 314,
+            rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
 
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
@@ -3339,7 +3339,7 @@ mod tests {
                 seq: vec![Transition {
                     nonce: Nonce {
                         time: Time(54321),
-                        rand: 314,
+                        rand: [1, 2, 3, 4, 5, 6, 7, 8],
                     },
                     trans_data: TransitionTypeSpecificData::Continued {
                         payload: Vec::new(),
