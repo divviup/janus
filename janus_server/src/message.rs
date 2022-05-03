@@ -322,26 +322,27 @@ pub struct Nonce {
     /// The time at which the report was generated.
     pub(crate) time: Time,
     /// A randomly generated value.
-    pub(crate) rand: u64,
+    pub(crate) rand: [u8; 8],
 }
 
 impl Display for Nonce {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}", self.time, self.rand)
+        write!(f, "{}.{}", self.time, hex::encode(self.rand))
     }
 }
 
 impl Encode for Nonce {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.time.encode(bytes);
-        self.rand.encode(bytes);
+        bytes.extend_from_slice(&self.rand);
     }
 }
 
 impl Decode for Nonce {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let time = Time::decode(bytes)?;
-        let rand = u64::decode(bytes)?;
+        let mut rand = [0; 8];
+        bytes.read_exact(&mut rand)?;
 
         Ok(Self { time, rand })
     }
@@ -478,7 +479,21 @@ pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
 
 impl Debug for TaskId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(
+            f,
+            "TaskId({})",
+            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+        )
+    }
+}
+
+impl Display for TaskId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+        )
     }
 }
 
@@ -1163,7 +1178,7 @@ mod tests {
                     ReportShare {
                         nonce: Nonce {
                             time: Time(54321),
-                            rand: 314,
+                            rand: [0u8; 8],
                         },
                         extensions: vec![Extension {
                             extension_type: ExtensionType::Tbd,
@@ -1178,7 +1193,7 @@ mod tests {
                     ReportShare {
                         nonce: Nonce {
                             time: Time(73542),
-                            rand: 515,
+                            rand: [1u8; 8],
                         },
                         extensions: vec![Extension {
                             extension_type: ExtensionType::Tbd,
@@ -1243,7 +1258,7 @@ mod tests {
                 Transition {
                     nonce: Nonce {
                         time: Time(54372),
-                        rand: 53,
+                        rand: [0u8; 8],
                     },
                     trans_data: TransitionTypeSpecificData::Continued {
                         payload: Vec::from("012345"),
@@ -1252,7 +1267,7 @@ mod tests {
                 Transition {
                     nonce: Nonce {
                         time: Time(12345),
-                        rand: 413,
+                        rand: [1u8; 8],
                     },
                     trans_data: TransitionTypeSpecificData::Finished,
                 },
@@ -1554,7 +1569,7 @@ mod tests {
                     task_id: TaskId([u8::MIN; 32]),
                     nonce: Nonce {
                         time: Time(12345),
-                        rand: 413,
+                        rand: [1, 2, 3, 4, 5, 6, 7, 8],
                     },
                     extensions: vec![],
                     encrypted_input_shares: vec![],
@@ -1564,7 +1579,7 @@ mod tests {
                     concat!(
                         // nonce
                         "0000000000003039", // time
-                        "000000000000019D", // rand
+                        "0102030405060708", // rand
                     ),
                     concat!(
                         // extensions
@@ -1581,7 +1596,7 @@ mod tests {
                     task_id: TaskId([u8::MAX; 32]),
                     nonce: Nonce {
                         time: Time(54321),
-                        rand: 314,
+                        rand: [8, 7, 6, 5, 4, 3, 2, 1],
                     },
                     extensions: vec![Extension {
                         extension_type: ExtensionType::Tbd,
@@ -1604,7 +1619,7 @@ mod tests {
                     "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
                     concat!(
                         "000000000000D431", // time
-                        "000000000000013A", // rand
+                        "0807060504030201", // rand
                     ),
                     concat!(
                         // extensions
@@ -1699,7 +1714,7 @@ mod tests {
                 Transition {
                     nonce: Nonce {
                         time: Time(54372),
-                        rand: 53,
+                        rand: [1, 2, 3, 4, 5, 6, 7, 8],
                     },
                     trans_data: TransitionTypeSpecificData::Continued {
                         payload: Vec::from("012345"),
@@ -1709,7 +1724,7 @@ mod tests {
                     concat!(
                         // nonce
                         "000000000000D464", // time
-                        "0000000000000035", // rand
+                        "0102030405060708", // rand
                     ),
                     "00", // trans_type
                     concat!(
@@ -1723,7 +1738,7 @@ mod tests {
                 Transition {
                     nonce: Nonce {
                         time: Time(12345),
-                        rand: 413,
+                        rand: [8, 7, 6, 5, 4, 3, 2, 1],
                     },
                     trans_data: TransitionTypeSpecificData::Finished,
                 },
@@ -1731,7 +1746,7 @@ mod tests {
                     concat!(
                         // nonce
                         "0000000000003039", // time
-                        "000000000000019D", // rand
+                        "0807060504030201", // rand
                     ),
                     "01", // trans_type
                 ),
@@ -1740,7 +1755,7 @@ mod tests {
                 Transition {
                     nonce: Nonce {
                         time: Time(345078),
-                        rand: 98345,
+                        rand: [255; 8],
                     },
                     trans_data: TransitionTypeSpecificData::Failed {
                         error: TransitionError::UnrecognizedNonce,
@@ -1750,7 +1765,7 @@ mod tests {
                     concat!(
                         // nonce
                         "00000000000543F6", // time
-                        "0000000000018029", // rand
+                        "FFFFFFFFFFFFFFFF", // rand
                     ),
                     "02", // trans_type
                     "06", // trans_error
@@ -1806,7 +1821,7 @@ mod tests {
                             ReportShare {
                                 nonce: Nonce {
                                     time: Time(54321),
-                                    rand: 314,
+                                    rand: [1, 2, 3, 4, 5, 6, 7, 8],
                                 },
                                 extensions: vec![Extension {
                                     extension_type: ExtensionType::Tbd,
@@ -1821,7 +1836,7 @@ mod tests {
                             ReportShare {
                                 nonce: Nonce {
                                     time: Time(73542),
-                                    rand: 515,
+                                    rand: [8, 7, 6, 5, 4, 3, 2, 1],
                                 },
                                 extensions: vec![Extension {
                                     extension_type: ExtensionType::Tbd,
@@ -1854,7 +1869,7 @@ mod tests {
                                 concat!(
                                     // nonce
                                     "000000000000D431", // time
-                                    "000000000000013A", // rand
+                                    "0102030405060708", // rand
                                 ),
                                 concat!(
                                     // extensions
@@ -1887,7 +1902,7 @@ mod tests {
                                 concat!(
                                     // nonce
                                     "0000000000011F46", // time
-                                    "0000000000000203", // rand
+                                    "0807060504030201", // rand
                                 ),
                                 concat!(
                                     // extensions
@@ -1928,7 +1943,7 @@ mod tests {
                             Transition {
                                 nonce: Nonce {
                                     time: Time(54372),
-                                    rand: 53,
+                                    rand: [1, 2, 3, 4, 5, 6, 7, 8],
                                 },
                                 trans_data: TransitionTypeSpecificData::Continued {
                                     payload: Vec::from("012345"),
@@ -1937,7 +1952,7 @@ mod tests {
                             Transition {
                                 nonce: Nonce {
                                     time: Time(12345),
-                                    rand: 413,
+                                    rand: [8, 7, 6, 5, 4, 3, 2, 1],
                                 },
                                 trans_data: TransitionTypeSpecificData::Finished,
                             },
@@ -1957,7 +1972,7 @@ mod tests {
                                 concat!(
                                     // nonce
                                     "000000000000D464", // time
-                                    "0000000000000035", // rand
+                                    "0102030405060708", // rand
                                 ),
                                 "00", // trans_type
                                 concat!(
@@ -1970,7 +1985,7 @@ mod tests {
                                 concat!(
                                     // nonce
                                     "0000000000003039", // time
-                                    "000000000000019D", // rand
+                                    "0807060504030201", // rand
                                 ),
                                 "01", // trans_type
                             )
@@ -1997,7 +2012,7 @@ mod tests {
                         Transition {
                             nonce: Nonce {
                                 time: Time(54372),
-                                rand: 53,
+                                rand: [1, 2, 3, 4, 5, 6, 7, 8],
                             },
                             trans_data: TransitionTypeSpecificData::Continued {
                                 payload: Vec::from("012345"),
@@ -2006,7 +2021,7 @@ mod tests {
                         Transition {
                             nonce: Nonce {
                                 time: Time(12345),
-                                rand: 413,
+                                rand: [8, 7, 6, 5, 4, 3, 2, 1],
                             },
                             trans_data: TransitionTypeSpecificData::Finished,
                         },
@@ -2019,7 +2034,7 @@ mod tests {
                         concat!(
                             // nonce
                             "000000000000D464", // time
-                            "0000000000000035", // rand
+                            "0102030405060708", // rand
                         ),
                         "00", // trans_type
                         concat!(
@@ -2032,7 +2047,7 @@ mod tests {
                         concat!(
                             // nonce
                             "0000000000003039", // time
-                            "000000000000019D", // rand
+                            "0807060504030201", // rand
                         ),
                         "01", // trans_type
                     ),

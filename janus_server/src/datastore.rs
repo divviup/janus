@@ -451,7 +451,7 @@ impl Transaction<'_> {
                 &[
                     /* task_id */ &&task_id.0[..],
                     /* nonce_time */ &nonce.time.as_naive_date_time(),
-                    /* nonce_rand */ &&nonce.rand.to_be_bytes()[..],
+                    /* nonce_rand */ &&nonce.rand[..],
                 ],
             )
             .await?
@@ -478,7 +478,7 @@ impl Transaction<'_> {
     #[tracing::instrument(skip(self), err)]
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
         let nonce_time = report.nonce.time.as_naive_date_time();
-        let nonce_rand = report.nonce.rand.to_be_bytes();
+        let nonce_rand = report.nonce.rand;
 
         let mut encoded_extensions = Vec::new();
         encode_u16_items(&mut encoded_extensions, &(), &report.extensions);
@@ -522,7 +522,7 @@ impl Transaction<'_> {
         report_share: &ReportShare,
     ) -> Result<(), Error> {
         let nonce_time = report_share.nonce.time.as_naive_date_time();
-        let nonce_rand = report_share.nonce.rand.to_be_bytes();
+        let nonce_rand = report_share.nonce.rand;
 
         let stmt = self
             .tx
@@ -660,7 +660,7 @@ impl Transaction<'_> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let nonce_time = nonce.time.as_naive_date_time();
-        let nonce_rand = &nonce.rand.to_be_bytes()[..];
+        let nonce_rand = &nonce.rand[..];
 
         let stmt = self
             .tx
@@ -740,7 +740,7 @@ impl Transaction<'_> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let nonce_time = report_aggregation.nonce.time.as_naive_date_time();
-        let nonce_rand = &report_aggregation.nonce.rand.to_be_bytes()[..];
+        let nonce_rand = &report_aggregation.nonce.rand[..];
         let state_code = report_aggregation.state.state_code();
         let (vdaf_message, error_code) = match &report_aggregation.state {
             ReportAggregationState::Start => (None, None),
@@ -788,7 +788,7 @@ impl Transaction<'_> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let nonce_time = report_aggregation.nonce.time.as_naive_date_time();
-        let nonce_rand = &report_aggregation.nonce.rand.to_be_bytes()[..];
+        let nonce_rand = &report_aggregation.nonce.rand[..];
         let state_code = report_aggregation.state.state_code();
         let (vdaf_message, error_code) = match &report_aggregation.state {
             ReportAggregationState::Start => (None, None),
@@ -1046,9 +1046,12 @@ where
     A::OutputShare: for<'a> TryFrom<&'a [u8]>,
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
+    let nonce_rand: Vec<u8> = row.get("nonce_rand");
     let nonce = Nonce {
         time: Time::from_naive_date_time(row.get("nonce_time")),
-        rand: row.get_bytea_as_u64("nonce_rand")?,
+        rand: nonce_rand.try_into().map_err(|err| {
+            Error::DbState(format!("couldn't convert nonce_rand value: {0:?}", err))
+        })?,
     };
     let ord: i64 = row.get("ord");
     let state: ReportAggregationStateCode = row.get("state");
@@ -1681,7 +1684,7 @@ mod tests {
             task_id: TaskId::random(),
             nonce: Nonce {
                 time: Time(12345),
-                rand: 54321,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![
                 Extension {
@@ -1744,7 +1747,7 @@ mod tests {
                         TaskId::random(),
                         Nonce {
                             time: Time(12345),
-                            rand: 54321,
+                            rand: [1, 2, 3, 4, 5, 6, 7, 8],
                         },
                     )
                     .await
@@ -1765,7 +1768,7 @@ mod tests {
         let report_share = ReportShare {
             nonce: Nonce {
                 time: Time(12345),
-                rand: 54321,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![
                 Extension {
@@ -1803,7 +1806,7 @@ mod tests {
             .run_tx(|tx| {
                 Box::pin(async move {
                     let nonce_time = report_share.nonce.time.as_naive_date_time();
-                    let nonce_rand = report_share.nonce.rand.to_be_bytes();
+                    let nonce_rand = report_share.nonce.rand;
                     let row = tx
                         .tx
                         .query_one(
@@ -1958,7 +1961,7 @@ mod tests {
             let aggregation_job_id = AggregationJobId::random();
             let nonce = Nonce {
                 time: Time(12345),
-                rand: 54321,
+                rand: [1, 2, 3, 4, 5, 6, 7, 8],
             };
 
             let report_aggregation = ds
@@ -2065,7 +2068,7 @@ mod tests {
                         AggregationJobId::random(),
                         Nonce {
                             time: Time(12345),
-                            rand: 54321,
+                            rand: [1, 2, 3, 4, 5, 6, 7, 8],
                         },
                     )
                     .await
@@ -2083,7 +2086,7 @@ mod tests {
                         task_id: TaskId::random(),
                         nonce: Nonce {
                             time: Time(12345),
-                            rand: 54321,
+                            rand: [1, 2, 3, 4, 5, 6, 7, 8],
                         },
                         ord: 0,
                         state: ReportAggregationState::Invalid,
@@ -2139,7 +2142,7 @@ mod tests {
                     {
                         let nonce = Nonce {
                             time: Time(12345),
-                            rand: ord as u64,
+                            rand: (ord as u64).to_be_bytes(),
                         };
                         tx.put_report_share(
                             task_id,
