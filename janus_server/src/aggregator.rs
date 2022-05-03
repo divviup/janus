@@ -1292,7 +1292,7 @@ fn build_problem_details_response(error_type: PpmProblemType, task_id: Option<Ta
                 // the instance member, thus ".." will always refer to the aggregator's endpoint,
                 // as required by §3.1.
                 "instance": "..",
-                "taskid": task_id.map(|tid| base64::encode(tid.as_bytes())),
+                "taskid": task_id.map(|tid| format!("{}", tid)),
             })),
             http::header::CONTENT_TYPE,
             PROBLEM_DETAILS_JSON_MEDIA_TYPE,
@@ -1775,10 +1775,7 @@ mod tests {
         let want_hpke_key = current_hpke_key(&task.hpke_keys).clone();
 
         let response = warp::test::request()
-            .path(&format!(
-                "/hpke_config?task_id={}",
-                base64::encode_config(&task_id.0[..], base64::URL_SAFE_NO_PAD)
-            ))
+            .path(&format!("/hpke_config?task_id={}", task_id))
             .method("GET")
             .filter(&aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap())
             .await
@@ -1908,7 +1905,7 @@ mod tests {
                 "title": "Report could not be processed because it arrived too late.",
                 "detail": "Report could not be processed because it arrived too late.",
                 "instance": "..",
-                "taskid": base64::encode(report.task_id.as_bytes()),
+                "taskid": format!("{}", report.task_id),
             })
         );
         assert_eq!(
@@ -1940,7 +1937,7 @@ mod tests {
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
-                "taskid": base64::encode(report.task_id.as_bytes()),
+                "taskid": format!("{}", report.task_id),
             })
         );
         assert_eq!(
@@ -1973,7 +1970,7 @@ mod tests {
                 "title": "The message was generated using an outdated configuration.",
                 "detail": "The message was generated using an outdated configuration.",
                 "instance": "..",
-                "taskid": base64::encode(report.task_id.as_bytes()),
+                "taskid": format!("{}", report.task_id),
             })
         );
         assert_eq!(
@@ -2039,7 +2036,7 @@ mod tests {
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
         assert_eq!(
@@ -2258,7 +2255,7 @@ mod tests {
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
         assert_eq!(
@@ -2322,7 +2319,7 @@ mod tests {
                 "title": "The aggregate message's HMAC was not valid.",
                 "detail": "The aggregate message's HMAC was not valid.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
         assert_eq!(want_status, parts.status.as_u16());
@@ -2669,7 +2666,7 @@ mod tests {
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
         assert_eq!(want_status, parts.status.as_u16());
@@ -2951,7 +2948,7 @@ mod tests {
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
     }
@@ -3204,7 +3201,7 @@ mod tests {
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
     }
@@ -3344,7 +3341,7 @@ mod tests {
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
     }
@@ -3450,7 +3447,7 @@ mod tests {
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
     }
@@ -3504,7 +3501,7 @@ mod tests {
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
     }
@@ -3563,7 +3560,7 @@ mod tests {
                 "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
                 "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
     }
@@ -3660,7 +3657,7 @@ mod tests {
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
     }
@@ -3721,7 +3718,7 @@ mod tests {
                 "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
                 "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
     }
@@ -3786,7 +3783,7 @@ mod tests {
                 "title": "There are not enough reports in the batch interval.",
                 "detail": "There are not enough reports in the batch interval.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
 
@@ -3860,7 +3857,7 @@ mod tests {
                 "title": "There are not enough reports in the batch interval.",
                 "detail": "There are not enough reports in the batch interval.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
 
@@ -3894,7 +3891,7 @@ mod tests {
                 "title": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
                 "detail": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
 
@@ -3928,7 +3925,7 @@ mod tests {
                 "title": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
                 "detail": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
                 "instance": "..",
-                "taskid": base64::encode(task_id.as_bytes()),
+                "taskid": format!("{}", task_id),
             })
         );
 
@@ -4008,7 +4005,7 @@ mod tests {
                     "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
                     "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
                     "instance": "..",
-                    "taskid": base64::encode(task_id.as_bytes()),
+                    "taskid": format!("{}", task_id),
                 })
             );
         }

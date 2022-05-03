@@ -478,7 +478,21 @@ pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
 
 impl Debug for TaskId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(
+            f,
+            "TaskId({})",
+            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+        )
+    }
+}
+
+impl Display for TaskId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+        )
     }
 }
 
@@ -585,7 +599,7 @@ impl Decode for HpkeAeadId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
         Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeKemId value {}", val).into()))
+            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeAeadId value {}", val).into()))
     }
 }
 
