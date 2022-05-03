@@ -480,7 +480,7 @@ impl Transaction<'_> {
         &self,
         task_id: TaskId,
     ) -> Result<Vec<Nonce>, Error> {
-        // We choose to return the newest client reports first (LIFO). The goal is to maintiain
+        // We choose to return the newest client reports first (LIFO). The goal is to maintain
         // throughput even if we begin to fall behind enough that reports are too old to be
         // aggregated.
         //
