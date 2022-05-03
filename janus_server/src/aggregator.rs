@@ -2553,7 +2553,7 @@ mod tests {
 
         let report_share = ReportShare {
             nonce: Nonce {
-                time: Time(54321),
+                time: Time::from_timestamp(54321),
                 rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: Vec::new(),
@@ -2792,7 +2792,7 @@ mod tests {
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce {
-            time: Time(54321),
+            time: Time::from_timestamp(54321),
             rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
@@ -2893,7 +2893,7 @@ mod tests {
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce {
-            time: Time(54321),
+            time: Time::from_timestamp(54321),
             rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
         let task = new_dummy_task(task_id, Vdaf::FakeFailsPrepStep, Role::Helper);
@@ -3041,7 +3041,7 @@ mod tests {
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce {
-            time: Time(54321),
+            time: Time::from_timestamp(54321),
             rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
@@ -3098,7 +3098,7 @@ mod tests {
             body: AggregateContinueReq {
                 seq: vec![Transition {
                     nonce: Nonce {
-                        time: Time(54321),
+                        time: Time::from_timestamp(54321),
                         rand: [8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
                     },
                     trans_data: TransitionTypeSpecificData::Continued {
@@ -3146,11 +3146,11 @@ mod tests {
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
         let nonce_0 = Nonce {
-            time: Time(54321),
+            time: Time::from_timestamp(54321),
             rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
         let nonce_1 = Nonce {
-            time: Time(54321),
+            time: Time::from_timestamp(54321),
             rand: [8, 7, 6, 5, 4, 3, 2, 1],
         };
 
@@ -3286,7 +3286,7 @@ mod tests {
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce {
-            time: Time(54321),
+            time: Time::from_timestamp(54321),
             rand: [1, 2, 3, 4, 5, 6, 7, 8],
         };
 
@@ -3344,7 +3344,7 @@ mod tests {
             body: AggregateContinueReq {
                 seq: vec![Transition {
                     nonce: Nonce {
-                        time: Time(54321),
+                        time: Time::from_timestamp(54321),
                         rand: [1, 2, 3, 4, 5, 6, 7, 8],
                     },
                     trans_data: TransitionTypeSpecificData::Continued {
@@ -3407,7 +3407,8 @@ mod tests {
 
         let request = CollectReq {
             task_id,
-            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
+            batch_interval: Interval::new(Time::from_timestamp(0), task.min_batch_duration)
+                .unwrap(),
             agg_param: vec![],
         };
 
@@ -3462,9 +3463,9 @@ mod tests {
         let request = CollectReq {
             task_id,
             batch_interval: Interval::new(
-                Time(0),
+                Time::from_timestamp(0),
                 // Collect request will be rejected because batch interval is too small
-                Duration(task.min_batch_duration.0 - 1),
+                Duration::from_seconds(task.min_batch_duration.as_seconds() - 1),
             )
             .unwrap(),
             agg_param: vec![],
@@ -3519,7 +3520,8 @@ mod tests {
 
         let request = CollectReq {
             task_id,
-            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
+            batch_interval: Interval::new(Time::from_timestamp(0), task.min_batch_duration)
+                .unwrap(),
             agg_param: vec![],
         };
 
@@ -3561,7 +3563,8 @@ mod tests {
 
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
+            batch_interval: Interval::new(Time::from_timestamp(0), task.min_batch_duration)
+                .unwrap(),
             aggregation_param: vec![],
             report_count: 0,
             checksum: [0; 32],
@@ -3618,9 +3621,9 @@ mod tests {
         let request = AggregateShareReq {
             task_id,
             batch_interval: Interval::new(
-                Time(0),
+                Time::from_timestamp(0),
                 // Collect request will be rejected because batch interval is too small
-                Duration(task.min_batch_duration.0 - 1),
+                Duration::from_seconds(task.min_batch_duration.as_seconds() - 1),
             )
             .unwrap(),
             aggregation_param: vec![],
@@ -3687,7 +3690,8 @@ mod tests {
         // There are no batch unit_aggregations in the datastore yet
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval::new(Time(0), task.min_batch_duration).unwrap(),
+            batch_interval: Interval::new(Time::from_timestamp(0), task.min_batch_duration)
+                .unwrap(),
             aggregation_param: vec![],
             report_count: 0,
             checksum: [0; 32],
@@ -3724,7 +3728,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
                         task_id,
-                        unit_interval_start: Time(500),
+                        unit_interval_start: Time::from_timestamp(500),
                         aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(64)]),
                         report_count: 5,
@@ -3734,7 +3738,7 @@ mod tests {
 
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
                         task_id,
-                        unit_interval_start: Time(1500),
+                        unit_interval_start: Time::from_timestamp(1500),
                         aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(128)]),
                         report_count: 5,
@@ -3744,7 +3748,7 @@ mod tests {
 
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
                         task_id,
-                        unit_interval_start: Time(2000),
+                        unit_interval_start: Time::from_timestamp(2000),
                         aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(256)]),
                         report_count: 5,
@@ -3761,7 +3765,8 @@ mod tests {
         // Specified interval includes too few reports
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval::new(Time(0), Duration(1000)).unwrap(),
+            batch_interval: Interval::new(Time::from_timestamp(0), Duration::from_seconds(1000))
+                .unwrap(),
             aggregation_param: vec![],
             report_count: 5,
             checksum: [0; 32],
@@ -3795,7 +3800,8 @@ mod tests {
         // Interval is big enough, but checksum doesn't match
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval::new(Time(0), Duration(2500)).unwrap(),
+            batch_interval: Interval::new(Time::from_timestamp(0), Duration::from_seconds(2500))
+                .unwrap(),
             aggregation_param: vec![],
             report_count: 10,
             checksum: [3; 32],
@@ -3829,7 +3835,8 @@ mod tests {
         // Interval is big enough, but report count doesn't match
         let request = AggregateShareReq {
             task_id,
-            batch_interval: Interval::new(Time(0), Duration(2500)).unwrap(),
+            batch_interval: Interval::new(Time::from_timestamp(0), Duration::from_seconds(2500))
+                .unwrap(),
             aggregation_param: vec![],
             report_count: 20,
             checksum: [3 ^ 2; 32],
@@ -3861,7 +3868,8 @@ mod tests {
         );
 
         // Interval is big enough, checksum and report count are good
-        let batch_interval = Interval::new(Time(0), Duration(2500)).unwrap();
+        let batch_interval =
+            Interval::new(Time::from_timestamp(0), Duration::from_seconds(2500)).unwrap();
         let request = AggregateShareReq {
             task_id,
             batch_interval,

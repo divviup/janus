@@ -163,12 +163,17 @@ fn authenticated_decode<M: Decode>(
 
 /// PPM protocol message representing a duration with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Duration(pub(crate) u64);
+pub struct Duration(u64);
 
 impl Duration {
     /// Create a duration representing the provided number of seconds.
     pub fn from_seconds(seconds: u64) -> Self {
         Self(seconds)
+    }
+
+    /// Get the number of seconds this duration represents.
+    pub fn as_seconds(self) -> u64 {
+        self.0
     }
 
     /// Create a duration representing the provided number of minutes.
@@ -208,19 +213,31 @@ impl Display for Duration {
 
 /// PPM protocol message representing an instant in time with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Time(pub(crate) u64);
+pub struct Time(u64);
 
 impl Time {
-    pub(crate) fn as_naive_date_time(&self) -> NaiveDateTime {
+    /// Convert this [`Time`] into a [`NaiveDateTime`], representing an instant in the UTC timezone.
+    pub fn as_naive_date_time(&self) -> NaiveDateTime {
         NaiveDateTime::from_timestamp(self.0 as i64, 0)
     }
 
+    /// Convert a [`NaiveDateTime`] representing an instant in the UTC timezone into a [`Time`].
     pub fn from_naive_date_time(time: NaiveDateTime) -> Self {
         Self(time.timestamp() as u64)
     }
 
+    /// Get the Unix timestamp represented by this [`Time`] (in seconds).
+    pub fn as_timestamp(&self) -> u64 {
+        self.0
+    }
+
+    /// Construct a [`Time`] from a Unix timestamp (in seconds).
+    pub fn from_timestamp(timestamp: u64) -> Self {
+        Self(timestamp)
+    }
+
     /// Add the provided duration to this time.
-    pub(crate) fn add(&self, duration: Duration) -> Result<Self, Error> {
+    pub fn add(&self, duration: Duration) -> Result<Self, Error> {
         self.0
             .checked_add(duration.0)
             .map(Self)
@@ -253,7 +270,7 @@ impl Time {
     }
 
     /// Returns true if this [`Time`] occurs after `time`.
-    pub(crate) fn is_after(&self, time: Time) -> bool {
+    pub fn is_after(&self, time: Time) -> bool {
         self.0 > time.0
     }
 }
@@ -289,22 +306,24 @@ pub struct Interval {
 impl Interval {
     /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end
     /// of the interval cannot be represented as a [`Time`].
-    pub(crate) fn new(start: Time, duration: Duration) -> Result<Self, Error> {
+    pub fn new(start: Time, duration: Duration) -> Result<Self, Error> {
         start.add(duration)?;
 
         Ok(Self { start, duration })
     }
 
-    pub(crate) fn start(&self) -> Time {
+    /// Returns a [`Time`] representing the included start of this interval.
+    pub fn start(&self) -> Time {
         self.start
     }
 
-    pub(crate) fn duration(&self) -> Duration {
+    /// Get the duration of this interval.
+    pub fn duration(&self) -> Duration {
         self.duration
     }
 
     /// Returns a [`Time`] representing the excluded end of this interval.
-    pub(crate) fn end(&self) -> Time {
+    pub fn end(&self) -> Time {
         // [`Self::new`] verified that this addition doesn't overflow.
         self.start.add(self.duration).unwrap()
     }

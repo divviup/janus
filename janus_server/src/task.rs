@@ -196,11 +196,11 @@ impl Task {
     /// Returns true if `batch_interval` is valid, per §4.6 of draft-gpew-priv-ppm.
     pub(crate) fn validate_batch_interval(&self, batch_interval: Interval) -> bool {
         // Batch interval should be greater than task's minimum batch duration
-        batch_interval.duration().0 >= self.min_batch_duration.0
+        batch_interval.duration().as_seconds() >= self.min_batch_duration.as_seconds()
             // Batch interval start must be a multiple of minimum batch duration
-            && batch_interval.start().0 % self.min_batch_duration.0 == 0
+            && batch_interval.start().as_timestamp() % self.min_batch_duration.as_seconds() == 0
             // Batch interval duration must be a multiple of minimum batch duration
-            && batch_interval.duration().0 % self.min_batch_duration.0 == 0
+            && batch_interval.duration().as_seconds() % self.min_batch_duration.as_seconds() == 0
     }
 }
 
@@ -312,7 +312,7 @@ mod tests {
             TestCase {
                 name: "same duration as minimum",
                 input: Interval::new(
-                    Time(min_batch_duration_secs),
+                    Time::from_timestamp(min_batch_duration_secs),
                     Duration::from_seconds(min_batch_duration_secs),
                 )
                 .unwrap(),
@@ -321,7 +321,7 @@ mod tests {
             TestCase {
                 name: "interval too short",
                 input: Interval::new(
-                    Time(min_batch_duration_secs),
+                    Time::from_timestamp(min_batch_duration_secs),
                     Duration::from_seconds(min_batch_duration_secs - 1),
                 )
                 .unwrap(),
@@ -330,7 +330,7 @@ mod tests {
             TestCase {
                 name: "interval larger than minimum",
                 input: Interval::new(
-                    Time(min_batch_duration_secs),
+                    Time::from_timestamp(min_batch_duration_secs),
                     Duration::from_seconds(min_batch_duration_secs * 2),
                 )
                 .unwrap(),
@@ -339,7 +339,7 @@ mod tests {
             TestCase {
                 name: "interval duration not aligned with minimum",
                 input: Interval::new(
-                    Time(min_batch_duration_secs),
+                    Time::from_timestamp(min_batch_duration_secs),
                     Duration::from_seconds(min_batch_duration_secs + 1800),
                 )
                 .unwrap(),
@@ -347,8 +347,11 @@ mod tests {
             },
             TestCase {
                 name: "interval start not aligned with minimum",
-                input: Interval::new(Time(1800), Duration::from_seconds(min_batch_duration_secs))
-                    .unwrap(),
+                input: Interval::new(
+                    Time::from_timestamp(1800),
+                    Duration::from_seconds(min_batch_duration_secs),
+                )
+                .unwrap(),
                 expected: false,
             },
         ];
