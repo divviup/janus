@@ -117,7 +117,7 @@ impl Transaction<'_> {
 
         let encrypted_vdaf_verify_param = self.crypter.encrypt(
             "tasks",
-            &task.id.0,
+            task.id.as_bytes(),
             "vdaf_verify_param",
             &task.vdaf_verify_parameter,
         )?;
@@ -136,7 +136,7 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    &&task.id.0[..],                           // task_id
+                    &task.id.as_bytes(),                       // task_id
                     &aggregator_role,                          // aggregator_role
                     &endpoints,                                // aggregator_endpoints
                     &Json(&task.vdaf),                         // vdaf
@@ -157,7 +157,7 @@ impl Transaction<'_> {
             let ord = i64::try_from(ord)?;
 
             let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task.id.0[..]);
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_bytes());
             row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
 
             let encrypted_agg_auth_key =
@@ -173,7 +173,7 @@ impl Transaction<'_> {
             )
             .await?;
         let auth_keys_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &&task.id.0[..],
+            /* task_id */ &task.id.as_bytes(),
             /* ords */ &agg_auth_key_ords,
             /* keys */ &agg_auth_keys,
         ];
@@ -185,7 +185,7 @@ impl Transaction<'_> {
         let mut hpke_private_keys: Vec<Vec<u8>> = Vec::new();
         for (hpke_config, hpke_private_key) in task.hpke_keys.values() {
             let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task.id.0);
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_bytes());
             row_id[TaskId::ENCODED_LEN..].copy_from_slice(&hpke_config.id.0.to_be_bytes());
 
             let encrypted_hpke_private_key = self.crypter.encrypt(
@@ -207,7 +207,7 @@ impl Transaction<'_> {
             )
             .await?;
         let hpke_configs_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &&task.id.0[..],
+            /* task_id */ &task.id.as_bytes(),
             /* config_id */ &hpke_config_ids,
             /* configs */ &hpke_configs,
             /* private_keys */ &hpke_private_keys,
@@ -222,7 +222,7 @@ impl Transaction<'_> {
     /// Fetch the task parameters corresponing to the provided `task_id`.
     #[tracing::instrument(skip(self), err)]
     pub(crate) async fn get_task(&self, task_id: TaskId) -> Result<Option<Task>, Error> {
-        let params: &[&(dyn ToSql + Sync)] = &[&&task_id.0[..]];
+        let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_bytes()];
         let stmt = self
             .tx
             .prepare_cached(
@@ -381,7 +381,7 @@ impl Transaction<'_> {
             let encrypted_agg_auth_key: Vec<u8> = row.get("key");
 
             let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task_id.0[..]);
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task_id.as_bytes());
             row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
 
             agg_auth_keys.push(AggregatorAuthKey::new(&self.crypter.decrypt(
@@ -400,7 +400,7 @@ impl Transaction<'_> {
             let encrypted_private_key: Vec<u8> = row.get("private_key");
 
             let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(&task_id.0);
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task_id.as_bytes());
             row_id[TaskId::ENCODED_LEN..].copy_from_slice(&config_id.to_be_bytes());
 
             let private_key = HpkePrivateKey::new(self.crypter.decrypt(
@@ -448,7 +448,7 @@ impl Transaction<'_> {
             .query_opt(
                 &stmt,
                 &[
-                    /* task_id */ &&task_id.0[..],
+                    /* task_id */ &task_id.as_bytes(),
                     /* nonce_time */ &nonce.time.as_naive_date_time(),
                     /* nonce_rand */ &&nonce.rand[..],
                 ],
@@ -499,7 +499,7 @@ impl Transaction<'_> {
                 ORDER BY nonce_time DESC LIMIT 5000",
             )
             .await?;
-        let rows = self.tx.query(&stmt, &[&&task_id.0[..]]).await?;
+        let rows = self.tx.query(&stmt, &[&task_id.as_bytes()]).await?;
 
         rows.into_iter()
             .map(|row| {
@@ -606,8 +606,8 @@ impl Transaction<'_> {
             .query_opt(
                 &stmt,
                 &[
-                    /* task_id */ &&task_id.0[..],
-                    /* aggregation_job_id */ &&aggregation_job_id.0[..],
+                    /* task_id */ &task_id.as_bytes(),
+                    /* aggregation_job_id */ &aggregation_job_id.as_bytes(),
                 ],
             )
             .await?
@@ -635,7 +635,7 @@ impl Transaction<'_> {
             )
             .await?;
         self.tx
-            .query(&stmt, &[/* task_id */ &&task_id.0[..]])
+            .query(&stmt, &[/* task_id */ &task_id.as_bytes()])
             .await?
             .into_iter()
             .map(|row| {
@@ -682,8 +682,8 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    /* aggregation_job_id */ &&aggregation_job.aggregation_job_id.0[..],
-                    /* task_id */ &&aggregation_job.task_id.0[..],
+                    /* aggregation_job_id */ &aggregation_job.aggregation_job_id.as_bytes(),
+                    /* task_id */ &aggregation_job.task_id.as_bytes(),
                     /* aggregation_param */ &aggregation_job.aggregation_param.get_encoded(),
                     /* state */ &aggregation_job.state,
                 ],
@@ -716,8 +716,9 @@ impl Transaction<'_> {
                         /* aggregation_param */
                         &aggregation_job.aggregation_param.get_encoded(),
                         /* state */ &aggregation_job.state,
-                        /* aggregation_job_id */ &&aggregation_job.aggregation_job_id.0[..],
-                        /* task_id */ &&aggregation_job.task_id.0[..],
+                        /* aggregation_job_id */
+                        &aggregation_job.aggregation_job_id.as_bytes(),
+                        /* task_id */ &aggregation_job.task_id.as_bytes(),
                     ],
                 )
                 .await?,
@@ -757,8 +758,8 @@ impl Transaction<'_> {
             .query_opt(
                 &stmt,
                 &[
-                    /* aggregation_job_id */ &&aggregation_job_id.0[..],
-                    /* task_id */ &&task_id.0[..],
+                    /* aggregation_job_id */ &aggregation_job_id.as_bytes(),
+                    /* task_id */ &task_id.as_bytes(),
                     /* nonce_time */ &nonce_time,
                     /* nonce_rand */ &nonce_rand,
                 ],
@@ -797,8 +798,8 @@ impl Transaction<'_> {
             .query(
                 &stmt,
                 &[
-                    /* aggregation_job_id */ &&aggregation_job_id.0[..],
-                    /* task_id */ &&task_id.0[..],
+                    /* aggregation_job_id */ &aggregation_job_id.as_bytes(),
+                    /* task_id */ &task_id.as_bytes(),
                 ],
             )
             .await?
@@ -842,8 +843,9 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    /* aggregation_job_id */ &&report_aggregation.aggregation_job_id.0[..],
-                    /* task_id */ &&report_aggregation.task_id.0[..],
+                    /* aggregation_job_id */
+                    &report_aggregation.aggregation_job_id.as_bytes(),
+                    /* task_id */ &report_aggregation.task_id.as_bytes(),
                     /* nonce_time */ &nonce_time,
                     /* nonce_rand */ &nonce_rand,
                     /* ord */ &report_aggregation.ord,
@@ -897,8 +899,8 @@ impl Transaction<'_> {
                         /* vdaf_message */ &vdaf_message,
                         /* error_code */ &error_code,
                         /* aggregation_job_id */
-                        &&report_aggregation.aggregation_job_id.0[..],
-                        /* task_id */ &&report_aggregation.task_id.0[..],
+                        &report_aggregation.aggregation_job_id.as_bytes(),
+                        /* task_id */ &report_aggregation.task_id.as_bytes(),
                         /* nonce_time */ &nonce_time,
                         /* nonce_rand */ &nonce_rand,
                     ],
@@ -934,7 +936,7 @@ impl Transaction<'_> {
             .query_opt(
                 &stmt,
                 &[
-                    /* task_id */ &&task_id.0[..],
+                    /* task_id */ &task_id.as_bytes(),
                     &batch_interval_start,
                     &batch_interval_duration,
                     /* aggregation_param */ &encoded_aggregation_parameter,
@@ -972,7 +974,7 @@ impl Transaction<'_> {
                 &stmt,
                 &[
                     /* collect_job_id */ &collect_job_id,
-                    /* task_id */ &&task_id.0[..],
+                    /* task_id */ &task_id.as_bytes(),
                     &batch_interval_start,
                     &batch_interval_duration,
                     /* aggregation_param */ &encoded_aggregation_parameter,
@@ -1012,7 +1014,7 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &&batch_aggregation.task_id.0[..],
+                    /* task_id */ &batch_aggregation.task_id.as_bytes(),
                     &unit_interval_start,
                     /* aggregation_param */ &encoded_aggregation_param,
                     /* aggregate_share */ &encoded_aggregate_share,
@@ -1062,7 +1064,7 @@ impl Transaction<'_> {
             .query(
                 &stmt,
                 &[
-                    /* task_id */ &&task_id.0[..],
+                    /* task_id */ &task_id.as_bytes(),
                     &unit_interval_start,
                     &unit_interval_end,
                     /* aggregation_param */ &encoded_aggregation_param,
@@ -1693,66 +1695,33 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let values = [
+            (TaskId::random(), Vdaf::Prio3Aes128Count, Role::Leader),
             (
-                TaskId([
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 1,
-                ]),
-                Vdaf::Prio3Aes128Count,
-                Role::Leader,
-            ),
-            (
-                TaskId([
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 2,
-                ]),
+                TaskId::random(),
                 Vdaf::Prio3Aes128Sum { bits: 64 },
                 Role::Helper,
             ),
             (
-                TaskId([
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 3,
-                ]),
+                TaskId::random(),
                 Vdaf::Prio3Aes128Sum { bits: 32 },
                 Role::Helper,
             ),
             (
-                TaskId([
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 4,
-                ]),
+                TaskId::random(),
                 Vdaf::Prio3Aes128Histogram {
                     buckets: vec![0, 100, 200, 400],
                 },
                 Role::Leader,
             ),
             (
-                TaskId([
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 5,
-                ]),
+                TaskId::random(),
                 Vdaf::Prio3Aes128Histogram {
                     buckets: vec![0, 25, 50, 75, 100],
                 },
                 Role::Leader,
             ),
-            (
-                TaskId([
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 6,
-                ]),
-                Vdaf::Poplar1 { bits: 8 },
-                Role::Helper,
-            ),
-            (
-                TaskId([
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 7,
-                ]),
-                Vdaf::Poplar1 { bits: 64 },
-                Role::Helper,
-            ),
+            (TaskId::random(), Vdaf::Poplar1 { bits: 8 }, Role::Helper),
+            (TaskId::random(), Vdaf::Poplar1 { bits: 64 }, Role::Helper),
         ];
 
         // Insert tasks, check that they can be retrieved by ID.

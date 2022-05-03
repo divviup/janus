@@ -491,7 +491,7 @@ impl Decode for HpkeCiphertext {
 
 /// PPM protocol message representing an identifier for a PPM task.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TaskId(pub(crate) [u8; Self::ENCODED_LEN]);
+pub struct TaskId([u8; Self::ENCODED_LEN]);
 
 impl Debug for TaskId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -914,7 +914,13 @@ impl Decode for TransitionError {
 
 /// PPM protocol message representing an identifier for an aggregation job.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AggregationJobId(pub(crate) [u8; Self::ENCODED_LEN]);
+pub struct AggregationJobId([u8; Self::ENCODED_LEN]);
+
+impl AggregationJobId {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
 
 impl Debug for AggregationJobId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
