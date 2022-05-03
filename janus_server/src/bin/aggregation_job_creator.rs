@@ -367,13 +367,6 @@ mod tests {
 
     test_util::define_ephemeral_datastore!();
 
-    #[test]
-    fn cli_tests() {
-        trycmd::TestCases::new()
-            .case("tests/cmd/aggregation_job_creator.trycmd")
-            .run();
-    }
-
     #[tokio::test]
     async fn aggregation_job_creator() {
         // This is a minimal test that AggregationJobCreator::run() will successfully find tasks &

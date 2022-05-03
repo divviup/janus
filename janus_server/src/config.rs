@@ -62,7 +62,7 @@ pub struct AggregatorConfig {
 /// tasks_update_frequency_secs: 3600
 /// aggregation_job_creation_interval_secs: 60
 /// min_aggregation_job_size: 100
-/// max_aggregation_job_size: 1000
+/// max_aggregation_job_size: 500
 /// "#;
 ///
 /// let _decoded: AggregationJobCreatorConfig = serde_yaml::from_str(yaml_config).unwrap();

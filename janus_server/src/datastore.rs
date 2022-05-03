@@ -480,9 +480,10 @@ impl Transaction<'_> {
         &self,
         task_id: TaskId,
     ) -> Result<Vec<Nonce>, Error> {
-        // We choose to return the newest client reports first (LIFO), including the nonce
-        // randomness to ensure a total ordering. The goal is to maintiain throughput even if we
-        // begin to fall behind enough that reports are too old to be aggregated.
+        // We choose to return the newest client reports first (LIFO). The goal is to maintiain
+        // throughput even if we begin to fall behind enough that reports are too old to be
+        // aggregated.
+        //
         // See https://medium.com/swlh/fifo-considered-harmful-793b76f98374 &
         // https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.376.5966&rep=rep1&type=pdf.
 
@@ -492,8 +493,9 @@ impl Transaction<'_> {
             .tx
             .prepare_cached(
                 "SELECT nonce_time, nonce_rand FROM client_reports
+                LEFT JOIN report_aggregations ON report_aggregations.client_report_id = client_reports.id
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND (SELECT COUNT(*) FROM report_aggregations WHERE client_report_id = client_reports.id) = 0
+                AND report_aggregations.id IS NULL
                 ORDER BY nonce_time DESC LIMIT 5000",
             )
             .await?;

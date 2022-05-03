@@ -2,7 +2,7 @@ use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 
 /// The Janus database schema.
-pub const SCHEMA: &str = include_str!("../../db/schema.sql");
+pub static SCHEMA: &str = include_str!("../../db/schema.sql");
 
 /// This macro injects definitions of `DbHandle` and `ephemeral_datastore()`, for use in tests.
 /// It should be invoked once per binary target, and then `ephemeral_datastore()` can be called
