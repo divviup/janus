@@ -73,7 +73,7 @@ logging_config:
         x-honeycomb-team: "YOUR_API_KEY"
 ```
 
-The gRPC metadata can also be specified on the command line, with `--otlp-metadata x-honeycomb-team=YOUR_API_KEY`, or through the environment variable `OTLP_METADATA`.
+The gRPC metadata can also be specified on the command line, with `--otlp-tracing-metadata x-honeycomb-team=YOUR_API_KEY`, or through the environment variable `OTLP_TRACING_METADATA`.
 
 ## OpenTelemetry Metrics
 
@@ -86,7 +86,11 @@ When the Prometheus exporter is enabled, a server will listen on port 9464 for m
 metrics_config:
   exporter:
     prometheus:
+      host: 0.0.0.0
+      port: 9464
 ```
+
+The IP address and port that Prometheus exporter listens on can optionally be set in the configuration file as above. If the `host` and `port` are not set, it will fall back to the environment variables `OTEL_EXPORTER_PROMETHEUS_HOST` and `OTEL_EXPORTER_PROMETHEUS_PORT`, or the default values of `0.0.0.0` and 9464.
 
 ### Honeycomb
 
@@ -102,4 +106,4 @@ metrics_config:
         x-honeycomb-dataset: "YOUR_METRICS_DATASET"
 ```
 
-The command line flag `--otlp-metadata` or environment variable `OTLP_METADATA` may alternately be used to supply gRPC metadata for the metrics exporter, as with the tracing exporter above.
+The command line flag `--otlp-metrics-metadata` or environment variable `OTLP_METRICS_METADATA` may alternately be used to supply gRPC metadata for the metrics exporter.

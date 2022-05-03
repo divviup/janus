@@ -172,12 +172,17 @@ database:
 metrics_config:
     exporter:
         prometheus:
+            host: 0.0.0.0
+            port: 9464
 "#
             )
             .unwrap()
             .metrics_config
             .exporter,
-            Some(MetricsExporterConfiguration::Prometheus),
+            Some(MetricsExporterConfiguration::Prometheus {
+                host: Some("0.0.0.0".to_string()),
+                port: Some(9464),
+            }),
         );
 
         assert_eq!(

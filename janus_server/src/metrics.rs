@@ -36,7 +36,10 @@ pub struct MetricsConfiguration {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MetricsExporterConfiguration {
     #[serde(rename = "prometheus")]
-    Prometheus,
+    Prometheus {
+        host: Option<String>,
+        port: Option<u16>,
+    },
     #[serde(rename = "otlp")]
     Otlp(OtlpExporterConfiguration),
 }
@@ -54,10 +57,7 @@ pub struct OtlpExporterConfiguration {
 /// Choice of OpenTelemetry metrics exporter implementation.
 pub enum MetricsExporterHandle {
     #[cfg(feature = "prometheus")]
-    Prometheus(
-        opentelemetry_prometheus::PrometheusExporter,
-        tokio::task::JoinHandle<()>,
-    ),
+    Prometheus(tokio::task::JoinHandle<()>),
     #[cfg(feature = "otlp")]
     Otlp(opentelemetry::sdk::metrics::controllers::PushController),
     Noop,
@@ -95,19 +95,29 @@ pub fn install_metrics_exporter(
 ) -> Result<MetricsExporterHandle, Error> {
     match &config.exporter {
         #[cfg(feature = "prometheus")]
-        Some(MetricsExporterConfiguration::Prometheus) => {
+        Some(MetricsExporterConfiguration::Prometheus {
+            host: config_exporter_host,
+            port: config_exporter_port,
+        }) => {
             use http::StatusCode;
             use hyper::Response;
             use prometheus::{Encoder, TextEncoder};
             use std::net::SocketAddr;
             use warp::{Filter, Reply};
 
-            let exporter = opentelemetry_prometheus::exporter()
-                .with_aggregator_selector(CustomAggregatorSelector)
-                .try_init()?;
+            let mut builder = opentelemetry_prometheus::exporter()
+                .with_aggregator_selector(CustomAggregatorSelector);
+            if let Some(host) = config_exporter_host {
+                builder = builder.with_host(host.clone());
+            }
+            if let Some(port) = config_exporter_port {
+                builder = builder.with_port(*port);
+            }
+            let exporter = builder.try_init()?;
+            let host = exporter.host().parse()?;
+            let port = exporter.port();
 
             let filter = warp::path("metrics").and(warp::get()).map({
-                let exporter = exporter.clone();
                 move || {
                     let mut buffer = Vec::new();
                     let encoder = TextEncoder::new();
@@ -120,19 +130,19 @@ pub fn install_metrics_exporter(
                             .unwrap()
                             .into_response(),
                         Err(err) => {
-                            tracing::error!(%err, "failed to encode Prometheus metrics");
+                            tracing::error!(%err, "Failed to encode Prometheus metrics");
                             StatusCode::INTERNAL_SERVER_ERROR.into_response()
                         }
                     }
                 }
             });
-            let listen_address = SocketAddr::new(exporter.host().parse()?, exporter.port());
+            let listen_address = SocketAddr::new(host, port);
             let handle = tokio::task::spawn(warp::serve(filter).bind(listen_address));
 
-            Ok(MetricsExporterHandle::Prometheus(exporter, handle))
+            Ok(MetricsExporterHandle::Prometheus(handle))
         }
         #[cfg(not(feature = "prometheus"))]
-        Some(MetricsExporterConfiguration::Prometheus) => Err(Error::Other(
+        Some(MetricsExporterConfiguration::Prometheus { .. }) => Err(Error::Other(
             "The OpenTelemetry Prometheus metrics exporter was enabled in the \
             configuration file, but support was not enabled at compile time. \
             Rebuild with `--features prometheus`.",

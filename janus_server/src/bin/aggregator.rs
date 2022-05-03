@@ -59,16 +59,28 @@ struct Options {
     datastore_keys: Vec<String>,
 
     /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the logging
-    /// and metrics configuration sections)
+    /// configuration sections)
     #[structopt(
         long,
-        env = "OTLP_METADATA",
+        env = "OTLP_TRACING_METADATA",
         parse(try_from_str = parse_metadata_entry),
-        help = "additional OTLP/gRPC metadata key/value pairs",
+        help = "additional OTLP/gRPC metadata key/value pairs for the tracing exporter",
         value_name = "KEY=value",
         use_delimiter = true,
     )]
-    otlp_metadata: Vec<(String, String)>,
+    otlp_tracing_metadata: Vec<(String, String)>,
+
+    /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the metrics
+    /// configuration sections)
+    #[structopt(
+        long,
+        env = "OTLP_METRICS_METADATA",
+        parse(try_from_str = parse_metadata_entry),
+        help = "additional OTLP/gRPC metadata key/value pairs for the metrics exporter",
+        value_name = "KEY=value",
+        use_delimiter = true,
+    )]
+    otlp_metrics_metadata: Vec<(String, String)>,
 }
 
 fn parse_metadata_entry(input: &str) -> Result<(String, String)> {
@@ -78,7 +90,7 @@ fn parse_metadata_entry(input: &str) -> Result<(String, String)> {
         Ok((key.to_string(), value.to_string()))
     } else {
         Err(anyhow!(
-            "`--otlp-metadata` must be provided a key and value, joined with an `=`"
+            "`--otlp-tracing-metadata` and `--otlp-metrics-metadata` must be provided a key and value, joined with an `=`"
         ))
     }
 }
@@ -138,14 +150,14 @@ async fn main() -> Result<()> {
     {
         otlp_config
             .metadata
-            .extend(options.otlp_metadata.iter().cloned());
+            .extend(options.otlp_tracing_metadata.iter().cloned());
     }
     if let Some(MetricsExporterConfiguration::Otlp(otlp_config)) =
         &mut config.metrics_config.exporter
     {
         otlp_config
             .metadata
-            .extend(options.otlp_metadata.iter().cloned());
+            .extend(options.otlp_metrics_metadata.iter().cloned());
     }
 
     install_trace_subscriber(&config.logging_config)
