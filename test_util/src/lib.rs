@@ -1,6 +1,9 @@
 use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 
+/// The Janus database schema.
+pub static SCHEMA: &str = include_str!("../../db/schema.sql");
+
 /// This macro injects definitions of `DbHandle` and `ephemeral_datastore()`, for use in tests.
 /// It should be invoked once per binary target, and then `ephemeral_datastore()` can be called
 /// to set up a database for test purposes. This depends on `janus_server::datastore::Datastore`
@@ -10,8 +13,6 @@ use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 #[macro_export]
 macro_rules! define_ephemeral_datastore {
     () => {
-        const SCHEMA: &str = include_str!("../../db/schema.sql");
-
         ::lazy_static::lazy_static! {
             static ref CONTAINER_CLIENT: ::testcontainers::clients::Cli = ::testcontainers::clients::Cli::default();
         }
@@ -36,7 +37,7 @@ macro_rules! define_ephemeral_datastore {
 
         impl Drop for DbHandle {
             fn drop(&mut self) {
-                ::tracing::trace!("dropping Postgres container with URL {}", self.connection_string);
+                ::tracing::trace!(connection_string = %self.connection_string, "Dropping ephemeral Postgres container");
             }
         }
 
@@ -72,7 +73,7 @@ macro_rules! define_ephemeral_datastore {
 
             // Connect to the database & run our schema.
             let client = pool.get().await.unwrap();
-            client.batch_execute(SCHEMA).await.unwrap();
+            client.batch_execute(::test_util::SCHEMA).await.unwrap();
 
             (
                 Datastore::new(pool, crypter),

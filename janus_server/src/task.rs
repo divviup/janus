@@ -111,15 +111,15 @@ impl Eq for AggregatorAuthKey {}
 /// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task {
-    /// Unique identifier for the task
-    pub(crate) id: TaskId,
+    /// Unique identifier for the task.
+    pub id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
     pub(crate) aggregator_endpoints: Vec<Url>,
     /// The VDAF this task executes.
-    pub(crate) vdaf: Vdaf,
+    pub vdaf: Vdaf,
     /// The role performed by the aggregator.
-    pub(crate) role: Role,
+    pub role: Role,
     /// Secret verification parameter shared by the aggregators.
     pub(crate) vdaf_verify_parameter: Vec<u8>,
     /// The maximum number of times a given batch may be collected.
@@ -128,7 +128,7 @@ pub struct Task {
     pub(crate) min_batch_size: u64,
     /// The minimum batch interval for a collect request. Batch intervals must
     /// be multiples of this duration.
-    pub(crate) min_batch_duration: Duration,
+    pub min_batch_duration: Duration,
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
     pub(crate) tolerable_clock_skew: Duration,
