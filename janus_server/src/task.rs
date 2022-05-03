@@ -198,7 +198,7 @@ impl Task {
         // Batch interval should be greater than task's minimum batch duration
         batch_interval.duration().as_seconds() >= self.min_batch_duration.as_seconds()
             // Batch interval start must be a multiple of minimum batch duration
-            && batch_interval.start().as_timestamp() % self.min_batch_duration.as_seconds() == 0
+            && batch_interval.start().as_seconds_since_epoch() % self.min_batch_duration.as_seconds() == 0
             // Batch interval duration must be a multiple of minimum batch duration
             && batch_interval.duration().as_seconds() % self.min_batch_duration.as_seconds() == 0
     }
@@ -312,7 +312,7 @@ mod tests {
             TestCase {
                 name: "same duration as minimum",
                 input: Interval::new(
-                    Time::from_timestamp(min_batch_duration_secs),
+                    Time::from_seconds_since_epoch(min_batch_duration_secs),
                     Duration::from_seconds(min_batch_duration_secs),
                 )
                 .unwrap(),
@@ -321,7 +321,7 @@ mod tests {
             TestCase {
                 name: "interval too short",
                 input: Interval::new(
-                    Time::from_timestamp(min_batch_duration_secs),
+                    Time::from_seconds_since_epoch(min_batch_duration_secs),
                     Duration::from_seconds(min_batch_duration_secs - 1),
                 )
                 .unwrap(),
@@ -330,7 +330,7 @@ mod tests {
             TestCase {
                 name: "interval larger than minimum",
                 input: Interval::new(
-                    Time::from_timestamp(min_batch_duration_secs),
+                    Time::from_seconds_since_epoch(min_batch_duration_secs),
                     Duration::from_seconds(min_batch_duration_secs * 2),
                 )
                 .unwrap(),
@@ -339,7 +339,7 @@ mod tests {
             TestCase {
                 name: "interval duration not aligned with minimum",
                 input: Interval::new(
-                    Time::from_timestamp(min_batch_duration_secs),
+                    Time::from_seconds_since_epoch(min_batch_duration_secs),
                     Duration::from_seconds(min_batch_duration_secs + 1800),
                 )
                 .unwrap(),
@@ -348,7 +348,7 @@ mod tests {
             TestCase {
                 name: "interval start not aligned with minimum",
                 input: Interval::new(
-                    Time::from_timestamp(1800),
+                    Time::from_seconds_since_epoch(1800),
                     Duration::from_seconds(min_batch_duration_secs),
                 )
                 .unwrap(),

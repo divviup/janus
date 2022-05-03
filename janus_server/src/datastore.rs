@@ -1762,7 +1762,7 @@ mod tests {
         let report = Report {
             task_id: TaskId::random(),
             nonce: Nonce {
-                time: Time::from_timestamp(12345),
+                time: Time::from_seconds_since_epoch(12345),
                 rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![
@@ -1825,7 +1825,7 @@ mod tests {
                     tx.get_client_report(
                         TaskId::random(),
                         Nonce {
-                            time: Time::from_timestamp(12345),
+                            time: Time::from_seconds_since_epoch(12345),
                             rand: [1, 2, 3, 4, 5, 6, 7, 8],
                         },
                     )
@@ -1849,7 +1849,7 @@ mod tests {
         let first_unaggregated_report = Report {
             task_id,
             nonce: Nonce {
-                time: Time::from_timestamp(12345),
+                time: Time::from_seconds_since_epoch(12345),
                 rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![],
@@ -1858,7 +1858,7 @@ mod tests {
         let second_unaggregated_report = Report {
             task_id,
             nonce: Nonce {
-                time: Time::from_timestamp(12346),
+                time: Time::from_seconds_since_epoch(12346),
                 rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![],
@@ -1867,7 +1867,7 @@ mod tests {
         let aggregated_report = Report {
             task_id,
             nonce: Nonce {
-                time: Time::from_timestamp(12347),
+                time: Time::from_seconds_since_epoch(12347),
                 rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![],
@@ -1876,7 +1876,7 @@ mod tests {
         let unrelated_report = Report {
             task_id: unrelated_task_id,
             nonce: Nonce {
-                time: Time::from_timestamp(12348),
+                time: Time::from_seconds_since_epoch(12348),
                 rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![],
@@ -1966,7 +1966,7 @@ mod tests {
         let task_id = TaskId::random();
         let report_share = ReportShare {
             nonce: Nonce {
-                time: Time::from_timestamp(12345),
+                time: Time::from_seconds_since_epoch(12345),
                 rand: [1, 2, 3, 4, 5, 6, 7, 8],
             },
             extensions: vec![
@@ -2242,7 +2242,7 @@ mod tests {
             let task_id = TaskId::random();
             let aggregation_job_id = AggregationJobId::random();
             let nonce = Nonce {
-                time: Time::from_timestamp(12345),
+                time: Time::from_seconds_since_epoch(12345),
                 rand: [1, 2, 3, 4, 5, 6, 7, 8],
             };
 
@@ -2349,7 +2349,7 @@ mod tests {
                         TaskId::random(),
                         AggregationJobId::random(),
                         Nonce {
-                            time: Time::from_timestamp(12345),
+                            time: Time::from_seconds_since_epoch(12345),
                             rand: [1, 2, 3, 4, 5, 6, 7, 8],
                         },
                     )
@@ -2367,7 +2367,7 @@ mod tests {
                         aggregation_job_id: AggregationJobId::random(),
                         task_id: TaskId::random(),
                         nonce: Nonce {
-                            time: Time::from_timestamp(12345),
+                            time: Time::from_seconds_since_epoch(12345),
                             rand: [1, 2, 3, 4, 5, 6, 7, 8],
                         },
                         ord: 0,
@@ -2423,7 +2423,7 @@ mod tests {
                     .enumerate()
                     {
                         let nonce = Nonce {
-                            time: Time::from_timestamp(12345),
+                            time: Time::from_seconds_since_epoch(12345),
                             rand: (ord as u64).to_be_bytes(),
                         };
                         tx.put_report_share(
@@ -2519,8 +2519,11 @@ mod tests {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
-        let batch_interval =
-            Interval::new(Time::from_timestamp(100), Duration::from_seconds(100)).unwrap();
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(100),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
 
         let (ds, _db_handle) = ephemeral_datastore().await;
 
@@ -2591,8 +2594,11 @@ mod tests {
                 Box::pin(async move {
                     tx.put_collect_job(
                         task_id,
-                        Interval::new(Time::from_timestamp(101), Duration::from_seconds(100))
-                            .unwrap(),
+                        Interval::new(
+                            Time::from_seconds_since_epoch(101),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
                         &[0, 1, 2, 3, 4],
                     )
                     .await
@@ -2655,7 +2661,7 @@ mod tests {
                     // Start of this aggregation's interval is before the interval queried below.
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
-                        unit_interval_start: Time::from_timestamp(25),
+                        unit_interval_start: Time::from_seconds_since_epoch(25),
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
@@ -2665,7 +2671,7 @@ mod tests {
 
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
-                        unit_interval_start: Time::from_timestamp(100),
+                        unit_interval_start: Time::from_seconds_since_epoch(100),
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
@@ -2675,7 +2681,7 @@ mod tests {
 
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
-                        unit_interval_start: Time::from_timestamp(150),
+                        unit_interval_start: Time::from_seconds_since_epoch(150),
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
@@ -2686,7 +2692,7 @@ mod tests {
                     // Aggregation parameter differs from the one queried below.
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
-                        unit_interval_start: Time::from_timestamp(100),
+                        unit_interval_start: Time::from_seconds_since_epoch(100),
                         aggregation_param: BTreeSet::from([
                             IdpfInput::new("gh".as_bytes(), 2).unwrap(),
                             IdpfInput::new("jk".as_bytes(), 3).unwrap(),
@@ -2700,7 +2706,7 @@ mod tests {
                     // End of this aggregation's interval is after the interval queried below.
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
-                        unit_interval_start: Time::from_timestamp(200),
+                        unit_interval_start: Time::from_seconds_since_epoch(200),
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
@@ -2711,7 +2717,7 @@ mod tests {
                     // Start of this aggregation's interval is after the interval queried below.
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
-                        unit_interval_start: Time::from_timestamp(400),
+                        unit_interval_start: Time::from_seconds_since_epoch(400),
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
@@ -2722,7 +2728,7 @@ mod tests {
                     // Task ID differs from that queried below.
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id: other_task_id,
-                        unit_interval_start: Time::from_timestamp(200),
+                        unit_interval_start: Time::from_seconds_since_epoch(200),
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
@@ -2732,8 +2738,11 @@ mod tests {
 
                     tx.get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1>(
                         task_id,
-                        Interval::new(Time::from_timestamp(50), Duration::from_seconds(250))
-                            .unwrap(),
+                        Interval::new(
+                            Time::from_seconds_since_epoch(50),
+                            Duration::from_seconds(250),
+                        )
+                        .unwrap(),
                         &aggregation_param,
                     )
                     .await
@@ -2745,7 +2754,7 @@ mod tests {
         assert_eq!(batch_unit_aggregations.len(), 2);
         assert!(batch_unit_aggregations.contains(&BatchUnitAggregation {
             task_id,
-            unit_interval_start: Time::from_timestamp(100),
+            unit_interval_start: Time::from_seconds_since_epoch(100),
             aggregation_param: aggregation_param.clone(),
             aggregate_share: aggregate_share.clone(),
             report_count: 0,
@@ -2753,7 +2762,7 @@ mod tests {
         }));
         assert!(batch_unit_aggregations.contains(&BatchUnitAggregation {
             task_id,
-            unit_interval_start: Time::from_timestamp(150),
+            unit_interval_start: Time::from_seconds_since_epoch(150),
             aggregation_param: aggregation_param.clone(),
             aggregate_share: aggregate_share.clone(),
             report_count: 0,

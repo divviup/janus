@@ -226,13 +226,16 @@ impl Time {
         Self(time.timestamp() as u64)
     }
 
-    /// Get the Unix timestamp represented by this [`Time`] (in seconds).
-    pub fn as_timestamp(&self) -> u64 {
+    /// Get the number of seconds from January 1st, 1970, at 0:00:00 UTC to the instant represented
+    /// by this [`Time`] (i.e., the Unix timestamp for the instant it represents).
+    pub fn as_seconds_since_epoch(&self) -> u64 {
         self.0
     }
 
-    /// Construct a [`Time`] from a Unix timestamp (in seconds).
-    pub fn from_timestamp(timestamp: u64) -> Self {
+    /// Construct a [`Time`] representing the instant that is a given number of seconds after
+    /// January 1st, 1970, at 0:00:00 UTC (i.e., the instant with the Unix timestamp of
+    /// `timestamp`).
+    pub fn from_seconds_since_epoch(timestamp: u64) -> Self {
         Self(timestamp)
     }
 
