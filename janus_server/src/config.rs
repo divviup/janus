@@ -126,7 +126,7 @@ mod tests {
             tasks_update_frequency_secs: 3600,
             aggregation_job_creation_interval_secs: 60,
             min_aggregation_job_size: 100,
-            max_aggregation_job_size: 1000,
+            max_aggregation_job_size: 500,
         };
 
         let encoded = serde_yaml::to_string(&config).unwrap();
