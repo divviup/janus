@@ -1063,7 +1063,7 @@ impl VdafOps {
         aggregate_share_req: &AggregateShareReq,
     ) -> Result<AggregateShareResp, Error>
     where
-        A: vdaf::Vdaf,
+        A: vdaf::Aggregator,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
@@ -1092,7 +1092,7 @@ impl VdafOps {
                     let aggregation_param =
                         A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
                     let batch_unit_aggregations = tx
-                        .get_batch_unit_aggregations_for_task_in_interval::<_, A::AggregateShare, E>(
+                        .get_batch_unit_aggregations_for_task_in_interval::<A>(
                             task.id,
                             aggregate_share_req.batch_interval,
                             &aggregation_param,
@@ -3713,7 +3713,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
                         task_id,
                         unit_interval_start: Time(500),
                         aggregation_param,
@@ -3723,7 +3723,7 @@ mod tests {
                     })
                     .await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
                         task_id,
                         unit_interval_start: Time(1500),
                         aggregation_param,
@@ -3733,7 +3733,7 @@ mod tests {
                     })
                     .await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
                         task_id,
                         unit_interval_start: Time(2000),
                         aggregation_param,
