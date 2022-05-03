@@ -7,6 +7,27 @@ use opentelemetry::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 
+#[cfg(feature = "prometheus")]
+use {
+    http::StatusCode,
+    hyper::Response,
+    prometheus::{Encoder, TextEncoder},
+    std::net::SocketAddr,
+    tokio::task::JoinHandle,
+    warp::{Filter, Reply},
+};
+
+#[cfg(feature = "otlp")]
+use {
+    opentelemetry::{
+        sdk::metrics::controllers::PushController, util::tokio_interval_stream, KeyValue,
+    },
+    opentelemetry_otlp::WithExportConfig,
+    opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+    std::str::FromStr,
+    tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
+};
+
 /// Errors from initializing metrics provider, registry, and exporter.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -34,13 +55,12 @@ pub struct MetricsConfiguration {
 
 /// Selection of an exporter for OpenTelemetry metrics.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MetricsExporterConfiguration {
-    #[serde(rename = "prometheus")]
     Prometheus {
         host: Option<String>,
         port: Option<u16>,
     },
-    #[serde(rename = "otlp")]
     Otlp(OtlpExporterConfiguration),
 }
 
@@ -57,9 +77,9 @@ pub struct OtlpExporterConfiguration {
 /// Choice of OpenTelemetry metrics exporter implementation.
 pub enum MetricsExporterHandle {
     #[cfg(feature = "prometheus")]
-    Prometheus(tokio::task::JoinHandle<()>),
+    Prometheus(JoinHandle<()>),
     #[cfg(feature = "otlp")]
-    Otlp(opentelemetry::sdk::metrics::controllers::PushController),
+    Otlp(PushController),
     Noop,
 }
 
@@ -99,12 +119,6 @@ pub fn install_metrics_exporter(
             host: config_exporter_host,
             port: config_exporter_port,
         }) => {
-            use http::StatusCode;
-            use hyper::Response;
-            use prometheus::{Encoder, TextEncoder};
-            use std::net::SocketAddr;
-            use warp::{Filter, Reply};
-
             let mut builder = opentelemetry_prometheus::exporter()
                 .with_aggregator_selector(CustomAggregatorSelector);
             if let Some(host) = config_exporter_host {
@@ -150,12 +164,6 @@ pub fn install_metrics_exporter(
 
         #[cfg(feature = "otlp")]
         Some(MetricsExporterConfiguration::Otlp(otlp_config)) => {
-            use opentelemetry::{util::tokio_interval_stream, KeyValue};
-            use opentelemetry_otlp::WithExportConfig;
-            use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
-            use std::str::FromStr;
-            use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
-
             let mut map = MetadataMap::with_capacity(otlp_config.metadata.len());
             for (key, value) in otlp_config.metadata.iter() {
                 map.insert(MetadataKey::from_str(key)?, MetadataValue::from_str(value)?);

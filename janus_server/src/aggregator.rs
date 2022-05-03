@@ -43,6 +43,7 @@ use std::{
     io::Cursor,
     net::SocketAddr,
     sync::Arc,
+    time::Instant,
 };
 use tokio::sync::Mutex;
 use tracing::{error, warn};
@@ -1395,11 +1396,11 @@ where
     let bound_value_recorder = value_recorder.bind(&[KeyValue::new("endpoint", name)]);
     move |filter| {
         warp::any()
-            .map(std::time::Instant::now)
+            .map(Instant::now)
             .and(filter)
             .map({
                 let bound_value_recorder = bound_value_recorder.clone();
-                move |start: std::time::Instant, reply| {
+                move |start: Instant, reply| {
                     let elapsed = start.elapsed().as_secs_f64();
                     bound_value_recorder.record(elapsed);
                     reply
