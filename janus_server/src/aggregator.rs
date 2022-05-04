@@ -151,7 +151,7 @@ impl From<datastore::Error> for Error {
 }
 
 /// Aggregator implements a PPM aggregator.
-pub struct Aggregator<C: Clock> {
+pub struct Aggregator<C> {
     /// Datastore used for durable storage.
     datastore: Arc<Datastore>,
     /// Clock used to sample time.
@@ -1411,13 +1411,10 @@ where
 }
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
-fn aggregator_filter<C>(
+fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore>,
     clock: C,
-) -> Result<BoxedFilter<(impl Reply,)>, Error>
-where
-    C: 'static + Clock,
-{
+) -> Result<BoxedFilter<(impl Reply,)>, Error> {
     let aggregator = Arc::new(Aggregator::new(datastore, clock));
 
     let meter = opentelemetry::global::meter("janus_server");
@@ -1535,15 +1532,12 @@ where
 /// If the `SocketAddr`'s `port` is 0, an ephemeral port is used. Returns a
 /// `SocketAddr` representing the address and port the server are listening on
 /// and a future that can be `await`ed to begin serving requests.
-pub fn aggregator_server<C>(
+pub fn aggregator_server<C: Clock>(
     datastore: Arc<Datastore>,
     clock: C,
     listen_address: SocketAddr,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
-) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error>
-where
-    C: 'static + Clock,
-{
+) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error> {
     Ok(warp::serve(aggregator_filter(datastore, clock)?)
         .bind_with_graceful_shutdown(listen_address, shutdown_signal))
 }
@@ -2368,7 +2362,7 @@ mod tests {
             .unwrap();
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(&clock);
+        let nonce_0 = Nonce::generate(clock);
         let input_share = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0)
             .input_shares
             .remove(1);
@@ -2381,11 +2375,11 @@ mod tests {
 
         // report_share_1 fails decryption.
         let mut report_share_1 = report_share_0.clone();
-        report_share_1.nonce = Nonce::generate(&clock);
+        report_share_1.nonce = Nonce::generate(clock);
         report_share_1.encrypted_input_share.payload[0] ^= 0xFF;
 
         // report_share_2 fails decoding.
-        let nonce_2 = Nonce::generate(&clock);
+        let nonce_2 = Nonce::generate(clock);
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
         let associated_data = associated_data_for_report_share(nonce_2, &[]);
@@ -2398,7 +2392,7 @@ mod tests {
         );
 
         // report_share_3 has an unknown HPKE config ID.
-        let nonce_3 = Nonce::generate(&clock);
+        let nonce_3 = Nonce::generate(clock);
         let mut wrong_hpke_config = hpke_key.0.clone();
         wrong_hpke_config.id = HpkeConfigId::from(u8::from(wrong_hpke_config.id) + 1);
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -2503,7 +2497,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
-            Nonce::generate(&clock),
+            Nonce::generate(clock),
             &hpke_key.0,
             &(),
         );
@@ -2572,7 +2566,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
-            Nonce::generate(&clock),
+            Nonce::generate(clock),
             &hpke_key.0,
             &(),
         );
@@ -2709,7 +2703,7 @@ mod tests {
         let hmac_key = hmac_key.clone();
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(&clock);
+        let nonce_0 = Nonce::generate(clock);
         let transcript_0 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0);
         let prep_step_0 = assert_matches!(&transcript_0.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_0 = assert_matches!(&transcript_0.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
@@ -2722,7 +2716,7 @@ mod tests {
         );
 
         // report_share_1 is omitted by the leader's request.
-        let nonce_1 = Nonce::generate(&clock);
+        let nonce_1 = Nonce::generate(clock);
         let transcript_1 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_1, &0);
         let prep_step_1 = assert_matches!(&transcript_1.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(

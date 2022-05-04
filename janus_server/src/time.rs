@@ -5,13 +5,13 @@ use chrono::{naive::NaiveDateTime, Utc};
 use std::fmt::{Debug, Formatter};
 
 /// A clock knows what time it currently is.
-pub trait Clock: Clone + Debug + Sync + Send {
+pub trait Clock: 'static + Clone + Copy + Debug + Sync + Send {
     /// Get the current time.
     fn now(&self) -> Time;
 }
 
 /// A real clock returns the current time relative to the Unix epoch.
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct RealClock {}
 
 impl Clock for RealClock {
@@ -33,7 +33,7 @@ pub mod test_util {
     use chrono::{NaiveDate, NaiveDateTime};
 
     /// A mock clock for use in testing.
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Copy, Debug)]
     pub struct MockClock {
         /// The time that this clock will always return from [`Self::now`]
         pub(crate) current_time: NaiveDateTime,

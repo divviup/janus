@@ -370,7 +370,7 @@ impl Nonce {
     }
 
     /// Generate a fresh nonce with the current time.
-    pub fn generate<C: Clock>(clock: &C) -> Nonce {
+    pub fn generate<C: Clock>(clock: C) -> Nonce {
         Nonce {
             time: clock.now(),
             rand: rand::random(),
