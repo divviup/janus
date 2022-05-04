@@ -1734,8 +1734,8 @@ mod tests {
             test_util::{ephemeral_datastore, DbHandle},
         },
         hpke::{
-            associated_data_for, test_util::generate_hpke_config_and_private_key, HpkePrivateKey,
-            Label,
+            associated_data_for_report_share, test_util::generate_hpke_config_and_private_key,
+            HpkePrivateKey, Label,
         },
         message::{
             AuthenticatedResponseDecoder, Duration, HpkeCiphertext, HpkeConfig, TaskId, Time,
@@ -1836,7 +1836,7 @@ mod tests {
         };
         let extensions = vec![];
         let message = b"this is a message";
-        let associated_data = associated_data_for(nonce, &extensions);
+        let associated_data = associated_data_for_report_share(nonce, &extensions);
 
         let leader_ciphertext = hpke::seal(
             &hpke_key.0,
@@ -2136,7 +2136,7 @@ mod tests {
 
     fn reencrypt_report(report: Report, hpke_config: &HpkeConfig) -> Report {
         let message = b"this is a message";
-        let associated_data = associated_data_for(report.nonce, &report.extensions);
+        let associated_data = associated_data_for_report_share(report.nonce, &report.extensions);
 
         let leader_ciphertext = hpke::seal(
             hpke_config,
@@ -2381,7 +2381,7 @@ mod tests {
         let nonce_2 = generate_nonce(&clock);
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
-        let associated_data = associated_data_for(nonce_2, &[]);
+        let associated_data = associated_data_for_report_share(nonce_2, &[]);
         let report_share_2 = generate_helper_report_share_for_plaintext(
             task_id,
             nonce_2,
@@ -4148,7 +4148,7 @@ mod tests {
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let associated_data = associated_data_for(nonce, &[]);
+        let associated_data = associated_data_for_report_share(nonce, &[]);
         generate_helper_report_share_for_plaintext(
             task_id,
             nonce,

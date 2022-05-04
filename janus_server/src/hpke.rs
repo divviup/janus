@@ -95,7 +95,7 @@ impl HpkeApplicationInfo {
 
 /// Construct the HPKE associated data for sealing or opening data enciphered for a report or report
 /// share, per §4.3.2 and 4.4.2.2 of draft-gpew-priv-ppm
-pub(crate) fn associated_data_for(nonce: Nonce, extensions: &[Extension]) -> Vec<u8> {
+pub fn associated_data_for_report_share(nonce: Nonce, extensions: &[Extension]) -> Vec<u8> {
     let mut associated_data = vec![];
     nonce.encode(&mut associated_data);
     encode_u16_items(&mut associated_data, &(), extensions);
@@ -108,7 +108,7 @@ pub(crate) fn associated_data_for(nonce: Nonce, extensions: &[Extension]) -> Vec
 // In PPM, an HPKE context can only be used once (we have no means of
 // ensuring that sender and recipient "increment" nonces in lockstep), so
 // this method creates a new HPKE context on each call.
-pub(crate) fn seal(
+pub fn seal(
     recipient_config: &HpkeConfig,
     application_info: &HpkeApplicationInfo,
     plaintext: &[u8],
@@ -213,7 +213,7 @@ fn seal_generic<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
 /// Decrypt `ciphertext` using the provided `recipient_config` & `recipient_private_key`, and return
 /// the plaintext. The `application_info` and `associated_data` must match what was provided to
 /// [`seal()`] exactly.
-pub(crate) fn open(
+pub fn open(
     recipient_config: &HpkeConfig,
     recipient_private_key: &HpkePrivateKey,
     application_info: &HpkeApplicationInfo,

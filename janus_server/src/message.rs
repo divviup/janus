@@ -24,7 +24,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::hpke::associated_data_for;
+use crate::hpke::associated_data_for_report_share;
 
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
@@ -723,7 +723,7 @@ pub struct Report {
 
 impl Report {
     pub(crate) fn associated_data(&self) -> Vec<u8> {
-        associated_data_for(self.nonce, &self.extensions)
+        associated_data_for_report_share(self.nonce, &self.extensions)
     }
 }
 
@@ -810,7 +810,7 @@ pub struct ReportShare {
 
 impl ReportShare {
     pub(crate) fn associated_data(&self) -> Vec<u8> {
-        associated_data_for(self.nonce, &self.extensions)
+        associated_data_for_report_share(self.nonce, &self.extensions)
     }
 }
 

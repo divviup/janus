@@ -1,7 +1,7 @@
 //! PPM protocol client
 
 use crate::{
-    hpke::{self, associated_data_for, HpkeApplicationInfo, Label},
+    hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
     message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
     time::Clock,
 };
@@ -166,7 +166,7 @@ where
             rand: rand::random(),
         };
         let extensions = vec![]; // No extensions supported yet
-        let associated_data = associated_data_for(nonce, &extensions);
+        let associated_data = associated_data_for_report_share(nonce, &extensions);
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
             (&self.leader_hpke_config, Role::Leader),
