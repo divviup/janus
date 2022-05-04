@@ -1,16 +1,8 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::{
-    Extension, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeKdfId, HpkeKemId, Nonce, Role, TaskId,
-};
-use hpke::{
-    aead::{Aead, AesGcm128, AesGcm256, ChaCha20Poly1305},
-    kdf::{HkdfSha256, HkdfSha384, HkdfSha512, Kdf},
-    kem::{DhP256HkdfSha256, X25519HkdfSha256},
-    Deserializable, HpkeError, Kem, OpModeR, OpModeS, Serializable,
-};
+use crate::message::{Extension, HpkeCiphertext, HpkeConfig, Nonce, Role, TaskId};
+use hpke::HpkeError;
 use prio::codec::{encode_u16_items, Encode};
-use rand::thread_rng;
 use std::str::FromStr;
 
 #[derive(Debug, thiserror::Error)]
@@ -35,6 +27,24 @@ impl Label {
             Self::InputShare => b"ppm input share",
             Self::AggregateShare => b"ppm aggregate share",
         }
+    }
+}
+
+impl TryFrom<&HpkeConfig> for hpke_dispatch::Config {
+    type Error = Error;
+
+    fn try_from(config: &HpkeConfig) -> Result<Self, Self::Error> {
+        Ok(Self {
+            aead: (config.aead_id as u16)
+                .try_into()
+                .map_err(|_| Self::Error::InvalidConfiguration("did not recognize aead"))?,
+            kdf: (config.kdf_id as u16)
+                .try_into()
+                .map_err(|_| Self::Error::InvalidConfiguration("did not recognize kdf"))?,
+            kem: (config.kem_id as u16)
+                .try_into()
+                .map_err(|_| Self::Error::InvalidConfiguration("did not recognize kem"))?,
+        })
     }
 }
 
@@ -114,99 +124,17 @@ pub fn seal(
     plaintext: &[u8],
     associated_data: &[u8],
 ) -> Result<HpkeCiphertext, Error> {
-    // We must manually dispatch to each possible specialization of seal.
-    let seal = match (
-        recipient_config.aead_id,
-        recipient_config.kdf_id,
-        recipient_config.kem_id,
-    ) {
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-            seal_generic::<AesGcm128, HkdfSha256, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-            seal_generic::<AesGcm256, HkdfSha256, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-            seal_generic::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-            seal_generic::<AesGcm128, HkdfSha384, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-            seal_generic::<AesGcm256, HkdfSha384, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-            seal_generic::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-            seal_generic::<AesGcm128, HkdfSha512, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-            seal_generic::<AesGcm256, HkdfSha512, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-            seal_generic::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-            seal_generic::<AesGcm128, HkdfSha256, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-            seal_generic::<AesGcm256, HkdfSha256, X25519HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-            seal_generic::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-            seal_generic::<AesGcm128, HkdfSha384, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-            seal_generic::<AesGcm256, HkdfSha384, X25519HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-            seal_generic::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-            seal_generic::<AesGcm128, HkdfSha512, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-            seal_generic::<AesGcm256, HkdfSha512, X25519HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-            seal_generic::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>
-        }
-    };
-    seal(
-        recipient_config,
-        application_info,
+    let output = hpke_dispatch::Config::try_from(recipient_config)?.base_mode_seal(
+        &recipient_config.public_key.0,
+        &application_info.0,
         plaintext,
         associated_data,
-    )
-}
-
-// This function exists separately from seal() to abstract away its generic parameters.
-fn seal_generic<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
-    recipient_config: &HpkeConfig,
-    application_info: &HpkeApplicationInfo,
-    plaintext: &[u8],
-    associated_data: &[u8],
-) -> Result<HpkeCiphertext, Error> {
-    // Deserialize recipient pub into the appropriate PublicKey type for the KEM.
-    let recipient_public_key = Encapsulate::PublicKey::from_bytes(&recipient_config.public_key.0)?;
-
-    let (encapsulated_context, ciphertext) =
-        hpke::single_shot_seal::<Encrypt, Derive, Encapsulate, _>(
-            &OpModeS::Base,
-            &recipient_public_key,
-            &application_info.0,
-            plaintext,
-            associated_data,
-            &mut thread_rng(),
-        )?;
+    )?;
 
     Ok(HpkeCiphertext {
         config_id: recipient_config.id,
-        encapsulated_context: encapsulated_context.to_bytes().to_vec(),
-        payload: ciphertext,
+        encapsulated_context: output.encapped_key,
+        payload: output.ciphertext,
     })
 }
 
@@ -220,97 +148,15 @@ pub fn open(
     ciphertext: &HpkeCiphertext,
     associated_data: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    // We must manually dispatch to each possible specialization of open.
-    let open = match (
-        recipient_config.aead_id,
-        recipient_config.kdf_id,
-        recipient_config.kem_id,
-    ) {
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-            open_generic::<AesGcm128, HkdfSha256, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-            open_generic::<AesGcm256, HkdfSha256, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::P256HkdfSha256) => {
-            open_generic::<ChaCha20Poly1305, HkdfSha256, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-            open_generic::<AesGcm128, HkdfSha384, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-            open_generic::<AesGcm256, HkdfSha384, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::P256HkdfSha256) => {
-            open_generic::<ChaCha20Poly1305, HkdfSha384, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-            open_generic::<AesGcm128, HkdfSha512, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-            open_generic::<AesGcm256, HkdfSha512, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::P256HkdfSha256) => {
-            open_generic::<ChaCha20Poly1305, HkdfSha512, DhP256HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-            open_generic::<AesGcm128, HkdfSha256, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-            open_generic::<AesGcm256, HkdfSha256, X25519HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha256, HpkeKemId::X25519HkdfSha256) => {
-            open_generic::<ChaCha20Poly1305, HkdfSha256, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-            open_generic::<AesGcm128, HkdfSha384, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-            open_generic::<AesGcm256, HkdfSha384, X25519HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha384, HpkeKemId::X25519HkdfSha256) => {
-            open_generic::<ChaCha20Poly1305, HkdfSha384, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes128Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-            open_generic::<AesGcm128, HkdfSha512, X25519HkdfSha256>
-        }
-        (HpkeAeadId::Aes256Gcm, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-            open_generic::<AesGcm256, HkdfSha512, X25519HkdfSha256>
-        }
-        (HpkeAeadId::ChaCha20Poly1305, HpkeKdfId::HkdfSha512, HpkeKemId::X25519HkdfSha256) => {
-            open_generic::<ChaCha20Poly1305, HkdfSha512, X25519HkdfSha256>
-        }
-    };
-    open(
-        recipient_private_key,
-        application_info,
-        ciphertext,
-        associated_data,
-    )
-}
-
-// This function exists separately from open() to abstract away its generic parameters.
-fn open_generic<Encrypt: Aead, Derive: Kdf, Encapsulate: Kem>(
-    recipient_private_key: &HpkePrivateKey,
-    application_info: &HpkeApplicationInfo,
-    ciphertext: &HpkeCiphertext,
-    associated_data: &[u8],
-) -> Result<Vec<u8>, Error> {
-    // Deserialize recipient priv into the appropriate PrivateKey type for the KEM.
-    let recipient_private_key = Encapsulate::PrivateKey::from_bytes(&recipient_private_key.0)?;
-
-    // Deserialize sender encapsulated key into the appropriate EncappedKey for the KEM.
-    let sender_encapped_key =
-        Encapsulate::EncappedKey::from_bytes(&ciphertext.encapsulated_context)?;
-
-    Ok(hpke::single_shot_open::<Encrypt, Derive, Encapsulate>(
-        &OpModeR::Base,
-        &recipient_private_key,
-        &sender_encapped_key,
-        &application_info.0,
-        &ciphertext.payload,
-        associated_data,
-    )?)
+    hpke_dispatch::Config::try_from(recipient_config)?
+        .base_mode_open(
+            &recipient_private_key.0,
+            &ciphertext.encapsulated_context,
+            &application_info.0,
+            &ciphertext.payload,
+            associated_data,
+        )
+        .map_err(Into::into)
 }
 
 // This is public to allow use in integration tests.
@@ -347,6 +193,7 @@ mod tests {
         message::{HpkeConfigId, HpkePublicKey},
         trace::test_util::install_test_trace_subscriber,
     };
+    use hpke::{aead::*, kdf::*, kem::*, Serializable};
     use serde::Deserialize;
     use std::collections::HashSet;
 
@@ -463,7 +310,7 @@ mod tests {
         const ASSOCIATED_DATA: &[u8] = b"round trip test associated data";
         const MESSAGE: &[u8] = b"round trip test message";
 
-        let (private_key, public_key) = KEM::gen_keypair(&mut thread_rng());
+        let (private_key, public_key) = KEM::gen_keypair(&mut rand::thread_rng());
         let hpke_config = HpkeConfig {
             id: HpkeConfigId::from(0),
             kem_id: KEM::KEM_ID.try_into().unwrap(),
