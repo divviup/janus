@@ -24,7 +24,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::hpke::associated_data_for_report_share;
+use crate::{hpke::associated_data_for_report_share, time::Clock};
 
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
@@ -358,9 +358,34 @@ impl Display for Interval {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Nonce {
     /// The time at which the report was generated.
-    pub time: Time,
+    time: Time,
     /// A randomly generated value.
-    pub(crate) rand: [u8; 8],
+    rand: [u8; 8],
+}
+
+impl Nonce {
+    /// Construct a nonce with the given time and random parts.
+    pub fn new(time: Time, rand: [u8; 8]) -> Nonce {
+        Nonce { time, rand }
+    }
+
+    /// Generate a fresh nonce with the current time.
+    pub fn generate<C: Clock>(clock: &C) -> Nonce {
+        Nonce {
+            time: clock.now(),
+            rand: rand::random(),
+        }
+    }
+
+    /// Get the time component of a nonce.
+    pub fn time(&self) -> Time {
+        self.time
+    }
+
+    /// Get the random component of a nonce.
+    pub fn rand(&self) -> [u8; 8] {
+        self.rand
+    }
 }
 
 impl Display for Nonce {

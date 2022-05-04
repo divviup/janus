@@ -275,7 +275,7 @@ impl<C: Clock> AggregationJobCreator<C> {
                         .into_iter()
                         .map(|nonce| {
                             nonce
-                                .time
+                                .time()
                                 .to_batch_unit_interval_start(min_batch_duration)
                                 .map(|s| (s, nonce))
                                 .map_err(datastore::Error::from)
@@ -554,7 +554,7 @@ mod tests {
                 .iter()
                 .map(|nonce| {
                     nonce
-                        .time
+                        .time()
                         .to_batch_unit_interval_start(task.min_batch_duration)
                         .unwrap()
                 })
