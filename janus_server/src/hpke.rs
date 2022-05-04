@@ -329,7 +329,7 @@ pub mod test_util {
         let (private_key, public_key) = X25519HkdfSha256::gen_keypair(&mut thread_rng());
         (
             HpkeConfig {
-                id: HpkeConfigId(0),
+                id: HpkeConfigId::from(0),
                 kem_id: HpkeKemId::X25519HkdfSha256,
                 kdf_id: HpkeKdfId::HkdfSha512,
                 aead_id: HpkeAeadId::ChaCha20Poly1305,
@@ -465,7 +465,7 @@ mod tests {
 
         let (private_key, public_key) = KEM::gen_keypair(&mut thread_rng());
         let hpke_config = HpkeConfig {
-            id: HpkeConfigId(0),
+            id: HpkeConfigId::from(0),
             kem_id: KEM::KEM_ID.try_into().unwrap(),
             kdf_id: KDF::KDF_ID.try_into().unwrap(),
             aead_id: AEAD::AEAD_ID.try_into().unwrap(),
@@ -586,7 +586,7 @@ mod tests {
                 }
 
                 let hpke_config = HpkeConfig {
-                    id: HpkeConfigId(0),
+                    id: HpkeConfigId::from(0),
                     kem_id,
                     kdf_id,
                     aead_id,
@@ -595,7 +595,7 @@ mod tests {
                 let hpke_private_key = HpkePrivateKey(test_vector.serialized_private_key.clone());
                 let application_info = HpkeApplicationInfo(test_vector.info.clone());
                 let ciphertext = HpkeCiphertext {
-                    config_id: HpkeConfigId(0),
+                    config_id: HpkeConfigId::from(0),
                     encapsulated_context: test_vector.enc.clone(),
                     payload: encryption.ct,
                 };

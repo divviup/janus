@@ -1910,7 +1910,7 @@ mod tests {
         assert_eq!(
             problem_details,
             serde_json::json!({
-                "status": 400,
+                "status": 400u16,
                 "type": "urn:ietf:params:ppm:error:staleReport",
                 "title": "Report could not be processed because it arrived too late.",
                 "detail": "Report could not be processed because it arrived too late.",
@@ -1942,7 +1942,7 @@ mod tests {
         assert_eq!(
             problem_details,
             serde_json::json!({
-                "status": 400,
+                "status": 400u16,
                 "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
@@ -1964,7 +1964,7 @@ mod tests {
         // should reject a report using the wrong HPKE config for the leader, and reply with
         // the error type outdatedConfig.
         let mut bad_report = report.clone();
-        bad_report.encrypted_input_shares[0].config_id = HpkeConfigId(101);
+        bad_report.encrypted_input_shares[0].config_id = HpkeConfigId::from(101);
         let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
             .await
             .unwrap();
@@ -1975,7 +1975,7 @@ mod tests {
         assert_eq!(
             problem_details,
             serde_json::json!({
-                "status": 400,
+                "status": 400u16,
                 "type": "urn:ietf:params:ppm:error:outdatedConfig",
                 "title": "The message was generated using an outdated configuration.",
                 "detail": "The message was generated using an outdated configuration.",
@@ -2126,11 +2126,11 @@ mod tests {
 
         let (aggregator, _, mut report, _, _db_handle) = setup_upload_test().await;
 
-        report.encrypted_input_shares[0].config_id = HpkeConfigId(101);
+        report.encrypted_input_shares[0].config_id = HpkeConfigId::from(101);
 
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::OutdatedHpkeConfig(config_id, task_id)) => {
             assert_eq!(task_id, report.task_id);
-            assert_eq!(config_id, HpkeConfigId(101));
+            assert_eq!(config_id, HpkeConfigId::from(101));
         });
     }
 
@@ -2393,7 +2393,7 @@ mod tests {
         // report_share_3 has an unknown HPKE config ID.
         let nonce_3 = generate_nonce(&clock);
         let mut wrong_hpke_config = hpke_key.0.clone();
-        wrong_hpke_config.id = HpkeConfigId(wrong_hpke_config.id.0 + 1);
+        wrong_hpke_config.id = HpkeConfigId::from(u8::from(wrong_hpke_config.id) + 1);
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_3,
@@ -2638,7 +2638,7 @@ mod tests {
             extensions: Vec::new(),
             encrypted_input_share: HpkeCiphertext {
                 // bogus, but we never get far enough to notice
-                config_id: HpkeConfigId(42),
+                config_id: HpkeConfigId::from(42),
                 encapsulated_context: Vec::from("012345"),
                 payload: Vec::from("543210"),
             },
@@ -2895,7 +2895,7 @@ mod tests {
                             nonce,
                             extensions: Vec::new(),
                             encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(42),
+                                config_id: HpkeConfigId::from(42),
                                 encapsulated_context: Vec::from("012345"),
                                 payload: Vec::from("543210"),
                             },
@@ -2996,7 +2996,7 @@ mod tests {
                             nonce,
                             extensions: Vec::new(),
                             encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(42),
+                                config_id: HpkeConfigId::from(42),
                                 encapsulated_context: Vec::from("012345"),
                                 payload: Vec::from("543210"),
                             },
@@ -3143,7 +3143,7 @@ mod tests {
                             nonce,
                             extensions: Vec::new(),
                             encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(42),
+                                config_id: HpkeConfigId::from(42),
                                 encapsulated_context: Vec::from("012345"),
                                 payload: Vec::from("543210"),
                             },
@@ -3254,7 +3254,7 @@ mod tests {
                             nonce: nonce_0,
                             extensions: Vec::new(),
                             encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(42),
+                                config_id: HpkeConfigId::from(42),
                                 encapsulated_context: Vec::from("012345"),
                                 payload: Vec::from("543210"),
                             },
@@ -3267,7 +3267,7 @@ mod tests {
                             nonce: nonce_1,
                             extensions: Vec::new(),
                             encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(42),
+                                config_id: HpkeConfigId::from(42),
                                 encapsulated_context: Vec::from("012345"),
                                 payload: Vec::from("543210"),
                             },
@@ -3389,7 +3389,7 @@ mod tests {
                             nonce,
                             extensions: Vec::new(),
                             encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId(42),
+                                config_id: HpkeConfigId::from(42),
                                 encapsulated_context: Vec::from("012345"),
                                 payload: Vec::from("543210"),
                             },
@@ -4136,7 +4136,10 @@ mod tests {
     fn current_hpke_key(
         hpke_keys: &HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
     ) -> &(HpkeConfig, HpkePrivateKey) {
-        hpke_keys.values().max_by_key(|(cfg, _)| cfg.id.0).unwrap()
+        hpke_keys
+            .values()
+            .max_by_key(|(cfg, _)| u8::from(cfg.id))
+            .unwrap()
     }
 
     fn generate_helper_report_share<V: vdaf::Client>(

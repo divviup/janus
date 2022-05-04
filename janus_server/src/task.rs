@@ -233,7 +233,7 @@ pub mod test_util {
             generate_hpke_config_and_private_key();
         let (mut aggregator_config_1, aggregator_private_key_1) =
             generate_hpke_config_and_private_key();
-        aggregator_config_1.id = HpkeConfigId(1);
+        aggregator_config_1.id = HpkeConfigId::from(1);
 
         let vdaf_verify_parameter = match &vdaf {
             Vdaf::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),

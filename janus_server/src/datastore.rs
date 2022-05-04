@@ -186,7 +186,7 @@ impl Transaction<'_> {
         for (hpke_config, hpke_private_key) in task.hpke_keys.values() {
             let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
             row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_bytes());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&hpke_config.id.0.to_be_bytes());
+            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&u8::from(hpke_config.id).to_be_bytes());
 
             let encrypted_hpke_private_key = self.crypter.encrypt(
                 "task_hpke_keys",
@@ -195,7 +195,7 @@ impl Transaction<'_> {
                 hpke_private_key.as_ref(),
             )?;
 
-            hpke_config_ids.push(hpke_config.id.0 as i16);
+            hpke_config_ids.push(u8::from(hpke_config.id) as i16);
             hpke_configs.push(hpke_config.get_encoded());
             hpke_private_keys.push(encrypted_hpke_private_key);
         }
@@ -1777,12 +1777,12 @@ mod tests {
             ],
             encrypted_input_shares: vec![
                 HpkeCiphertext {
-                    config_id: HpkeConfigId(12),
+                    config_id: HpkeConfigId::from(12),
                     encapsulated_context: Vec::from("encapsulated_context_0"),
                     payload: Vec::from("payload_0"),
                 },
                 HpkeCiphertext {
-                    config_id: HpkeConfigId(13),
+                    config_id: HpkeConfigId::from(13),
                     encapsulated_context: Vec::from("encapsulated_context_1"),
                     payload: Vec::from("payload_1"),
                 },
@@ -1980,7 +1980,7 @@ mod tests {
                 },
             ],
             encrypted_input_share: HpkeCiphertext {
-                config_id: HpkeConfigId(12),
+                config_id: HpkeConfigId::from(12),
                 encapsulated_context: Vec::from("encapsulated_context_0"),
                 payload: Vec::from("payload_0"),
             },
@@ -2269,7 +2269,7 @@ mod tests {
                                 nonce,
                                 extensions: Vec::new(),
                                 encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId(12),
+                                    config_id: HpkeConfigId::from(12),
                                     encapsulated_context: Vec::from("encapsulated_context_0"),
                                     payload: Vec::from("payload_0"),
                                 },
@@ -2432,7 +2432,7 @@ mod tests {
                                 nonce,
                                 extensions: Vec::new(),
                                 encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId(12),
+                                    config_id: HpkeConfigId::from(12),
                                     encapsulated_context: Vec::from("encapsulated_context_0"),
                                     payload: Vec::from("payload_0"),
                                 },
