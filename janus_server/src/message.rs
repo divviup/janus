@@ -458,7 +458,7 @@ impl Decode for Role {
 
 /// PPM protocol message representing an identifier for an HPKE config.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct HpkeConfigId(pub(crate) u8);
+pub struct HpkeConfigId(u8);
 
 impl Display for HpkeConfigId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -475,6 +475,18 @@ impl Encode for HpkeConfigId {
 impl Decode for HpkeConfigId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         Ok(Self(u8::decode(bytes)?))
+    }
+}
+
+impl From<u8> for HpkeConfigId {
+    fn from(value: u8) -> HpkeConfigId {
+        HpkeConfigId(value)
+    }
+}
+
+impl From<HpkeConfigId> for u8 {
+    fn from(id: HpkeConfigId) -> u8 {
+        id.0
     }
 }
 
