@@ -1,6 +1,6 @@
 //! Configuration for various Janus actors.
 
-use crate::trace::TraceConfiguration;
+use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use url::Url;
@@ -44,6 +44,9 @@ pub struct AggregatorConfig {
     /// Logging configuration.
     #[serde(default)]
     pub logging_config: TraceConfiguration,
+    /// Application-level metrics configuration
+    #[serde(default)]
+    pub metrics_config: MetricsConfiguration,
 }
 
 /// Non-secret configuration options for the Janus Aggregation Job Creator job.
@@ -89,7 +92,16 @@ pub struct AggregationJobCreatorConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr};
+    use crate::{
+        metrics::{MetricsExporterConfiguration, OtlpExporterConfiguration},
+        trace::{
+            OpenTelemetryTraceConfiguration, OtlpTraceConfiguration, TokioConsoleConfiguration,
+        },
+    };
+    use std::{
+        collections::HashMap,
+        net::{IpAddr, Ipv4Addr},
+    };
 
     fn generate_db_config() -> DbConfig {
         DbConfig {
@@ -111,6 +123,7 @@ mod tests {
             listen_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
             database: generate_db_config(),
             logging_config: TraceConfiguration::default(),
+            metrics_config: MetricsConfiguration::default(),
         };
 
         let encoded = serde_yaml::to_string(&aggregator_config).unwrap();
@@ -132,5 +145,132 @@ mod tests {
         let encoded = serde_yaml::to_string(&config).unwrap();
         let decoded_config: AggregationJobCreatorConfig = serde_yaml::from_str(&encoded).unwrap();
         assert_eq!(config, decoded_config);
+    }
+
+    /// Check that configuration fragments in the README can be parsed correctly.
+    #[test]
+    fn readme_config_examples() {
+        assert_eq!(
+            serde_yaml::from_str::<AggregatorConfig>(
+                r#"---
+listen_address: "0.0.0.0:8080"
+database:
+    url: "postgres://postgres:postgres@localhost:5432/postgres"
+logging_config:
+    tokio_console_config:
+        enabled: true
+        listen_address: 127.0.0.1:6669
+"#
+            )
+            .unwrap()
+            .logging_config
+            .tokio_console_config,
+            TokioConsoleConfiguration {
+                enabled: true,
+                listen_address: Some(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    6669,
+                )),
+            },
+        );
+
+        assert_eq!(
+            serde_yaml::from_str::<AggregatorConfig>(
+                r#"---
+listen_address: "0.0.0.0:8080"
+database:
+    url: "postgres://postgres:postgres@localhost:5432/postgres"
+logging_config:
+    open_telemetry_config:
+        jaeger:
+"#
+            )
+            .unwrap()
+            .logging_config
+            .open_telemetry_config,
+            Some(OpenTelemetryTraceConfiguration::Jaeger),
+        );
+
+        assert_eq!(
+            serde_yaml::from_str::<AggregatorConfig>(
+                r#"---
+listen_address: "0.0.0.0:8080"
+database:
+    url: "postgres://postgres:postgres@localhost:5432/postgres"
+logging_config:
+    open_telemetry_config:
+        otlp:
+            endpoint: "https://api.honeycomb.io:443"
+            metadata:
+                x-honeycomb-team: "YOUR_API_KEY"
+"#
+            )
+            .unwrap()
+            .logging_config
+            .open_telemetry_config,
+            Some(OpenTelemetryTraceConfiguration::Otlp(
+                OtlpTraceConfiguration {
+                    endpoint: "https://api.honeycomb.io:443".to_string(),
+                    metadata: HashMap::from([(
+                        "x-honeycomb-team".to_string(),
+                        "YOUR_API_KEY".to_string(),
+                    )]),
+                },
+            )),
+        );
+
+        assert_eq!(
+            serde_yaml::from_str::<AggregatorConfig>(
+                r#"---
+listen_address: "0.0.0.0:8080"
+database:
+    url: "postgres://postgres:postgres@localhost:5432/postgres"
+metrics_config:
+    exporter:
+        prometheus:
+            host: 0.0.0.0
+            port: 9464
+"#
+            )
+            .unwrap()
+            .metrics_config
+            .exporter,
+            Some(MetricsExporterConfiguration::Prometheus {
+                host: Some("0.0.0.0".to_string()),
+                port: Some(9464),
+            }),
+        );
+
+        assert_eq!(
+            serde_yaml::from_str::<AggregatorConfig>(
+                r#"---
+listen_address: "0.0.0.0:8080"
+database:
+    url: "postgres://postgres:postgres@localhost:5432/postgres"
+metrics_config:
+    exporter:
+        otlp:
+            endpoint: "https://api.honeycomb.io:443"
+            metadata:
+                x-honeycomb-team: "YOUR_API_KEY"
+                x-honeycomb-dataset: "YOUR_METRICS_DATASET"
+"#
+            )
+            .unwrap()
+            .metrics_config
+            .exporter,
+            Some(MetricsExporterConfiguration::Otlp(
+                OtlpExporterConfiguration {
+                    endpoint: "https://api.honeycomb.io:443".to_string(),
+                    metadata: HashMap::from([
+                        ("x-honeycomb-team".to_string(), "YOUR_API_KEY".to_string()),
+                        (
+                            "x-honeycomb-dataset".to_string(),
+                            "YOUR_METRICS_DATASET".to_string(),
+                        ),
+                    ]),
+                },
+            )),
+        );
     }
 }

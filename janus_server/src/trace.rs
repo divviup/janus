@@ -6,6 +6,19 @@ use std::{collections::HashMap, net::SocketAddr};
 use tracing_log::LogTracer;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer, Registry};
 
+#[cfg(feature = "otlp")]
+use {
+    opentelemetry::{
+        sdk::{trace, Resource},
+        KeyValue,
+    },
+    opentelemetry_otlp::WithExportConfig,
+    opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+    std::str::FromStr,
+    tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
+    tracing_subscriber::filter::{LevelFilter, Targets},
+};
+
 /// Errors from initializing trace subscriber.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -66,16 +79,15 @@ pub struct TokioConsoleConfiguration {
 
 /// Selection of an exporter for OpenTelemetry spans.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum OpenTelemetryTraceConfiguration {
-    #[serde(rename = "jaeger")]
     Jaeger,
-    #[serde(rename = "otlp")]
-    Otlp(OtlpConfiguration),
+    Otlp(OtlpTraceConfiguration),
 }
 
 /// Configuration options specific to the OpenTelemetry OTLP exporter.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OtlpConfiguration {
+pub struct OtlpTraceConfiguration {
     /// gRPC endpoint for OTLP exporter.
     pub endpoint: String,
     /// Additional metadata/HTTP headers to be sent with OTLP requests.
@@ -163,16 +175,6 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     #[cfg(feature = "otlp")]
     if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) = &config.open_telemetry_config
     {
-        use opentelemetry::{
-            sdk::{trace, Resource},
-            KeyValue,
-        };
-        use opentelemetry_otlp::WithExportConfig;
-        use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
-        use std::str::FromStr;
-        use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
-        use tracing_subscriber::filter::{LevelFilter, Targets};
-
         let mut map = MetadataMap::with_capacity(otlp_config.metadata.len());
         for (key, value) in otlp_config.metadata.iter() {
             map.insert(MetadataKey::from_str(key)?, MetadataValue::from_str(value)?);

@@ -62,6 +62,7 @@ async fn server_shutdown() {
             url: db_handle.connection_string().parse().unwrap(),
         },
         logging_config: Default::default(),
+        metrics_config: Default::default(),
     };
 
     let task_id = TaskId::random();

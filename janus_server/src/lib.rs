@@ -7,6 +7,7 @@ pub mod config;
 pub mod datastore;
 pub mod hpke;
 pub mod message;
+pub mod metrics;
 pub mod task;
 pub mod time;
 pub mod trace;
