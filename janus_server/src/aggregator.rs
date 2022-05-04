@@ -415,7 +415,7 @@ impl TaskAggregator {
         let report_deadline = clock.now().add(self.task.tolerable_clock_skew)?;
 
         // §4.2.4: reject reports from too far in the future
-        if report.nonce.time.is_after(report_deadline) {
+        if report.nonce.time().is_after(report_deadline) {
             warn!(?report.task_id, ?report.nonce, "Report timestamp exceeds tolerable clock skew");
             return Err(Error::ReportFromTheFuture(report.nonce, report.task_id));
         }
@@ -1830,10 +1830,10 @@ mod tests {
             .unwrap();
 
         let hpke_key = current_hpke_key(&task.hpke_keys);
-        let nonce = Nonce {
-            time: clock.now().sub(task.tolerable_clock_skew).unwrap(),
-            rand: thread_rng().gen(),
-        };
+        let nonce = Nonce::new(
+            clock.now().sub(task.tolerable_clock_skew).unwrap(),
+            thread_rng().gen(),
+        );
         let extensions = vec![];
         let message = b"this is a message";
         let associated_data = associated_data_for_report_share(nonce, &extensions);
@@ -1996,12 +1996,13 @@ mod tests {
 
         // reports from the future should be rejected.
         let mut bad_report = report.clone();
-        bad_report.nonce.time = MockClock::default()
+        let bad_report_time = MockClock::default()
             .now()
             .add(Duration::from_minutes(10).unwrap())
             .unwrap()
             .add(Duration::from_seconds(1))
             .unwrap();
+        bad_report.nonce = Nonce::new(bad_report_time, bad_report.nonce.rand());
         let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
             .await
             .unwrap();
@@ -2179,11 +2180,14 @@ mod tests {
         let (aggregator, task, mut report, datastore, _db_handle) = setup_upload_test().await;
 
         // Boundary condition
-        report.nonce.time = aggregator
-            .clock
-            .now()
-            .add(task.tolerable_clock_skew)
-            .unwrap();
+        report.nonce = Nonce::new(
+            aggregator
+                .clock
+                .now()
+                .add(task.tolerable_clock_skew)
+                .unwrap(),
+            report.nonce.rand(),
+        );
         let mut report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
         aggregator
             .handle_upload(&report.get_encoded())
@@ -2199,13 +2203,16 @@ mod tests {
         assert_eq!(Some(&report), got_report.as_ref());
 
         // Just past the clock skew
-        report.nonce.time = aggregator
-            .clock
-            .now()
-            .add(task.tolerable_clock_skew)
-            .unwrap()
-            .add(Duration::from_seconds(1))
-            .unwrap();
+        report.nonce = Nonce::new(
+            aggregator
+                .clock
+                .now()
+                .add(task.tolerable_clock_skew)
+                .unwrap()
+                .add(Duration::from_seconds(1))
+                .unwrap(),
+            report.nonce.rand(),
+        );
         let report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id);
@@ -2361,7 +2368,7 @@ mod tests {
             .unwrap();
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = generate_nonce(&clock);
+        let nonce_0 = Nonce::generate(&clock);
         let input_share = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0)
             .input_shares
             .remove(1);
@@ -2374,11 +2381,11 @@ mod tests {
 
         // report_share_1 fails decryption.
         let mut report_share_1 = report_share_0.clone();
-        report_share_1.nonce = generate_nonce(&clock);
+        report_share_1.nonce = Nonce::generate(&clock);
         report_share_1.encrypted_input_share.payload[0] ^= 0xFF;
 
         // report_share_2 fails decoding.
-        let nonce_2 = generate_nonce(&clock);
+        let nonce_2 = Nonce::generate(&clock);
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
         let associated_data = associated_data_for_report_share(nonce_2, &[]);
@@ -2391,7 +2398,7 @@ mod tests {
         );
 
         // report_share_3 has an unknown HPKE config ID.
-        let nonce_3 = generate_nonce(&clock);
+        let nonce_3 = Nonce::generate(&clock);
         let mut wrong_hpke_config = hpke_key.0.clone();
         wrong_hpke_config.id = HpkeConfigId::from(u8::from(wrong_hpke_config.id) + 1);
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -2496,7 +2503,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
-            generate_nonce(&clock),
+            Nonce::generate(&clock),
             &hpke_key.0,
             &(),
         );
@@ -2565,7 +2572,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
-            generate_nonce(&clock),
+            Nonce::generate(&clock),
             &hpke_key.0,
             &(),
         );
@@ -2631,10 +2638,10 @@ mod tests {
             .unwrap();
 
         let report_share = ReportShare {
-            nonce: Nonce {
-                time: Time::from_seconds_since_epoch(54321),
-                rand: [1, 2, 3, 4, 5, 6, 7, 8],
-            },
+            nonce: Nonce::new(
+                Time::from_seconds_since_epoch(54321),
+                [1, 2, 3, 4, 5, 6, 7, 8],
+            ),
             extensions: Vec::new(),
             encrypted_input_share: HpkeCiphertext {
                 // bogus, but we never get far enough to notice
@@ -2702,7 +2709,7 @@ mod tests {
         let hmac_key = hmac_key.clone();
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = generate_nonce(&clock);
+        let nonce_0 = Nonce::generate(&clock);
         let transcript_0 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0);
         let prep_step_0 = assert_matches!(&transcript_0.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_0 = assert_matches!(&transcript_0.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
@@ -2715,7 +2722,7 @@ mod tests {
         );
 
         // report_share_1 is omitted by the leader's request.
-        let nonce_1 = generate_nonce(&clock);
+        let nonce_1 = Nonce::generate(&clock);
         let transcript_1 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_1, &0);
         let prep_step_1 = assert_matches!(&transcript_1.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -2870,10 +2877,10 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce = Nonce {
-            time: Time::from_seconds_since_epoch(54321),
-            rand: [1, 2, 3, 4, 5, 6, 7, 8],
-        };
+        let nonce = Nonce::new(
+            Time::from_seconds_since_epoch(54321),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+        );
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let datastore = Arc::new(datastore);
@@ -2971,10 +2978,10 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce = Nonce {
-            time: Time::from_seconds_since_epoch(54321),
-            rand: [1, 2, 3, 4, 5, 6, 7, 8],
-        };
+        let nonce = Nonce::new(
+            Time::from_seconds_since_epoch(54321),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+        );
         let task = new_dummy_task(task_id, Vdaf::FakeFailsPrepStep, Role::Helper);
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let datastore = Arc::new(datastore);
@@ -3119,10 +3126,10 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce = Nonce {
-            time: Time::from_seconds_since_epoch(54321),
-            rand: [1, 2, 3, 4, 5, 6, 7, 8],
-        };
+        let nonce = Nonce::new(
+            Time::from_seconds_since_epoch(54321),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+        );
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
         let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
@@ -3176,10 +3183,10 @@ mod tests {
             job_id: aggregation_job_id,
             body: AggregateContinueReq {
                 seq: vec![Transition {
-                    nonce: Nonce {
-                        time: Time::from_seconds_since_epoch(54321),
-                        rand: [8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
-                    },
+                    nonce: Nonce::new(
+                        Time::from_seconds_since_epoch(54321),
+                        [8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
+                    ),
                     trans_data: TransitionTypeSpecificData::Continued {
                         payload: Vec::new(),
                     },
@@ -3224,14 +3231,14 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce_0 = Nonce {
-            time: Time::from_seconds_since_epoch(54321),
-            rand: [1, 2, 3, 4, 5, 6, 7, 8],
-        };
-        let nonce_1 = Nonce {
-            time: Time::from_seconds_since_epoch(54321),
-            rand: [8, 7, 6, 5, 4, 3, 2, 1],
-        };
+        let nonce_0 = Nonce::new(
+            Time::from_seconds_since_epoch(54321),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+        );
+        let nonce_1 = Nonce::new(
+            Time::from_seconds_since_epoch(54321),
+            [8, 7, 6, 5, 4, 3, 2, 1],
+        );
 
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
         let (datastore, _db_handle) = ephemeral_datastore().await;
@@ -3364,10 +3371,10 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce = Nonce {
-            time: Time::from_seconds_since_epoch(54321),
-            rand: [1, 2, 3, 4, 5, 6, 7, 8],
-        };
+        let nonce = Nonce::new(
+            Time::from_seconds_since_epoch(54321),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+        );
 
         let task = new_dummy_task(task_id, Vdaf::Fake, Role::Helper);
         let (datastore, _db_handle) = ephemeral_datastore().await;
@@ -3422,10 +3429,10 @@ mod tests {
             job_id: aggregation_job_id,
             body: AggregateContinueReq {
                 seq: vec![Transition {
-                    nonce: Nonce {
-                        time: Time::from_seconds_since_epoch(54321),
-                        rand: [1, 2, 3, 4, 5, 6, 7, 8],
-                    },
+                    nonce: Nonce::new(
+                        Time::from_seconds_since_epoch(54321),
+                        [1, 2, 3, 4, 5, 6, 7, 8],
+                    ),
                     trans_data: TransitionTypeSpecificData::Continued {
                         payload: Vec::new(),
                     },
@@ -4050,13 +4057,6 @@ mod tests {
                     "taskid": format!("{}", task_id),
                 })
             );
-        }
-    }
-
-    fn generate_nonce<C: Clock>(clock: &C) -> Nonce {
-        Nonce {
-            time: clock.now(),
-            rand: thread_rng().gen(),
         }
     }
 
