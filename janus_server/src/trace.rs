@@ -242,7 +242,7 @@ pub mod test_util {
     /// called at the beginning of any test that requires a tracing subscriber.
     ///
     /// To see output, you will need to set the RUST_LOG environment variable appropriately.
-    /// See https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html.
+    /// See <https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html>.
     pub fn install_test_trace_subscriber() {
         static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
         INSTALL_TRACE_SUBSCRIBER.call_once(|| {
