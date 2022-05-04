@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
     // Start creating aggregation jobs.
     Arc::new(AggregationJobCreator {
         datastore,
-        clock: RealClock {},
+        clock: RealClock::default(),
         tasks_update_frequency: Duration::from_secs(config.tasks_update_frequency_secs),
         aggregation_job_creation_interval: Duration::from_secs(
             config.aggregation_job_creation_interval_secs,
@@ -109,10 +109,7 @@ async fn main() -> anyhow::Result<()> {
     .await
 }
 
-struct AggregationJobCreator<C: Clock>
-where
-    C: 'static,
-{
+struct AggregationJobCreator<C: Clock + 'static> {
     // Dependencies.
     datastore: Datastore,
     clock: C,
@@ -130,7 +127,7 @@ where
     max_aggregation_job_size: usize,
 }
 
-impl<C: Clock> AggregationJobCreator<C> {
+impl<C: Clock + 'static> AggregationJobCreator<C> {
     #[tracing::instrument(skip(self))]
     async fn run(self: Arc<Self>) -> ! {
         // TODO(brandon): add support for handling only a subset of tasks in a single job (i.e. sharding).
@@ -239,7 +236,10 @@ impl<C: Clock> AggregationJobCreator<C> {
                     .await
             }
 
-            _ => panic!("VDAF {:?} is not yet supported", task.vdaf),
+            _ => {
+                error!(vdaf = ?task.vdaf, "VDAF is not yet supported");
+                panic!("VDAF {:?} is not yet supported", task.vdaf);
+            }
         }
     }
 
