@@ -10,6 +10,10 @@ use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::str::FromStr;
 use tokio_postgres::NoTls;
 
+/// Connects to a datastore, given a config for the underlying database. `db_password` is mutually
+/// exclusive with the database password specified in the connection URL in `db_config`. `ds_keys`
+/// are a list of AES-128-GCM keys, encoded in base64 with no padding, used to protect secret values
+/// stored in the datastore; it must not be empty.
 pub fn datastore(
     db_config: DbConfig,
     db_password: Option<String>,
@@ -44,7 +48,7 @@ pub fn datastore(
                 .and_then(|k| {
                     Ok(LessSafeKey::new(
                         UnboundKey::new(&AES_128_GCM, &k)
-                            .map_err(|_| anyhow!("coulnd't parse datastore keys as keys"))?,
+                            .map_err(|_| anyhow!("couldn't parse datastore keys as keys"))?,
                     ))
                 })
         })
