@@ -158,6 +158,9 @@ impl From<datastore::Error> for Error {
 
 /// Aggregator implements a PPM aggregator.
 pub struct Aggregator<C> {
+    /// The base URL for this aggregator, relative to which API endpoints like `/collect` or
+    /// `/upload` are found.
+    pub api_base_url: Url,
     /// Datastore used for durable storage.
     datastore: Arc<Datastore>,
     /// Clock used to sample time.
@@ -167,8 +170,9 @@ pub struct Aggregator<C> {
 }
 
 impl<C: Clock> Aggregator<C> {
-    fn new(datastore: Arc<Datastore>, clock: C) -> Self {
+    fn new(api_base_url: &Url, datastore: Arc<Datastore>, clock: C) -> Self {
         Self {
+            api_base_url: api_base_url.clone(),
             datastore,
             clock,
             task_aggregators: Mutex::new(HashMap::new()),
@@ -243,7 +247,7 @@ impl<C: Clock> Aggregator<C> {
         }
 
         task_aggregator
-            .handle_collect(&self.datastore, collect_req)
+            .handle_collect(&self.api_base_url, &self.datastore, collect_req)
             .await
     }
 
@@ -486,7 +490,12 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_collect(&self, datastore: &Datastore, req: CollectReq) -> Result<Url, Error> {
+    async fn handle_collect(
+        &self,
+        api_base_url: &Url,
+        datastore: &Datastore,
+        req: CollectReq,
+    ) -> Result<Url, Error> {
         // §4.5: check that the batch interval meets the requirements from §4.6
         if !self.task.validate_batch_interval(req.batch_interval) {
             return Err(Error::InvalidBatchInterval(
@@ -514,11 +523,7 @@ impl TaskAggregator {
             })
             .await?;
 
-        // TODO(timg): Aggregator configuration needs to include the URL from which collect job URIs
-        // are constructed
-        let base_url = Url::parse("https://example.com").unwrap();
-
-        Ok(base_url
+        Ok(api_base_url
             .join("collect_jobs/")?
             .join(&collect_job_uuid.to_string())?)
     }
@@ -1528,10 +1533,11 @@ where
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
 fn aggregator_filter<C: Clock>(
+    api_base_url: &Url,
     datastore: Arc<Datastore>,
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
-    let aggregator = Arc::new(Aggregator::new(datastore, clock));
+    let aggregator = Arc::new(Aggregator::new(api_base_url, datastore, clock));
 
     let meter = opentelemetry::global::meter("janus_server");
     let response_counter = meter
@@ -1649,13 +1655,16 @@ fn aggregator_filter<C: Clock>(
 /// `SocketAddr` representing the address and port the server are listening on
 /// and a future that can be `await`ed to begin serving requests.
 pub fn aggregator_server<C: Clock>(
+    api_base_url: &Url,
     datastore: Arc<Datastore>,
     clock: C,
     listen_address: SocketAddr,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error> {
-    Ok(warp::serve(aggregator_filter(datastore, clock)?)
-        .bind_with_graceful_shutdown(listen_address, shutdown_signal))
+    Ok(
+        warp::serve(aggregator_filter(api_base_url, datastore, clock)?)
+            .bind_with_graceful_shutdown(listen_address, shutdown_signal),
+    )
 }
 
 #[cfg(test)]
@@ -1896,7 +1905,14 @@ mod tests {
         let response = warp::test::request()
             .path(&format!("/hpke_config?task_id={}", task_id))
             .method("GET")
-            .filter(&aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap())
+            .filter(
+                &aggregator_filter(
+                    &Url::parse("https://example.com").unwrap(),
+                    Arc::new(datastore),
+                    MockClock::default(),
+                )
+                .unwrap(),
+            )
             .await
             .unwrap()
             .into_response();
@@ -1995,7 +2011,12 @@ mod tests {
         let clock = MockClock::default();
 
         let report = setup_report(&task, &datastore, &clock).await;
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
@@ -2133,7 +2154,12 @@ mod tests {
 
         let report = setup_report(&task, &datastore, &clock).await;
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let (part, body) = warp::test::request()
             .method("POST")
@@ -2184,7 +2210,11 @@ mod tests {
         let clock = MockClock::default();
         let report = setup_report(&task, &datastore, &clock).await;
 
-        let aggregator = Aggregator::new(datastore.clone(), clock);
+        let aggregator = Aggregator::new(
+            &Url::parse("https://example.com").unwrap(),
+            datastore.clone(),
+            clock,
+        );
 
         (aggregator, task, report, datastore, db_handle)
     }
@@ -2358,7 +2388,12 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let (part, body) = warp::test::request()
             .method("POST")
@@ -2422,7 +2457,12 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -2532,7 +2572,12 @@ mod tests {
         };
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -2626,7 +2671,12 @@ mod tests {
         };
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -2695,7 +2745,12 @@ mod tests {
         };
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -2769,7 +2824,12 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -2897,7 +2957,12 @@ mod tests {
         };
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            datastore.clone(),
+            clock,
+        )
+        .unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -3050,7 +3115,12 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            datastore.clone(),
+            clock,
+        )
+        .unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -3153,7 +3223,12 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            datastore.clone(),
+            clock,
+        )
+        .unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -3303,7 +3378,12 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -3443,7 +3523,12 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -3549,7 +3634,12 @@ mod tests {
             },
         };
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -3598,7 +3688,12 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let request = CollectReq {
             task_id,
@@ -3656,7 +3751,12 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            clock,
+        )
+        .unwrap();
 
         let request = CollectReq {
             task_id,
@@ -3714,7 +3814,12 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            MockClock::default(),
+        )
+        .unwrap();
 
         let request = CollectReq {
             task_id,
@@ -3736,8 +3841,12 @@ mod tests {
             .into_response();
 
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        // TODO(timg): validate collect URI
-        assert!(response.headers().get(LOCATION).is_some());
+        let collect_uri =
+            Url::parse(response.headers().get(LOCATION).unwrap().to_str().unwrap()).unwrap();
+        assert_eq!(collect_uri.scheme(), "https");
+        assert_eq!(collect_uri.host_str().unwrap(), "example.com");
+        // Verify that the path is more than just "/"
+        assert!(collect_uri.path().len() > 1);
     }
 
     #[tokio::test]
@@ -3760,7 +3869,12 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            MockClock::default(),
+        )
+        .unwrap();
 
         let request = AggregateShareReq {
             task_id,
@@ -3820,7 +3934,12 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            Arc::new(datastore),
+            MockClock::default(),
+        )
+        .unwrap();
 
         let request = AggregateShareReq {
             task_id,
@@ -3889,7 +4008,12 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(datastore.clone(), MockClock::default()).unwrap();
+        let filter = aggregator_filter(
+            &Url::parse("https://example.com").unwrap(),
+            datastore.clone(),
+            MockClock::default(),
+        )
+        .unwrap();
 
         // There are no batch unit_aggregations in the datastore yet
         let request = AggregateShareReq {

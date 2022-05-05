@@ -102,6 +102,7 @@ async fn setup_test() -> TestCase {
         .await
         .unwrap();
     let (leader_address, leader_server) = aggregator_server(
+        &Url::parse("https://example.com").unwrap(),
         leader_datastore.clone(),
         RealClock::default(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
@@ -135,6 +136,7 @@ async fn setup_test() -> TestCase {
         .await
         .unwrap();
     let (helper_address, helper_server) = aggregator_server(
+        &Url::parse("https://example.com").unwrap(),
         Arc::new(helper_datastore),
         RealClock::default(),
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),

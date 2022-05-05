@@ -58,6 +58,7 @@ async fn server_shutdown() {
 
     let config = AggregatorConfig {
         listen_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port)),
+        api_base_url: Url::parse("https://example.com").unwrap(),
         database: DbConfig {
             url: db_handle.connection_string().parse().unwrap(),
         },

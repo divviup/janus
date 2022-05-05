@@ -24,6 +24,7 @@ pub struct DbConfig {
 /// let yaml_config = r#"
 /// ---
 /// listen_address: "0.0.0.0:8080"
+/// api_base_url: "http://0.0.0.0:8080"
 /// database:
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
 /// logging_config: # logging_config is optional
@@ -34,11 +35,12 @@ pub struct DbConfig {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AggregatorConfig {
-    /// Address on which this server should listen for connections and serve its
-    /// API endpoints.
-    // TODO: Options for terminating TLS, unless that gets handled in a load
-    // balancer?
+    /// Address on which this server should listen for connections and serve its API endpoints.
+    // TODO: Options for terminating TLS, unless that gets handled in a load balancer?
     pub listen_address: SocketAddr,
+    /// The base URL for this aggregator, relative to which API endpoints like `/collect` or
+    /// `/upload` are found.
+    pub api_base_url: Url,
     /// The aggregator's database configuration.
     pub database: DbConfig,
     /// Logging configuration.
@@ -120,6 +122,7 @@ mod tests {
     #[test]
     fn roundtrip_aggregator_config() {
         let aggregator_config = AggregatorConfig {
+            api_base_url: Url::parse("https://example.com").unwrap(),
             listen_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
             database: generate_db_config(),
             logging_config: TraceConfiguration::default(),
@@ -154,6 +157,7 @@ mod tests {
             serde_yaml::from_str::<AggregatorConfig>(
                 r#"---
 listen_address: "0.0.0.0:8080"
+api_base_url: "https://example.com"
 database:
     url: "postgres://postgres:postgres@localhost:5432/postgres"
 logging_config:
@@ -178,6 +182,7 @@ logging_config:
             serde_yaml::from_str::<AggregatorConfig>(
                 r#"---
 listen_address: "0.0.0.0:8080"
+api_base_url: "https://example.com"
 database:
     url: "postgres://postgres:postgres@localhost:5432/postgres"
 logging_config:
@@ -195,6 +200,7 @@ logging_config:
             serde_yaml::from_str::<AggregatorConfig>(
                 r#"---
 listen_address: "0.0.0.0:8080"
+api_base_url: "https://example.com"
 database:
     url: "postgres://postgres:postgres@localhost:5432/postgres"
 logging_config:
@@ -223,6 +229,7 @@ logging_config:
             serde_yaml::from_str::<AggregatorConfig>(
                 r#"---
 listen_address: "0.0.0.0:8080"
+api_base_url: "https://example.com"
 database:
     url: "postgres://postgres:postgres@localhost:5432/postgres"
 metrics_config:
@@ -245,6 +252,7 @@ metrics_config:
             serde_yaml::from_str::<AggregatorConfig>(
                 r#"---
 listen_address: "0.0.0.0:8080"
+api_base_url: "https://example.com"
 database:
     url: "postgres://postgres:postgres@localhost:5432/postgres"
 metrics_config:

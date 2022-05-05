@@ -177,6 +177,7 @@ async fn main() -> Result<()> {
         setup_signal_handler().context("failed to register SIGTERM signal handler")?;
 
     let (bound_address, server) = aggregator_server(
+        &config.api_base_url,
         datastore,
         RealClock::default(),
         config.listen_address,
