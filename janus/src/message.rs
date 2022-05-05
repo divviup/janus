@@ -120,6 +120,14 @@ impl Time {
             .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
     }
 
+    /// Get the difference between the provided `other` and `self`. `self` must be after `other`.
+    pub fn difference(&self, other: Self) -> Result<Duration, Error> {
+        self.0
+            .checked_sub(other.0)
+            .map(Duration)
+            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
+    }
+
     /// Compute the start of the batch interval containing this Time, given the batch unit duration.
     pub fn to_batch_unit_interval_start(
         &self,

@@ -12,6 +12,7 @@ use crate::{
     },
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
+use chrono::NaiveDateTime;
 use futures::try_join;
 use janus::message::{Duration, Nonce, TaskId, Time};
 use postgres_types::{Json, ToSql};
@@ -21,7 +22,10 @@ use prio::{
 };
 use rand::{thread_rng, Rng};
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
-use std::{convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of, pin::Pin};
+use std::{
+    collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
+    pin::Pin,
+};
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
 use uuid::Uuid;
@@ -360,12 +364,12 @@ impl Transaction<'_> {
             .collect::<Result<_, Error>>()?;
         let vdaf = row.try_get::<_, Json<Vdaf>>("vdaf")?.0;
         let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
-        let max_batch_lifetime = row.get_bigint_as_u64("max_batch_lifetime")?;
-        let min_batch_size = row.get_bigint_as_u64("min_batch_size")?;
+        let max_batch_lifetime = row.get_bigint_and_convert("max_batch_lifetime")?;
+        let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
         let min_batch_duration =
-            Duration::from_seconds(row.get_bigint_as_u64("min_batch_duration")?);
+            Duration::from_seconds(row.get_bigint_and_convert("min_batch_duration")?);
         let tolerable_clock_skew =
-            Duration::from_seconds(row.get_bigint_as_u64("tolerable_clock_skew")?);
+            Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
 
         let vdaf_verify_param = self.crypter.decrypt(
@@ -1060,7 +1064,7 @@ impl Transaction<'_> {
                 WHERE
                     task_id = (SELECT id FROM tasks)
                     AND unit_interval_start >= $2
-                    AND (unit_interval_start + (SELECT min_batch_duration FROM tasks) * interval '1 second') < $3
+                    AND (unit_interval_start + (SELECT min_batch_duration FROM tasks) * interval '1 second') <= $3
                     AND aggregation_param = $4",
             )
             .await?;
@@ -1081,7 +1085,7 @@ impl Transaction<'_> {
                 let unit_interval_start =
                     Time::from_naive_date_time(row.get("unit_interval_start"));
                 let aggregate_share = row.get_bytea_and_convert("aggregate_share")?;
-                let report_count = row.get_bigint_as_u64("report_count")?;
+                let report_count = row.get_bigint_and_convert("report_count")?;
                 let checksum: &[u8] = row.get("checksum");
                 let checksum: [u8; 32] = checksum.try_into().map_err(|e| {
                     Error::DbState(format!(
@@ -1151,7 +1155,7 @@ impl Transaction<'_> {
 
         let aggregation_param = A::AggregationParam::get_decoded(&request.aggregation_param)?;
         let helper_aggregate_share = row.get_bytea_and_convert("helper_aggregate_share")?;
-        let report_count = row.get_bigint_as_u64("report_count")?;
+        let report_count = row.get_bigint_and_convert("report_count")?;
         let checksum: [u8; 32] = row.get_bytea_and_convert("checksum")?;
 
         Ok(Some(AggregateShareJob {
@@ -1162,6 +1166,63 @@ impl Transaction<'_> {
             report_count,
             checksum,
         }))
+    }
+
+    /// Returns a map whose keys are those values from `intervals` that fall within the batch
+    /// interval described by at least one `aggregate_share_jobs` row.
+    pub(crate) async fn get_aggregate_share_job_counts_for_intervals(
+        &self,
+        task_id: TaskId,
+        intervals: &[Interval],
+    ) -> Result<HashMap<Interval, u64>, Error> {
+        let interval_starts: Vec<NaiveDateTime> = intervals
+            .iter()
+            .map(|interval| interval.start().as_naive_date_time())
+            .collect();
+        let interval_ends: Vec<NaiveDateTime> = intervals
+            .iter()
+            .map(|interval| interval.end().as_naive_date_time())
+            .collect();
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "WITH ranges AS (
+                    SELECT tsrange(x.range_start, x.range_end) as interval
+                    FROM unnest($1::TIMESTAMP[], $2::TIMESTAMP[]) AS x(range_start, range_end)
+                )
+                SELECT
+                    COUNT(aggregate_share_jobs.batch_interval_start) as overlap_count,
+                    lower(ranges.interval) as interval_start,
+                    upper(ranges.interval) as interval_end
+                FROM aggregate_share_jobs
+                INNER JOIN ranges
+                    ON tsrange(
+                        aggregate_share_jobs.batch_interval_start,
+                        aggregate_share_jobs.batch_interval_start + aggregate_share_jobs.batch_interval_duration * interval '1 second'
+                    ) @> ranges.interval
+                WHERE aggregate_share_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $3)
+                GROUP BY ranges.interval;"
+            )
+            .await?;
+        let rows = self
+            .tx
+            .query(
+                &stmt,
+                &[&interval_starts, &interval_ends, &task_id.as_bytes()],
+            )
+            .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let interval_start = Time::from_naive_date_time(row.get("interval_start"));
+                let interval_end = Time::from_naive_date_time(row.get("interval_end"));
+                let interval =
+                    Interval::new(interval_start, interval_end.difference(interval_start)?)?;
+                let overlap_count = row.get_bigint_and_convert("overlap_count")?;
+                Ok((interval, overlap_count))
+            })
+            .collect::<Result<_, _>>()
     }
 
     /// Put an `aggregate_share_job` row into the datastore.
@@ -1299,12 +1360,13 @@ where
 /// Extensions for [`tokio_postgres::row::Row`]
 trait RowExt {
     /// Get a PostgreSQL `BIGINT` from the row, which is represented in Rust as
-    /// i64 ([1]), then attempt to convert it to u64.
+    /// i64 ([1]), then attempt to convert it to the desired integer type `T`.
     ///
     /// [1]: https://docs.rs/postgres-types/latest/postgres_types/trait.FromSql.html
-    fn get_bigint_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    fn get_bigint_and_convert<I, T>(&self, idx: I) -> Result<T, Error>
     where
-        I: RowIndex + Display;
+        I: RowIndex + Display,
+        T: TryFrom<i64, Error = std::num::TryFromIntError>;
 
     /// Get a PostgreSQL `BYTEA` from the row and then attempt to convert it to
     /// u64, treating it as an 8 byte big endian array.
@@ -1320,12 +1382,13 @@ trait RowExt {
 }
 
 impl RowExt for Row {
-    fn get_bigint_as_u64<I>(&self, idx: I) -> Result<u64, Error>
+    fn get_bigint_and_convert<I, T>(&self, idx: I) -> Result<T, Error>
     where
         I: RowIndex + Display,
+        T: TryFrom<i64, Error = std::num::TryFromIntError>,
     {
         let bigint: i64 = self.try_get(idx)?;
-        Ok(u64::try_from(bigint)?)
+        Ok(T::try_from(bigint)?)
     }
 
     fn get_bytea_as_u64<I>(&self, idx: I) -> Result<u64, Error>
@@ -1349,7 +1412,7 @@ impl RowExt for Row {
         E: Display,
         for<'a> T: TryFrom<&'a [u8], Error = E>,
     {
-        let encoded: Vec<u8> = self.get(idx);
+        let encoded: Vec<u8> = self.try_get(idx)?;
         let decoded = T::try_from(&encoded)
             .map_err(|e| Error::DbState(format!("{} stored in database is invalid: {}", idx, e)))?;
         Ok(decoded)
@@ -2844,6 +2907,7 @@ mod tests {
                     })
                     .await?;
 
+                    // Following three batch units are within the interval queried below.
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
                         unit_interval_start: Time::from_seconds_since_epoch(100),
@@ -2857,6 +2921,17 @@ mod tests {
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
                         unit_interval_start: Time::from_seconds_since_epoch(150),
+                        aggregation_param: aggregation_param.clone(),
+                        aggregate_share: aggregate_share.clone(),
+                        report_count: 0,
+                        checksum: [0; 32],
+                    })
+                    .await?;
+
+                    // The end of this batch unit is exactly the end of the interval queried below.
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
+                        task_id,
+                        unit_interval_start: Time::from_seconds_since_epoch(200),
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
@@ -2881,7 +2956,7 @@ mod tests {
                     // End of this aggregation's interval is after the interval queried below.
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
                         task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(200),
+                        unit_interval_start: Time::from_seconds_since_epoch(250),
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
@@ -2926,23 +3001,36 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(batch_unit_aggregations.len(), 2);
-        assert!(batch_unit_aggregations.contains(&BatchUnitAggregation {
-            task_id,
-            unit_interval_start: Time::from_seconds_since_epoch(100),
-            aggregation_param: aggregation_param.clone(),
-            aggregate_share: aggregate_share.clone(),
-            report_count: 0,
-            checksum: [0u8; 32],
-        }));
-        assert!(batch_unit_aggregations.contains(&BatchUnitAggregation {
-            task_id,
-            unit_interval_start: Time::from_seconds_since_epoch(150),
-            aggregation_param: aggregation_param.clone(),
-            aggregate_share: aggregate_share.clone(),
-            report_count: 0,
-            checksum: [0u8; 32],
-        }));
+        assert_eq!(
+            batch_unit_aggregations.len(),
+            3,
+            "{:#?}",
+            batch_unit_aggregations,
+        );
+        assert!(
+            batch_unit_aggregations.contains(&BatchUnitAggregation {
+                task_id,
+                unit_interval_start: Time::from_seconds_since_epoch(100),
+                aggregation_param: aggregation_param.clone(),
+                aggregate_share: aggregate_share.clone(),
+                report_count: 0,
+                checksum: [0u8; 32],
+            }),
+            "{:#?}",
+            batch_unit_aggregations,
+        );
+        assert!(
+            batch_unit_aggregations.contains(&BatchUnitAggregation {
+                task_id,
+                unit_interval_start: Time::from_seconds_since_epoch(150),
+                aggregation_param: aggregation_param.clone(),
+                aggregate_share: aggregate_share.clone(),
+                report_count: 0,
+                checksum: [0u8; 32],
+            }),
+            "{:#?}",
+            batch_unit_aggregations,
+        );
     }
 
     #[tokio::test]
@@ -2954,9 +3042,10 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let task_id = TaskId::random();
-                let aggregate_share = AggregateShare::from(vec![Field64::from(17)]);
                 let task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Helper);
                 tx.put_task(&task).await?;
+
+                let aggregate_share = AggregateShare::from(vec![Field64::from(17)]);
                 let batch_interval = Interval::new(
                     Time::from_seconds_since_epoch(100),
                     Duration::from_seconds(100),
@@ -3008,6 +3097,170 @@ mod tests {
                     .await
                     .unwrap()
                     .is_none());
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn aggregate_share_job_count_by_interval() {
+        install_test_trace_subscriber();
+
+        let (ds, _db_handle) = ephemeral_datastore().await;
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                let first_task_id = TaskId::random();
+                let mut task = new_dummy_task(first_task_id, Vdaf::Prio3Aes128Count, Role::Helper);
+                task.max_batch_lifetime = 2;
+                task.min_batch_duration = Duration::from_seconds(100);
+                tx.put_task(&task).await?;
+
+                let second_task_id = TaskId::random();
+                let other_task =
+                    new_dummy_task(second_task_id, Vdaf::Prio3Aes128Count, Role::Helper);
+                tx.put_task(&other_task).await?;
+
+                let aggregate_share = AggregateShare::from(vec![Field64::from(17)]);
+
+                // For first_task_id:
+                // [100, 200) has been collected once, by the second job.
+                // [200, 300) has been collected twice, by the first and second jobs.
+                // For second_task_id:
+                // [100, 200) has been collected once, by the third job.
+                let aggregate_share_jobs = [
+                    (
+                        first_task_id,
+                        Interval::new(
+                            Time::from_seconds_since_epoch(200),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                    ),
+                    (
+                        first_task_id,
+                        Interval::new(
+                            Time::from_seconds_since_epoch(100),
+                            Duration::from_seconds(200),
+                        )
+                        .unwrap(),
+                    ),
+                    (
+                        second_task_id,
+                        Interval::new(
+                            Time::from_seconds_since_epoch(100),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                    ),
+                ];
+
+                for (task_id, interval) in aggregate_share_jobs {
+                    tx.put_aggregate_share_job::<Prio3Aes128Count, _>(&AggregateShareJob {
+                        task_id,
+                        batch_interval: interval,
+                        aggregation_param: (),
+                        helper_aggregate_share: aggregate_share.clone(),
+                        report_count: 10,
+                        checksum: [1; 32],
+                    })
+                    .await
+                    .unwrap();
+                }
+
+                struct TestCase {
+                    label: &'static str,
+                    expected_count: u64,
+                    interval: Interval,
+                }
+
+                let first_task_collected_batch_units: &[TestCase] = &[
+                    TestCase {
+                        label: "first task interval [0, 100)",
+                        expected_count: 0,
+                        interval: Interval::new(
+                            Time::from_seconds_since_epoch(0),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                    },
+                    TestCase {
+                        label: "first task interval [100, 200)",
+                        expected_count: 1,
+                        interval: Interval::new(
+                            Time::from_seconds_since_epoch(100),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                    },
+                    TestCase {
+                        label: "first task interval [200, 300)",
+                        expected_count: 2,
+                        interval: Interval::new(
+                            Time::from_seconds_since_epoch(200),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                    },
+                ];
+
+                let second_task_collected_batch_units: &[TestCase] = &[
+                    TestCase {
+                        label: "second task interval [0, 100)",
+                        expected_count: 0,
+                        interval: Interval::new(
+                            Time::from_seconds_since_epoch(0),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                    },
+                    TestCase {
+                        label: "second task interval [100, 200)",
+                        expected_count: 1,
+                        interval: Interval::new(
+                            Time::from_seconds_since_epoch(100),
+                            Duration::from_seconds(100),
+                        )
+                        .unwrap(),
+                    },
+                ];
+
+                for (task_id, test_case_list) in [
+                    (first_task_id, first_task_collected_batch_units),
+                    (second_task_id, second_task_collected_batch_units),
+                ] {
+                    let counts = tx
+                        .get_aggregate_share_job_counts_for_intervals(
+                            task_id,
+                            &test_case_list
+                                .iter()
+                                .map(|v| v.interval)
+                                .collect::<Vec<_>>(),
+                        )
+                        .await
+                        .unwrap();
+                    tracing::warn!(?counts, "first task counts");
+                    for TestCase {
+                        label,
+                        expected_count,
+                        interval,
+                    } in test_case_list
+                    {
+                        if *expected_count == 0 {
+                            assert!(!counts.contains_key(interval), "test case: {}", label);
+                        } else {
+                            assert_eq!(
+                                counts.get(interval),
+                                Some(expected_count),
+                                "test case: {}",
+                                label
+                            );
+                        }
+                    }
+                }
 
                 Ok(())
             })

@@ -1079,11 +1079,6 @@ impl VdafOps {
         E: std::fmt::Display,
         for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
     {
-        // TODO(timg) For each batch unit in the request, check how many rows in
-        // aggregate_share_requests contain that unit, regardless of agg_param. Each
-        // such row consumes one of batch lifetime and we can check that against
-        // task.max_batch_lifetime.
-
         let aggregation_param =
             A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
         let batch_unit_aggregations = tx
@@ -1093,6 +1088,75 @@ impl VdafOps {
                 &aggregation_param,
             )
             .await?;
+
+        // Check how many rows in aggregate_share_jobs have a batch interval that includes this
+        // batch unit. Each such row consumes one unit of batch lifetime (§4.6).
+        //
+        // We have to check each batch unit interval separately rather than checking how many times
+        // aggregate_share_req.batch_interval overlaps with any row. Suppose we had:
+        //
+        //   * task.max_batch_lifetime = 2,
+        //   * an AggregateShareReq.batch interval that spans two batch units,
+        //   * and that each of those batch units has been collected once before.
+        //
+        // A further AggregateShareReq including either or both of the units is permissible, but
+        // if we queried how many rows overlap with that interval, we would get 2 and refuse the
+        // request. We must check the unit intervals individually to notice that each has enough
+        // remaining lifetime to permit the share request.
+        //
+        // TODO: We believe this to be a correct implementation of currently specified batch
+        // parameter validation, but we also know it to be inadequate. This should work for interop
+        // experiments, but we should do better before we allow any real user data to be processed
+        // (see issue #149).
+        let intervals: Vec<_> = batch_unit_aggregations
+            .iter()
+            .map(|v| {
+                Interval::new(v.unit_interval_start, task.min_batch_duration)
+                    .map_err(|e| datastore::Error::User(e.into()))
+            })
+            .collect::<Result<_, datastore::Error>>()?;
+
+        let overlaps = tx
+            .get_aggregate_share_job_counts_for_intervals(task.id, &intervals)
+            .await?;
+
+        for (unit_interval, consumed_batch_lifetime) in overlaps {
+            if consumed_batch_lifetime == task.max_batch_lifetime {
+                warn!(
+                    ?task.id, ?aggregate_share_req, ?unit_interval,
+                    "refusing aggregate share request because lifetime for batch unit has been consumed"
+                );
+                return Err(datastore::Error::User(
+                    Error::BatchLifetimeExceeded(task.id).into(),
+                ));
+            }
+            if consumed_batch_lifetime > task.max_batch_lifetime {
+                error!(
+                    ?task.id, ?aggregate_share_req, ?unit_interval,
+                    "batch unit lifetime has been consumed more times than task allows"
+                );
+                panic!("batch unit lifetime has already been consumed more times than task allows");
+            }
+        }
+
+        // At the moment we handle the AggregateShareReq, there could be some incomplete aggregation
+        // jobs whose results not been accumulated into the batch unit aggregations we just queried
+        // from the datastore, meaning we will aggregate over an incomplete view of data, which:
+        //
+        //  * reduces fidelity of the resulting aggregates,
+        //  * could cause us to fail to meet the minimum batch size for the task,
+        //  * or for particularly pathological timing, could cause us to aggregate a different set
+        //    of reports than the leader did (though the checksum will detect this).
+        //
+        // There's not much the helper can do about this, because an aggregate job might be
+        // unfinished because it's waiting on an aggregate sub-protocol message that is never coming
+        // because the leader has abandoned that job.
+        //
+        // Thus the helper has no choice but to assume that any unfinished aggregation jobs were
+        // intentionally abandoned by the leader and service the aggregate share request with
+        // whatever batch unit aggregations are available now.
+        //
+        // See issue #104 for more discussion.
 
         let mut total_report_count = 0;
         let mut total_checksum = [0u8; 32];
@@ -1164,12 +1228,6 @@ impl VdafOps {
         E: std::fmt::Display,
         for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
     {
-        // TODO(timg): What should we do if any of the aggregation jobs handling reports relevant to
-        // the aggregate share request aren't finished yet? Helper could return an error like
-        // "EAGAIN" to leader, or could trust leader not to issue an AggregateShareReq until all of
-        // leader's aggregate jobs are done (which should imply that helper's are done).
-        // See issue #104.
-
         let aggregate_share_job = datastore
             .run_tx(move |tx| {
                 let task = task.clone();
@@ -1210,6 +1268,13 @@ impl VdafOps {
 
         // §4.4.4.3: verify total report count and the checksum we computed against those reported
         // by the leader.
+        //
+        // We check these *after* consuming batch lifetime by recording the aggregate share jobs
+        // because the leader could retry the AggregateShareReq with corrected report count and
+        // checksum, in which case we want to service that new request from cache. It may also be
+        // helpful to have a record in the helper's datastore of failed requests for debugging. But
+        // we may only wish to consider batch lifetime to be consumed once the an aggregate share
+        // leaves the helper.
         if aggregate_share_job.report_count != aggregate_share_req.report_count
             || aggregate_share_job.checksum != aggregate_share_req.checksum
         {
@@ -3805,7 +3870,7 @@ mod tests {
             generate_hpke_config_and_private_key();
 
         let mut task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Helper);
-        task.max_batch_lifetime = 1;
+        task.max_batch_lifetime = 3;
         task.min_batch_duration = Duration::from_seconds(500);
         task.min_batch_size = 10;
         task.collector_hpke_config = collector_hpke_config.clone();
@@ -3894,7 +3959,17 @@ mod tests {
                         aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(256)]),
                         report_count: 5,
-                        checksum: [2; 32],
+                        checksum: [4; 32],
+                    })
+                    .await?;
+
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
+                        task_id,
+                        unit_interval_start: Time::from_seconds_since_epoch(2500),
+                        aggregation_param,
+                        aggregate_share: AggregateShare::from(vec![Field64::from(512)]),
+                        report_count: 5,
+                        checksum: [8; 32],
                     })
                     .await?;
 
@@ -3942,7 +4017,8 @@ mod tests {
             })
         );
 
-        // Make requests that will fail because the checksum or report counts don't match
+        // Make requests that will fail because the checksum or report counts don't match. Note that
+        // while these requests fail, they *do* consume batch lifetime.
         let misaligned_requests = [
             // Interval is big enough, but checksum doesn't match
             AggregateShareReq {
@@ -3996,119 +4072,151 @@ mod tests {
             );
         }
 
-        // Interval is big enough, checksum and report count are good
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(0),
-            Duration::from_seconds(2500),
-        )
-        .unwrap();
-        let request = AggregateShareReq {
-            task_id,
-            batch_interval,
-            aggregation_param: vec![],
-            report_count: 10,
-            checksum: [3 ^ 2; 32],
-        };
-
-        // Request the aggregate share multiple times. If the request parameters don't change, then
-        // there is no batch lifetime violation and all requests should succeed, being served from
-        // cache after the first time.
-        for _ in 0..2 {
-            let (parts, body) = warp::test::request()
-                .method("POST")
-                .path("/aggregate_share")
-                .body(AuthenticatedEncoder::new(request.clone()).encode(hmac_key))
-                .filter(&filter)
-                .await
-                .unwrap()
-                .into_response()
-                .into_parts();
-
-            assert_eq!(parts.status, StatusCode::OK);
-            let body_bytes = hyper::body::to_bytes(body).await.unwrap();
-
-            let aggregate_share_resp: AggregateShareResp =
-                AuthenticatedResponseDecoder::new(body_bytes.as_ref())
-                    .unwrap()
-                    .decode(hmac_key)
-                    .unwrap();
-
-            let aggregate_share = hpke::open(
-                &collector_hpke_config,
-                &collector_hpke_recipient,
-                &HpkeApplicationInfo::new(
-                    task_id,
-                    Label::AggregateShare,
-                    Role::Helper,
-                    Role::Collector,
-                ),
-                &aggregate_share_resp.encrypted_aggregate_share,
-                &batch_interval.get_encoded(),
-            )
-            .unwrap();
-
-            // Should get the sum over the first and second aggregate shares
-            let decoded_aggregate_share =
-                <AggregateShare<Field64>>::try_from(aggregate_share.as_ref()).unwrap();
-            assert_eq!(
-                decoded_aggregate_share,
-                AggregateShare::from(vec![Field64::from(64 + 128)])
-            );
-        }
-
-        // TODO(timg): re-enable this test once handle_aggregate_share_generic handles
-        // max_batch_lifetime
-        #[cfg(disabled)]
-        {
-            // Attempt to collect some of the same batch units again, but with different aggregate
-            // share request parameters, which should cause batch lifetime violations.
-            let batch_lifetime_violation_requests = [
-                // Different batch interval that overlaps with the previous one
+        // Intervals are big enough, do not overlap, checksum and report count are good
+        let valid_requests = [
+            (
+                "first and second batch units",
                 AggregateShareReq {
                     task_id,
-                    batch_interval: Interval::new(Time(0), Duration(3000)).unwrap(),
+                    batch_interval: Interval::new(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_seconds(2000),
+                    )
+                    .unwrap(),
                     aggregation_param: vec![],
                     report_count: 10,
                     checksum: [3 ^ 2; 32],
                 },
-                // Different aggregation parameter
+                Field64::from(64 + 128),
+            ),
+            (
+                "third and fourth batch units",
                 AggregateShareReq {
                     task_id,
-                    batch_interval,
-                    aggregation_param: vec![1],
+                    batch_interval: Interval::new(
+                        Time::from_seconds_since_epoch(2000),
+                        Duration::from_seconds(2000),
+                    )
+                    .unwrap(),
+                    aggregation_param: vec![],
                     report_count: 10,
-                    checksum: [3 ^ 2; 32],
+                    checksum: [8 ^ 4; 32],
                 },
-            ];
-            for batch_lifetime_violation_request in batch_lifetime_violation_requests {
+                // Should get sum over the third and fourth batch units
+                Field64::from(256 + 512),
+            ),
+            (
+                "first, second, third, fourth batch units",
+                AggregateShareReq {
+                    task_id,
+                    batch_interval: Interval::new(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_seconds(4000),
+                    )
+                    .unwrap(),
+                    aggregation_param: vec![],
+                    report_count: 20,
+                    checksum: [8 ^ 4 ^ 3 ^ 2; 32],
+                },
+                // Should get sum over the third and fourth batch units
+                Field64::from(64 + 128 + 256 + 512),
+            ),
+        ];
+
+        for (label, request, expected_result) in valid_requests {
+            // Request the aggregate share multiple times. If the request parameters don't change,
+            // then there is no batch lifetime violation and all requests should succeed, being
+            // served from cache after the first time.
+            for iteration in 0..3 {
                 let (parts, body) = warp::test::request()
                     .method("POST")
                     .path("/aggregate_share")
-                    .body(
-                        AuthenticatedEncoder::new(batch_lifetime_violation_request)
-                            .encode(hmac_key),
-                    )
+                    .body(AuthenticatedEncoder::new(request.clone()).encode(hmac_key))
                     .filter(&filter)
                     .await
                     .unwrap()
                     .into_response()
                     .into_parts();
-                assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-                let problem_details: serde_json::Value =
-                    serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+
                 assert_eq!(
-                    problem_details,
-                    serde_json::json!({
-                        "status": StatusCode::BAD_REQUEST.as_u16(),
-                        "type": "urn:ietf:params:ppm:error:batchLifetimeExceeded",
-                        "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
-                        "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
-                        "instance": "..",
-                        "taskid": base64::encode(task_id.as_bytes()),
-                    })
+                    parts.status,
+                    StatusCode::OK,
+                    "test case: {} iteration: {}",
+                    label,
+                    iteration
+                );
+                let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+
+                let aggregate_share_resp: AggregateShareResp =
+                    AuthenticatedResponseDecoder::new(body_bytes.as_ref())
+                        .unwrap()
+                        .decode(hmac_key)
+                        .unwrap();
+
+                let aggregate_share = hpke::open(
+                    &collector_hpke_config,
+                    &collector_hpke_recipient,
+                    &HpkeApplicationInfo::new(
+                        task_id,
+                        Label::AggregateShare,
+                        Role::Helper,
+                        Role::Collector,
+                    ),
+                    &aggregate_share_resp.encrypted_aggregate_share,
+                    &request.batch_interval.get_encoded(),
+                )
+                .unwrap();
+
+                // Should get the sum over the first and second aggregate shares
+                let decoded_aggregate_share =
+                    <AggregateShare<Field64>>::try_from(aggregate_share.as_ref()).unwrap();
+                assert_eq!(
+                    decoded_aggregate_share,
+                    AggregateShare::from(vec![expected_result]),
+                    "test case: {} iteration: {}",
+                    label,
+                    iteration
                 );
             }
         }
+
+        // Previous sequence of aggregate share requests should have consumed the batch lifetime for
+        // all the batch units. Further requests for any batch units will cause batch lifetime
+        // violations.
+        let batch_lifetime_violation_request = AggregateShareReq {
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(3000),
+            )
+            .unwrap(),
+            aggregation_param: vec![],
+            report_count: 10,
+            checksum: [3 ^ 2; 32],
+        };
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .body(AuthenticatedEncoder::new(batch_lifetime_violation_request).encode(hmac_key))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:batchLifetimeExceeded",
+                "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
     }
 
     /// A transcript of a VDAF run. All fields are indexed by participant index (in PPM terminology,
