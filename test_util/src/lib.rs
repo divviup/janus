@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDate;
 use janus::{message::Time, time::Clock};
 use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
@@ -104,19 +104,28 @@ pub fn generate_aead_key() -> LessSafeKey {
 #[derive(Clone, Copy, Debug)]
 pub struct MockClock {
     /// The time that this clock will always return from [`Self::now`]
-    pub(crate) current_time: NaiveDateTime,
+    current_time: Time,
+}
+
+impl MockClock {
+    /// Create a new [`MockClock`] that will always return the provided [`Time`].
+    pub fn new(current_time: Time) -> Self {
+        Self { current_time }
+    }
 }
 
 impl Clock for MockClock {
     fn now(&self) -> Time {
-        Time::from_naive_date_time(self.current_time)
+        self.current_time
     }
 }
 
 impl Default for MockClock {
     fn default() -> Self {
         Self {
-            current_time: NaiveDate::from_ymd(2001, 9, 9).and_hms(1, 46, 40),
+            current_time: Time::from_naive_date_time(
+                NaiveDate::from_ymd(2001, 9, 9).and_hms(1, 46, 40),
+            ),
         }
     }
 }
