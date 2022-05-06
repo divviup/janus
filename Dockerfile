@@ -1,4 +1,5 @@
 FROM rust:1.60.0-alpine as builder
+ARG BINARY=aggregator
 RUN apk add libc-dev
 
 WORKDIR /src
@@ -8,9 +9,13 @@ COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test
 COPY test_util /src/test_util
 COPY db/schema.sql /src/db/schema.sql
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release --bin aggregator && cp /src/target/release/aggregator /aggregator
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release --bin $BINARY && cp /src/target/release/$BINARY /$BINARY
 
 FROM alpine:3.15.4
+ARG BINARY=aggregator
 COPY --from=builder /src/db/schema.sql /db/schema.sql
-COPY --from=builder /aggregator /aggregator
-ENTRYPOINT ["/aggregator"]
+COPY --from=builder /$BINARY /$BINARY
+# Store the build argument in an environment variable so we can reference it
+# from the ENTRYPOINT at runtime.
+ENV BINARY=$BINARY
+ENTRYPOINT ["/bin/sh", "-c", "/$BINARY"]
