@@ -2,7 +2,12 @@
 name = "test_util"
 version = "0.1.0"
 edition = "2021"
+license = "MPL-2.0"
+rust-version = "1.58"
+publish = false
 
 [dependencies]
 rand = "0.8"
 ring = "0.16.20"
+janus = { path = "../janus" }
+chrono = "0.4"
