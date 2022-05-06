@@ -43,3 +43,6 @@ jobs:
     - env:
         DOCKER_BUILDKIT: 1
       run: docker build .
+    - env:
+        DOCKER_BUILDKIT: 1
+      run: docker build -f Dockerfile.aggregation_job_creator .
