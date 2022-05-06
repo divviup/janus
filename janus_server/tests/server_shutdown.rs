@@ -3,10 +3,10 @@
 //! The server should promptly shut down, and this test will fail if it times
 //! out waiting for the server to do so.
 
+use janus::message::{Role, TaskId};
 use janus_server::{
     config::{AggregatorConfig, DbConfig},
     datastore::{Crypter, Datastore},
-    message::{Role, TaskId},
     task::{test_util::new_dummy_task, Vdaf},
     trace::{install_trace_subscriber, TraceConfiguration},
 };

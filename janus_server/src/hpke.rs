@@ -1,7 +1,8 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::{Extension, HpkeCiphertext, HpkeConfig, Nonce, Role, TaskId};
+use crate::message::{Extension, HpkeCiphertext, HpkeConfig};
 use hpke::HpkeError;
+use janus::message::{Nonce, Role, TaskId};
 use prio::codec::{encode_u16_items, Encode};
 use std::str::FromStr;
 
@@ -163,10 +164,9 @@ pub fn open(
 #[doc(hidden)]
 pub mod test_util {
     use super::HpkePrivateKey;
-    use crate::message::{
-        HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
-    };
+    use crate::message::{HpkeConfig, HpkePublicKey};
     use hpke::{kem::X25519HkdfSha256, Kem, Serializable};
+    use janus::message::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
     use rand::thread_rng;
 
     /// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
@@ -189,11 +189,9 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use super::{test_util::generate_hpke_config_and_private_key, *};
-    use crate::{
-        message::{HpkeConfigId, HpkePublicKey},
-        trace::test_util::install_test_trace_subscriber,
-    };
+    use crate::{message::HpkePublicKey, trace::test_util::install_test_trace_subscriber};
     use hpke::{aead::*, kdf::*, kem::*, Serializable};
+    use janus::message::HpkeConfigId;
     use serde::Deserialize;
     use std::collections::HashSet;
 

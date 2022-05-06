@@ -2,10 +2,13 @@
 
 use crate::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
-    time::Clock,
+    message::{HpkeCiphertext, HpkeConfig, Report},
 };
 use http::StatusCode;
+use janus::{
+    message::{Nonce, Role, TaskId},
+    time::Clock,
+};
 use prio::{
     codec::{Decode, Encode},
     vdaf,
@@ -213,12 +216,14 @@ where
 mod tests {
     use super::*;
     use crate::{
-        hpke::test_util::generate_hpke_config_and_private_key, message::TaskId,
-        time::test_util::MockClock, trace::test_util::install_test_trace_subscriber,
+        hpke::test_util::generate_hpke_config_and_private_key,
+        trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
+    use janus::message::TaskId;
     use mockito::mock;
     use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Sum};
+    use test_util::MockClock;
     use url::Url;
 
     fn setup_client<V: vdaf::Client>(

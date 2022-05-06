@@ -1265,6 +1265,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aab8fc367588b89dcee83ab0fd66b72b50b72fa1904d7095045ace2b0c81c35"
 
 [[package]]
+name = "janus"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_matches",
+ "base64",
+ "chrono",
+ "hex",
+ "hpke",
+ "num_enum",
+ "prio",
+ "rand",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "janus_server"
 version = "0.1.0"
 dependencies = [
@@ -1284,6 +1301,7 @@ dependencies = [
  "http",
  "hyper",
  "itertools",
+ "janus",
  "lazy_static",
  "libc",
  "mockito",
@@ -1501,6 +1519,7 @@ dependencies = [
  "chrono",
  "deadpool-postgres",
  "futures",
+ "janus",
  "janus_server",
  "lazy_static",
  "prio",
@@ -2709,6 +2728,8 @@ dependencies = [
 name = "test_util"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "janus",
  "rand",
  "ring",
 ]
