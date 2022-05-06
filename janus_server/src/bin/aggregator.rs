@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
+use janus::time::RealClock;
 use janus_server::{
     aggregator::aggregator_server,
     binary_utils::datastore,
     config::AggregatorConfig,
     metrics::{install_metrics_exporter, MetricsExporterConfiguration},
-    time::RealClock,
     trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
 use std::{

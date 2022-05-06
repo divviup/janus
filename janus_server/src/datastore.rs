@@ -7,12 +7,13 @@ use self::models::{
 use crate::{
     hpke::HpkePrivateKey,
     message::{
-        self, AggregateShareReq, AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
-        Interval, Nonce, Report, ReportShare, TaskId, Time,
+        AggregateShareReq, AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Interval,
+        Report, ReportShare,
     },
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
 use futures::try_join;
+use janus::message::{Duration, Nonce, TaskId, Time};
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -1496,7 +1497,7 @@ pub enum Error {
     #[error("integer conversion failed: {0}")]
     TryFromInt(#[from] std::num::TryFromIntError),
     #[error(transparent)]
-    Message(#[from] message::Error),
+    Message(#[from] janus::message::Error),
 }
 
 impl Error {
@@ -1525,10 +1526,11 @@ impl From<ring::error::Unspecified> for Error {
 pub mod models {
     use super::Error;
     use crate::{
-        message::{AggregationJobId, Interval, Nonce, Role, TaskId, Time, TransitionError},
+        message::{AggregationJobId, Interval, TransitionError},
         task,
     };
     use derivative::Derivative;
+    use janus::message::{Nonce, Role, TaskId, Time};
     use postgres_types::{FromSql, ToSql};
     use prio::vdaf;
 
@@ -1844,12 +1846,13 @@ mod tests {
     use crate::{
         aggregator::test_util::fake,
         datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
-        message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time, TransitionError},
+        message::{ExtensionType, Interval, TransitionError},
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
     use ::test_util::generate_aead_key;
     use assert_matches::assert_matches;
+    use janus::message::{Duration, HpkeConfigId, Role, Time};
     use prio::{
         field::{Field128, Field64},
         vdaf::{

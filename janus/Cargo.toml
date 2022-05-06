@@ -1,0 +1,21 @@
+[package]
+name = "janus"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+rust-version = "1.58"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.13.0"
+chrono = "0.4"
+hex = "0.4.3"
+hpke = { version = "0.8.0", features = ["default", "std"] }
+num_enum = "0.5.6"
+prio = { git = "https://github.com/divviup/libprio-rs", rev = "229cd9c45924c7dae3ba754a6eb46b2a05ca8451" }  # TODO(brandon): use a numbered version, once a release is cut >0.7.0
+rand = "0.8"
+serde = { version = "1.0.137", features = ["derive"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+assert_matches = "1"

@@ -4,9 +4,10 @@ use std::collections::HashMap;
 
 use crate::{
     hpke::HpkePrivateKey,
-    message::{Duration, HpkeConfig, HpkeConfigId, Interval, Role, TaskId},
+    message::{HpkeConfig, Interval},
 };
 use ::rand::{thread_rng, Rng};
+use janus::message::{Duration, HpkeConfigId, Role, TaskId};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
@@ -208,11 +209,8 @@ impl Task {
 #[doc(hidden)]
 pub mod test_util {
     use super::{Task, Vdaf};
-    use crate::{
-        hpke::test_util::generate_hpke_config_and_private_key,
-        message::{Duration, HpkeConfigId, Role, TaskId},
-        task::AggregatorAuthKey,
-    };
+    use crate::{hpke::test_util::generate_hpke_config_and_private_key, task::AggregatorAuthKey};
+    use janus::message::{Duration, HpkeConfigId, Role, TaskId};
     use prio::{
         codec::Encode,
         field::Field128,
@@ -290,11 +288,10 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use serde_test::{assert_tokens, Token};
-
     use super::test_util::new_dummy_task;
     use super::*;
-    use crate::message::{Duration, TaskId, Time};
+    use janus::message::{Duration, TaskId, Time};
+    use serde_test::{assert_tokens, Token};
 
     #[test]
     fn validate_batch_interval() {

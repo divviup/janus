@@ -14,17 +14,20 @@ use crate::{
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
         AggregateResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
         AuthenticatedDecodeError, AuthenticatedEncoder, AuthenticatedRequestDecoder, CollectReq,
-        HpkeConfig, HpkeConfigId, Interval, Nonce, Report, ReportShare, Role, TaskId, Transition,
-        TransitionError, TransitionTypeSpecificData,
+        HpkeConfig, Interval, Report, ReportShare, Transition, TransitionError,
+        TransitionTypeSpecificData,
     },
     task::{self, AggregatorAuthKey, Task},
-    time::Clock,
 };
 use bytes::Bytes;
 use futures::try_join;
 use http::{
     header::{CACHE_CONTROL, LOCATION},
     StatusCode,
+};
+use janus::{
+    message::{HpkeConfigId, Nonce, Role, TaskId},
+    time::Clock,
 };
 use opentelemetry::{
     metrics::{Counter, Unit, ValueRecorder},
@@ -73,7 +76,7 @@ pub enum Error {
     MessageDecode(#[from] prio::codec::CodecError),
     /// Error handling a message.
     #[error("invalid message: {0}")]
-    Message(#[from] crate::message::Error),
+    Message(#[from] janus::message::Error),
     /// Corresponds to `staleReport`, §3.1
     #[error("stale report: {0} {1:?}")]
     StaleReport(Nonce, TaskId),
@@ -1779,15 +1782,14 @@ mod tests {
             associated_data_for_report_share, test_util::generate_hpke_config_and_private_key,
             HpkePrivateKey, Label,
         },
-        message::{
-            AuthenticatedResponseDecoder, Duration, HpkeCiphertext, HpkeConfig, TaskId, Time,
-        },
+        message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig},
         task::{test_util::new_dummy_task, Vdaf},
-        time::test_util::MockClock,
         trace::test_util::install_test_trace_subscriber,
     };
+    use ::test_util::MockClock;
     use assert_matches::assert_matches;
     use http::Method;
+    use janus::message::{Duration, TaskId, Time};
     use prio::{
         codec::Decode,
         field::Field64,

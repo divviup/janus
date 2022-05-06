@@ -1,11 +1,9 @@
 //! PPM protocol message definitions with serialization/deserialization support.
 
+use crate::hpke::associated_data_for_report_share;
 use anyhow::anyhow;
-use chrono::NaiveDateTime;
-use hpke::{
-    aead::{self, Aead},
-    kdf::{self, Kdf},
-    kem, Kem,
+use janus::message::{
+    Duration, Error, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Nonce, TaskId, Time,
 };
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
@@ -21,18 +19,7 @@ use std::{
     fmt::{Debug, Display, Formatter},
     io::{self, Cursor, ErrorKind, Read},
     marker::PhantomData,
-    str::FromStr,
 };
-
-use crate::{hpke::associated_data_for_report_share, time::Clock};
-
-/// Errors returned by functions and methods in this module
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// An illegal arithmetic operation on a [`Time`] or [`Duration`].
-    #[error("{0}")]
-    IllegalTimeArithmetic(&'static str),
-}
 
 /// AuthenticatedEncoder can encode messages into the format used by authenticated PPM messages. The
 /// encoding format is the encoding format of the underlying message, followed by a 32-byte
@@ -97,7 +84,7 @@ impl<B: AsRef<[u8]>, M: Decode> AuthenticatedRequestDecoder<B, M> {
         // Retrieve task_id from the buffer bytes.
         let mut buf = [0u8; TaskId::ENCODED_LEN];
         buf.copy_from_slice(&self.buf.as_ref()[..TaskId::ENCODED_LEN]);
-        TaskId(buf)
+        TaskId::new(buf)
     }
 
     /// decode authenticates & decodes the message using the given key.
@@ -161,141 +148,6 @@ fn authenticated_decode<M: Decode>(
     M::get_decoded(msg_bytes).map_err(AuthenticatedDecodeError::from)
 }
 
-/// PPM protocol message representing a duration with a resolution of seconds.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Duration(u64);
-
-impl Duration {
-    /// Create a duration representing the provided number of seconds.
-    pub fn from_seconds(seconds: u64) -> Self {
-        Self(seconds)
-    }
-
-    /// Get the number of seconds this duration represents.
-    pub fn as_seconds(self) -> u64 {
-        self.0
-    }
-
-    /// Create a duration representing the provided number of minutes.
-    pub fn from_minutes(minutes: u64) -> Result<Self, Error> {
-        60u64
-            .checked_mul(minutes)
-            .map(Self::from_seconds)
-            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-
-    /// Create a duration representing the provided number of hours.
-    pub fn from_hours(hours: u64) -> Result<Self, Error> {
-        3600u64
-            .checked_mul(hours)
-            .map(Self::from_seconds)
-            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-}
-
-impl Encode for Duration {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.0.encode(bytes);
-    }
-}
-
-impl Decode for Duration {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        Ok(Self(u64::decode(bytes)?))
-    }
-}
-
-impl Display for Duration {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} seconds", self.0)
-    }
-}
-
-/// PPM protocol message representing an instant in time with a resolution of seconds.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Time(u64);
-
-impl Time {
-    /// Convert this [`Time`] into a [`NaiveDateTime`], representing an instant in the UTC timezone.
-    pub fn as_naive_date_time(&self) -> NaiveDateTime {
-        NaiveDateTime::from_timestamp(self.0 as i64, 0)
-    }
-
-    /// Convert a [`NaiveDateTime`] representing an instant in the UTC timezone into a [`Time`].
-    pub fn from_naive_date_time(time: NaiveDateTime) -> Self {
-        Self(time.timestamp() as u64)
-    }
-
-    /// Get the number of seconds from January 1st, 1970, at 0:00:00 UTC to the instant represented
-    /// by this [`Time`] (i.e., the Unix timestamp for the instant it represents).
-    pub fn as_seconds_since_epoch(&self) -> u64 {
-        self.0
-    }
-
-    /// Construct a [`Time`] representing the instant that is a given number of seconds after
-    /// January 1st, 1970, at 0:00:00 UTC (i.e., the instant with the Unix timestamp of
-    /// `timestamp`).
-    pub fn from_seconds_since_epoch(timestamp: u64) -> Self {
-        Self(timestamp)
-    }
-
-    /// Add the provided duration to this time.
-    pub fn add(&self, duration: Duration) -> Result<Self, Error> {
-        self.0
-            .checked_add(duration.0)
-            .map(Self)
-            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
-    }
-
-    /// Subtract the provided duration from this time.
-    pub fn sub(&self, duration: Duration) -> Result<Self, Error> {
-        self.0
-            .checked_sub(duration.0)
-            .map(Self)
-            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
-    }
-
-    /// Compute the start of the batch interval containing this Time, given the batch unit duration.
-    pub fn to_batch_unit_interval_start(
-        &self,
-        min_batch_duration: Duration,
-    ) -> Result<Self, Error> {
-        let rem = self
-            .0
-            .checked_rem(min_batch_duration.0)
-            .ok_or(Error::IllegalTimeArithmetic(
-                "remainder would overflow/underflow",
-            ))?;
-        self.0
-            .checked_sub(rem)
-            .map(Self)
-            .ok_or(Error::IllegalTimeArithmetic("operation would underflow"))
-    }
-
-    /// Returns true if this [`Time`] occurs after `time`.
-    pub fn is_after(&self, time: Time) -> bool {
-        self.0 > time.0
-    }
-}
-
-impl Display for Time {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Encode for Time {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.0.encode(bytes);
-    }
-}
-
-impl Decode for Time {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        Ok(Self(u64::decode(bytes)?))
-    }
-}
-
 /// PPM protocol message representing a half-open interval of time with a resolution of seconds;
 /// the start of the interval is included while the end of the interval is excluded.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -354,167 +206,6 @@ impl Display for Interval {
     }
 }
 
-/// PPM protocol message representing a nonce uniquely identifying a client report.
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Nonce {
-    /// The time at which the report was generated.
-    time: Time,
-    /// A randomly generated value.
-    rand: [u8; 8],
-}
-
-impl Nonce {
-    /// Construct a nonce with the given time and random parts.
-    pub fn new(time: Time, rand: [u8; 8]) -> Nonce {
-        Nonce { time, rand }
-    }
-
-    /// Generate a fresh nonce with the current time.
-    pub fn generate<C: Clock>(clock: C) -> Nonce {
-        Nonce {
-            time: clock.now(),
-            rand: rand::random(),
-        }
-    }
-
-    /// Get the time component of a nonce.
-    pub fn time(&self) -> Time {
-        self.time
-    }
-
-    /// Get the random component of a nonce.
-    pub fn rand(&self) -> [u8; 8] {
-        self.rand
-    }
-}
-
-impl Display for Nonce {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}", self.time, hex::encode(self.rand))
-    }
-}
-
-impl Encode for Nonce {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.time.encode(bytes);
-        bytes.extend_from_slice(&self.rand);
-    }
-}
-
-impl Decode for Nonce {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let time = Time::decode(bytes)?;
-        let mut rand = [0; 8];
-        bytes.read_exact(&mut rand)?;
-
-        Ok(Self { time, rand })
-    }
-}
-
-/// PPM protocol message representing the different roles that participants can adopt.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum Role {
-    Collector = 0,
-    Client = 1,
-    Leader = 2,
-    Helper = 3,
-}
-
-impl Role {
-    /// True if this [`Role`] is one of the aggregators.
-    pub(crate) fn is_aggregator(&self) -> bool {
-        matches!(self, Role::Leader | Role::Helper)
-    }
-
-    /// If this [`Role`] is one of the aggregators, returns the index at which
-    /// that aggregator's message or data can be found in various lists, or
-    /// `None` if the role is not an aggregator.
-    pub(crate) fn index(&self) -> Option<usize> {
-        match self {
-            // draft-gpew-priv-ppm §4.2: the leader's endpoint MUST be the first
-            Role::Leader => Some(0),
-            Role::Helper => Some(1),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Collector => "collector",
-            Self::Client => "client",
-            Self::Leader => "leader",
-            Self::Helper => "helper",
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("unknown role {0}")]
-pub struct RoleParseError(String);
-
-impl FromStr for Role {
-    type Err = RoleParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "collector" => Ok(Self::Collector),
-            "client" => Ok(Self::Client),
-            "leader" => Ok(Self::Leader),
-            "helper" => Ok(Self::Helper),
-            _ => Err(RoleParseError(s.to_owned())),
-        }
-    }
-}
-
-impl Encode for Role {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        (*self as u8).encode(bytes);
-    }
-}
-
-impl Decode for Role {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let val = u8::decode(bytes)?;
-        Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected Role value {}", val).into()))
-    }
-}
-
-/// PPM protocol message representing an identifier for an HPKE config.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct HpkeConfigId(u8);
-
-impl Display for HpkeConfigId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Encode for HpkeConfigId {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.0.encode(bytes);
-    }
-}
-
-impl Decode for HpkeConfigId {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        Ok(Self(u8::decode(bytes)?))
-    }
-}
-
-impl From<u8> for HpkeConfigId {
-    fn from(value: u8) -> HpkeConfigId {
-        HpkeConfigId(value)
-    }
-}
-
-impl From<HpkeConfigId> for u8 {
-    fn from(id: HpkeConfigId) -> u8 {
-        id.0
-    }
-}
-
 /// PPM protocol message representing an HPKE ciphertext.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HpkeCiphertext {
@@ -545,137 +236,6 @@ impl Decode for HpkeCiphertext {
             encapsulated_context,
             payload,
         })
-    }
-}
-
-/// PPM protocol message representing an identifier for a PPM task.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TaskId([u8; Self::ENCODED_LEN]);
-
-impl Debug for TaskId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "TaskId({})",
-            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
-        )
-    }
-}
-
-impl Display for TaskId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
-        )
-    }
-}
-
-impl Encode for TaskId {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        bytes.extend_from_slice(&self.0)
-    }
-}
-
-impl Decode for TaskId {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let mut decoded = [0u8; Self::ENCODED_LEN];
-        bytes.read_exact(&mut decoded)?;
-        Ok(Self(decoded))
-    }
-}
-
-impl TaskId {
-    /// ENCODED_LEN is the length of a task ID in bytes when encoded.
-    pub(crate) const ENCODED_LEN: usize = 32;
-
-    /// Get a reference to the task ID as a byte slice
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
-    /// Generate a random [`TaskId`]
-    pub fn random() -> Self {
-        let mut buf = [0u8; Self::ENCODED_LEN];
-        thread_rng().fill(&mut buf);
-        Self(buf)
-    }
-}
-
-/// PPM protocol message representing an HPKE key encapsulation mechanism.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum HpkeKemId {
-    /// NIST P-256 keys and HKDF-SHA256.
-    P256HkdfSha256 = kem::DhP256HkdfSha256::KEM_ID,
-    /// X25519 keys and HKDF-SHA256.
-    X25519HkdfSha256 = kem::X25519HkdfSha256::KEM_ID,
-}
-
-impl Encode for HpkeKemId {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        (*self as u16).encode(bytes);
-    }
-}
-
-impl Decode for HpkeKemId {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let val = u16::decode(bytes)?;
-        Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeKemId value {}", val).into()))
-    }
-}
-
-/// PPM protocol message representing an HPKE key derivation function.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum HpkeKdfId {
-    /// HMAC Key Derivation Function SHA256.
-    HkdfSha256 = kdf::HkdfSha256::KDF_ID,
-    /// HMAC Key Derivation Function SHA384.
-    HkdfSha384 = kdf::HkdfSha384::KDF_ID,
-    /// HMAC Key Derivation Function SHA512.
-    HkdfSha512 = kdf::HkdfSha512::KDF_ID,
-}
-
-impl Encode for HpkeKdfId {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        (*self as u16).encode(bytes);
-    }
-}
-
-impl Decode for HpkeKdfId {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let val = u16::decode(bytes)?;
-        Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeKdfId value {}", val).into()))
-    }
-}
-
-/// PPM protocol message representing an HPKE AEAD.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum HpkeAeadId {
-    /// AES-128-GCM.
-    Aes128Gcm = aead::AesGcm128::AEAD_ID,
-    /// AES-256-GCM.
-    Aes256Gcm = aead::AesGcm256::AEAD_ID,
-    /// ChaCha20Poly1305.
-    ChaCha20Poly1305 = aead::ChaCha20Poly1305::AEAD_ID,
-}
-
-impl Encode for HpkeAeadId {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        (*self as u16).encode(bytes);
-    }
-}
-
-impl Decode for HpkeAeadId {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let val = u16::decode(bytes)?;
-        Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeAeadId value {}", val).into()))
     }
 }
 
@@ -1223,16 +783,14 @@ impl Decode for CollectResp {
 
 #[doc(hidden)]
 pub mod test_util {
-    use super::{Nonce, Report, TaskId, Time};
+    use super::{Nonce, Report, TaskId};
+    use janus::message::Time;
     use rand::{thread_rng, Rng};
 
     pub fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
         Report {
             task_id,
-            nonce: Nonce {
-                time: when,
-                rand: thread_rng().gen(),
-            },
+            nonce: Nonce::new(when, thread_rng().gen()),
             extensions: Vec::new(),
             encrypted_input_shares: Vec::new(),
         }
@@ -1243,6 +801,7 @@ pub mod test_util {
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
+    use janus::message::{Duration, Time};
     use lazy_static::lazy_static;
 
     lazy_static! {
@@ -1272,7 +831,7 @@ mod tests {
     #[test]
     fn roundtrip_authenticated_request_encoding() {
         let msg = AggregateReq {
-            task_id: TaskId([
+            task_id: TaskId::new([
                 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
                 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
             ]),
@@ -1281,31 +840,25 @@ mod tests {
                 agg_param: Vec::from("012345"),
                 seq: vec![
                     ReportShare {
-                        nonce: Nonce {
-                            time: Time(54321),
-                            rand: [0u8; 8],
-                        },
+                        nonce: Nonce::new(Time::from_seconds_since_epoch(54321), [0u8; 8]),
                         extensions: vec![Extension {
                             extension_type: ExtensionType::Tbd,
                             extension_data: Vec::from("0123"),
                         }],
                         encrypted_input_share: HpkeCiphertext {
-                            config_id: HpkeConfigId(42),
+                            config_id: HpkeConfigId::from(42),
                             encapsulated_context: Vec::from("012345"),
                             payload: Vec::from("543210"),
                         },
                     },
                     ReportShare {
-                        nonce: Nonce {
-                            time: Time(73542),
-                            rand: [1u8; 8],
-                        },
+                        nonce: Nonce::new(Time::from_seconds_since_epoch(73542), [1u8; 8]),
                         extensions: vec![Extension {
                             extension_type: ExtensionType::Tbd,
                             extension_data: Vec::from("3210"),
                         }],
                         encrypted_input_share: HpkeCiphertext {
-                            config_id: HpkeConfigId(13),
+                            config_id: HpkeConfigId::from(13),
                             encapsulated_context: Vec::from("abce"),
                             payload: Vec::from("abfd"),
                         },
@@ -1332,7 +885,7 @@ mod tests {
     #[test]
     fn authenticated_request_bad_tag() {
         let msg = AggregateReq {
-            task_id: TaskId([u8::MIN; 32]),
+            task_id: TaskId::new([u8::MIN; 32]),
             job_id: AggregationJobId([u8::MAX; 32]),
             body: AggregateReqBody::AggregateContinueReq { seq: Vec::new() },
         };
@@ -1361,19 +914,13 @@ mod tests {
         let msg = AggregateResp {
             seq: vec![
                 Transition {
-                    nonce: Nonce {
-                        time: Time(54372),
-                        rand: [0u8; 8],
-                    },
+                    nonce: Nonce::new(Time::from_seconds_since_epoch(54372), [0u8; 8]),
                     trans_data: TransitionTypeSpecificData::Continued {
                         payload: Vec::from("012345"),
                     },
                 },
                 Transition {
-                    nonce: Nonce {
-                        time: Time(12345),
-                        rand: [1u8; 8],
-                    },
+                    nonce: Nonce::new(Time::from_seconds_since_epoch(12345), [1u8; 8]),
                     trans_data: TransitionTypeSpecificData::Finished,
                 },
             ],
@@ -1417,30 +964,16 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_duration() {
-        roundtrip_encoding(&[
-            (Duration(u64::MIN), "0000000000000000"),
-            (Duration(12345), "0000000000003039"),
-            (Duration(u64::MAX), "FFFFFFFFFFFFFFFF"),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_time() {
-        roundtrip_encoding(&[
-            (Time(u64::MIN), "0000000000000000"),
-            (Time(12345), "0000000000003039"),
-            (Time(u64::MAX), "FFFFFFFFFFFFFFFF"),
-        ])
-    }
-
-    #[test]
     fn roundtrip_interval() {
-        Interval::new(Time(1), Duration(u64::MAX)).unwrap_err();
+        Interval::new(
+            Time::from_seconds_since_epoch(1),
+            Duration::from_seconds(u64::MAX),
+        )
+        .unwrap_err();
 
         let encoded = Interval {
-            start: Time(1),
-            duration: Duration(u64::MAX),
+            start: Time::from_seconds_since_epoch(1),
+            duration: Duration::from_seconds(u64::MAX),
         }
         .get_encoded();
         assert_eq!(
@@ -1457,8 +990,8 @@ mod tests {
         roundtrip_encoding(&[
             (
                 Interval {
-                    start: Time(u64::MIN),
-                    duration: Duration(u64::MAX),
+                    start: Time::from_seconds_since_epoch(u64::MIN),
+                    duration: Duration::from_seconds(u64::MAX),
                 },
                 concat!(
                     "0000000000000000", // start
@@ -1467,8 +1000,8 @@ mod tests {
             ),
             (
                 Interval {
-                    start: Time(54321),
-                    duration: Duration(12345),
+                    start: Time::from_seconds_since_epoch(54321),
+                    duration: Duration::from_seconds(12345),
                 },
                 concat!(
                     "000000000000D431", // start
@@ -1477,8 +1010,8 @@ mod tests {
             ),
             (
                 Interval {
-                    start: Time(u64::MAX),
-                    duration: Duration(u64::MIN),
+                    start: Time::from_seconds_since_epoch(u64::MAX),
+                    duration: Duration::from_seconds(u64::MIN),
                 },
                 concat!(
                     "FFFFFFFFFFFFFFFF", // start
@@ -1489,30 +1022,11 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_role() {
-        roundtrip_encoding(&[
-            (Role::Collector, "00"),
-            (Role::Client, "01"),
-            (Role::Leader, "02"),
-            (Role::Helper, "03"),
-        ]);
-    }
-
-    #[test]
-    fn roundtrip_hpke_config_id() {
-        roundtrip_encoding(&[
-            (HpkeConfigId(u8::MIN), "00"),
-            (HpkeConfigId(10), "0A"),
-            (HpkeConfigId(u8::MAX), "FF"),
-        ])
-    }
-
-    #[test]
     fn roundtrip_hpke_ciphertext() {
         roundtrip_encoding(&[
             (
                 HpkeCiphertext {
-                    config_id: HpkeConfigId(10),
+                    config_id: HpkeConfigId::from(10),
                     encapsulated_context: Vec::from("0123"),
                     payload: Vec::from("4567"),
                 },
@@ -1532,7 +1046,7 @@ mod tests {
             ),
             (
                 HpkeCiphertext {
-                    config_id: HpkeConfigId(12),
+                    config_id: HpkeConfigId::from(12),
                     encapsulated_context: Vec::from("01234"),
                     payload: Vec::from("567"),
                 },
@@ -1557,18 +1071,18 @@ mod tests {
     fn roundtrip_task_id() {
         roundtrip_encoding(&[
             (
-                TaskId([u8::MIN; 32]),
+                TaskId::new([u8::MIN; 32]),
                 "0000000000000000000000000000000000000000000000000000000000000000",
             ),
             (
-                TaskId([
+                TaskId::new([
                     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
                     22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
                 ]),
                 "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F",
             ),
             (
-                TaskId([u8::MAX; 32]),
+                TaskId::new([u8::MAX; 32]),
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
             ),
         ])
@@ -1625,7 +1139,7 @@ mod tests {
         roundtrip_encoding(&[
             (
                 HpkeConfig {
-                    id: HpkeConfigId(12),
+                    id: HpkeConfigId::from(12),
                     kem_id: HpkeKemId::P256HkdfSha256,
                     kdf_id: HpkeKdfId::HkdfSha512,
                     aead_id: HpkeAeadId::Aes256Gcm,
@@ -1645,7 +1159,7 @@ mod tests {
             ),
             (
                 HpkeConfig {
-                    id: HpkeConfigId(23),
+                    id: HpkeConfigId::from(23),
                     kem_id: HpkeKemId::X25519HkdfSha256,
                     kdf_id: HpkeKdfId::HkdfSha256,
                     aead_id: HpkeAeadId::ChaCha20Poly1305,
@@ -1671,11 +1185,11 @@ mod tests {
         roundtrip_encoding(&[
             (
                 Report {
-                    task_id: TaskId([u8::MIN; 32]),
-                    nonce: Nonce {
-                        time: Time(12345),
-                        rand: [1, 2, 3, 4, 5, 6, 7, 8],
-                    },
+                    task_id: TaskId::new([u8::MIN; 32]),
+                    nonce: Nonce::new(
+                        Time::from_seconds_since_epoch(12345),
+                        [1, 2, 3, 4, 5, 6, 7, 8],
+                    ),
                     extensions: vec![],
                     encrypted_input_shares: vec![],
                 },
@@ -1698,23 +1212,23 @@ mod tests {
             ),
             (
                 Report {
-                    task_id: TaskId([u8::MAX; 32]),
-                    nonce: Nonce {
-                        time: Time(54321),
-                        rand: [8, 7, 6, 5, 4, 3, 2, 1],
-                    },
+                    task_id: TaskId::new([u8::MAX; 32]),
+                    nonce: Nonce::new(
+                        Time::from_seconds_since_epoch(54321),
+                        [8, 7, 6, 5, 4, 3, 2, 1],
+                    ),
                     extensions: vec![Extension {
                         extension_type: ExtensionType::Tbd,
                         extension_data: Vec::from("0123"),
                     }],
                     encrypted_input_shares: vec![
                         HpkeCiphertext {
-                            config_id: HpkeConfigId(42),
+                            config_id: HpkeConfigId::from(42),
                             encapsulated_context: Vec::from("012345"),
                             payload: Vec::from("543210"),
                         },
                         HpkeCiphertext {
-                            config_id: HpkeConfigId(13),
+                            config_id: HpkeConfigId::from(13),
                             encapsulated_context: Vec::from("abce"),
                             payload: Vec::from("abfd"),
                         },
@@ -1817,10 +1331,10 @@ mod tests {
         roundtrip_encoding(&[
             (
                 Transition {
-                    nonce: Nonce {
-                        time: Time(54372),
-                        rand: [1, 2, 3, 4, 5, 6, 7, 8],
-                    },
+                    nonce: Nonce::new(
+                        Time::from_seconds_since_epoch(54372),
+                        [1, 2, 3, 4, 5, 6, 7, 8],
+                    ),
                     trans_data: TransitionTypeSpecificData::Continued {
                         payload: Vec::from("012345"),
                     },
@@ -1841,10 +1355,10 @@ mod tests {
             ),
             (
                 Transition {
-                    nonce: Nonce {
-                        time: Time(12345),
-                        rand: [8, 7, 6, 5, 4, 3, 2, 1],
-                    },
+                    nonce: Nonce::new(
+                        Time::from_seconds_since_epoch(12345),
+                        [8, 7, 6, 5, 4, 3, 2, 1],
+                    ),
                     trans_data: TransitionTypeSpecificData::Finished,
                 },
                 concat!(
@@ -1858,10 +1372,7 @@ mod tests {
             ),
             (
                 Transition {
-                    nonce: Nonce {
-                        time: Time(345078),
-                        rand: [255; 8],
-                    },
+                    nonce: Nonce::new(Time::from_seconds_since_epoch(345078), [255; 8]),
                     trans_data: TransitionTypeSpecificData::Failed {
                         error: TransitionError::UnrecognizedNonce,
                     },
@@ -1918,37 +1429,37 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateReq {
-                    task_id: TaskId([u8::MAX; 32]),
+                    task_id: TaskId::new([u8::MAX; 32]),
                     job_id: AggregationJobId([u8::MIN; 32]),
                     body: AggregateReqBody::AggregateInitReq {
                         agg_param: Vec::from("012345"),
                         seq: vec![
                             ReportShare {
-                                nonce: Nonce {
-                                    time: Time(54321),
-                                    rand: [1, 2, 3, 4, 5, 6, 7, 8],
-                                },
+                                nonce: Nonce::new(
+                                    Time::from_seconds_since_epoch(54321),
+                                    [1, 2, 3, 4, 5, 6, 7, 8],
+                                ),
                                 extensions: vec![Extension {
                                     extension_type: ExtensionType::Tbd,
                                     extension_data: Vec::from("0123"),
                                 }],
                                 encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId(42),
+                                    config_id: HpkeConfigId::from(42),
                                     encapsulated_context: Vec::from("012345"),
                                     payload: Vec::from("543210"),
                                 },
                             },
                             ReportShare {
-                                nonce: Nonce {
-                                    time: Time(73542),
-                                    rand: [8, 7, 6, 5, 4, 3, 2, 1],
-                                },
+                                nonce: Nonce::new(
+                                    Time::from_seconds_since_epoch(73542),
+                                    [8, 7, 6, 5, 4, 3, 2, 1],
+                                ),
                                 extensions: vec![Extension {
                                     extension_type: ExtensionType::Tbd,
                                     extension_data: Vec::from("3210"),
                                 }],
                                 encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId(13),
+                                    config_id: HpkeConfigId::from(13),
                                     encapsulated_context: Vec::from("abce"),
                                     payload: Vec::from("abfd"),
                                 },
@@ -2041,24 +1552,24 @@ mod tests {
             ),
             (
                 AggregateReq {
-                    task_id: TaskId([u8::MIN; 32]),
+                    task_id: TaskId::new([u8::MIN; 32]),
                     job_id: AggregationJobId([u8::MAX; 32]),
                     body: AggregateReqBody::AggregateContinueReq {
                         seq: vec![
                             Transition {
-                                nonce: Nonce {
-                                    time: Time(54372),
-                                    rand: [1, 2, 3, 4, 5, 6, 7, 8],
-                                },
+                                nonce: Nonce::new(
+                                    Time::from_seconds_since_epoch(54372),
+                                    [1, 2, 3, 4, 5, 6, 7, 8],
+                                ),
                                 trans_data: TransitionTypeSpecificData::Continued {
                                     payload: Vec::from("012345"),
                                 },
                             },
                             Transition {
-                                nonce: Nonce {
-                                    time: Time(12345),
-                                    rand: [8, 7, 6, 5, 4, 3, 2, 1],
-                                },
+                                nonce: Nonce::new(
+                                    Time::from_seconds_since_epoch(12345),
+                                    [8, 7, 6, 5, 4, 3, 2, 1],
+                                ),
                                 trans_data: TransitionTypeSpecificData::Finished,
                             },
                         ],
@@ -2115,19 +1626,19 @@ mod tests {
                 AggregateResp {
                     seq: vec![
                         Transition {
-                            nonce: Nonce {
-                                time: Time(54372),
-                                rand: [1, 2, 3, 4, 5, 6, 7, 8],
-                            },
+                            nonce: Nonce::new(
+                                Time::from_seconds_since_epoch(54372),
+                                [1, 2, 3, 4, 5, 6, 7, 8],
+                            ),
                             trans_data: TransitionTypeSpecificData::Continued {
                                 payload: Vec::from("012345"),
                             },
                         },
                         Transition {
-                            nonce: Nonce {
-                                time: Time(12345),
-                                rand: [8, 7, 6, 5, 4, 3, 2, 1],
-                            },
+                            nonce: Nonce::new(
+                                Time::from_seconds_since_epoch(12345),
+                                [8, 7, 6, 5, 4, 3, 2, 1],
+                            ),
                             trans_data: TransitionTypeSpecificData::Finished,
                         },
                     ],
@@ -2166,11 +1677,12 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateShareReq {
-                    task_id: TaskId([u8::MIN; 32]),
-                    batch_interval: Interval {
-                        start: Time(54321),
-                        duration: Duration(12345),
-                    },
+                    task_id: TaskId::new([u8::MIN; 32]),
+                    batch_interval: Interval::new(
+                        Time::from_seconds_since_epoch(54321),
+                        Duration::from_seconds(12345),
+                    )
+                    .unwrap(),
                     aggregation_param: vec![],
                     report_count: 439,
                     checksum: [u8::MIN; 32],
@@ -2193,11 +1705,12 @@ mod tests {
             ),
             (
                 AggregateShareReq {
-                    task_id: TaskId([12u8; 32]),
-                    batch_interval: Interval {
-                        start: Time(50821),
-                        duration: Duration(84354),
-                    },
+                    task_id: TaskId::new([12u8; 32]),
+                    batch_interval: Interval::new(
+                        Time::from_seconds_since_epoch(50821),
+                        Duration::from_seconds(84354),
+                    )
+                    .unwrap(),
                     aggregation_param: Vec::from("012345"),
                     report_count: 8725,
                     checksum: [u8::MAX; 32],
@@ -2227,7 +1740,7 @@ mod tests {
             (
                 AggregateShareResp {
                     encrypted_aggregate_share: HpkeCiphertext {
-                        config_id: HpkeConfigId(10),
+                        config_id: HpkeConfigId::from(10),
                         encapsulated_context: Vec::from("0123"),
                         payload: Vec::from("4567"),
                     },
@@ -2250,7 +1763,7 @@ mod tests {
             (
                 AggregateShareResp {
                     encrypted_aggregate_share: HpkeCiphertext {
-                        config_id: HpkeConfigId(12),
+                        config_id: HpkeConfigId::from(12),
                         encapsulated_context: Vec::from("01234"),
                         payload: Vec::from("567"),
                     },
@@ -2277,11 +1790,12 @@ mod tests {
         roundtrip_encoding(&[
             (
                 CollectReq {
-                    task_id: TaskId([u8::MIN; 32]),
-                    batch_interval: Interval {
-                        start: Time(54321),
-                        duration: Duration(12345),
-                    },
+                    task_id: TaskId::new([u8::MIN; 32]),
+                    batch_interval: Interval::new(
+                        Time::from_seconds_since_epoch(54321),
+                        Duration::from_seconds(12345),
+                    )
+                    .unwrap(),
                     agg_param: Vec::new(),
                 },
                 concat!(
@@ -2300,11 +1814,12 @@ mod tests {
             ),
             (
                 CollectReq {
-                    task_id: TaskId([13u8; 32]),
-                    batch_interval: Interval {
-                        start: Time(48913),
-                        duration: Duration(44721),
-                    },
+                    task_id: TaskId::new([13u8; 32]),
+                    batch_interval: Interval::new(
+                        Time::from_seconds_since_epoch(48913),
+                        Duration::from_seconds(44721),
+                    )
+                    .unwrap(),
                     agg_param: Vec::from("012345"),
                 },
                 concat!(
@@ -2340,12 +1855,12 @@ mod tests {
                 CollectResp {
                     encrypted_agg_shares: vec![
                         HpkeCiphertext {
-                            config_id: HpkeConfigId(10),
+                            config_id: HpkeConfigId::from(10),
                             encapsulated_context: Vec::from("0123"),
                             payload: Vec::from("4567"),
                         },
                         HpkeCiphertext {
-                            config_id: HpkeConfigId(12),
+                            config_id: HpkeConfigId::from(12),
                             encapsulated_context: Vec::from("01234"),
                             payload: Vec::from("567"),
                         },
