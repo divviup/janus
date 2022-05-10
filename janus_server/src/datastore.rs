@@ -6,15 +6,12 @@ use self::models::{
 };
 use crate::{
     hpke::HpkePrivateKey,
-    message::{
-        AggregateShareReq, AggregationJobId, HpkeCiphertext, HpkeConfig, Interval, Report,
-        ReportShare,
-    },
+    message::{AggregateShareReq, AggregationJobId, HpkeConfig, Interval, Report, ReportShare},
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
 use chrono::NaiveDateTime;
 use futures::try_join;
-use janus::message::{Duration, Extension, Nonce, TaskId, Time};
+use janus::message::{Duration, Extension, HpkeCiphertext, Nonce, TaskId, Time};
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -2008,16 +2005,16 @@ mod tests {
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
             ],
             encrypted_input_shares: vec![
-                HpkeCiphertext {
-                    config_id: HpkeConfigId::from(12),
-                    encapsulated_context: Vec::from("encapsulated_context_0"),
-                    payload: Vec::from("payload_0"),
-                },
-                HpkeCiphertext {
-                    config_id: HpkeConfigId::from(13),
-                    encapsulated_context: Vec::from("encapsulated_context_1"),
-                    payload: Vec::from("payload_1"),
-                },
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(12),
+                    Vec::from("encapsulated_context_0"),
+                    Vec::from("payload_0"),
+                ),
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(13),
+                    Vec::from("encapsulated_context_1"),
+                    Vec::from("payload_1"),
+                ),
             ],
         };
 
@@ -2205,11 +2202,11 @@ mod tests {
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
             ],
-            encrypted_input_share: HpkeCiphertext {
-                config_id: HpkeConfigId::from(12),
-                encapsulated_context: Vec::from("encapsulated_context_0"),
-                payload: Vec::from("payload_0"),
-            },
+            encrypted_input_share: HpkeCiphertext::new(
+                HpkeConfigId::from(12),
+                Vec::from("encapsulated_context_0"),
+                Vec::from("payload_0"),
+            ),
         };
 
         ds.run_tx(|tx| {
@@ -2494,11 +2491,11 @@ mod tests {
                             &ReportShare {
                                 nonce,
                                 extensions: Vec::new(),
-                                encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId::from(12),
-                                    encapsulated_context: Vec::from("encapsulated_context_0"),
-                                    payload: Vec::from("payload_0"),
-                                },
+                                encrypted_input_share: HpkeCiphertext::new(
+                                    HpkeConfigId::from(12),
+                                    Vec::from("encapsulated_context_0"),
+                                    Vec::from("payload_0"),
+                                ),
                             },
                         )
                         .await?;
@@ -2657,11 +2654,11 @@ mod tests {
                             &ReportShare {
                                 nonce,
                                 extensions: Vec::new(),
-                                encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId::from(12),
-                                    encapsulated_context: Vec::from("encapsulated_context_0"),
-                                    payload: Vec::from("payload_0"),
-                                },
+                                encrypted_input_share: HpkeCiphertext::new(
+                                    HpkeConfigId::from(12),
+                                    Vec::from("encapsulated_context_0"),
+                                    Vec::from("payload_0"),
+                                ),
                             },
                         )
                         .await?;

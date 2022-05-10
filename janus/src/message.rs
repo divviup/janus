@@ -524,9 +524,72 @@ impl Decode for ExtensionType {
     }
 }
 
+/// PPM protocol message representing an HPKE ciphertext.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HpkeCiphertext {
+    /// An identifier of the HPKE configuration used to seal the message.
+    config_id: HpkeConfigId,
+    /// An encasulated HPKE context.
+    encapsulated_context: Vec<u8>,
+    /// An HPKE ciphertext.
+    payload: Vec<u8>,
+}
+
+impl HpkeCiphertext {
+    /// Construct a HPKE ciphertext message from its components.
+    pub fn new(
+        config_id: HpkeConfigId,
+        encapsulated_context: Vec<u8>,
+        payload: Vec<u8>,
+    ) -> HpkeCiphertext {
+        HpkeCiphertext {
+            config_id,
+            encapsulated_context,
+            payload,
+        }
+    }
+
+    /// Get the configuration identifier associated with this ciphertext.
+    pub fn config_id(&self) -> HpkeConfigId {
+        self.config_id
+    }
+
+    /// Get the encapsulated key from this ciphertext message.
+    pub fn encapsulated_context(&self) -> &[u8] {
+        &self.encapsulated_context
+    }
+
+    /// Get the encrypted payload from this ciphertext message.
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+impl Encode for HpkeCiphertext {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.config_id.encode(bytes);
+        encode_u16_items(bytes, &(), &self.encapsulated_context);
+        encode_u16_items(bytes, &(), &self.payload);
+    }
+}
+
+impl Decode for HpkeCiphertext {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let config_id = HpkeConfigId::decode(bytes)?;
+        let encapsulated_context = decode_u16_items(&(), bytes)?;
+        let payload = decode_u16_items(&(), bytes)?;
+
+        Ok(Self {
+            config_id,
+            encapsulated_context,
+            payload,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Duration, Extension, ExtensionType, HpkeConfigId, Role, Time};
+    use super::{Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Role, Time};
     use prio::codec::{Decode, Encode};
     use std::io::Cursor;
 
@@ -612,5 +675,43 @@ mod tests {
     #[test]
     fn roundtrip_extension_type() {
         roundtrip_encoding(&[(ExtensionType::Tbd, "0000")])
+    }
+
+    #[test]
+    fn roundtrip_hpke_ciphertext() {
+        roundtrip_encoding(&[
+            (
+                HpkeCiphertext::new(HpkeConfigId::from(10), Vec::from("0123"), Vec::from("4567")),
+                concat!(
+                    "0A", // config_id
+                    concat!(
+                        // encapsulated_context
+                        "0004",     // length
+                        "30313233", // opaque data
+                    ),
+                    concat!(
+                        // payload
+                        "0004",     // length
+                        "34353637", // opaque data
+                    ),
+                ),
+            ),
+            (
+                HpkeCiphertext::new(HpkeConfigId::from(12), Vec::from("01234"), Vec::from("567")),
+                concat!(
+                    "0C", // config_id
+                    concat!(
+                        // encapsulated_context
+                        "0005",       // length
+                        "3031323334", // opaque data
+                    ),
+                    concat!(
+                        // payload
+                        "0003",   // length
+                        "353637", // opaque data
+                    ),
+                ),
+            ),
+        ])
     }
 }

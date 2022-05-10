@@ -3,7 +3,8 @@
 use crate::hpke::associated_data_for_report_share;
 use anyhow::anyhow;
 use janus::message::{
-    Duration, Error, Extension, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Nonce, TaskId, Time,
+    Duration, Error, Extension, HpkeAeadId, HpkeCiphertext, HpkeConfigId, HpkeKdfId, HpkeKemId,
+    Nonce, TaskId, Time,
 };
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
@@ -203,39 +204,6 @@ impl Decode for Interval {
 impl Display for Interval {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "start: {} duration: {}", self.start, self.duration)
-    }
-}
-
-/// PPM protocol message representing an HPKE ciphertext.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HpkeCiphertext {
-    /// An identifier of the HPKE configuration used to seal the message.
-    pub(crate) config_id: HpkeConfigId,
-    /// An encasulated HPKE context.
-    pub(crate) encapsulated_context: Vec<u8>,
-    /// An HPKE ciphertext.
-    pub(crate) payload: Vec<u8>,
-}
-
-impl Encode for HpkeCiphertext {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.config_id.encode(bytes);
-        encode_u16_items(bytes, &(), &self.encapsulated_context);
-        encode_u16_items(bytes, &(), &self.payload);
-    }
-}
-
-impl Decode for HpkeCiphertext {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let config_id = HpkeConfigId::decode(bytes)?;
-        let encapsulated_context = decode_u16_items(&(), bytes)?;
-        let payload = decode_u16_items(&(), bytes)?;
-
-        Ok(Self {
-            config_id,
-            encapsulated_context,
-            payload,
-        })
     }
 }
 
@@ -794,20 +762,20 @@ mod tests {
                     ReportShare {
                         nonce: Nonce::new(Time::from_seconds_since_epoch(54321), [0u8; 8]),
                         extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
-                        encrypted_input_share: HpkeCiphertext {
-                            config_id: HpkeConfigId::from(42),
-                            encapsulated_context: Vec::from("012345"),
-                            payload: Vec::from("543210"),
-                        },
+                        encrypted_input_share: HpkeCiphertext::new(
+                            HpkeConfigId::from(42),
+                            Vec::from("012345"),
+                            Vec::from("543210"),
+                        ),
                     },
                     ReportShare {
                         nonce: Nonce::new(Time::from_seconds_since_epoch(73542), [1u8; 8]),
                         extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
-                        encrypted_input_share: HpkeCiphertext {
-                            config_id: HpkeConfigId::from(13),
-                            encapsulated_context: Vec::from("abce"),
-                            payload: Vec::from("abfd"),
-                        },
+                        encrypted_input_share: HpkeCiphertext::new(
+                            HpkeConfigId::from(13),
+                            Vec::from("abce"),
+                            Vec::from("abfd"),
+                        ),
                     },
                 ],
             },
@@ -968,52 +936,6 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_hpke_ciphertext() {
-        roundtrip_encoding(&[
-            (
-                HpkeCiphertext {
-                    config_id: HpkeConfigId::from(10),
-                    encapsulated_context: Vec::from("0123"),
-                    payload: Vec::from("4567"),
-                },
-                concat!(
-                    "0A", // config_id
-                    concat!(
-                        // encapsulated_context
-                        "0004",     // length
-                        "30313233", // opaque data
-                    ),
-                    concat!(
-                        // payload
-                        "0004",     // length
-                        "34353637", // opaque data
-                    ),
-                ),
-            ),
-            (
-                HpkeCiphertext {
-                    config_id: HpkeConfigId::from(12),
-                    encapsulated_context: Vec::from("01234"),
-                    payload: Vec::from("567"),
-                },
-                concat!(
-                    "0C", // config_id
-                    concat!(
-                        // encapsulated_context
-                        "0005",       // length
-                        "3031323334", // opaque data
-                    ),
-                    concat!(
-                        // payload
-                        "0003",   // length
-                        "353637", // opaque data
-                    ),
-                ),
-            ),
-        ])
-    }
-
-    #[test]
     fn roundtrip_task_id() {
         roundtrip_encoding(&[
             (
@@ -1165,16 +1087,16 @@ mod tests {
                     ),
                     extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                     encrypted_input_shares: vec![
-                        HpkeCiphertext {
-                            config_id: HpkeConfigId::from(42),
-                            encapsulated_context: Vec::from("012345"),
-                            payload: Vec::from("543210"),
-                        },
-                        HpkeCiphertext {
-                            config_id: HpkeConfigId::from(13),
-                            encapsulated_context: Vec::from("abce"),
-                            payload: Vec::from("abfd"),
-                        },
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(42),
+                            Vec::from("012345"),
+                            Vec::from("543210"),
+                        ),
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(13),
+                            Vec::from("abce"),
+                            Vec::from("abfd"),
+                        ),
                     ],
                 },
                 concat!(
@@ -1347,11 +1269,11 @@ mod tests {
                                     ExtensionType::Tbd,
                                     Vec::from("0123"),
                                 )],
-                                encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId::from(42),
-                                    encapsulated_context: Vec::from("012345"),
-                                    payload: Vec::from("543210"),
-                                },
+                                encrypted_input_share: HpkeCiphertext::new(
+                                    HpkeConfigId::from(42),
+                                    Vec::from("012345"),
+                                    Vec::from("543210"),
+                                ),
                             },
                             ReportShare {
                                 nonce: Nonce::new(
@@ -1362,11 +1284,11 @@ mod tests {
                                     ExtensionType::Tbd,
                                     Vec::from("3210"),
                                 )],
-                                encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId::from(13),
-                                    encapsulated_context: Vec::from("abce"),
-                                    payload: Vec::from("abfd"),
-                                },
+                                encrypted_input_share: HpkeCiphertext::new(
+                                    HpkeConfigId::from(13),
+                                    Vec::from("abce"),
+                                    Vec::from("abfd"),
+                                ),
                             },
                         ],
                     },
@@ -1643,11 +1565,11 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateShareResp {
-                    encrypted_aggregate_share: HpkeCiphertext {
-                        config_id: HpkeConfigId::from(10),
-                        encapsulated_context: Vec::from("0123"),
-                        payload: Vec::from("4567"),
-                    },
+                    encrypted_aggregate_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(10),
+                        Vec::from("0123"),
+                        Vec::from("4567"),
+                    ),
                 },
                 concat!(concat!(
                     // encrypted_aggregate_share
@@ -1666,11 +1588,11 @@ mod tests {
             ),
             (
                 AggregateShareResp {
-                    encrypted_aggregate_share: HpkeCiphertext {
-                        config_id: HpkeConfigId::from(12),
-                        encapsulated_context: Vec::from("01234"),
-                        payload: Vec::from("567"),
-                    },
+                    encrypted_aggregate_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(12),
+                        Vec::from("01234"),
+                        Vec::from("567"),
+                    ),
                 },
                 concat!(concat!(
                     // encrypted_aggregate_share
@@ -1758,16 +1680,16 @@ mod tests {
             (
                 CollectResp {
                     encrypted_agg_shares: vec![
-                        HpkeCiphertext {
-                            config_id: HpkeConfigId::from(10),
-                            encapsulated_context: Vec::from("0123"),
-                            payload: Vec::from("4567"),
-                        },
-                        HpkeCiphertext {
-                            config_id: HpkeConfigId::from(12),
-                            encapsulated_context: Vec::from("01234"),
-                            payload: Vec::from("567"),
-                        },
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(10),
+                            Vec::from("0123"),
+                            Vec::from("4567"),
+                        ),
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(12),
+                            Vec::from("01234"),
+                            Vec::from("567"),
+                        ),
                     ],
                 },
                 concat!(concat!(

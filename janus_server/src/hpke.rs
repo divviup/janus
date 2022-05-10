@@ -1,8 +1,8 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::{HpkeCiphertext, HpkeConfig};
+use crate::message::HpkeConfig;
 use hpke::HpkeError;
-use janus::message::{Extension, Nonce, Role, TaskId};
+use janus::message::{Extension, HpkeCiphertext, Nonce, Role, TaskId};
 use prio::codec::{encode_u16_items, Encode};
 use std::str::FromStr;
 
@@ -132,11 +132,11 @@ pub fn seal(
         associated_data,
     )?;
 
-    Ok(HpkeCiphertext {
-        config_id: recipient_config.id,
-        encapsulated_context: output.encapped_key,
-        payload: output.ciphertext,
-    })
+    Ok(HpkeCiphertext::new(
+        recipient_config.id,
+        output.encapped_key,
+        output.ciphertext,
+    ))
 }
 
 /// Decrypt `ciphertext` using the provided `recipient_config` & `recipient_private_key`, and return
@@ -152,9 +152,9 @@ pub fn open(
     hpke_dispatch::Config::try_from(recipient_config)?
         .base_mode_open(
             &recipient_private_key.0,
-            &ciphertext.encapsulated_context,
+            ciphertext.encapsulated_context(),
             &application_info.0,
-            &ciphertext.payload,
+            ciphertext.payload(),
             associated_data,
         )
         .map_err(Into::into)
@@ -439,11 +439,11 @@ mod tests {
                 };
                 let hpke_private_key = HpkePrivateKey(test_vector.serialized_private_key.clone());
                 let application_info = HpkeApplicationInfo(test_vector.info.clone());
-                let ciphertext = HpkeCiphertext {
-                    config_id: HpkeConfigId::from(0),
-                    encapsulated_context: test_vector.enc.clone(),
-                    payload: encryption.ct,
-                };
+                let ciphertext = HpkeCiphertext::new(
+                    HpkeConfigId::from(0),
+                    test_vector.enc.clone(),
+                    encryption.ct,
+                );
 
                 let plaintext = open(
                     &hpke_config,
