@@ -9,7 +9,7 @@ use hpke::{
     kem, Kem,
 };
 use num_enum::TryFromPrimitive;
-use prio::codec::{CodecError, Decode, Encode};
+use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -466,9 +466,67 @@ impl Decode for HpkeAeadId {
     }
 }
 
+/// PPM protocol message representing an arbitrary extension included in a client report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Extension {
+    extension_type: ExtensionType,
+    extension_data: Vec<u8>,
+}
+
+impl Extension {
+    /// Construct an extension from its type and payload.
+    pub fn new(extension_type: ExtensionType, extension_data: Vec<u8>) -> Extension {
+        Extension {
+            extension_type,
+            extension_data,
+        }
+    }
+}
+
+impl Encode for Extension {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.extension_type.encode(bytes);
+        encode_u16_items(bytes, &(), &self.extension_data);
+    }
+}
+
+impl Decode for Extension {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let extension_type = ExtensionType::decode(bytes)?;
+        let extension_data = decode_u16_items(&(), bytes)?;
+
+        Ok(Self {
+            extension_type,
+            extension_data,
+        })
+    }
+}
+
+/// PPM protocol message representing the type of an extension included in a client report.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u16)]
+pub enum ExtensionType {
+    Tbd = 0,
+}
+
+impl Encode for ExtensionType {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        (*self as u16).encode(bytes);
+    }
+}
+
+impl Decode for ExtensionType {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let val = u16::decode(bytes)?;
+        Self::try_from(val).map_err(|_| {
+            CodecError::Other(anyhow!("unexpected ExtensionType value {}", val).into())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Duration, HpkeConfigId, Role, Time};
+    use super::{Duration, Extension, ExtensionType, HpkeConfigId, Role, Time};
     use prio::codec::{Decode, Encode};
     use std::io::Cursor;
 
@@ -521,5 +579,38 @@ mod tests {
             (HpkeConfigId(10), "0A"),
             (HpkeConfigId(u8::MAX), "FF"),
         ])
+    }
+
+    #[test]
+    fn roundtrip_extension() {
+        roundtrip_encoding(&[
+            (
+                Extension::new(ExtensionType::Tbd, Vec::new()),
+                concat!(
+                    "0000", // extension_type
+                    concat!(
+                        // extension_data
+                        "0000", // length
+                        "",     // opaque data
+                    ),
+                ),
+            ),
+            (
+                Extension::new(ExtensionType::Tbd, Vec::from("0123")),
+                concat!(
+                    "0000", // extension_type
+                    concat!(
+                        // extension_data
+                        "0004",     // length
+                        "30313233", // opaque data
+                    ),
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_extension_type() {
+        roundtrip_encoding(&[(ExtensionType::Tbd, "0000")])
     }
 }

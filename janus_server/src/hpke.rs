@@ -1,8 +1,8 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::{Extension, HpkeCiphertext, HpkeConfig};
+use crate::message::{HpkeCiphertext, HpkeConfig};
 use hpke::HpkeError;
-use janus::message::{Nonce, Role, TaskId};
+use janus::message::{Extension, Nonce, Role, TaskId};
 use prio::codec::{encode_u16_items, Encode};
 use std::str::FromStr;
 

@@ -3,7 +3,7 @@
 use crate::hpke::associated_data_for_report_share;
 use anyhow::anyhow;
 use janus::message::{
-    Duration, Error, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Nonce, TaskId, Time,
+    Duration, Error, Extension, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Nonce, TaskId, Time,
 };
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
@@ -345,54 +345,6 @@ impl Decode for Report {
             nonce: timestamp,
             extensions,
             encrypted_input_shares,
-        })
-    }
-}
-
-/// PPM protocol message representing an arbitrary extension included in a client report.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Extension {
-    pub(crate) extension_type: ExtensionType,
-    pub(crate) extension_data: Vec<u8>,
-}
-
-impl Encode for Extension {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.extension_type.encode(bytes);
-        encode_u16_items(bytes, &(), &self.extension_data);
-    }
-}
-
-impl Decode for Extension {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let extension_type = ExtensionType::decode(bytes)?;
-        let extension_data = decode_u16_items(&(), bytes)?;
-
-        Ok(Self {
-            extension_type,
-            extension_data,
-        })
-    }
-}
-
-/// PPM protocol message representing the type of an extension included in a client report.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
-#[repr(u16)]
-pub enum ExtensionType {
-    Tbd = 0,
-}
-
-impl Encode for ExtensionType {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        (*self as u16).encode(bytes);
-    }
-}
-
-impl Decode for ExtensionType {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let val = u16::decode(bytes)?;
-        Self::try_from(val).map_err(|_| {
-            CodecError::Other(anyhow!("unexpected ExtensionType value {}", val).into())
         })
     }
 }
@@ -801,7 +753,7 @@ pub mod test_util {
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
-    use janus::message::{Duration, Time};
+    use janus::message::{Duration, ExtensionType, Time};
     use lazy_static::lazy_static;
 
     lazy_static! {
@@ -841,10 +793,7 @@ mod tests {
                 seq: vec![
                     ReportShare {
                         nonce: Nonce::new(Time::from_seconds_since_epoch(54321), [0u8; 8]),
-                        extensions: vec![Extension {
-                            extension_type: ExtensionType::Tbd,
-                            extension_data: Vec::from("0123"),
-                        }],
+                        extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                         encrypted_input_share: HpkeCiphertext {
                             config_id: HpkeConfigId::from(42),
                             encapsulated_context: Vec::from("012345"),
@@ -853,10 +802,7 @@ mod tests {
                     },
                     ReportShare {
                         nonce: Nonce::new(Time::from_seconds_since_epoch(73542), [1u8; 8]),
-                        extensions: vec![Extension {
-                            extension_type: ExtensionType::Tbd,
-                            extension_data: Vec::from("3210"),
-                        }],
+                        extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
                         encrypted_input_share: HpkeCiphertext {
                             config_id: HpkeConfigId::from(13),
                             encapsulated_context: Vec::from("abce"),
@@ -1217,10 +1163,7 @@ mod tests {
                         Time::from_seconds_since_epoch(54321),
                         [8, 7, 6, 5, 4, 3, 2, 1],
                     ),
-                    extensions: vec![Extension {
-                        extension_type: ExtensionType::Tbd,
-                        extension_data: Vec::from("0123"),
-                    }],
+                    extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                     encrypted_input_shares: vec![
                         HpkeCiphertext {
                             config_id: HpkeConfigId::from(42),
@@ -1285,45 +1228,6 @@ mod tests {
                 ),
             ),
         ])
-    }
-
-    #[test]
-    fn roundtrip_extension() {
-        roundtrip_encoding(&[
-            (
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::new(),
-                },
-                concat!(
-                    "0000", // extension_type
-                    concat!(
-                        // extension_data
-                        "0000", // length
-                        "",     // opaque data
-                    ),
-                ),
-            ),
-            (
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("0123"),
-                },
-                concat!(
-                    "0000", // extension_type
-                    concat!(
-                        // extension_data
-                        "0004",     // length
-                        "30313233", // opaque data
-                    ),
-                ),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_extension_type() {
-        roundtrip_encoding(&[(ExtensionType::Tbd, "0000")])
     }
 
     #[test]
@@ -1439,10 +1343,10 @@ mod tests {
                                     Time::from_seconds_since_epoch(54321),
                                     [1, 2, 3, 4, 5, 6, 7, 8],
                                 ),
-                                extensions: vec![Extension {
-                                    extension_type: ExtensionType::Tbd,
-                                    extension_data: Vec::from("0123"),
-                                }],
+                                extensions: vec![Extension::new(
+                                    ExtensionType::Tbd,
+                                    Vec::from("0123"),
+                                )],
                                 encrypted_input_share: HpkeCiphertext {
                                     config_id: HpkeConfigId::from(42),
                                     encapsulated_context: Vec::from("012345"),
@@ -1454,10 +1358,10 @@ mod tests {
                                     Time::from_seconds_since_epoch(73542),
                                     [8, 7, 6, 5, 4, 3, 2, 1],
                                 ),
-                                extensions: vec![Extension {
-                                    extension_type: ExtensionType::Tbd,
-                                    extension_data: Vec::from("3210"),
-                                }],
+                                extensions: vec![Extension::new(
+                                    ExtensionType::Tbd,
+                                    Vec::from("3210"),
+                                )],
                                 encrypted_input_share: HpkeCiphertext {
                                     config_id: HpkeConfigId::from(13),
                                     encapsulated_context: Vec::from("abce"),

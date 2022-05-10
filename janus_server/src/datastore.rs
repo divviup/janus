@@ -7,14 +7,14 @@ use self::models::{
 use crate::{
     hpke::HpkePrivateKey,
     message::{
-        AggregateShareReq, AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Interval,
-        Report, ReportShare,
+        AggregateShareReq, AggregationJobId, HpkeCiphertext, HpkeConfig, Interval, Report,
+        ReportShare,
     },
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
 use chrono::NaiveDateTime;
 use futures::try_join;
-use janus::message::{Duration, Nonce, TaskId, Time};
+use janus::message::{Duration, Extension, Nonce, TaskId, Time};
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -1909,13 +1909,13 @@ mod tests {
     use crate::{
         aggregator::test_util::fake,
         datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
-        message::{ExtensionType, Interval, TransitionError},
+        message::{Interval, TransitionError},
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
     use ::test_util::generate_aead_key;
     use assert_matches::assert_matches;
-    use janus::message::{Duration, HpkeConfigId, Role, Time};
+    use janus::message::{Duration, ExtensionType, HpkeConfigId, Role, Time};
     use prio::{
         field::{Field128, Field64},
         vdaf::{
@@ -2004,14 +2004,8 @@ mod tests {
                 [1, 2, 3, 4, 5, 6, 7, 8],
             ),
             extensions: vec![
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_0"),
-                },
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_1"),
-                },
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
             ],
             encrypted_input_shares: vec![
                 HpkeCiphertext {
@@ -2208,14 +2202,8 @@ mod tests {
                 [1, 2, 3, 4, 5, 6, 7, 8],
             ),
             extensions: vec![
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_0"),
-                },
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_1"),
-                },
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
             ],
             encrypted_input_share: HpkeCiphertext {
                 config_id: HpkeConfigId::from(12),
