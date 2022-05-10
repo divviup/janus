@@ -1,18 +1,18 @@
 //! Shared parameters for a PPM task.
 
-use std::collections::HashMap;
-
 use crate::{
     hpke::HpkePrivateKey,
     message::{HpkeConfig, Interval},
 };
 use ::rand::{thread_rng, Rng};
+use derivative::Derivative;
 use janus::message::{Duration, HpkeConfigId, Role, TaskId};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use url::Url;
 
 /// Errors that methods and functions in this module may return.
@@ -110,7 +110,8 @@ impl PartialEq for AggregatorAuthKey {
 impl Eq for AggregatorAuthKey {}
 
 /// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
 pub struct Task {
     /// Unique identifier for the task.
     pub id: TaskId,
@@ -122,6 +123,7 @@ pub struct Task {
     /// The role performed by the aggregator.
     pub role: Role,
     /// Secret verification parameter shared by the aggregators.
+    #[derivative(Debug = "ignore")]
     pub(crate) vdaf_verify_parameter: Vec<u8>,
     /// The maximum number of times a given batch may be collected.
     pub(crate) max_batch_lifetime: u64,
@@ -137,6 +139,7 @@ pub struct Task {
     pub(crate) collector_hpke_config: HpkeConfig,
     /// Key used to authenticate messages sent to or received from the other
     /// aggregators.
+    #[derivative(Debug = "ignore")]
     pub(crate) agg_auth_keys: Vec<AggregatorAuthKey>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
     pub(crate) hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
