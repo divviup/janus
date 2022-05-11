@@ -134,6 +134,9 @@ peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
     /// HPKE failure.
     #[error("HPKE error: {0}")]
     Hpke(#[from] crate::hpke::Error),
+    /// Error handling task parameters
+    #[error("Invalid task parameters: {0}")]
+    TaskParameters(#[from] crate::task::Error),
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
@@ -514,11 +517,9 @@ impl TaskAggregator {
             })
             .await?;
 
-        // TODO(timg): Aggregator configuration needs to include the URL from which collect job URIs
-        // are constructed
-        let base_url = Url::parse("https://example.com").unwrap();
-
-        Ok(base_url
+        Ok(self
+            .task
+            .aggregator_url(Role::Leader)?
             .join("collect_jobs/")?
             .join(&collect_job_uuid.to_string())?)
     }
@@ -1495,6 +1496,7 @@ fn error_handler<R: Reply>(
             Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(Error::TaskParameters(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
 }
@@ -1867,6 +1869,7 @@ mod tests {
         rand::SystemRandom,
     };
     use std::{collections::HashMap, io::Cursor};
+    use uuid::Uuid;
     use warp::{reply::Reply, Rejection};
 
     type PrepareTransition<V> = vdaf::PrepareTransition<
@@ -3701,7 +3704,11 @@ mod tests {
 
         // Prepare parameters.
         let task_id = TaskId::random();
-        let task = new_dummy_task(task_id, Vdaf::Fake, Role::Leader);
+        let mut task = new_dummy_task(task_id, Vdaf::Fake, Role::Leader);
+        task.aggregator_endpoints = vec![
+            "https://leader.endpoint".parse().unwrap(),
+            "https://helper.endpoint".parse().unwrap(),
+        ];
 
         let (datastore, _db_handle) = ephemeral_datastore().await;
 
@@ -3736,8 +3743,16 @@ mod tests {
             .into_response();
 
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        // TODO(timg): validate collect URI
-        assert!(response.headers().get(LOCATION).is_some());
+        let collect_uri =
+            Url::parse(response.headers().get(LOCATION).unwrap().to_str().unwrap()).unwrap();
+        assert_eq!(collect_uri.scheme(), "https");
+        assert_eq!(collect_uri.host_str().unwrap(), "leader.endpoint");
+        let mut path_segments = collect_uri.path_segments().unwrap();
+        assert_eq!(path_segments.next(), Some("collect_jobs"));
+        assert_matches!(path_segments.next(), Some(uuid) => {
+            Uuid::parse_str(uuid).unwrap();
+        });
+        assert!(path_segments.next().is_none());
     }
 
     #[tokio::test]
