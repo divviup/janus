@@ -349,12 +349,12 @@ mod tests {
     use chrono::NaiveDateTime;
     use futures::{future::try_join_all, TryFutureExt};
     use janus::{
-        message::{Nonce, Role, TaskId, Time},
+        message::{Nonce, Report, Role, TaskId, Time},
         time::Clock,
     };
     use janus_server::{
         datastore::{Crypter, Datastore, Transaction},
-        message::{test_util::new_dummy_report, AggregationJobId, Report},
+        message::{test_util::new_dummy_report, AggregationJobId},
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
@@ -445,7 +445,7 @@ mod tests {
         assert!(helper_agg_jobs.is_empty());
         assert_eq!(leader_agg_jobs.len(), 1);
         let nonces = leader_agg_jobs.into_iter().next().unwrap().1;
-        assert_eq!(nonces, HashSet::from([leader_report.nonce]));
+        assert_eq!(nonces, HashSet::from([leader_report.nonce()]));
     }
 
     #[tokio::test]
@@ -501,7 +501,7 @@ mod tests {
             .iter()
             .chain(&small_batch_unit_reports)
             .chain(&big_batch_unit_reports)
-            .map(|report| report.nonce)
+            .map(|report| report.nonce())
             .collect();
 
         ds.run_tx(|tx| {
@@ -659,7 +659,7 @@ mod tests {
         let nonces = agg_jobs.into_iter().next().unwrap().1;
         assert_eq!(
             nonces,
-            HashSet::from([first_report.nonce, second_report.nonce])
+            HashSet::from([first_report.nonce(), second_report.nonce()])
         );
     }
 

@@ -1,8 +1,10 @@
 //! PPM protocol message definitions with serialization/deserialization support.
 
-use crate::hpke::associated_data_for_report_share;
 use anyhow::anyhow;
-use janus::message::{Duration, Error, Extension, HpkeCiphertext, Nonce, TaskId, Time};
+use janus::{
+    hpke::associated_data_for_report_share,
+    message::{Duration, Error, Extension, HpkeCiphertext, Nonce, TaskId, Time},
+};
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
@@ -200,46 +202,6 @@ impl Decode for Interval {
 impl Display for Interval {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "start: {} duration: {}", self.start, self.duration)
-    }
-}
-
-/// PPM protocol message representing a client report.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Report {
-    pub(crate) task_id: TaskId,
-    pub nonce: Nonce,
-    pub(crate) extensions: Vec<Extension>,
-    pub(crate) encrypted_input_shares: Vec<HpkeCiphertext>,
-}
-
-impl Report {
-    pub(crate) fn associated_data(&self) -> Vec<u8> {
-        associated_data_for_report_share(self.nonce, &self.extensions)
-    }
-}
-
-impl Encode for Report {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
-        self.nonce.encode(bytes);
-        encode_u16_items(bytes, &(), &self.extensions);
-        encode_u16_items(bytes, &(), &self.encrypted_input_shares);
-    }
-}
-
-impl Decode for Report {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
-        let timestamp = Nonce::decode(bytes)?;
-        let extensions = decode_u16_items(&(), bytes)?;
-        let encrypted_input_shares = decode_u16_items(&(), bytes)?;
-
-        Ok(Self {
-            task_id,
-            nonce: timestamp,
-            extensions,
-            encrypted_input_shares,
-        })
     }
 }
 
@@ -629,17 +591,17 @@ impl Decode for CollectResp {
 
 #[doc(hidden)]
 pub mod test_util {
-    use super::{Nonce, Report, TaskId};
-    use janus::message::Time;
+    use super::{Nonce, TaskId};
+    use janus::message::{Report, Time};
     use rand::{thread_rng, Rng};
 
     pub fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
-        Report {
+        Report::new(
             task_id,
-            nonce: Nonce::new(when, thread_rng().gen()),
-            extensions: Vec::new(),
-            encrypted_input_shares: Vec::new(),
-        }
+            Nonce::new(when, thread_rng().gen()),
+            Vec::new(),
+            Vec::new(),
+        )
     }
 }
 
@@ -856,110 +818,6 @@ mod tests {
                 concat!(
                     "FFFFFFFFFFFFFFFF", // start
                     "0000000000000000", // duration
-                ),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_report() {
-        roundtrip_encoding(&[
-            (
-                Report {
-                    task_id: TaskId::new([u8::MIN; 32]),
-                    nonce: Nonce::new(
-                        Time::from_seconds_since_epoch(12345),
-                        [1, 2, 3, 4, 5, 6, 7, 8],
-                    ),
-                    extensions: vec![],
-                    encrypted_input_shares: vec![],
-                },
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
-                    concat!(
-                        // nonce
-                        "0000000000003039", // time
-                        "0102030405060708", // rand
-                    ),
-                    concat!(
-                        // extensions
-                        "0000", // length
-                    ),
-                    concat!(
-                        // encrypted_input_shares
-                        "0000", // length
-                    )
-                ),
-            ),
-            (
-                Report {
-                    task_id: TaskId::new([u8::MAX; 32]),
-                    nonce: Nonce::new(
-                        Time::from_seconds_since_epoch(54321),
-                        [8, 7, 6, 5, 4, 3, 2, 1],
-                    ),
-                    extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
-                    encrypted_input_shares: vec![
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(42),
-                            Vec::from("012345"),
-                            Vec::from("543210"),
-                        ),
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(13),
-                            Vec::from("abce"),
-                            Vec::from("abfd"),
-                        ),
-                    ],
-                },
-                concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
-                    concat!(
-                        "000000000000D431", // time
-                        "0807060504030201", // rand
-                    ),
-                    concat!(
-                        // extensions
-                        "0008", // length
-                        concat!(
-                            "0000", // extension_type
-                            concat!(
-                                // extension_data
-                                "0004",     // length
-                                "30313233", // opaque data
-                            ),
-                        )
-                    ),
-                    concat!(
-                        // encrypted_input_shares
-                        "001E", // length
-                        concat!(
-                            "2A", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0006",         // length
-                                "303132333435"  // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "0006",         // length
-                                "353433323130", // opaque data
-                            ),
-                        ),
-                        concat!(
-                            "0D", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0004",     // length
-                                "61626365", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "0004",     // length
-                                "61626664", // opaque data
-                            ),
-                        ),
-                    ),
                 ),
             ),
         ])

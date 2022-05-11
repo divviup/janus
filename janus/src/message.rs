@@ -1,6 +1,6 @@
 //! PPM protocol message definitions with serialization/deserialization support.
 
-use crate::time::Clock;
+use crate::{hpke::associated_data_for_report_share, time::Clock};
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use hpke::{
@@ -706,11 +706,87 @@ impl Decode for HpkeConfig {
     }
 }
 
+/// PPM protocol message representing a client report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Report {
+    task_id: TaskId,
+    nonce: Nonce,
+    extensions: Vec<Extension>,
+    encrypted_input_shares: Vec<HpkeCiphertext>,
+}
+
+impl Report {
+    /// Construct a report from its components.
+    pub fn new(
+        task_id: TaskId,
+        nonce: Nonce,
+        extensions: Vec<Extension>,
+        encrypted_input_shares: Vec<HpkeCiphertext>,
+    ) -> Report {
+        Report {
+            task_id,
+            nonce,
+            extensions,
+            encrypted_input_shares,
+        }
+    }
+
+    /// Retrieve the task identifier from this report.
+    pub fn task_id(&self) -> TaskId {
+        self.task_id
+    }
+
+    /// Get this report's nonce.
+    pub fn nonce(&self) -> Nonce {
+        self.nonce
+    }
+
+    /// Get this report's extensions.
+    pub fn extensions(&self) -> &[Extension] {
+        &self.extensions
+    }
+
+    /// Get this report's encrypted input shares.
+    pub fn encrypted_input_shares(&self) -> &[HpkeCiphertext] {
+        &self.encrypted_input_shares
+    }
+
+    /// Get the authenticated additional data associated with this report.
+    pub fn associated_data(&self) -> Vec<u8> {
+        associated_data_for_report_share(self.nonce, &self.extensions)
+    }
+}
+
+impl Encode for Report {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.task_id.encode(bytes);
+        self.nonce.encode(bytes);
+        encode_u16_items(bytes, &(), &self.extensions);
+        encode_u16_items(bytes, &(), &self.encrypted_input_shares);
+    }
+}
+
+impl Decode for Report {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let task_id = TaskId::decode(bytes)?;
+        let timestamp = Nonce::decode(bytes)?;
+        let extensions = decode_u16_items(&(), bytes)?;
+        let encrypted_input_shares = decode_u16_items(&(), bytes)?;
+
+        Ok(Self {
+            task_id,
+            nonce: timestamp,
+            extensions,
+            encrypted_input_shares,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         Duration, Extension, ExtensionType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId,
-        HpkeKdfId, HpkeKemId, HpkePublicKey, Role, TaskId, Time,
+        HpkeKdfId, HpkeKemId, HpkePublicKey, Nonce, Report, Role, TaskId, Time,
     };
     use prio::codec::{Decode, Encode};
     use std::io::Cursor;
@@ -945,6 +1021,110 @@ mod tests {
                         "0010",                             // length
                         "30313233343536373839616263646566", // opaque data
                     )
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_report() {
+        roundtrip_encoding(&[
+            (
+                Report::new(
+                    TaskId::new([u8::MIN; 32]),
+                    Nonce::new(
+                        Time::from_seconds_since_epoch(12345),
+                        [1, 2, 3, 4, 5, 6, 7, 8],
+                    ),
+                    vec![],
+                    vec![],
+                ),
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                    concat!(
+                        // nonce
+                        "0000000000003039", // time
+                        "0102030405060708", // rand
+                    ),
+                    concat!(
+                        // extensions
+                        "0000", // length
+                    ),
+                    concat!(
+                        // encrypted_input_shares
+                        "0000", // length
+                    )
+                ),
+            ),
+            (
+                Report::new(
+                    TaskId::new([u8::MAX; 32]),
+                    Nonce::new(
+                        Time::from_seconds_since_epoch(54321),
+                        [8, 7, 6, 5, 4, 3, 2, 1],
+                    ),
+                    vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
+                    vec![
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(42),
+                            Vec::from("012345"),
+                            Vec::from("543210"),
+                        ),
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(13),
+                            Vec::from("abce"),
+                            Vec::from("abfd"),
+                        ),
+                    ],
+                ),
+                concat!(
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
+                    concat!(
+                        "000000000000D431", // time
+                        "0807060504030201", // rand
+                    ),
+                    concat!(
+                        // extensions
+                        "0008", // length
+                        concat!(
+                            "0000", // extension_type
+                            concat!(
+                                // extension_data
+                                "0004",     // length
+                                "30313233", // opaque data
+                            ),
+                        )
+                    ),
+                    concat!(
+                        // encrypted_input_shares
+                        "001E", // length
+                        concat!(
+                            "2A", // config_id
+                            concat!(
+                                // encapsulated_context
+                                "0006",         // length
+                                "303132333435"  // opaque data
+                            ),
+                            concat!(
+                                // payload
+                                "0006",         // length
+                                "353433323130", // opaque data
+                            ),
+                        ),
+                        concat!(
+                            "0D", // config_id
+                            concat!(
+                                // encapsulated_context
+                                "0004",     // length
+                                "61626365", // opaque data
+                            ),
+                            concat!(
+                                // payload
+                                "0004",     // length
+                                "61626664", // opaque data
+                            ),
+                        ),
+                    ),
                 ),
             ),
         ])

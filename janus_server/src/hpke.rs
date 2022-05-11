@@ -1,8 +1,7 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
 use hpke::HpkeError;
-use janus::message::{Extension, HpkeCiphertext, HpkeConfig, Nonce, Role, TaskId};
-use prio::codec::{encode_u16_items, Encode};
+use janus::message::{HpkeCiphertext, HpkeConfig, Role, TaskId};
 use std::str::FromStr;
 
 #[derive(Debug, thiserror::Error)]
@@ -83,15 +82,6 @@ impl HpkeApplicationInfo {
             .concat(),
         )
     }
-}
-
-/// Construct the HPKE associated data for sealing or opening data enciphered for a report or report
-/// share, per §4.3.2 and 4.4.2.2 of draft-gpew-priv-ppm
-pub fn associated_data_for_report_share(nonce: Nonce, extensions: &[Extension]) -> Vec<u8> {
-    let mut associated_data = vec![];
-    nonce.encode(&mut associated_data);
-    encode_u16_items(&mut associated_data, &(), extensions);
-    associated_data
 }
 
 /// Encrypt `plaintext` using the provided `recipient_config` and return the HPKE ciphertext. The
