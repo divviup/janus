@@ -710,7 +710,7 @@ impl Decode for HpkeConfig {
 mod tests {
     use super::{
         Duration, Extension, ExtensionType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId,
-        HpkeKdfId, HpkeKemId, HpkePublicKey, Role, Time,
+        HpkeKdfId, HpkeKemId, HpkePublicKey, Role, TaskId, Time,
     };
     use prio::codec::{Decode, Encode};
     use std::io::Cursor;
@@ -763,6 +763,53 @@ mod tests {
             (HpkeConfigId(u8::MIN), "00"),
             (HpkeConfigId(10), "0A"),
             (HpkeConfigId(u8::MAX), "FF"),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_task_id() {
+        roundtrip_encoding(&[
+            (
+                TaskId::new([u8::MIN; 32]),
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            (
+                TaskId::new([
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                    22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                ]),
+                "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F",
+            ),
+            (
+                TaskId::new([u8::MAX; 32]),
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_hpke_kem_id() {
+        roundtrip_encoding(&[
+            (HpkeKemId::P256HkdfSha256, "0010"),
+            (HpkeKemId::X25519HkdfSha256, "0020"),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_hpke_kdf_id() {
+        roundtrip_encoding(&[
+            (HpkeKdfId::HkdfSha256, "0001"),
+            (HpkeKdfId::HkdfSha384, "0002"),
+            (HpkeKdfId::HkdfSha512, "0003"),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_hpke_aead_id() {
+        roundtrip_encoding(&[
+            (HpkeAeadId::Aes128Gcm, "0001"),
+            (HpkeAeadId::Aes256Gcm, "0002"),
+            (HpkeAeadId::ChaCha20Poly1305, "0003"),
         ])
     }
 
