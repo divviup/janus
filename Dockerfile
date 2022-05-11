@@ -19,4 +19,4 @@ COPY --from=builder /$BINARY /$BINARY
 # Store the build argument in an environment variable so we can reference it
 # from the ENTRYPOINT at runtime.
 ENV BINARY=$BINARY
-ENTRYPOINT ["/bin/sh", "-c", "/$BINARY"]
+ENTRYPOINT ["/bin/sh", "-c", "exec /$BINARY \"$0\" \"$@\""]
