@@ -206,6 +206,12 @@ impl Task {
             // Batch interval duration must be a multiple of minimum batch duration
             && batch_interval.duration().as_seconds() % self.min_batch_duration.as_seconds() == 0
     }
+
+    /// Returns the [`Url`] relative to which the server performing `role` serves its API.
+    pub(crate) fn aggregator_url(&self, role: Role) -> Result<&Url, Error> {
+        let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
+        Ok(&self.aggregator_endpoints[index])
+    }
 }
 
 // This is public to allow use in integration tests.
