@@ -42,7 +42,9 @@ jobs:
     - uses: actions/checkout@v3
     - env:
         DOCKER_BUILDKIT: 1
-      run: docker build .
+      run: docker build --tag janus_server .
     - env:
         DOCKER_BUILDKIT: 1
-      run: docker build --build-arg BINARY=aggregation_job_creator .
+      run: docker build --tag janus_aggregation_job_creator --build-arg BINARY=aggregation_job_creator .
+    - run: docker run --rm janus_server --help
+    - run: docker run --rm janus_aggregation_job_creator --help
