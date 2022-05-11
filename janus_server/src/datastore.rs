@@ -12,7 +12,7 @@ use crate::{
 use chrono::NaiveDateTime;
 use futures::try_join;
 use janus::message::{
-    Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, Report, TaskId, Time,
+    Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId, Time,
 };
 use postgres_types::{Json, ToSql};
 use prio::{
@@ -1164,12 +1164,19 @@ impl Transaction<'_> {
     }
 
     /// Returns a map whose keys are those values from `intervals` that fall within the batch
-    /// interval described by at least one `aggregate_share_jobs` row.
+    /// interval described by at least one row in `aggregate_share_jobs` (for `role` ==
+    /// [`Role::Helper`]) or in `collect_jobs` (for `role` == [`Role::Leader`]).
     pub(crate) async fn get_aggregate_share_job_counts_for_intervals(
         &self,
         task_id: TaskId,
+        role: Role,
         intervals: &[Interval],
     ) -> Result<HashMap<Interval, u64>, Error> {
+        let table = match role {
+            Role::Leader => "collect_jobs",
+            Role::Helper => "aggregate_share_jobs",
+            _ => panic!("unexpected role"),
+        };
         let interval_starts: Vec<NaiveDateTime> = intervals
             .iter()
             .map(|interval| interval.start().as_naive_date_time())
@@ -1182,22 +1189,22 @@ impl Transaction<'_> {
         let stmt = self
             .tx
             .prepare_cached(
-                "WITH ranges AS (
+                &format!("WITH ranges AS (
                     SELECT tsrange(x.range_start, x.range_end) as interval
                     FROM unnest($1::TIMESTAMP[], $2::TIMESTAMP[]) AS x(range_start, range_end)
                 )
                 SELECT
-                    COUNT(aggregate_share_jobs.batch_interval_start) as overlap_count,
+                    COUNT({table}.batch_interval_start) as overlap_count,
                     lower(ranges.interval) as interval_start,
                     upper(ranges.interval) as interval_end
-                FROM aggregate_share_jobs
+                FROM {table}
                 INNER JOIN ranges
                     ON tsrange(
-                        aggregate_share_jobs.batch_interval_start,
-                        aggregate_share_jobs.batch_interval_start + aggregate_share_jobs.batch_interval_duration * interval '1 second'
+                        {table}.batch_interval_start,
+                        {table}.batch_interval_start + {table}.batch_interval_duration * interval '1 second'
                     ) @> ranges.interval
-                WHERE aggregate_share_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $3)
-                GROUP BY ranges.interval;"
+                WHERE {table}.task_id = (SELECT id FROM tasks WHERE task_id = $3)
+                GROUP BY ranges.interval;")
             )
             .await?;
         let rows = self
@@ -3220,6 +3227,7 @@ mod tests {
                     let counts = tx
                         .get_aggregate_share_job_counts_for_intervals(
                             task_id,
+                            Role::Helper,
                             &test_case_list
                                 .iter()
                                 .map(|v| v.interval)

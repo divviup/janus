@@ -3,8 +3,8 @@ use crate::{
     datastore::{
         self,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, ReportAggregation,
-            ReportAggregationState,
+            AggregateShareJob, AggregationJob, AggregationJobState, BatchUnitAggregation,
+            ReportAggregation, ReportAggregationState,
         },
         Datastore, Transaction,
     },
@@ -53,6 +53,7 @@ use std::{
 use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
 use url::Url;
+use uuid::Uuid;
 use warp::{
     filters::BoxedFilter,
     reply::{self, Response},
@@ -489,31 +490,9 @@ impl TaskAggregator {
     }
 
     async fn handle_collect(&self, datastore: &Datastore, req: CollectReq) -> Result<Url, Error> {
-        // §4.5: check that the batch interval meets the requirements from §4.6
-        if !self.task.validate_batch_interval(req.batch_interval) {
-            return Err(Error::InvalidBatchInterval(
-                req.batch_interval,
-                self.task.id,
-            ));
-        }
-
-        let collect_job_uuid = datastore
-            .run_tx(move |tx| {
-                let aggregation_param = req.agg_param.clone();
-                Box::pin(async move {
-                    let collect_job_uuid = tx
-                        .get_collect_job_uuid(req.task_id, req.batch_interval, &aggregation_param)
-                        .await?;
-
-                    match collect_job_uuid {
-                        Some(uuid) => Ok(uuid),
-                        None => {
-                            tx.put_collect_job(req.task_id, req.batch_interval, &aggregation_param)
-                                .await
-                        }
-                    }
-                })
-            })
+        let collect_job_uuid = self
+            .vdaf_ops
+            .handle_collect(datastore, &self.task, &req)
             .await?;
 
         Ok(self
@@ -1021,6 +1000,99 @@ impl VdafOps {
             .await?)
     }
 
+    async fn handle_collect(
+        &self,
+        datastore: &Datastore,
+        task: &Task,
+        collect_req: &CollectReq,
+    ) -> Result<Uuid, Error> {
+        match self {
+            VdafOps::Prio3Aes128Count(_, _) => {
+                Self::handle_collect_generic::<Prio3Aes128Count, _>(datastore, task, collect_req)
+                    .await
+            }
+            VdafOps::Prio3Aes128Sum(_, _) => {
+                Self::handle_collect_generic::<Prio3Aes128Sum, _>(datastore, task, collect_req)
+                    .await
+            }
+            VdafOps::Prio3Aes128Histogram(_, _) => {
+                Self::handle_collect_generic::<Prio3Aes128Histogram, _>(
+                    datastore,
+                    task,
+                    collect_req,
+                )
+                .await
+            }
+
+            #[cfg(test)]
+            VdafOps::Fake(_) => {
+                Self::handle_collect_generic::<fake::Vdaf, _>(datastore, task, collect_req).await
+            }
+        }
+    }
+
+    #[tracing::instrument(skip(datastore), err)]
+    async fn handle_collect_generic<A, E>(
+        datastore: &Datastore,
+        task: &Task,
+        req: &CollectReq,
+    ) -> Result<Uuid, Error>
+    where
+        A: vdaf::Aggregator,
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+        E: std::fmt::Display,
+        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+    {
+        // §4.5: check that the batch interval meets the requirements from §4.6
+        if !task.validate_batch_interval(req.batch_interval) {
+            return Err(Error::InvalidBatchInterval(req.batch_interval, task.id));
+        }
+
+        Ok(datastore
+            .run_tx(move |tx| {
+                let task = task.clone();
+                let req = req.clone();
+                Box::pin(async move {
+                    if let Some(collect_job_uuid) = tx
+                        .get_collect_job_uuid(task.id, req.batch_interval, &req.agg_param)
+                        .await?
+                    {
+                        warn!(collect_request = ?req, "Serving existing collect job UUID");
+                        return Ok(collect_job_uuid);
+                    }
+
+                    warn!(collect_request = ?req, "Cache miss, creating new collect job UUID");
+                    let aggregation_param = A::AggregationParam::get_decoded(&req.agg_param)?;
+                    let batch_unit_aggregations = tx
+                        .get_batch_unit_aggregations_for_task_in_interval::<A, E>(
+                            task.id,
+                            req.batch_interval,
+                            &aggregation_param,
+                        )
+                        .await?;
+                    Self::validate_batch_lifetime_for_unit_aggregations(
+                        tx,
+                        &task,
+                        &batch_unit_aggregations,
+                    )
+                    .await?;
+
+                    for batch_unit_aggregation in &batch_unit_aggregations {
+                        warn!(
+                            ?batch_unit_aggregation,
+                            "checking if batch unit is consumed"
+                        );
+                    }
+
+                    tx.put_collect_job(req.task_id, req.batch_interval, &req.agg_param)
+                        .await
+                })
+            })
+            .await?)
+    }
+
     /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
     async fn handle_aggregate_share(
         &self,
@@ -1066,31 +1138,22 @@ impl VdafOps {
         }
     }
 
-    async fn service_aggregate_share_request<A, E>(
+    /// Check whether any member of `batch_unit_aggregations` has been included in enough collect
+    /// jobs (for `task.role` == [`Role::Leader`]) or aggregate share jobs (for `task.role` ==
+    /// [`Role::Helper`]) to violate the task's maximum batch lifetime.
+    async fn validate_batch_lifetime_for_unit_aggregations<A, E>(
         tx: &Transaction<'_>,
         task: &Task,
-        aggregate_share_req: &AggregateShareReq,
-    ) -> Result<AggregateShareJob<A>, datastore::Error>
+        batch_unit_aggregations: &[BatchUnitAggregation<A>],
+    ) -> Result<(), datastore::Error>
     where
         A: vdaf::Aggregator,
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         E: std::fmt::Display,
         for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
     {
-        let aggregation_param =
-            A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
-        let batch_unit_aggregations = tx
-            .get_batch_unit_aggregations_for_task_in_interval::<A, E>(
-                task.id,
-                aggregate_share_req.batch_interval,
-                &aggregation_param,
-            )
-            .await?;
-
-        // Check how many rows in aggregate_share_jobs have a batch interval that includes this
-        // batch unit. Each such row consumes one unit of batch lifetime (§4.6).
+        // Check how many rows in the relevant table have a batch interval that includes each batch
+        // unit. Each such row consumes one unit of batch lifetime (§4.6).
         //
         // We have to check each batch unit interval separately rather than checking how many times
         // aggregate_share_req.batch_interval overlaps with any row. Suppose we had:
@@ -1117,13 +1180,13 @@ impl VdafOps {
             .collect::<Result<_, datastore::Error>>()?;
 
         let overlaps = tx
-            .get_aggregate_share_job_counts_for_intervals(task.id, &intervals)
+            .get_aggregate_share_job_counts_for_intervals(task.id, task.role, &intervals)
             .await?;
 
         for (unit_interval, consumed_batch_lifetime) in overlaps {
             if consumed_batch_lifetime == task.max_batch_lifetime {
                 warn!(
-                    ?task.id, ?aggregate_share_req, ?unit_interval,
+                    ?task.id, ?unit_interval,
                     "refusing aggregate share request because lifetime for batch unit has been consumed"
                 );
                 return Err(datastore::Error::User(
@@ -1132,12 +1195,42 @@ impl VdafOps {
             }
             if consumed_batch_lifetime > task.max_batch_lifetime {
                 error!(
-                    ?task.id, ?aggregate_share_req, ?unit_interval,
+                    ?task.id, ?unit_interval,
                     "batch unit lifetime has been consumed more times than task allows"
                 );
                 panic!("batch unit lifetime has already been consumed more times than task allows");
             }
         }
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(tx), err)]
+    async fn service_aggregate_share_request<A, E>(
+        tx: &Transaction<'_>,
+        task: &Task,
+        aggregate_share_req: &AggregateShareReq,
+    ) -> Result<AggregateShareJob<A>, datastore::Error>
+    where
+        A: vdaf::Aggregator,
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+        E: std::fmt::Display,
+        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+    {
+        let aggregation_param =
+            A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
+        let batch_unit_aggregations = tx
+            .get_batch_unit_aggregations_for_task_in_interval::<A, E>(
+                task.id,
+                aggregate_share_req.batch_interval,
+                &aggregation_param,
+            )
+            .await?;
+
+        Self::validate_batch_lifetime_for_unit_aggregations(tx, task, &batch_unit_aggregations)
+            .await?;
 
         // At the moment we handle the AggregateShareReq, there could be some incomplete aggregation
         // jobs whose results not been accumulated into the batch unit aggregations we just queried
@@ -1251,7 +1344,6 @@ impl VdafOps {
                                 ?aggregate_share_req,
                                 "Cache miss, computing aggregate share job result"
                             );
-                            // No cached aggregate job, so attempt to compute the aggregate share.
                             Self::service_aggregate_share_request::<A, E>(
                                 tx,
                                 &task,
@@ -3782,6 +3874,7 @@ mod tests {
             "https://leader.endpoint".parse().unwrap(),
             "https://helper.endpoint".parse().unwrap(),
         ];
+        task.max_batch_lifetime = 1;
 
         let (datastore, _db_handle) = ephemeral_datastore().await;
 
@@ -3826,6 +3919,96 @@ mod tests {
             Uuid::parse_str(uuid).unwrap();
         });
         assert!(path_segments.next().is_none());
+    }
+
+    #[tokio::test]
+    async fn collect_request_batch_lifetime_violation() {
+        install_test_trace_subscriber();
+
+        let task_id = TaskId::random();
+        let mut task = new_dummy_task(task_id, Vdaf::Fake, Role::Leader);
+        task.max_batch_lifetime = 1;
+
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<fake::Vdaf> {
+                        task_id: task.id,
+                        unit_interval_start: Time::from_seconds_since_epoch(0),
+                        aggregation_param: (),
+                        aggregate_share: fake::AggregateShare(),
+                        report_count: 10,
+                        checksum: [2; 32],
+                    })
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+
+        // Sending this request will consume the lifetime for [0, min_batch_duration).
+        let request = CollectReq {
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                task.min_batch_duration,
+            )
+            .unwrap(),
+            agg_param: vec![],
+        };
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+
+        let invalid_request = CollectReq {
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(task.min_batch_duration.as_seconds() * 2),
+            )
+            .unwrap(),
+            agg_param: vec![],
+        };
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .body(invalid_request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:error:batchLifetimeExceeded",
+                "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
     }
 
     #[tokio::test]
