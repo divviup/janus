@@ -14,8 +14,7 @@ use crate::{
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
         AggregateResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
         AuthenticatedDecodeError, AuthenticatedEncoder, AuthenticatedRequestDecoder, CollectReq,
-        HpkeConfig, Interval, Report, ReportShare, Transition, TransitionError,
-        TransitionTypeSpecificData,
+        Interval, ReportShare, Transition, TransitionError, TransitionTypeSpecificData,
     },
     task::{self, AggregatorAuthKey, Task},
 };
@@ -26,7 +25,7 @@ use http::{
     StatusCode,
 };
 use janus::{
-    message::{HpkeConfigId, Nonce, Role, TaskId},
+    message::{HpkeConfig, HpkeConfigId, Nonce, Report, Role, TaskId},
     time::Clock,
 };
 use opentelemetry::{
@@ -190,10 +189,10 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_upload(&self, report_bytes: &[u8]) -> Result<(), Error> {
         let report = Report::get_decoded(report_bytes)?;
 
-        let task_aggregator = self.task_aggregator_for(report.task_id).await?;
+        let task_aggregator = self.task_aggregator_for(report.task_id()).await?;
         // Only the leader supports upload.
         if task_aggregator.task.role != Role::Leader {
-            return Err(Error::UnrecognizedTask(report.task_id));
+            return Err(Error::UnrecognizedTask(report.task_id()));
         }
         task_aggregator
             .handle_upload(&self.datastore, &self.clock, report)
@@ -396,37 +395,37 @@ impl TaskAggregator {
         report: Report,
     ) -> Result<(), Error> {
         // §4.2.2 The leader's report is the first one
-        if report.encrypted_input_shares.len() != 2 {
+        if report.encrypted_input_shares().len() != 2 {
             warn!(
-                share_count = report.encrypted_input_shares.len(),
+                share_count = report.encrypted_input_shares().len(),
                 "Unexpected number of encrypted shares in report"
             );
             return Err(Error::UnrecognizedMessage(
                 "unexpected number of encrypted shares in report",
-                Some(report.task_id),
+                Some(report.task_id()),
             ));
         }
-        let leader_report = &report.encrypted_input_shares[0];
+        let leader_report = &report.encrypted_input_shares()[0];
 
         // §4.2.2: verify that the report's HPKE config ID is known
         let (hpke_config, hpke_private_key) = self
             .task
             .hpke_keys
-            .get(&leader_report.config_id)
+            .get(&leader_report.config_id())
             .ok_or_else(|| {
-                warn!(
-                    config_id = ?leader_report.config_id,
-                    "Unknown HPKE config ID"
-                );
-                Error::OutdatedHpkeConfig(leader_report.config_id, report.task_id)
-            })?;
+            warn!(
+                config_id = ?leader_report.config_id(),
+                "Unknown HPKE config ID"
+            );
+            Error::OutdatedHpkeConfig(leader_report.config_id(), report.task_id())
+        })?;
 
         let report_deadline = clock.now().add(self.task.tolerable_clock_skew)?;
 
         // §4.2.4: reject reports from too far in the future
-        if report.nonce.time().is_after(report_deadline) {
-            warn!(?report.task_id, ?report.nonce, "Report timestamp exceeds tolerable clock skew");
-            return Err(Error::ReportFromTheFuture(report.nonce, report.task_id));
+        if report.nonce().time().is_after(report_deadline) {
+            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report timestamp exceeds tolerable clock skew");
+            return Err(Error::ReportFromTheFuture(report.nonce(), report.task_id()));
         }
 
         // Check that we can decrypt the report. This isn't required by the spec
@@ -437,7 +436,7 @@ impl TaskAggregator {
             hpke_config,
             hpke_private_key,
             &HpkeApplicationInfo::new(
-                report.task_id,
+                report.task_id(),
                 Label::InputShare,
                 Role::Client,
                 self.task.role,
@@ -445,7 +444,7 @@ impl TaskAggregator {
             leader_report,
             &report.associated_data(),
         ) {
-            warn!(?report.task_id, ?report.nonce, ?err, "Report decryption failed");
+            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
             return Ok(());
         }
 
@@ -455,14 +454,14 @@ impl TaskAggregator {
                 Box::pin(async move {
                     // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before.
                     if tx
-                        .get_client_report(report.task_id, report.nonce)
+                        .get_client_report(report.task_id(), report.nonce())
                         .await?
                         .is_some()
                     {
-                        warn!(?report.task_id, ?report.nonce, "Report replayed");
+                        warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report replayed");
                         // TODO (issue #34): change this error type.
                         return Err(datastore::Error::User(
-                            Error::StaleReport(report.nonce, report.task_id).into(),
+                            Error::StaleReport(report.nonce(), report.task_id()).into(),
                         ));
                     }
 
@@ -679,10 +678,10 @@ impl VdafOps {
         for report_share in report_shares {
             let hpke_key = task
                 .hpke_keys
-                .get(&report_share.encrypted_input_share.config_id)
+                .get(&report_share.encrypted_input_share.config_id())
                 .ok_or_else(|| {
                     warn!(
-                        config_id = ?report_share.encrypted_input_share.config_id,
+                        config_id = ?report_share.encrypted_input_share.config_id(),
                         "Unknown HPKE config ID"
                     );
                     TransitionError::HpkeUnknownConfigId
@@ -1845,18 +1844,18 @@ mod tests {
             models::BatchUnitAggregation,
             test_util::{ephemeral_datastore, DbHandle},
         },
-        hpke::{
-            associated_data_for_report_share, test_util::generate_hpke_config_and_private_key,
-            HpkePrivateKey, Label,
-        },
-        message::{AuthenticatedResponseDecoder, HpkeCiphertext, HpkeConfig},
+        hpke::{test_util::generate_hpke_config_and_private_key, HpkePrivateKey, Label},
+        message::AuthenticatedResponseDecoder,
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
     use ::test_util::MockClock;
     use assert_matches::assert_matches;
     use http::Method;
-    use janus::message::{Duration, TaskId, Time};
+    use janus::{
+        hpke::associated_data_for_report_share,
+        message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
+    };
     use prio::{
         codec::Decode,
         field::Field64,
@@ -1965,12 +1964,12 @@ mod tests {
         )
         .unwrap();
 
-        Report {
-            task_id: task.id,
+        Report::new(
+            task.id,
             nonce,
             extensions,
-            encrypted_input_shares: vec![leader_ciphertext, helper_ciphertext],
-        }
+            vec![leader_ciphertext, helper_ciphertext],
+        )
     }
 
     /// Convenience method to handle interaction with `warp::test` for typical PPM requests.
@@ -2027,7 +2026,7 @@ mod tests {
                 "title": "Report could not be processed because it arrived too late.",
                 "detail": "Report could not be processed because it arrived too late.",
                 "instance": "..",
-                "taskid": format!("{}", report.task_id),
+                "taskid": format!("{}", report.task_id()),
             })
         );
         assert_eq!(
@@ -2042,8 +2041,12 @@ mod tests {
         );
 
         // should reject a report with only one share with the unrecognizedMessage type.
-        let mut bad_report = report.clone();
-        bad_report.encrypted_input_shares.truncate(1);
+        let bad_report = Report::new(
+            report.task_id(),
+            report.nonce(),
+            report.extensions().to_vec(),
+            vec![report.encrypted_input_shares()[0].clone()],
+        );
         let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
             .await
             .unwrap();
@@ -2059,7 +2062,7 @@ mod tests {
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
-                "taskid": format!("{}", report.task_id),
+                "taskid": format!("{}", report.task_id()),
             })
         );
         assert_eq!(
@@ -2075,8 +2078,21 @@ mod tests {
 
         // should reject a report using the wrong HPKE config for the leader, and reply with
         // the error type outdatedConfig.
-        let mut bad_report = report.clone();
-        bad_report.encrypted_input_shares[0].config_id = HpkeConfigId::from(101);
+        let bad_report = Report::new(
+            report.task_id(),
+            report.nonce(),
+            report.extensions().to_vec(),
+            vec![
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(101),
+                    report.encrypted_input_shares()[0]
+                        .encapsulated_context()
+                        .to_vec(),
+                    report.encrypted_input_shares()[0].payload().to_vec(),
+                ),
+                report.encrypted_input_shares()[1].clone(),
+            ],
+        );
         let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
             .await
             .unwrap();
@@ -2092,7 +2108,7 @@ mod tests {
                 "title": "The message was generated using an outdated configuration.",
                 "detail": "The message was generated using an outdated configuration.",
                 "instance": "..",
-                "taskid": format!("{}", report.task_id),
+                "taskid": format!("{}", report.task_id()),
             })
         );
         assert_eq!(
@@ -2107,14 +2123,18 @@ mod tests {
         );
 
         // reports from the future should be rejected.
-        let mut bad_report = report.clone();
         let bad_report_time = MockClock::default()
             .now()
             .add(Duration::from_minutes(10).unwrap())
             .unwrap()
             .add(Duration::from_seconds(1))
             .unwrap();
-        bad_report.nonce = Nonce::new(bad_report_time, bad_report.nonce.rand());
+        let bad_report = Report::new(
+            report.task_id(),
+            Nonce::new(bad_report_time, report.nonce().rand()),
+            report.extensions().to_vec(),
+            report.encrypted_input_shares().to_vec(),
+        );
         let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
             .await
             .unwrap();
@@ -2205,7 +2225,9 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                Box::pin(async move { tx.get_client_report(report.task_id, report.nonce).await })
+                let task_id = report.task_id();
+                let nonce = report.nonce();
+                Box::pin(async move { tx.get_client_report(task_id, nonce).await })
             })
             .await
             .unwrap();
@@ -2214,8 +2236,8 @@ mod tests {
         // should reject duplicate reports.
         // TODO (issue #34): change this error type.
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::StaleReport(stale_nonce, task_id)) => {
-            assert_eq!(task_id, report.task_id);
-            assert_eq!(report.nonce, stale_nonce);
+            assert_eq!(task_id, report.task_id());
+            assert_eq!(report.nonce(), stale_nonce);
         });
     }
 
@@ -2225,7 +2247,12 @@ mod tests {
 
         let (aggregator, _, mut report, _, _db_handle) = setup_upload_test().await;
 
-        report.encrypted_input_shares = vec![report.encrypted_input_shares[0].clone()];
+        report = Report::new(
+            report.task_id(),
+            report.nonce(),
+            report.extensions().to_vec(),
+            vec![report.encrypted_input_shares()[0].clone()],
+        );
 
         assert_matches!(
             aggregator.handle_upload(&report.get_encoded()).await,
@@ -2239,22 +2266,36 @@ mod tests {
 
         let (aggregator, _, mut report, _, _db_handle) = setup_upload_test().await;
 
-        report.encrypted_input_shares[0].config_id = HpkeConfigId::from(101);
+        report = Report::new(
+            report.task_id(),
+            report.nonce(),
+            report.extensions().to_vec(),
+            vec![
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(101),
+                    report.encrypted_input_shares()[0]
+                        .encapsulated_context()
+                        .to_vec(),
+                    report.encrypted_input_shares()[0].payload().to_vec(),
+                ),
+                report.encrypted_input_shares()[1].clone(),
+            ],
+        );
 
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::OutdatedHpkeConfig(config_id, task_id)) => {
-            assert_eq!(task_id, report.task_id);
+            assert_eq!(task_id, report.task_id());
             assert_eq!(config_id, HpkeConfigId::from(101));
         });
     }
 
     fn reencrypt_report(report: Report, hpke_config: &HpkeConfig) -> Report {
         let message = b"this is a message";
-        let associated_data = associated_data_for_report_share(report.nonce, &report.extensions);
+        let associated_data = associated_data_for_report_share(report.nonce(), report.extensions());
 
         let leader_ciphertext = hpke::seal(
             hpke_config,
             &HpkeApplicationInfo::new(
-                report.task_id,
+                report.task_id(),
                 Label::InputShare,
                 Role::Client,
                 Role::Leader,
@@ -2267,7 +2308,7 @@ mod tests {
         let helper_ciphertext = hpke::seal(
             hpke_config,
             &HpkeApplicationInfo::new(
-                report.task_id,
+                report.task_id(),
                 Label::InputShare,
                 Role::Client,
                 Role::Helper,
@@ -2277,30 +2318,38 @@ mod tests {
         )
         .unwrap();
 
-        Report {
-            task_id: report.task_id,
-            nonce: report.nonce,
-            extensions: report.extensions,
-            encrypted_input_shares: vec![leader_ciphertext, helper_ciphertext],
-        }
+        Report::new(
+            report.task_id(),
+            report.nonce(),
+            report.extensions().to_vec(),
+            vec![leader_ciphertext, helper_ciphertext],
+        )
     }
 
     #[tokio::test]
     async fn upload_report_in_the_future() {
         install_test_trace_subscriber();
 
-        let (aggregator, task, mut report, datastore, _db_handle) = setup_upload_test().await;
+        let (aggregator, task, report, datastore, _db_handle) = setup_upload_test().await;
 
         // Boundary condition
-        report.nonce = Nonce::new(
+        let future_nonce = Nonce::new(
             aggregator
                 .clock
                 .now()
                 .add(task.tolerable_clock_skew)
                 .unwrap(),
-            report.nonce.rand(),
+            report.nonce().rand(),
         );
-        let mut report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
+        let report = reencrypt_report(
+            Report::new(
+                report.task_id(),
+                future_nonce,
+                report.extensions().to_vec(),
+                report.encrypted_input_shares().to_vec(),
+            ),
+            &task.hpke_keys.values().next().unwrap().0,
+        );
         aggregator
             .handle_upload(&report.get_encoded())
             .await
@@ -2308,14 +2357,16 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                Box::pin(async move { tx.get_client_report(report.task_id, report.nonce).await })
+                let task_id = report.task_id();
+                let nonce = report.nonce();
+                Box::pin(async move { tx.get_client_report(task_id, nonce).await })
             })
             .await
             .unwrap();
         assert_eq!(Some(&report), got_report.as_ref());
 
         // Just past the clock skew
-        report.nonce = Nonce::new(
+        let future_nonce = Nonce::new(
             aggregator
                 .clock
                 .now()
@@ -2323,12 +2374,20 @@ mod tests {
                 .unwrap()
                 .add(Duration::from_seconds(1))
                 .unwrap(),
-            report.nonce.rand(),
+            report.nonce().rand(),
         );
-        let report = reencrypt_report(report, &task.hpke_keys.values().next().unwrap().0);
+        let report = reencrypt_report(
+            Report::new(
+                report.task_id(),
+                future_nonce,
+                report.extensions().to_vec(),
+                report.encrypted_input_shares().to_vec(),
+            ),
+            &task.hpke_keys.values().next().unwrap().0,
+        );
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
-            assert_eq!(task_id, report.task_id);
-            assert_eq!(report.nonce, nonce);
+            assert_eq!(task_id, report.task_id());
+            assert_eq!(report.nonce(), nonce);
         });
     }
 
@@ -2494,7 +2553,16 @@ mod tests {
         // report_share_1 fails decryption.
         let mut report_share_1 = report_share_0.clone();
         report_share_1.nonce = Nonce::generate(clock);
-        report_share_1.encrypted_input_share.payload[0] ^= 0xFF;
+        let mut corrupted_payload = report_share_1.encrypted_input_share.payload().to_vec();
+        corrupted_payload[0] ^= 0xFF;
+        report_share_1.encrypted_input_share = HpkeCiphertext::new(
+            report_share_1.encrypted_input_share.config_id(),
+            report_share_1
+                .encrypted_input_share
+                .encapsulated_context()
+                .to_vec(),
+            corrupted_payload,
+        );
 
         // report_share_2 fails decoding.
         let nonce_2 = Nonce::generate(clock);
@@ -2511,8 +2579,13 @@ mod tests {
 
         // report_share_3 has an unknown HPKE config ID.
         let nonce_3 = Nonce::generate(clock);
-        let mut wrong_hpke_config = hpke_key.0.clone();
-        wrong_hpke_config.id = HpkeConfigId::from(u8::from(wrong_hpke_config.id) + 1);
+        let wrong_hpke_config = HpkeConfig::new(
+            HpkeConfigId::from(u8::from(hpke_key.0.id()) + 1),
+            hpke_key.0.kem_id(),
+            hpke_key.0.kdf_id(),
+            hpke_key.0.aead_id(),
+            hpke_key.0.public_key().clone(),
+        );
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_3,
@@ -2755,12 +2828,12 @@ mod tests {
                 [1, 2, 3, 4, 5, 6, 7, 8],
             ),
             extensions: Vec::new(),
-            encrypted_input_share: HpkeCiphertext {
+            encrypted_input_share: HpkeCiphertext::new(
                 // bogus, but we never get far enough to notice
-                config_id: HpkeConfigId::from(42),
-                encapsulated_context: Vec::from("012345"),
-                payload: Vec::from("543210"),
-            },
+                HpkeConfigId::from(42),
+                Vec::from("012345"),
+                Vec::from("543210"),
+            ),
         };
 
         let request = AggregateReq {
@@ -3013,11 +3086,11 @@ mod tests {
                         &ReportShare {
                             nonce,
                             extensions: Vec::new(),
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId::from(42),
-                                encapsulated_context: Vec::from("012345"),
-                                payload: Vec::from("543210"),
-                            },
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(42),
+                                Vec::from("012345"),
+                                Vec::from("543210"),
+                            ),
                         },
                     )
                     .await?;
@@ -3114,11 +3187,11 @@ mod tests {
                         &ReportShare {
                             nonce,
                             extensions: Vec::new(),
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId::from(42),
-                                encapsulated_context: Vec::from("012345"),
-                                payload: Vec::from("543210"),
-                            },
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(42),
+                                Vec::from("012345"),
+                                Vec::from("543210"),
+                            ),
                         },
                     )
                     .await?;
@@ -3261,11 +3334,11 @@ mod tests {
                         &ReportShare {
                             nonce,
                             extensions: Vec::new(),
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId::from(42),
-                                encapsulated_context: Vec::from("012345"),
-                                payload: Vec::from("543210"),
-                            },
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(42),
+                                Vec::from("012345"),
+                                Vec::from("543210"),
+                            ),
                         },
                     )
                     .await?;
@@ -3372,11 +3445,11 @@ mod tests {
                         &ReportShare {
                             nonce: nonce_0,
                             extensions: Vec::new(),
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId::from(42),
-                                encapsulated_context: Vec::from("012345"),
-                                payload: Vec::from("543210"),
-                            },
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(42),
+                                Vec::from("012345"),
+                                Vec::from("543210"),
+                            ),
                         },
                     )
                     .await?;
@@ -3385,11 +3458,11 @@ mod tests {
                         &ReportShare {
                             nonce: nonce_1,
                             extensions: Vec::new(),
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId::from(42),
-                                encapsulated_context: Vec::from("012345"),
-                                payload: Vec::from("543210"),
-                            },
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(42),
+                                Vec::from("012345"),
+                                Vec::from("543210"),
+                            ),
                         },
                     )
                     .await?;
@@ -3507,11 +3580,11 @@ mod tests {
                         &ReportShare {
                             nonce,
                             extensions: Vec::new(),
-                            encrypted_input_share: HpkeCiphertext {
-                                config_id: HpkeConfigId::from(42),
-                                encapsulated_context: Vec::from("012345"),
-                                payload: Vec::from("543210"),
-                            },
+                            encrypted_input_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(42),
+                                Vec::from("012345"),
+                                Vec::from("543210"),
+                            ),
                         },
                     )
                     .await?;
@@ -4312,7 +4385,7 @@ mod tests {
     ) -> &(HpkeConfig, HpkePrivateKey) {
         hpke_keys
             .values()
-            .max_by_key(|(cfg, _)| u8::from(cfg.id))
+            .max_by_key(|(cfg, _)| u8::from(cfg.id()))
             .unwrap()
     }
 

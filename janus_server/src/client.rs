@@ -1,12 +1,10 @@
 //! PPM protocol client
 
-use crate::{
-    hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    message::{HpkeCiphertext, HpkeConfig, Report},
-};
+use crate::hpke::{self, HpkeApplicationInfo, Label};
 use http::StatusCode;
 use janus::{
-    message::{Nonce, Role, TaskId},
+    hpke::associated_data_for_report_share,
+    message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
     time::Clock,
 };
 use prio::{
@@ -189,12 +187,12 @@ where
         })
         .collect::<Result<_, Error>>()?;
 
-        let report = Report {
-            task_id: self.parameters.task_id,
+        let report = Report::new(
+            self.parameters.task_id,
             nonce,
             extensions,
             encrypted_input_shares,
-        };
+        );
 
         let upload_response = self
             .http_client

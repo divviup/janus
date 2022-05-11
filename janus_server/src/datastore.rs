@@ -6,15 +6,14 @@ use self::models::{
 };
 use crate::{
     hpke::HpkePrivateKey,
-    message::{
-        AggregateShareReq, AggregationJobId, Extension, HpkeCiphertext, HpkeConfig, Interval,
-        Report, ReportShare,
-    },
+    message::{AggregateShareReq, AggregationJobId, Interval, ReportShare},
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
 use chrono::NaiveDateTime;
 use futures::try_join;
-use janus::message::{Duration, Nonce, TaskId, Time};
+use janus::message::{
+    Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, Report, TaskId, Time,
+};
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -191,7 +190,8 @@ impl Transaction<'_> {
         for (hpke_config, hpke_private_key) in task.hpke_keys.values() {
             let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
             row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_bytes());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&u8::from(hpke_config.id).to_be_bytes());
+            row_id[TaskId::ENCODED_LEN..]
+                .copy_from_slice(&u8::from(hpke_config.id()).to_be_bytes());
 
             let encrypted_hpke_private_key = self.crypter.encrypt(
                 "task_hpke_keys",
@@ -200,7 +200,7 @@ impl Transaction<'_> {
                 hpke_private_key.as_ref(),
             )?;
 
-            hpke_config_ids.push(u8::from(hpke_config.id) as i16);
+            hpke_config_ids.push(u8::from(hpke_config.id()) as i16);
             hpke_configs.push(hpke_config.get_encoded());
             hpke_private_keys.push(encrypted_hpke_private_key);
         }
@@ -468,12 +468,7 @@ impl Transaction<'_> {
                 let input_shares: Vec<HpkeCiphertext> =
                     decode_u16_items(&(), &mut Cursor::new(&encoded_input_shares))?;
 
-                Ok(Report {
-                    task_id,
-                    nonce,
-                    extensions,
-                    encrypted_input_shares: input_shares,
-                })
+                Ok(Report::new(task_id, nonce, extensions, input_shares))
             })
             .transpose()
     }
@@ -522,17 +517,17 @@ impl Transaction<'_> {
     /// put_client_report stores a client report.
     #[tracing::instrument(skip(self), err)]
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
-        let nonce_time = report.nonce.time().as_naive_date_time();
-        let nonce_rand = report.nonce.rand();
+        let nonce_time = report.nonce().time().as_naive_date_time();
+        let nonce_rand = report.nonce().rand();
 
         let mut encoded_extensions = Vec::new();
-        encode_u16_items(&mut encoded_extensions, &(), &report.extensions);
+        encode_u16_items(&mut encoded_extensions, &(), report.extensions());
 
         let mut encoded_input_shares = Vec::new();
         encode_u16_items(
             &mut encoded_input_shares,
             &(),
-            &report.encrypted_input_shares,
+            report.encrypted_input_shares(),
         );
 
         let stmt = self.tx.prepare_cached(
@@ -543,7 +538,7 @@ impl Transaction<'_> {
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &&report.task_id.get_encoded(),
+                    /* task_id */ &&report.task_id().get_encoded(),
                     /* nonce_time */ &nonce_time,
                     /* nonce_rand */ &&nonce_rand[..],
                     /* extensions */ &encoded_extensions,
@@ -1909,13 +1904,13 @@ mod tests {
     use crate::{
         aggregator::test_util::fake,
         datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
-        message::{ExtensionType, Interval, TransitionError},
+        message::{Interval, TransitionError},
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
     use ::test_util::generate_aead_key;
     use assert_matches::assert_matches;
-    use janus::message::{Duration, HpkeConfigId, Role, Time};
+    use janus::message::{Duration, ExtensionType, HpkeConfigId, Role, Time};
     use prio::{
         field::{Field128, Field64},
         vdaf::{
@@ -1997,41 +1992,35 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore().await;
 
-        let report = Report {
-            task_id: TaskId::random(),
-            nonce: Nonce::new(
+        let report = Report::new(
+            TaskId::random(),
+            Nonce::new(
                 Time::from_seconds_since_epoch(12345),
                 [1, 2, 3, 4, 5, 6, 7, 8],
             ),
-            extensions: vec![
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_0"),
-                },
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_1"),
-                },
+            vec![
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
             ],
-            encrypted_input_shares: vec![
-                HpkeCiphertext {
-                    config_id: HpkeConfigId::from(12),
-                    encapsulated_context: Vec::from("encapsulated_context_0"),
-                    payload: Vec::from("payload_0"),
-                },
-                HpkeCiphertext {
-                    config_id: HpkeConfigId::from(13),
-                    encapsulated_context: Vec::from("encapsulated_context_1"),
-                    payload: Vec::from("payload_1"),
-                },
+            vec![
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(12),
+                    Vec::from("encapsulated_context_0"),
+                    Vec::from("payload_0"),
+                ),
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(13),
+                    Vec::from("encapsulated_context_1"),
+                    Vec::from("payload_1"),
+                ),
             ],
-        };
+        );
 
         ds.run_tx(|tx| {
             let report = report.clone();
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
-                    report.task_id,
+                    report.task_id(),
                     Vdaf::Prio3Aes128Count,
                     Role::Leader,
                 ))
@@ -2044,7 +2033,9 @@ mod tests {
 
         let retrieved_report = ds
             .run_tx(|tx| {
-                Box::pin(async move { tx.get_client_report(report.task_id, report.nonce).await })
+                let task_id = report.task_id();
+                let nonce = report.nonce();
+                Box::pin(async move { tx.get_client_report(task_id, nonce).await })
             })
             .await
             .unwrap();
@@ -2084,42 +2075,42 @@ mod tests {
         let task_id = TaskId::random();
         let unrelated_task_id = TaskId::random();
 
-        let first_unaggregated_report = Report {
+        let first_unaggregated_report = Report::new(
             task_id,
-            nonce: Nonce::new(
+            Nonce::new(
                 Time::from_seconds_since_epoch(12345),
                 [1, 2, 3, 4, 5, 6, 7, 8],
             ),
-            extensions: vec![],
-            encrypted_input_shares: vec![],
-        };
-        let second_unaggregated_report = Report {
+            vec![],
+            vec![],
+        );
+        let second_unaggregated_report = Report::new(
             task_id,
-            nonce: Nonce::new(
+            Nonce::new(
                 Time::from_seconds_since_epoch(12346),
                 [1, 2, 3, 4, 5, 6, 7, 8],
             ),
-            extensions: vec![],
-            encrypted_input_shares: vec![],
-        };
-        let aggregated_report = Report {
+            vec![],
+            vec![],
+        );
+        let aggregated_report = Report::new(
             task_id,
-            nonce: Nonce::new(
+            Nonce::new(
                 Time::from_seconds_since_epoch(12347),
                 [1, 2, 3, 4, 5, 6, 7, 8],
             ),
-            extensions: vec![],
-            encrypted_input_shares: vec![],
-        };
-        let unrelated_report = Report {
-            task_id: unrelated_task_id,
-            nonce: Nonce::new(
+            vec![],
+            vec![],
+        );
+        let unrelated_report = Report::new(
+            unrelated_task_id,
+            Nonce::new(
                 Time::from_seconds_since_epoch(12348),
                 [1, 2, 3, 4, 5, 6, 7, 8],
             ),
-            extensions: vec![],
-            encrypted_input_shares: vec![],
-        };
+            vec![],
+            vec![],
+        );
 
         // Set up state.
         ds.run_tx(|tx| {
@@ -2165,7 +2156,7 @@ mod tests {
                 tx.put_report_aggregation(&ReportAggregation {
                     aggregation_job_id,
                     task_id,
-                    nonce: aggregated_report.nonce,
+                    nonce: aggregated_report.nonce(),
                     ord: 0,
                     state: ReportAggregationState::<Prio3Aes128Count>::Start,
                 })
@@ -2190,8 +2181,8 @@ mod tests {
         assert_eq!(
             got_reports,
             HashSet::from([
-                first_unaggregated_report.nonce,
-                second_unaggregated_report.nonce
+                first_unaggregated_report.nonce(),
+                second_unaggregated_report.nonce()
             ]),
         );
     }
@@ -2208,20 +2199,14 @@ mod tests {
                 [1, 2, 3, 4, 5, 6, 7, 8],
             ),
             extensions: vec![
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_0"),
-                },
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("extension_data_1"),
-                },
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
             ],
-            encrypted_input_share: HpkeCiphertext {
-                config_id: HpkeConfigId::from(12),
-                encapsulated_context: Vec::from("encapsulated_context_0"),
-                payload: Vec::from("payload_0"),
-            },
+            encrypted_input_share: HpkeCiphertext::new(
+                HpkeConfigId::from(12),
+                Vec::from("encapsulated_context_0"),
+                Vec::from("payload_0"),
+            ),
         };
 
         ds.run_tx(|tx| {
@@ -2506,11 +2491,11 @@ mod tests {
                             &ReportShare {
                                 nonce,
                                 extensions: Vec::new(),
-                                encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId::from(12),
-                                    encapsulated_context: Vec::from("encapsulated_context_0"),
-                                    payload: Vec::from("payload_0"),
-                                },
+                                encrypted_input_share: HpkeCiphertext::new(
+                                    HpkeConfigId::from(12),
+                                    Vec::from("encapsulated_context_0"),
+                                    Vec::from("payload_0"),
+                                ),
                             },
                         )
                         .await?;
@@ -2669,11 +2654,11 @@ mod tests {
                             &ReportShare {
                                 nonce,
                                 extensions: Vec::new(),
-                                encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId::from(12),
-                                    encapsulated_context: Vec::from("encapsulated_context_0"),
-                                    payload: Vec::from("payload_0"),
-                                },
+                                encrypted_input_share: HpkeCiphertext::new(
+                                    HpkeConfigId::from(12),
+                                    Vec::from("encapsulated_context_0"),
+                                    Vec::from("payload_0"),
+                                ),
                             },
                         )
                         .await?;

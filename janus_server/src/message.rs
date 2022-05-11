@@ -1,9 +1,9 @@
 //! PPM protocol message definitions with serialization/deserialization support.
 
-use crate::hpke::associated_data_for_report_share;
 use anyhow::anyhow;
-use janus::message::{
-    Duration, Error, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Nonce, TaskId, Time,
+use janus::{
+    hpke::associated_data_for_report_share,
+    message::{Duration, Error, Extension, HpkeCiphertext, Nonce, TaskId, Time},
 };
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
@@ -14,7 +14,6 @@ use ring::{
     error::Unspecified,
     hmac::{self, HMAC_SHA256},
 };
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display, Formatter},
     io::{self, Cursor, ErrorKind, Read},
@@ -203,197 +202,6 @@ impl Decode for Interval {
 impl Display for Interval {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "start: {} duration: {}", self.start, self.duration)
-    }
-}
-
-/// PPM protocol message representing an HPKE ciphertext.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HpkeCiphertext {
-    /// An identifier of the HPKE configuration used to seal the message.
-    pub(crate) config_id: HpkeConfigId,
-    /// An encasulated HPKE context.
-    pub(crate) encapsulated_context: Vec<u8>,
-    /// An HPKE ciphertext.
-    pub(crate) payload: Vec<u8>,
-}
-
-impl Encode for HpkeCiphertext {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.config_id.encode(bytes);
-        encode_u16_items(bytes, &(), &self.encapsulated_context);
-        encode_u16_items(bytes, &(), &self.payload);
-    }
-}
-
-impl Decode for HpkeCiphertext {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let config_id = HpkeConfigId::decode(bytes)?;
-        let encapsulated_context = decode_u16_items(&(), bytes)?;
-        let payload = decode_u16_items(&(), bytes)?;
-
-        Ok(Self {
-            config_id,
-            encapsulated_context,
-            payload,
-        })
-    }
-}
-
-/// PPM protocol message representing an HPKE public key.
-// TODO(brandon): refactor HpkePublicKey to carry around a decoded public key so we don't have to
-// decode on every cryptographic operation.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HpkePublicKey(pub(crate) Vec<u8>);
-
-impl Encode for HpkePublicKey {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u16_items(bytes, &(), &self.0);
-    }
-}
-
-impl Decode for HpkePublicKey {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let key = decode_u16_items(&(), bytes)?;
-        Ok(Self(key))
-    }
-}
-
-impl Debug for HpkePublicKey {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(&self.0))
-    }
-}
-
-/// PPM protocol message representing an HPKE config.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HpkeConfig {
-    pub(crate) id: HpkeConfigId,
-    pub(crate) kem_id: HpkeKemId,
-    pub(crate) kdf_id: HpkeKdfId,
-    pub(crate) aead_id: HpkeAeadId,
-    pub(crate) public_key: HpkePublicKey,
-}
-
-impl HpkeConfig {
-    /// Returns the HPKE config ID associated with this HPKE config.
-    pub fn id(&self) -> HpkeConfigId {
-        self.id
-    }
-}
-
-impl Encode for HpkeConfig {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.id.encode(bytes);
-        self.kem_id.encode(bytes);
-        self.kdf_id.encode(bytes);
-        self.aead_id.encode(bytes);
-        self.public_key.encode(bytes);
-    }
-}
-
-impl Decode for HpkeConfig {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let id = HpkeConfigId::decode(bytes)?;
-        let kem_id = HpkeKemId::decode(bytes)?;
-        let kdf_id = HpkeKdfId::decode(bytes)?;
-        let aead_id = HpkeAeadId::decode(bytes)?;
-        let public_key = HpkePublicKey::decode(bytes)?;
-
-        Ok(Self {
-            id,
-            kem_id,
-            kdf_id,
-            aead_id,
-            public_key,
-        })
-    }
-}
-
-/// PPM protocol message representing a client report.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Report {
-    pub(crate) task_id: TaskId,
-    pub nonce: Nonce,
-    pub(crate) extensions: Vec<Extension>,
-    pub(crate) encrypted_input_shares: Vec<HpkeCiphertext>,
-}
-
-impl Report {
-    pub(crate) fn associated_data(&self) -> Vec<u8> {
-        associated_data_for_report_share(self.nonce, &self.extensions)
-    }
-}
-
-impl Encode for Report {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
-        self.nonce.encode(bytes);
-        encode_u16_items(bytes, &(), &self.extensions);
-        encode_u16_items(bytes, &(), &self.encrypted_input_shares);
-    }
-}
-
-impl Decode for Report {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
-        let timestamp = Nonce::decode(bytes)?;
-        let extensions = decode_u16_items(&(), bytes)?;
-        let encrypted_input_shares = decode_u16_items(&(), bytes)?;
-
-        Ok(Self {
-            task_id,
-            nonce: timestamp,
-            extensions,
-            encrypted_input_shares,
-        })
-    }
-}
-
-/// PPM protocol message representing an arbitrary extension included in a client report.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Extension {
-    pub(crate) extension_type: ExtensionType,
-    pub(crate) extension_data: Vec<u8>,
-}
-
-impl Encode for Extension {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.extension_type.encode(bytes);
-        encode_u16_items(bytes, &(), &self.extension_data);
-    }
-}
-
-impl Decode for Extension {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let extension_type = ExtensionType::decode(bytes)?;
-        let extension_data = decode_u16_items(&(), bytes)?;
-
-        Ok(Self {
-            extension_type,
-            extension_data,
-        })
-    }
-}
-
-/// PPM protocol message representing the type of an extension included in a client report.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
-#[repr(u16)]
-pub enum ExtensionType {
-    Tbd = 0,
-}
-
-impl Encode for ExtensionType {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        (*self as u16).encode(bytes);
-    }
-}
-
-impl Decode for ExtensionType {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let val = u16::decode(bytes)?;
-        Self::try_from(val).map_err(|_| {
-            CodecError::Other(anyhow!("unexpected ExtensionType value {}", val).into())
-        })
     }
 }
 
@@ -783,17 +591,17 @@ impl Decode for CollectResp {
 
 #[doc(hidden)]
 pub mod test_util {
-    use super::{Nonce, Report, TaskId};
-    use janus::message::Time;
+    use super::{Nonce, TaskId};
+    use janus::message::{Report, Time};
     use rand::{thread_rng, Rng};
 
     pub fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
-        Report {
+        Report::new(
             task_id,
-            nonce: Nonce::new(when, thread_rng().gen()),
-            extensions: Vec::new(),
-            encrypted_input_shares: Vec::new(),
-        }
+            Nonce::new(when, thread_rng().gen()),
+            Vec::new(),
+            Vec::new(),
+        )
     }
 }
 
@@ -801,7 +609,7 @@ pub mod test_util {
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
-    use janus::message::{Duration, Time};
+    use janus::message::{Duration, ExtensionType, HpkeConfigId, Time};
     use lazy_static::lazy_static;
 
     lazy_static! {
@@ -841,27 +649,21 @@ mod tests {
                 seq: vec![
                     ReportShare {
                         nonce: Nonce::new(Time::from_seconds_since_epoch(54321), [0u8; 8]),
-                        extensions: vec![Extension {
-                            extension_type: ExtensionType::Tbd,
-                            extension_data: Vec::from("0123"),
-                        }],
-                        encrypted_input_share: HpkeCiphertext {
-                            config_id: HpkeConfigId::from(42),
-                            encapsulated_context: Vec::from("012345"),
-                            payload: Vec::from("543210"),
-                        },
+                        extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
+                        encrypted_input_share: HpkeCiphertext::new(
+                            HpkeConfigId::from(42),
+                            Vec::from("012345"),
+                            Vec::from("543210"),
+                        ),
                     },
                     ReportShare {
                         nonce: Nonce::new(Time::from_seconds_since_epoch(73542), [1u8; 8]),
-                        extensions: vec![Extension {
-                            extension_type: ExtensionType::Tbd,
-                            extension_data: Vec::from("3210"),
-                        }],
-                        encrypted_input_share: HpkeCiphertext {
-                            config_id: HpkeConfigId::from(13),
-                            encapsulated_context: Vec::from("abce"),
-                            payload: Vec::from("abfd"),
-                        },
+                        extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
+                        encrypted_input_share: HpkeCiphertext::new(
+                            HpkeConfigId::from(13),
+                            Vec::from("abce"),
+                            Vec::from("abfd"),
+                        ),
                     },
                 ],
             },
@@ -1022,311 +824,6 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_hpke_ciphertext() {
-        roundtrip_encoding(&[
-            (
-                HpkeCiphertext {
-                    config_id: HpkeConfigId::from(10),
-                    encapsulated_context: Vec::from("0123"),
-                    payload: Vec::from("4567"),
-                },
-                concat!(
-                    "0A", // config_id
-                    concat!(
-                        // encapsulated_context
-                        "0004",     // length
-                        "30313233", // opaque data
-                    ),
-                    concat!(
-                        // payload
-                        "0004",     // length
-                        "34353637", // opaque data
-                    ),
-                ),
-            ),
-            (
-                HpkeCiphertext {
-                    config_id: HpkeConfigId::from(12),
-                    encapsulated_context: Vec::from("01234"),
-                    payload: Vec::from("567"),
-                },
-                concat!(
-                    "0C", // config_id
-                    concat!(
-                        // encapsulated_context
-                        "0005",       // length
-                        "3031323334", // opaque data
-                    ),
-                    concat!(
-                        // payload
-                        "0003",   // length
-                        "353637", // opaque data
-                    ),
-                ),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_task_id() {
-        roundtrip_encoding(&[
-            (
-                TaskId::new([u8::MIN; 32]),
-                "0000000000000000000000000000000000000000000000000000000000000000",
-            ),
-            (
-                TaskId::new([
-                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-                    22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-                ]),
-                "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F",
-            ),
-            (
-                TaskId::new([u8::MAX; 32]),
-                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_hpke_kem_id() {
-        roundtrip_encoding(&[
-            (HpkeKemId::P256HkdfSha256, "0010"),
-            (HpkeKemId::X25519HkdfSha256, "0020"),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_hpke_kdf_id() {
-        roundtrip_encoding(&[
-            (HpkeKdfId::HkdfSha256, "0001"),
-            (HpkeKdfId::HkdfSha384, "0002"),
-            (HpkeKdfId::HkdfSha512, "0003"),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_hpke_aead_id() {
-        roundtrip_encoding(&[
-            (HpkeAeadId::Aes128Gcm, "0001"),
-            (HpkeAeadId::Aes256Gcm, "0002"),
-            (HpkeAeadId::ChaCha20Poly1305, "0003"),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_hpke_public_key() {
-        roundtrip_encoding(&[
-            (
-                HpkePublicKey(Vec::new()),
-                concat!(
-                    "0000", // length
-                    "",     // opaque data
-                ),
-            ),
-            (
-                HpkePublicKey(Vec::from("0123456789abcdef")),
-                concat!(
-                    "0010",                             // length
-                    "30313233343536373839616263646566"  // opaque data
-                ),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_hpke_config() {
-        roundtrip_encoding(&[
-            (
-                HpkeConfig {
-                    id: HpkeConfigId::from(12),
-                    kem_id: HpkeKemId::P256HkdfSha256,
-                    kdf_id: HpkeKdfId::HkdfSha512,
-                    aead_id: HpkeAeadId::Aes256Gcm,
-                    public_key: HpkePublicKey(Vec::new()),
-                },
-                concat!(
-                    "0C",   // id
-                    "0010", // kem_id
-                    "0003", // kdf_id
-                    "0002", // aead_id
-                    concat!(
-                        // public_key
-                        "0000", // length
-                        "",     // opaque data
-                    )
-                ),
-            ),
-            (
-                HpkeConfig {
-                    id: HpkeConfigId::from(23),
-                    kem_id: HpkeKemId::X25519HkdfSha256,
-                    kdf_id: HpkeKdfId::HkdfSha256,
-                    aead_id: HpkeAeadId::ChaCha20Poly1305,
-                    public_key: HpkePublicKey(Vec::from("0123456789abcdef")),
-                },
-                concat!(
-                    "17",   // id
-                    "0020", // kem_id
-                    "0001", // kdf_id
-                    "0003", // aead_id
-                    concat!(
-                        // public_key
-                        "0010",                             // length
-                        "30313233343536373839616263646566", // opaque data
-                    )
-                ),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_report() {
-        roundtrip_encoding(&[
-            (
-                Report {
-                    task_id: TaskId::new([u8::MIN; 32]),
-                    nonce: Nonce::new(
-                        Time::from_seconds_since_epoch(12345),
-                        [1, 2, 3, 4, 5, 6, 7, 8],
-                    ),
-                    extensions: vec![],
-                    encrypted_input_shares: vec![],
-                },
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
-                    concat!(
-                        // nonce
-                        "0000000000003039", // time
-                        "0102030405060708", // rand
-                    ),
-                    concat!(
-                        // extensions
-                        "0000", // length
-                    ),
-                    concat!(
-                        // encrypted_input_shares
-                        "0000", // length
-                    )
-                ),
-            ),
-            (
-                Report {
-                    task_id: TaskId::new([u8::MAX; 32]),
-                    nonce: Nonce::new(
-                        Time::from_seconds_since_epoch(54321),
-                        [8, 7, 6, 5, 4, 3, 2, 1],
-                    ),
-                    extensions: vec![Extension {
-                        extension_type: ExtensionType::Tbd,
-                        extension_data: Vec::from("0123"),
-                    }],
-                    encrypted_input_shares: vec![
-                        HpkeCiphertext {
-                            config_id: HpkeConfigId::from(42),
-                            encapsulated_context: Vec::from("012345"),
-                            payload: Vec::from("543210"),
-                        },
-                        HpkeCiphertext {
-                            config_id: HpkeConfigId::from(13),
-                            encapsulated_context: Vec::from("abce"),
-                            payload: Vec::from("abfd"),
-                        },
-                    ],
-                },
-                concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
-                    concat!(
-                        "000000000000D431", // time
-                        "0807060504030201", // rand
-                    ),
-                    concat!(
-                        // extensions
-                        "0008", // length
-                        concat!(
-                            "0000", // extension_type
-                            concat!(
-                                // extension_data
-                                "0004",     // length
-                                "30313233", // opaque data
-                            ),
-                        )
-                    ),
-                    concat!(
-                        // encrypted_input_shares
-                        "001E", // length
-                        concat!(
-                            "2A", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0006",         // length
-                                "303132333435"  // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "0006",         // length
-                                "353433323130", // opaque data
-                            ),
-                        ),
-                        concat!(
-                            "0D", // config_id
-                            concat!(
-                                // encapsulated_context
-                                "0004",     // length
-                                "61626365", // opaque data
-                            ),
-                            concat!(
-                                // payload
-                                "0004",     // length
-                                "61626664", // opaque data
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_extension() {
-        roundtrip_encoding(&[
-            (
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::new(),
-                },
-                concat!(
-                    "0000", // extension_type
-                    concat!(
-                        // extension_data
-                        "0000", // length
-                        "",     // opaque data
-                    ),
-                ),
-            ),
-            (
-                Extension {
-                    extension_type: ExtensionType::Tbd,
-                    extension_data: Vec::from("0123"),
-                },
-                concat!(
-                    "0000", // extension_type
-                    concat!(
-                        // extension_data
-                        "0004",     // length
-                        "30313233", // opaque data
-                    ),
-                ),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_extension_type() {
-        roundtrip_encoding(&[(ExtensionType::Tbd, "0000")])
-    }
-
-    #[test]
     fn roundtrip_transition() {
         roundtrip_encoding(&[
             (
@@ -1439,30 +936,30 @@ mod tests {
                                     Time::from_seconds_since_epoch(54321),
                                     [1, 2, 3, 4, 5, 6, 7, 8],
                                 ),
-                                extensions: vec![Extension {
-                                    extension_type: ExtensionType::Tbd,
-                                    extension_data: Vec::from("0123"),
-                                }],
-                                encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId::from(42),
-                                    encapsulated_context: Vec::from("012345"),
-                                    payload: Vec::from("543210"),
-                                },
+                                extensions: vec![Extension::new(
+                                    ExtensionType::Tbd,
+                                    Vec::from("0123"),
+                                )],
+                                encrypted_input_share: HpkeCiphertext::new(
+                                    HpkeConfigId::from(42),
+                                    Vec::from("012345"),
+                                    Vec::from("543210"),
+                                ),
                             },
                             ReportShare {
                                 nonce: Nonce::new(
                                     Time::from_seconds_since_epoch(73542),
                                     [8, 7, 6, 5, 4, 3, 2, 1],
                                 ),
-                                extensions: vec![Extension {
-                                    extension_type: ExtensionType::Tbd,
-                                    extension_data: Vec::from("3210"),
-                                }],
-                                encrypted_input_share: HpkeCiphertext {
-                                    config_id: HpkeConfigId::from(13),
-                                    encapsulated_context: Vec::from("abce"),
-                                    payload: Vec::from("abfd"),
-                                },
+                                extensions: vec![Extension::new(
+                                    ExtensionType::Tbd,
+                                    Vec::from("3210"),
+                                )],
+                                encrypted_input_share: HpkeCiphertext::new(
+                                    HpkeConfigId::from(13),
+                                    Vec::from("abce"),
+                                    Vec::from("abfd"),
+                                ),
                             },
                         ],
                     },
@@ -1739,11 +1236,11 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateShareResp {
-                    encrypted_aggregate_share: HpkeCiphertext {
-                        config_id: HpkeConfigId::from(10),
-                        encapsulated_context: Vec::from("0123"),
-                        payload: Vec::from("4567"),
-                    },
+                    encrypted_aggregate_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(10),
+                        Vec::from("0123"),
+                        Vec::from("4567"),
+                    ),
                 },
                 concat!(concat!(
                     // encrypted_aggregate_share
@@ -1762,11 +1259,11 @@ mod tests {
             ),
             (
                 AggregateShareResp {
-                    encrypted_aggregate_share: HpkeCiphertext {
-                        config_id: HpkeConfigId::from(12),
-                        encapsulated_context: Vec::from("01234"),
-                        payload: Vec::from("567"),
-                    },
+                    encrypted_aggregate_share: HpkeCiphertext::new(
+                        HpkeConfigId::from(12),
+                        Vec::from("01234"),
+                        Vec::from("567"),
+                    ),
                 },
                 concat!(concat!(
                     // encrypted_aggregate_share
@@ -1854,16 +1351,16 @@ mod tests {
             (
                 CollectResp {
                     encrypted_agg_shares: vec![
-                        HpkeCiphertext {
-                            config_id: HpkeConfigId::from(10),
-                            encapsulated_context: Vec::from("0123"),
-                            payload: Vec::from("4567"),
-                        },
-                        HpkeCiphertext {
-                            config_id: HpkeConfigId::from(12),
-                            encapsulated_context: Vec::from("01234"),
-                            payload: Vec::from("567"),
-                        },
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(10),
+                            Vec::from("0123"),
+                            Vec::from("4567"),
+                        ),
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(12),
+                            Vec::from("01234"),
+                            Vec::from("567"),
+                        ),
                     ],
                 },
                 concat!(concat!(
