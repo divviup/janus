@@ -1,12 +1,9 @@
 //! Shared parameters for a PPM task.
 
-use crate::{
-    hpke::HpkePrivateKey,
-    message::{HpkeConfig, Interval},
-};
+use crate::{hpke::HpkePrivateKey, message::Interval};
 use ::rand::{thread_rng, Rng};
 use derivative::Derivative;
-use janus::message::{Duration, HpkeConfigId, Role, TaskId};
+use janus::message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
@@ -175,7 +172,7 @@ impl Task {
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
         let hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_keys
             .into_iter()
-            .map(|(cfg, key)| (cfg.id, (cfg, key)))
+            .map(|(cfg, key)| (cfg.id(), (cfg, key)))
             .collect();
         if hpke_configs.is_empty() {
             return Err(Error::InvalidParameter("hpke_configs"));
@@ -213,7 +210,7 @@ impl Task {
 pub mod test_util {
     use super::{Task, Vdaf};
     use crate::{hpke::test_util::generate_hpke_config_and_private_key, task::AggregatorAuthKey};
-    use janus::message::{Duration, HpkeConfigId, Role, TaskId};
+    use janus::message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
     use prio::{
         codec::Encode,
         field::Field128,
@@ -234,7 +231,13 @@ pub mod test_util {
             generate_hpke_config_and_private_key();
         let (mut aggregator_config_1, aggregator_private_key_1) =
             generate_hpke_config_and_private_key();
-        aggregator_config_1.id = HpkeConfigId::from(1);
+        aggregator_config_1 = HpkeConfig::new(
+            HpkeConfigId::from(1),
+            aggregator_config_1.kem_id(),
+            aggregator_config_1.kdf_id(),
+            aggregator_config_1.aead_id(),
+            aggregator_config_1.public_key().clone(),
+        );
 
         let vdaf_verify_parameter = match &vdaf {
             Vdaf::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),

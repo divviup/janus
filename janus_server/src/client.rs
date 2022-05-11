@@ -2,11 +2,11 @@
 
 use crate::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    message::{HpkeConfig, Report},
+    message::Report,
 };
 use http::StatusCode;
 use janus::{
-    message::{HpkeCiphertext, Nonce, Role, TaskId},
+    message::{HpkeCiphertext, HpkeConfig, Nonce, Role, TaskId},
     time::Clock,
 };
 use prio::{

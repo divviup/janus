@@ -2,10 +2,7 @@
 
 use crate::hpke::associated_data_for_report_share;
 use anyhow::anyhow;
-use janus::message::{
-    Duration, Error, Extension, HpkeAeadId, HpkeCiphertext, HpkeConfigId, HpkeKdfId, HpkeKemId,
-    Nonce, TaskId, Time,
-};
+use janus::message::{Duration, Error, Extension, HpkeCiphertext, Nonce, TaskId, Time};
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
@@ -15,7 +12,6 @@ use ring::{
     error::Unspecified,
     hmac::{self, HMAC_SHA256},
 };
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display, Formatter},
     io::{self, Cursor, ErrorKind, Read},
@@ -204,76 +200,6 @@ impl Decode for Interval {
 impl Display for Interval {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "start: {} duration: {}", self.start, self.duration)
-    }
-}
-
-/// PPM protocol message representing an HPKE public key.
-// TODO(brandon): refactor HpkePublicKey to carry around a decoded public key so we don't have to
-// decode on every cryptographic operation.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HpkePublicKey(pub(crate) Vec<u8>);
-
-impl Encode for HpkePublicKey {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u16_items(bytes, &(), &self.0);
-    }
-}
-
-impl Decode for HpkePublicKey {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let key = decode_u16_items(&(), bytes)?;
-        Ok(Self(key))
-    }
-}
-
-impl Debug for HpkePublicKey {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(&self.0))
-    }
-}
-
-/// PPM protocol message representing an HPKE config.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HpkeConfig {
-    pub(crate) id: HpkeConfigId,
-    pub(crate) kem_id: HpkeKemId,
-    pub(crate) kdf_id: HpkeKdfId,
-    pub(crate) aead_id: HpkeAeadId,
-    pub(crate) public_key: HpkePublicKey,
-}
-
-impl HpkeConfig {
-    /// Returns the HPKE config ID associated with this HPKE config.
-    pub fn id(&self) -> HpkeConfigId {
-        self.id
-    }
-}
-
-impl Encode for HpkeConfig {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.id.encode(bytes);
-        self.kem_id.encode(bytes);
-        self.kdf_id.encode(bytes);
-        self.aead_id.encode(bytes);
-        self.public_key.encode(bytes);
-    }
-}
-
-impl Decode for HpkeConfig {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let id = HpkeConfigId::decode(bytes)?;
-        let kem_id = HpkeKemId::decode(bytes)?;
-        let kdf_id = HpkeKdfId::decode(bytes)?;
-        let aead_id = HpkeAeadId::decode(bytes)?;
-        let public_key = HpkePublicKey::decode(bytes)?;
-
-        Ok(Self {
-            id,
-            kem_id,
-            kdf_id,
-            aead_id,
-            public_key,
-        })
     }
 }
 
@@ -721,7 +647,9 @@ pub mod test_util {
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
-    use janus::message::{Duration, ExtensionType, Time};
+    use janus::message::{
+        Duration, ExtensionType, HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Time,
+    };
     use lazy_static::lazy_static;
 
     lazy_static! {
@@ -979,72 +907,6 @@ mod tests {
             (HpkeAeadId::Aes128Gcm, "0001"),
             (HpkeAeadId::Aes256Gcm, "0002"),
             (HpkeAeadId::ChaCha20Poly1305, "0003"),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_hpke_public_key() {
-        roundtrip_encoding(&[
-            (
-                HpkePublicKey(Vec::new()),
-                concat!(
-                    "0000", // length
-                    "",     // opaque data
-                ),
-            ),
-            (
-                HpkePublicKey(Vec::from("0123456789abcdef")),
-                concat!(
-                    "0010",                             // length
-                    "30313233343536373839616263646566"  // opaque data
-                ),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_hpke_config() {
-        roundtrip_encoding(&[
-            (
-                HpkeConfig {
-                    id: HpkeConfigId::from(12),
-                    kem_id: HpkeKemId::P256HkdfSha256,
-                    kdf_id: HpkeKdfId::HkdfSha512,
-                    aead_id: HpkeAeadId::Aes256Gcm,
-                    public_key: HpkePublicKey(Vec::new()),
-                },
-                concat!(
-                    "0C",   // id
-                    "0010", // kem_id
-                    "0003", // kdf_id
-                    "0002", // aead_id
-                    concat!(
-                        // public_key
-                        "0000", // length
-                        "",     // opaque data
-                    )
-                ),
-            ),
-            (
-                HpkeConfig {
-                    id: HpkeConfigId::from(23),
-                    kem_id: HpkeKemId::X25519HkdfSha256,
-                    kdf_id: HpkeKdfId::HkdfSha256,
-                    aead_id: HpkeAeadId::ChaCha20Poly1305,
-                    public_key: HpkePublicKey(Vec::from("0123456789abcdef")),
-                },
-                concat!(
-                    "17",   // id
-                    "0020", // kem_id
-                    "0001", // kdf_id
-                    "0003", // aead_id
-                    concat!(
-                        // public_key
-                        "0010",                             // length
-                        "30313233343536373839616263646566", // opaque data
-                    )
-                ),
-            ),
         ])
     }
 

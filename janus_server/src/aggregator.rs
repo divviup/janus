@@ -14,8 +14,7 @@ use crate::{
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
         AggregateResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
         AuthenticatedDecodeError, AuthenticatedEncoder, AuthenticatedRequestDecoder, CollectReq,
-        HpkeConfig, Interval, Report, ReportShare, Transition, TransitionError,
-        TransitionTypeSpecificData,
+        Interval, Report, ReportShare, Transition, TransitionError, TransitionTypeSpecificData,
     },
     task::{self, AggregatorAuthKey, Task},
 };
@@ -26,7 +25,7 @@ use http::{
     StatusCode,
 };
 use janus::{
-    message::{HpkeConfigId, Nonce, Role, TaskId},
+    message::{HpkeConfig, HpkeConfigId, Nonce, Role, TaskId},
     time::Clock,
 };
 use opentelemetry::{
@@ -1847,14 +1846,14 @@ mod tests {
             associated_data_for_report_share, test_util::generate_hpke_config_and_private_key,
             HpkePrivateKey, Label,
         },
-        message::{AuthenticatedResponseDecoder, HpkeConfig},
+        message::AuthenticatedResponseDecoder,
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
     };
     use ::test_util::MockClock;
     use assert_matches::assert_matches;
     use http::Method;
-    use janus::message::{Duration, HpkeCiphertext, TaskId, Time};
+    use janus::message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time};
     use prio::{
         codec::Decode,
         field::Field64,
@@ -2529,8 +2528,13 @@ mod tests {
 
         // report_share_3 has an unknown HPKE config ID.
         let nonce_3 = Nonce::generate(clock);
-        let mut wrong_hpke_config = hpke_key.0.clone();
-        wrong_hpke_config.id = HpkeConfigId::from(u8::from(wrong_hpke_config.id) + 1);
+        let wrong_hpke_config = HpkeConfig::new(
+            HpkeConfigId::from(u8::from(hpke_key.0.id()) + 1),
+            hpke_key.0.kem_id(),
+            hpke_key.0.kdf_id(),
+            hpke_key.0.aead_id(),
+            hpke_key.0.public_key().clone(),
+        );
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_3,
@@ -4318,7 +4322,7 @@ mod tests {
     ) -> &(HpkeConfig, HpkePrivateKey) {
         hpke_keys
             .values()
-            .max_by_key(|(cfg, _)| u8::from(cfg.id))
+            .max_by_key(|(cfg, _)| u8::from(cfg.id()))
             .unwrap()
     }
 

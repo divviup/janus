@@ -587,9 +587,131 @@ impl Decode for HpkeCiphertext {
     }
 }
 
+/// PPM protocol message representing an HPKE public key.
+// TODO(brandon): refactor HpkePublicKey to carry around a decoded public key so we don't have to
+// decode on every cryptographic operation.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HpkePublicKey(pub(crate) Vec<u8>);
+
+impl HpkePublicKey {
+    /// Construct a `HpkePublicKey` from its byte array form.
+    pub fn new(buf: Vec<u8>) -> HpkePublicKey {
+        HpkePublicKey(buf)
+    }
+
+    /// Return the contents of this public key.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Encode for HpkePublicKey {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        encode_u16_items(bytes, &(), &self.0);
+    }
+}
+
+impl Decode for HpkePublicKey {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let key = decode_u16_items(&(), bytes)?;
+        Ok(Self(key))
+    }
+}
+
+impl Debug for HpkePublicKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
+
+/// PPM protocol message representing an HPKE config.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HpkeConfig {
+    id: HpkeConfigId,
+    kem_id: HpkeKemId,
+    kdf_id: HpkeKdfId,
+    aead_id: HpkeAeadId,
+    public_key: HpkePublicKey,
+}
+
+impl HpkeConfig {
+    /// Construct a HPKE configuration message from its components.
+    pub fn new(
+        id: HpkeConfigId,
+        kem_id: HpkeKemId,
+        kdf_id: HpkeKdfId,
+        aead_id: HpkeAeadId,
+        public_key: HpkePublicKey,
+    ) -> HpkeConfig {
+        HpkeConfig {
+            id,
+            kem_id,
+            kdf_id,
+            aead_id,
+            public_key,
+        }
+    }
+
+    /// Returns the HPKE config ID associated with this HPKE configuration.
+    pub fn id(&self) -> HpkeConfigId {
+        self.id
+    }
+
+    /// Retrieve the key encapsulation mechanism algorithm identifier associated with this HPKE configuration.
+    pub fn kem_id(&self) -> HpkeKemId {
+        self.kem_id
+    }
+
+    /// Retrieve the key derivation function algorithm identifier associated with this HPKE configuration.
+    pub fn kdf_id(&self) -> HpkeKdfId {
+        self.kdf_id
+    }
+
+    /// Retrieve the AEAD algorithm identifier associated with this HPKE configuration.
+    pub fn aead_id(&self) -> HpkeAeadId {
+        self.aead_id
+    }
+
+    /// Retrieve the public key from this HPKE configuration.
+    pub fn public_key(&self) -> &HpkePublicKey {
+        &self.public_key
+    }
+}
+
+impl Encode for HpkeConfig {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.id.encode(bytes);
+        self.kem_id.encode(bytes);
+        self.kdf_id.encode(bytes);
+        self.aead_id.encode(bytes);
+        self.public_key.encode(bytes);
+    }
+}
+
+impl Decode for HpkeConfig {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let id = HpkeConfigId::decode(bytes)?;
+        let kem_id = HpkeKemId::decode(bytes)?;
+        let kdf_id = HpkeKdfId::decode(bytes)?;
+        let aead_id = HpkeAeadId::decode(bytes)?;
+        let public_key = HpkePublicKey::decode(bytes)?;
+
+        Ok(Self {
+            id,
+            kem_id,
+            kdf_id,
+            aead_id,
+            public_key,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Role, Time};
+    use super::{
+        Duration, Extension, ExtensionType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId,
+        HpkeKdfId, HpkeKemId, HpkePublicKey, Role, Time,
+    };
     use prio::codec::{Decode, Encode};
     use std::io::Cursor;
 
@@ -710,6 +832,72 @@ mod tests {
                         "0003",   // length
                         "353637", // opaque data
                     ),
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_hpke_public_key() {
+        roundtrip_encoding(&[
+            (
+                HpkePublicKey::new(Vec::new()),
+                concat!(
+                    "0000", // length
+                    "",     // opaque data
+                ),
+            ),
+            (
+                HpkePublicKey::new(Vec::from("0123456789abcdef")),
+                concat!(
+                    "0010",                             // length
+                    "30313233343536373839616263646566"  // opaque data
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_hpke_config() {
+        roundtrip_encoding(&[
+            (
+                HpkeConfig::new(
+                    HpkeConfigId::from(12),
+                    HpkeKemId::P256HkdfSha256,
+                    HpkeKdfId::HkdfSha512,
+                    HpkeAeadId::Aes256Gcm,
+                    HpkePublicKey::new(Vec::new()),
+                ),
+                concat!(
+                    "0C",   // id
+                    "0010", // kem_id
+                    "0003", // kdf_id
+                    "0002", // aead_id
+                    concat!(
+                        // public_key
+                        "0000", // length
+                        "",     // opaque data
+                    )
+                ),
+            ),
+            (
+                HpkeConfig::new(
+                    HpkeConfigId::from(23),
+                    HpkeKemId::X25519HkdfSha256,
+                    HpkeKdfId::HkdfSha256,
+                    HpkeAeadId::ChaCha20Poly1305,
+                    HpkePublicKey::new(Vec::from("0123456789abcdef")),
+                ),
+                concat!(
+                    "17",   // id
+                    "0020", // kem_id
+                    "0001", // kdf_id
+                    "0003", // aead_id
+                    concat!(
+                        // public_key
+                        "0010",                             // length
+                        "30313233343536373839616263646566", // opaque data
+                    )
                 ),
             ),
         ])

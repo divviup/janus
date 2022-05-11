@@ -6,12 +6,12 @@ use self::models::{
 };
 use crate::{
     hpke::HpkePrivateKey,
-    message::{AggregateShareReq, AggregationJobId, HpkeConfig, Interval, Report, ReportShare},
+    message::{AggregateShareReq, AggregationJobId, Interval, Report, ReportShare},
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
 use chrono::NaiveDateTime;
 use futures::try_join;
-use janus::message::{Duration, Extension, HpkeCiphertext, Nonce, TaskId, Time};
+use janus::message::{Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, TaskId, Time};
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -188,7 +188,8 @@ impl Transaction<'_> {
         for (hpke_config, hpke_private_key) in task.hpke_keys.values() {
             let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
             row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_bytes());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&u8::from(hpke_config.id).to_be_bytes());
+            row_id[TaskId::ENCODED_LEN..]
+                .copy_from_slice(&u8::from(hpke_config.id()).to_be_bytes());
 
             let encrypted_hpke_private_key = self.crypter.encrypt(
                 "task_hpke_keys",
@@ -197,7 +198,7 @@ impl Transaction<'_> {
                 hpke_private_key.as_ref(),
             )?;
 
-            hpke_config_ids.push(u8::from(hpke_config.id) as i16);
+            hpke_config_ids.push(u8::from(hpke_config.id()) as i16);
             hpke_configs.push(hpke_config.get_encoded());
             hpke_private_keys.push(encrypted_hpke_private_key);
         }

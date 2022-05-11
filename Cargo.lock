@@ -1280,6 +1280,7 @@ dependencies = [
  "chrono",
  "hex",
  "hpke",
+ "hpke-dispatch",
  "num_enum",
  "prio",
  "rand",

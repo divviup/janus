@@ -1,8 +1,7 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::HpkeConfig;
 use hpke::HpkeError;
-use janus::message::{Extension, HpkeCiphertext, Nonce, Role, TaskId};
+use janus::message::{Extension, HpkeCiphertext, HpkeConfig, Nonce, Role, TaskId};
 use prio::codec::{encode_u16_items, Encode};
 use std::str::FromStr;
 
@@ -11,8 +10,8 @@ pub enum Error {
     /// An error occurred in the underlying HPKE library.
     #[error("HPKE error: {0}")]
     Hpke(#[from] HpkeError),
-    #[error("invalid HPKE configuration: {0}")]
-    InvalidConfiguration(&'static str),
+    #[error(transparent)]
+    Common(#[from] janus::hpke::Error),
 }
 
 /// Labels incorporated into HPKE application info string
@@ -28,24 +27,6 @@ impl Label {
             Self::InputShare => b"ppm input share",
             Self::AggregateShare => b"ppm aggregate share",
         }
-    }
-}
-
-impl TryFrom<&HpkeConfig> for hpke_dispatch::Config {
-    type Error = Error;
-
-    fn try_from(config: &HpkeConfig) -> Result<Self, Self::Error> {
-        Ok(Self {
-            aead: (config.aead_id as u16)
-                .try_into()
-                .map_err(|_| Self::Error::InvalidConfiguration("did not recognize aead"))?,
-            kdf: (config.kdf_id as u16)
-                .try_into()
-                .map_err(|_| Self::Error::InvalidConfiguration("did not recognize kdf"))?,
-            kem: (config.kem_id as u16)
-                .try_into()
-                .map_err(|_| Self::Error::InvalidConfiguration("did not recognize kem"))?,
-        })
     }
 }
 
@@ -126,14 +107,14 @@ pub fn seal(
     associated_data: &[u8],
 ) -> Result<HpkeCiphertext, Error> {
     let output = hpke_dispatch::Config::try_from(recipient_config)?.base_mode_seal(
-        &recipient_config.public_key.0,
+        recipient_config.public_key().as_bytes(),
         &application_info.0,
         plaintext,
         associated_data,
     )?;
 
     Ok(HpkeCiphertext::new(
-        recipient_config.id,
+        recipient_config.id(),
         output.encapped_key,
         output.ciphertext,
     ))
@@ -164,9 +145,10 @@ pub fn open(
 #[doc(hidden)]
 pub mod test_util {
     use super::HpkePrivateKey;
-    use crate::message::{HpkeConfig, HpkePublicKey};
     use hpke::{kem::X25519HkdfSha256, Kem, Serializable};
-    use janus::message::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
+    use janus::message::{
+        HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
+    };
     use rand::thread_rng;
 
     /// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
@@ -174,13 +156,13 @@ pub mod test_util {
     pub fn generate_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
         let (private_key, public_key) = X25519HkdfSha256::gen_keypair(&mut thread_rng());
         (
-            HpkeConfig {
-                id: HpkeConfigId::from(0),
-                kem_id: HpkeKemId::X25519HkdfSha256,
-                kdf_id: HpkeKdfId::HkdfSha512,
-                aead_id: HpkeAeadId::ChaCha20Poly1305,
-                public_key: HpkePublicKey(public_key.to_bytes().as_slice().to_vec()),
-            },
+            HpkeConfig::new(
+                HpkeConfigId::from(0),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha512,
+                HpkeAeadId::ChaCha20Poly1305,
+                HpkePublicKey::new(public_key.to_bytes().to_vec()),
+            ),
             HpkePrivateKey(private_key.to_bytes().as_slice().to_vec()),
         )
     }
@@ -189,9 +171,9 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use super::{test_util::generate_hpke_config_and_private_key, *};
-    use crate::{message::HpkePublicKey, trace::test_util::install_test_trace_subscriber};
+    use crate::trace::test_util::install_test_trace_subscriber;
     use hpke::{aead::*, kdf::*, kem::*, Serializable};
-    use janus::message::HpkeConfigId;
+    use janus::message::{HpkeConfigId, HpkePublicKey};
     use serde::Deserialize;
     use std::collections::HashSet;
 
@@ -309,13 +291,13 @@ mod tests {
         const MESSAGE: &[u8] = b"round trip test message";
 
         let (private_key, public_key) = KEM::gen_keypair(&mut rand::thread_rng());
-        let hpke_config = HpkeConfig {
-            id: HpkeConfigId::from(0),
-            kem_id: KEM::KEM_ID.try_into().unwrap(),
-            kdf_id: KDF::KDF_ID.try_into().unwrap(),
-            aead_id: AEAD::AEAD_ID.try_into().unwrap(),
-            public_key: HpkePublicKey(public_key.to_bytes().to_vec()),
-        };
+        let hpke_config = HpkeConfig::new(
+            HpkeConfigId::from(0),
+            KEM::KEM_ID.try_into().unwrap(),
+            KDF::KDF_ID.try_into().unwrap(),
+            AEAD::AEAD_ID.try_into().unwrap(),
+            HpkePublicKey::new(public_key.to_bytes().to_vec()),
+        );
         let hpke_private_key = HpkePrivateKey(private_key.to_bytes().to_vec());
         let application_info = HpkeApplicationInfo::new(
             TaskId::random(),
@@ -430,13 +412,13 @@ mod tests {
                     continue;
                 }
 
-                let hpke_config = HpkeConfig {
-                    id: HpkeConfigId::from(0),
+                let hpke_config = HpkeConfig::new(
+                    HpkeConfigId::from(0),
                     kem_id,
                     kdf_id,
                     aead_id,
-                    public_key: HpkePublicKey(test_vector.serialized_public_key.clone()),
-                };
+                    HpkePublicKey::new(test_vector.serialized_public_key.clone()),
+                );
                 let hpke_private_key = HpkePrivateKey(test_vector.serialized_private_key.clone());
                 let application_info = HpkeApplicationInfo(test_vector.info.clone());
                 let ciphertext = HpkeCiphertext::new(
