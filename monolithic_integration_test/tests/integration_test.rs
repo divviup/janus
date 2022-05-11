@@ -1,5 +1,6 @@
 use futures::channel::oneshot::Sender;
 use janus::{
+    hpke::test_util::generate_hpke_config_and_private_key,
     message::{Duration, Role, TaskId},
     time::RealClock,
 };
@@ -7,7 +8,6 @@ use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
     datastore::{Crypter, Datastore},
-    hpke::test_util::generate_hpke_config_and_private_key,
     task::{AggregatorAuthKey, Task, Vdaf},
     trace::{install_trace_subscriber, TraceConfiguration},
 };

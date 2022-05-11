@@ -8,7 +8,6 @@ use crate::{
         },
         Datastore, Transaction,
     },
-    hpke::{self, HpkeApplicationInfo, Label},
     message::{
         AggregateReq,
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
@@ -25,6 +24,7 @@ use http::{
     StatusCode,
 };
 use janus::{
+    hpke::{self, HpkeApplicationInfo, Label},
     message::{HpkeConfig, HpkeConfigId, Nonce, Report, Role, TaskId},
     time::Clock,
 };
@@ -133,7 +133,7 @@ peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
     BatchLifetimeExceeded(TaskId),
     /// HPKE failure.
     #[error("HPKE error: {0}")]
-    Hpke(#[from] crate::hpke::Error),
+    Hpke(#[from] janus::hpke::Error),
     /// Error handling task parameters
     #[error("Invalid task parameters: {0}")]
     TaskParameters(#[from] crate::task::Error),
@@ -1936,7 +1936,6 @@ mod tests {
             models::BatchUnitAggregation,
             test_util::{ephemeral_datastore, DbHandle},
         },
-        hpke::{test_util::generate_hpke_config_and_private_key, HpkePrivateKey, Label},
         message::AuthenticatedResponseDecoder,
         task::{test_util::new_dummy_task, Vdaf},
         trace::test_util::install_test_trace_subscriber,
@@ -1946,6 +1945,7 @@ mod tests {
     use http::Method;
     use janus::{
         hpke::associated_data_for_report_share,
+        hpke::{test_util::generate_hpke_config_and_private_key, HpkePrivateKey, Label},
         message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
     };
     use prio::{

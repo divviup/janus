@@ -1285,6 +1285,7 @@ dependencies = [
  "prio",
  "rand",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

@@ -1,9 +1,12 @@
 //! Shared parameters for a PPM task.
 
-use crate::{hpke::HpkePrivateKey, message::Interval};
+use crate::message::Interval;
 use ::rand::{thread_rng, Rng};
 use derivative::Derivative;
-use janus::message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
+use janus::{
+    hpke::HpkePrivateKey,
+    message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
+};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
@@ -215,8 +218,11 @@ impl Task {
 #[doc(hidden)]
 pub mod test_util {
     use super::{Task, Vdaf};
-    use crate::{hpke::test_util::generate_hpke_config_and_private_key, task::AggregatorAuthKey};
-    use janus::message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
+    use crate::task::AggregatorAuthKey;
+    use janus::{
+        hpke::test_util::generate_hpke_config_and_private_key,
+        message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
+    };
     use prio::{
         codec::Encode,
         field::Field128,
