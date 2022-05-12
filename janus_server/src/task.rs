@@ -119,9 +119,9 @@ pub struct Task {
     pub vdaf: Vdaf,
     /// The role performed by the aggregator.
     pub role: Role,
-    /// Secret verification parameter shared by the aggregators.
+    /// Secret verification parameters shared by the aggregators.
     #[derivative(Debug = "ignore")]
-    pub(crate) vdaf_verify_parameter: Vec<u8>,
+    pub(crate) vdaf_verify_parameters: Vec<Vec<u8>>,
     /// The maximum number of times a given batch may be collected.
     pub(crate) max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
@@ -149,7 +149,7 @@ impl Task {
         aggregator_endpoints: Vec<Url>,
         vdaf: Vdaf,
         role: Role,
-        vdaf_verify_parameter: Vec<u8>,
+        vdaf_verify_parameters: Vec<Vec<u8>>,
         max_batch_lifetime: u64,
         min_batch_size: u64,
         min_batch_duration: Duration,
@@ -168,6 +168,9 @@ impl Task {
         if agg_auth_keys.is_empty() {
             return Err(Error::InvalidParameter("agg_auth_keys"));
         }
+        if vdaf_verify_parameters.is_empty() {
+            return Err(Error::InvalidParameter("vdaf_verify_parameters"));
+        }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
         let hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_keys
@@ -183,7 +186,7 @@ impl Task {
             aggregator_endpoints,
             vdaf,
             role,
-            vdaf_verify_parameter,
+            vdaf_verify_parameters,
             max_batch_lifetime,
             min_batch_size,
             min_batch_duration,
@@ -245,7 +248,34 @@ pub mod test_util {
             aggregator_config_1.public_key().clone(),
         );
 
-        let vdaf_verify_parameter = match &vdaf {
+        let vdaf_verify_parameter_0 = verify_param_dispatch(&vdaf, role);
+        let vdaf_verify_parameter_1 = verify_param_dispatch(&vdaf, role);
+
+        Task::new(
+            task_id,
+            vec![
+                "http://leader_endpoint".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+            ],
+            vdaf,
+            role,
+            vec![vdaf_verify_parameter_0, vdaf_verify_parameter_1],
+            0,
+            0,
+            Duration::from_hours(8).unwrap(),
+            Duration::from_minutes(10).unwrap(),
+            collector_config,
+            vec![AggregatorAuthKey::generate(), AggregatorAuthKey::generate()],
+            vec![
+                (aggregator_config_0, aggregator_private_key_0),
+                (aggregator_config_1, aggregator_private_key_1),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn verify_param_dispatch(vdaf: &Vdaf, role: Role) -> Vec<u8> {
+        match &vdaf {
             Vdaf::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),
             Vdaf::Prio3Aes128Sum { bits } => {
                 verify_param(Prio3Aes128Sum::new(2, *bits).unwrap(), role)
@@ -260,29 +290,7 @@ pub mod test_util {
 
             #[cfg(test)]
             Vdaf::Fake | Vdaf::FakeFailsPrepInit | Vdaf::FakeFailsPrepStep => Vec::new(),
-        };
-
-        Task::new(
-            task_id,
-            vec![
-                "http://leader_endpoint".parse().unwrap(),
-                "http://helper_endpoint".parse().unwrap(),
-            ],
-            vdaf,
-            role,
-            vdaf_verify_parameter,
-            0,
-            0,
-            Duration::from_hours(8).unwrap(),
-            Duration::from_minutes(10).unwrap(),
-            collector_config,
-            vec![AggregatorAuthKey::generate(), AggregatorAuthKey::generate()],
-            vec![
-                (aggregator_config_0, aggregator_private_key_0),
-                (aggregator_config_1, aggregator_private_key_1),
-            ],
-        )
-        .unwrap()
+        }
     }
 
     fn verify_param<V: vdaf::Vdaf>(vdaf: V, role: Role) -> Vec<u8>
