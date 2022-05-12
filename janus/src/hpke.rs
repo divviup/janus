@@ -169,7 +169,7 @@ pub mod test_util {
         message::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey},
     };
     use hpke::{kem::X25519HkdfSha256, Kem, Serializable};
-    use rand::thread_rng;
+    use rand::{thread_rng, Rng};
 
     /// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
     /// HpkePrivateKey (private portion).
@@ -177,10 +177,10 @@ pub mod test_util {
         let (private_key, public_key) = X25519HkdfSha256::gen_keypair(&mut thread_rng());
         (
             HpkeConfig::new(
-                HpkeConfigId::from(0),
+                HpkeConfigId::from(thread_rng().gen::<u8>()),
                 HpkeKemId::X25519HkdfSha256,
-                HpkeKdfId::HkdfSha512,
-                HpkeAeadId::ChaCha20Poly1305,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::Aes128Gcm,
                 HpkePublicKey::new(public_key.to_bytes().to_vec()),
             ),
             HpkePrivateKey::new(private_key.to_bytes().as_slice().to_vec()),
