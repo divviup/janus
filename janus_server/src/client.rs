@@ -1,6 +1,9 @@
 //! PPM protocol client
 
-use crate::hpke::{self, HpkeApplicationInfo, Label};
+use crate::{
+    hpke::{self, HpkeApplicationInfo, Label},
+    task::Vdaf,
+};
 use http::StatusCode;
 use janus::{
     hpke::associated_data_for_report_share,
@@ -32,6 +35,11 @@ pub enum Error {
     Hpke(#[from] crate::hpke::Error),
     #[error("invalid task parameters: {0}")]
     TaskParameters(#[from] crate::task::Error),
+    #[error("Wrong measurement type, expected {expected} and got {actual}")]
+    WrongMeasurementType {
+        expected: &'static str,
+        actual: &'static str,
+    },
 }
 
 static CLIENT_USER_AGENT: &str = concat!(
@@ -112,38 +120,29 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 
 /// A PPM client.
 #[derive(Debug)]
-pub struct Client<V: vdaf::Client, C>
-where
-    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-{
+pub struct Client<C> {
     parameters: ClientParameters,
-    vdaf_client: V,
-    vdaf_public_parameter: V::PublicParam,
+    vdaf_instance: Vdaf,
+    vdaf_public_parameter: Vec<u8>,
     clock: C,
     http_client: reqwest::Client,
     leader_hpke_config: HpkeConfig,
     helper_hpke_config: HpkeConfig,
 }
 
-impl<V: vdaf::Client, C: Clock> Client<V, C>
-where
-    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-{
+impl<C: Clock> Client<C> {
     pub fn new(
         parameters: ClientParameters,
-        vdaf_client: V,
-        vdaf_public_parameter: V::PublicParam,
+        vdaf_instance: Vdaf,
+        vdaf_public_parameter: Vec<u8>,
         clock: C,
         http_client: &reqwest::Client,
         leader_hpke_config: HpkeConfig,
         helper_hpke_config: HpkeConfig,
-    ) -> Self
-    where
-        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Self {
         Self {
             parameters,
-            vdaf_client,
+            vdaf_instance,
             vdaf_public_parameter,
             clock,
             http_client: http_client.clone(),
@@ -156,10 +155,106 @@ where
     /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
     /// share plus one proof share for each aggregator and then uploaded to the
     /// leader.
-    pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
-        let input_shares = self
-            .vdaf_client
-            .shard(&self.vdaf_public_parameter, measurement)?;
+    ///
+    /// This method is suitable for use with the "Prio3Aes128Count" VDAF, as
+    /// the measurement is a Boolean value.
+    pub async fn upload_boolean(&self, measurement: bool) -> Result<(), Error> {
+        match &self.vdaf_instance {
+            Vdaf::Prio3Aes128Count => {
+                self.upload_generic(
+                    vdaf::prio3::Prio3Aes128Count::new(2)?,
+                    &<vdaf::prio3::Prio3Aes128Count as vdaf::Vdaf>::PublicParam::get_decoded(
+                        &self.vdaf_public_parameter,
+                    )?,
+                    &(measurement as u64),
+                )
+                .await
+            }
+            Vdaf::Prio3Aes128Sum { .. } => Err(Error::WrongMeasurementType {
+                expected: "u128",
+                actual: "bool",
+            }),
+            Vdaf::Prio3Aes128Histogram { .. } => Err(Error::WrongMeasurementType {
+                expected: "u128",
+                actual: "bool",
+            }),
+            Vdaf::Poplar1 { .. } => Err(Error::WrongMeasurementType {
+                expected: "&[u8]",
+                actual: "bool",
+            }),
+            #[cfg(test)]
+            Vdaf::Fake | Vdaf::FakeFailsPrepInit | Vdaf::FakeFailsPrepStep => {
+                Err(Error::WrongMeasurementType {
+                    expected: "()",
+                    actual: "bool",
+                })
+            }
+        }
+    }
+
+    /// Upload a [`crate::message::Report`] to the leader, per §4.3.2 of
+    /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
+    /// share plus one proof share for each aggregator and then uploaded to the
+    /// leader.
+    ///
+    /// This method is suitable for use with the "Prio3Aes128Sum" and
+    /// "Prio3Aes128Histogram" VDAFs, as the measurement is a single integer.
+    pub async fn upload_integer_u128(&self, measurement: u128) -> Result<(), Error> {
+        match &self.vdaf_instance {
+            Vdaf::Prio3Aes128Count => Err(Error::WrongMeasurementType {
+                expected: "bool",
+                actual: "u128",
+            }),
+            Vdaf::Prio3Aes128Sum { bits } => {
+                self.upload_generic(
+                    vdaf::prio3::Prio3Aes128Sum::new(2, *bits)?,
+                    &<vdaf::prio3::Prio3Aes128Sum as vdaf::Vdaf>::PublicParam::get_decoded(
+                        &self.vdaf_public_parameter,
+                    )?,
+                    &measurement,
+                )
+                .await
+            }
+            Vdaf::Prio3Aes128Histogram { buckets } => {
+                self.upload_generic(
+                    vdaf::prio3::Prio3Aes128Histogram::new(2, buckets)?,
+                    &<vdaf::prio3::Prio3Aes128Histogram as vdaf::Vdaf>::PublicParam::get_decoded(
+                        &self.vdaf_public_parameter,
+                    )?,
+                    &measurement,
+                )
+                .await
+            }
+            Vdaf::Poplar1 { .. } => Err(Error::WrongMeasurementType {
+                expected: "&[u8]",
+                actual: "u128",
+            }),
+            #[cfg(test)]
+            Vdaf::Fake | Vdaf::FakeFailsPrepInit | Vdaf::FakeFailsPrepStep => {
+                Err(Error::WrongMeasurementType {
+                    expected: "()",
+                    actual: "u128",
+                })
+            }
+        }
+    }
+
+    // TODO(dcook): implement upload_byte_string() for Poplar1.
+
+    /// Upload a [`crate::message::Report`] to the leader, per §4.3.2 of
+    /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
+    /// share plus one proof share for each aggregator and then uploaded to the
+    /// leader.
+    pub async fn upload_generic<V: vdaf::Client>(
+        &self,
+        vdaf_client: V,
+        vdaf_public_parameter: &V::PublicParam,
+        measurement: &V::Measurement,
+    ) -> Result<(), Error>
+    where
+        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+    {
+        let input_shares = vdaf_client.shard(vdaf_public_parameter, measurement)?;
         assert_eq!(input_shares.len(), 2); // PPM only supports VDAFs using two aggregators.
 
         let nonce = Nonce::generate(self.clock);
@@ -220,17 +315,10 @@ mod tests {
     use assert_matches::assert_matches;
     use janus::message::TaskId;
     use mockito::mock;
-    use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Sum};
     use test_util::MockClock;
     use url::Url;
 
-    fn setup_client<V: vdaf::Client>(
-        vdaf_client: V,
-        public_parameter: V::PublicParam,
-    ) -> Client<V, MockClock>
-    where
-        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-    {
+    fn setup_client(vdaf_instance: Vdaf, public_parameter: Vec<u8>) -> Client<MockClock> {
         let task_id = TaskId::random();
 
         let clock = MockClock::default();
@@ -246,7 +334,7 @@ mod tests {
 
         Client::new(
             client_parameters,
-            vdaf_client,
+            vdaf_instance,
             public_parameter,
             clock,
             &default_http_client().unwrap(),
@@ -260,9 +348,38 @@ mod tests {
         install_test_trace_subscriber();
         let mocked_upload = mock("POST", "/upload").with_status(200).expect(1).create();
 
-        let client = setup_client(Prio3Aes128Count::new(2).unwrap(), ());
+        let client = setup_client(Vdaf::Prio3Aes128Count, vec![]);
 
-        client.upload(&1).await.unwrap();
+        client.upload_boolean(true).await.unwrap();
+
+        mocked_upload.assert();
+    }
+
+    #[tokio::test]
+    async fn upload_prio3_sum() {
+        install_test_trace_subscriber();
+        let mocked_upload = mock("POST", "/upload").with_status(200).expect(1).create();
+
+        let client = setup_client(Vdaf::Prio3Aes128Sum { bits: 64 }, vec![]);
+
+        client.upload_integer_u128(17).await.unwrap();
+
+        mocked_upload.assert();
+    }
+
+    #[tokio::test]
+    async fn upload_prio3_histogram() {
+        install_test_trace_subscriber();
+        let mocked_upload = mock("POST", "/upload").with_status(200).expect(1).create();
+
+        let client = setup_client(
+            Vdaf::Prio3Aes128Histogram {
+                buckets: vec![1, 10, 100, 1000],
+            },
+            vec![],
+        );
+
+        client.upload_integer_u128(50).await.unwrap();
 
         mocked_upload.assert();
     }
@@ -270,13 +387,13 @@ mod tests {
     #[tokio::test]
     async fn upload_prio3_invalid_measurement() {
         install_test_trace_subscriber();
-        let vdaf = Prio3Aes128Sum::new(2, 16).unwrap();
+        let vdaf = Vdaf::Prio3Aes128Sum { bits: 16 };
 
-        let client = setup_client(vdaf, ());
+        let client = setup_client(vdaf, vec![]);
         // 65536 is too big for a 16 bit sum and will be rejected by the VDAF.
         // Make sure we get the right error variant but otherwise we aren't
         // picky about its contents.
-        assert_matches!(client.upload(&65536).await, Err(Error::Vdaf(_)));
+        assert_matches!(client.upload_integer_u128(65536).await, Err(Error::Vdaf(_)));
     }
 
     #[tokio::test]
@@ -285,12 +402,65 @@ mod tests {
 
         let mocked_upload = mock("POST", "/upload").with_status(501).expect(1).create();
 
-        let client = setup_client(Prio3Aes128Count::new(2).unwrap(), ());
+        let client = setup_client(Vdaf::Prio3Aes128Count, vec![]);
         assert_matches!(
-            client.upload(&1).await,
+            client.upload_boolean(true).await,
             Err(Error::Http(StatusCode::NOT_IMPLEMENTED))
         );
 
         mocked_upload.assert();
+    }
+
+    #[tokio::test]
+    async fn upload_wrong_measurement_type() {
+        install_test_trace_subscriber();
+
+        let client = setup_client(Vdaf::Prio3Aes128Count, vec![]);
+        assert_matches!(
+            client.upload_integer_u128(0).await,
+            Err(Error::WrongMeasurementType {
+                expected: "bool",
+                actual: "u128",
+            })
+        );
+
+        let client = setup_client(Vdaf::Prio3Aes128Sum { bits: 32 }, vec![]);
+        assert_matches!(
+            client.upload_boolean(true).await,
+            Err(Error::WrongMeasurementType {
+                expected: "u128",
+                actual: "bool",
+            })
+        );
+
+        let client = setup_client(
+            Vdaf::Prio3Aes128Histogram {
+                buckets: vec![1, 10, 100, 1000],
+            },
+            vec![],
+        );
+        assert_matches!(
+            client.upload_boolean(true).await,
+            Err(Error::WrongMeasurementType {
+                expected: "u128",
+                actual: "bool",
+            })
+        );
+
+        let client = setup_client(Vdaf::Poplar1 { bits: 8 }, vec![]);
+        assert_matches!(
+            client.upload_boolean(true).await,
+            Err(Error::WrongMeasurementType {
+                expected: "&[u8]",
+                actual: "bool",
+            })
+        );
+        assert_matches!(
+            client.upload_integer_u128(5).await,
+            Err(Error::WrongMeasurementType {
+                expected: "&[u8]",
+                actual: "u128",
+            })
+        );
     }
 }

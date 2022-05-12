@@ -33,7 +33,7 @@ fn endpoint_from_socket_addr(addr: &SocketAddr) -> Url {
 }
 
 struct TestCase {
-    client: Client<Prio3Aes128Count, RealClock>,
+    client: Client<RealClock>,
     _leader_db_handle: DbHandle,
     _helper_db_handle: DbHandle,
     leader_shutdown_sender: Sender<()>,
@@ -164,12 +164,10 @@ async fn setup_test() -> TestCase {
             .await
             .unwrap();
 
-    let vdaf = Prio3Aes128Count::new(2).unwrap();
-
     let client = Client::new(
         client_parameters,
-        vdaf,
-        (), // no public parameter for prio3
+        Vdaf::Prio3Aes128Count,
+        vec![], // no public parameter for prio3
         RealClock::default(),
         &http_client,
         leader_report_config,
@@ -198,6 +196,6 @@ async fn teardown_test(test_case: TestCase) {
 #[tokio::test]
 async fn upload() {
     let test_case = setup_test().await;
-    test_case.client.upload(&1).await.unwrap();
+    test_case.client.upload_boolean(true).await.unwrap();
     teardown_test(test_case).await
 }
