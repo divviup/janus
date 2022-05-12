@@ -13,7 +13,8 @@ use crate::{
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
         AggregateResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
         AuthenticatedDecodeError, AuthenticatedEncoder, AuthenticatedRequestDecoder, CollectReq,
-        Interval, ReportShare, Transition, TransitionError, TransitionTypeSpecificData,
+        CollectResp, Interval, ReportShare, Transition, TransitionError,
+        TransitionTypeSpecificData,
     },
     task::{AggregatorAuthKey, Task, VdafInstance},
 };
@@ -89,6 +90,9 @@ pub enum Error {
     /// An attempt was made to act on an unknown aggregation job.
     #[error("unrecognized aggregation job: {0:?}")]
     UnrecognizedAggregationJob(AggregationJobId, TaskId),
+    /// An attempt was made to act on an unknown collect job.
+    #[error("unrecognized collect job: {0}")]
+    UnrecognizedCollectJob(Uuid),
     /// Corresponds to `outdatedHpkeConfig`, §3.1
     #[error("outdated HPKE config: {0} {1:?}")]
     OutdatedHpkeConfig(HpkeConfigId, TaskId),
@@ -233,6 +237,9 @@ impl<C: Clock> Aggregator<C> {
         Err(Error::InvalidHmac(task_id))
     }
 
+    /// Handle a collect request. Only supported by the leader. `req_bytes` is an encoded
+    /// [`CollectReq`]. Returns the URL at which a collector may poll for status of the collect job
+    /// corresponding to the `CollectReq`.
     async fn handle_collect(&self, req_bytes: &[u8]) -> Result<Url, Error> {
         let collect_req = CollectReq::get_decoded(req_bytes)?;
 
@@ -248,6 +255,30 @@ impl<C: Clock> Aggregator<C> {
         task_aggregator
             .handle_collect(&self.datastore, collect_req)
             .await
+    }
+
+    /// Handle a request for a collect job. `collect_job_id` is the unique identifier for the
+    /// collect job parsed out of the request URI. Returns an encoded [`CollectResp`] if the collect
+    /// job has been run to completion, `None` if the collect job has not yet run, or an error
+    /// otherwise.
+    async fn handle_collect_job(&self, collect_job_id: Uuid) -> Result<Option<Vec<u8>>, Error> {
+        let task_id = self
+            .datastore
+            .run_tx(|tx| Box::pin(async move { tx.get_collect_job_task_id(collect_job_id).await }))
+            .await?
+            .ok_or(Error::UnrecognizedCollectJob(collect_job_id))?;
+
+        let task_aggregator = self.task_aggregator_for(task_id).await?;
+
+        // Only the leader handles collect jobs.
+        if task_aggregator.task.role != Role::Leader {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
+
+        Ok(task_aggregator
+            .handle_collect_job(&self.datastore, collect_job_id)
+            .await?
+            .map(|resp| resp.get_encoded()))
     }
 
     /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded,
@@ -490,7 +521,7 @@ impl TaskAggregator {
     }
 
     async fn handle_collect(&self, datastore: &Datastore, req: CollectReq) -> Result<Url, Error> {
-        let collect_job_uuid = self
+        let collect_job_id = self
             .vdaf_ops
             .handle_collect(datastore, &self.task, &req)
             .await?;
@@ -499,7 +530,17 @@ impl TaskAggregator {
             .task
             .aggregator_url(Role::Leader)?
             .join("collect_jobs/")?
-            .join(&collect_job_uuid.to_string())?)
+            .join(&collect_job_id.to_string())?)
+    }
+
+    async fn handle_collect_job(
+        &self,
+        datastore: &Datastore,
+        collect_job_id: Uuid,
+    ) -> Result<Option<CollectResp>, Error> {
+        self.vdaf_ops
+            .handle_collect_job(datastore, &self.task, collect_job_id)
+            .await
     }
 
     async fn handle_aggregate_share(
@@ -1000,6 +1041,7 @@ impl VdafOps {
             .await?)
     }
 
+    /// Handle requests to the leader `/collect` endpoint (§4.5).
     async fn handle_collect(
         &self,
         datastore: &Datastore,
@@ -1055,15 +1097,15 @@ impl VdafOps {
                 let task = task.clone();
                 let req = req.clone();
                 Box::pin(async move {
-                    if let Some(collect_job_uuid) = tx
-                        .get_collect_job_uuid(task.id, req.batch_interval, &req.agg_param)
+                    if let Some(collect_job_id) = tx
+                        .get_collect_job_id(task.id, req.batch_interval, &req.agg_param)
                         .await?
                     {
-                        warn!(collect_request = ?req, "Serving existing collect job UUID");
-                        return Ok(collect_job_uuid);
+                        debug!(collect_request = ?req, "Serving existing collect job UUID");
+                        return Ok(collect_job_id);
                     }
 
-                    warn!(collect_request = ?req, "Cache miss, creating new collect job UUID");
+                    debug!(collect_request = ?req, "Cache miss, creating new collect job UUID");
                     let aggregation_param = A::AggregationParam::get_decoded(&req.agg_param)?;
                     let batch_unit_aggregations = tx
                         .get_batch_unit_aggregations_for_task_in_interval::<A, E>(
@@ -1079,18 +1121,122 @@ impl VdafOps {
                     )
                     .await?;
 
-                    for batch_unit_aggregation in &batch_unit_aggregations {
-                        warn!(
-                            ?batch_unit_aggregation,
-                            "checking if batch unit is consumed"
-                        );
-                    }
-
                     tx.put_collect_job(req.task_id, req.batch_interval, &req.agg_param)
                         .await
                 })
             })
             .await?)
+    }
+
+    /// Handle requests to a collect job URI obtained from the leader's `/collect` endpoint (§4.5).
+    async fn handle_collect_job(
+        &self,
+        datastore: &Datastore,
+        task: &Task,
+        collect_job_id: Uuid,
+    ) -> Result<Option<CollectResp>, Error> {
+        match self {
+            VdafOps::Prio3Aes128Count(_, _) => {
+                Self::handle_collect_job_generic::<Prio3Aes128Count, _>(
+                    datastore,
+                    task,
+                    collect_job_id,
+                )
+                .await
+            }
+            VdafOps::Prio3Aes128Sum(_, _) => {
+                Self::handle_collect_job_generic::<Prio3Aes128Sum, _>(
+                    datastore,
+                    task,
+                    collect_job_id,
+                )
+                .await
+            }
+            VdafOps::Prio3Aes128Histogram(_, _) => {
+                Self::handle_collect_job_generic::<Prio3Aes128Histogram, _>(
+                    datastore,
+                    task,
+                    collect_job_id,
+                )
+                .await
+            }
+
+            #[cfg(test)]
+            VdafOps::Fake(_) => {
+                Self::handle_collect_job_generic::<fake::Vdaf, _>(datastore, task, collect_job_id)
+                    .await
+            }
+        }
+    }
+
+    async fn handle_collect_job_generic<A, E>(
+        datastore: &Datastore,
+        task: &Task,
+        collect_job_id: Uuid,
+    ) -> Result<Option<CollectResp>, Error>
+    where
+        A: vdaf::Aggregator,
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+        E: std::fmt::Display,
+        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+    {
+        let collect_job = datastore
+            .run_tx(move |tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    let collect_job = tx
+                        .get_collect_job::<A, _>(collect_job_id)
+                        .await?
+                        .ok_or_else(|| {
+                            datastore::Error::User(
+                                Error::UnrecognizedCollectJob(collect_job_id).into(),
+                            )
+                        })?;
+
+                    if collect_job.has_run()? {
+                        debug!(?collect_job_id, ?task.id, "serving cached collect job response");
+                        return Ok(Some(collect_job));
+                    }
+
+                    debug!(?collect_job_id, ?task.id, "collect job has not run yet");
+                    Ok(None)
+                })
+            })
+            .await?;
+
+        collect_job
+            .map(|job| {
+                // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store the leader
+                // aggregate share *unencrypted* in the datastore so that we can encrypt cached
+                // results to the collector HPKE config valid when the current collect job request
+                // was made, and not whatever was valid at the time the aggregate share was first
+                // computed.
+                // However we store the helper's *encrypted* share.
+                // TODO: consider fetching freshly encrypted helper aggregate share if it has been
+                // long enough since the encrypted helper share was cached -- tricky thing is
+                // deciding what "long enough" is.
+                let encrypted_leader_aggregate_share = hpke::seal(
+                    &task.collector_hpke_config,
+                    &HpkeApplicationInfo::new(
+                        task.id,
+                        Label::AggregateShare,
+                        Role::Leader,
+                        Role::Collector,
+                    ),
+                    &<Vec<u8>>::from(&job.leader_aggregate_share.unwrap()),
+                    &job.batch_interval.get_encoded(),
+                )?;
+
+                Ok(CollectResp {
+                    encrypted_agg_shares: vec![
+                        encrypted_leader_aggregate_share,
+                        job.helper_aggregate_share.unwrap(),
+                    ],
+                })
+            })
+            .transpose()
     }
 
     /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
@@ -1185,7 +1331,7 @@ impl VdafOps {
 
         for (unit_interval, consumed_batch_lifetime) in overlaps {
             if consumed_batch_lifetime == task.max_batch_lifetime {
-                warn!(
+                debug!(
                     ?task.id, ?unit_interval,
                     "refusing aggregate share request because lifetime for batch unit has been consumed"
                 );
@@ -1555,6 +1701,7 @@ fn error_handler<R: Reply>(
                 PpmProblemType::UnrecognizedAggregationJob,
                 Some(task_id),
             ),
+            Err(Error::UnrecognizedCollectJob(_)) => StatusCode::NOT_FOUND.into_response(),
             Err(Error::OutdatedHpkeConfig(_, task_id)) => {
                 build_problem_details_response(PpmProblemType::OutdatedConfig, Some(task_id))
             }
@@ -1709,6 +1856,25 @@ fn aggregator_filter<C: Clock>(
         )))
         .with(trace::named("collect"));
 
+    let collect_jobs_endpoint = warp::path("collect_jobs")
+        .and(warp::path::param())
+        .and(with_cloned_value(aggregator.clone()))
+        .then(
+            |collect_job_id: Uuid, aggregator: Arc<Aggregator<C>>| async move {
+                let resp_bytes = aggregator.handle_collect_job(collect_job_id).await?;
+
+                match resp_bytes {
+                    Some(resp_bytes) => Ok(reply::with_status(resp_bytes, StatusCode::OK)),
+                    None => Ok(reply::with_status(vec![], StatusCode::ACCEPTED)),
+                }
+            },
+        )
+        .map(error_handler(&response_counter, "collect_jobs"))
+        .with(warp::wrap_fn(timing_wrapper(
+            &time_value_recorder,
+            "collect_jobs",
+        )));
+
     let aggregate_share_endpoint = warp::path("aggregate_share")
         .and(warp::post())
         .and(with_cloned_value(aggregator))
@@ -1730,6 +1896,7 @@ fn aggregator_filter<C: Clock>(
         .or(upload_endpoint)
         .or(aggregate_endpoint)
         .or(collect_endpoint)
+        .or(collect_jobs_endpoint)
         .or(aggregate_share_endpoint)
         .boxed())
 }
@@ -3874,14 +4041,23 @@ mod tests {
 
         // Prepare parameters.
         let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
+        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
         task.aggregator_endpoints = vec![
             "https://leader.endpoint".parse().unwrap(),
             "https://helper.endpoint".parse().unwrap(),
         ];
         task.max_batch_lifetime = 1;
+        let batch_interval =
+            Interval::new(Time::from_seconds_since_epoch(0), task.min_batch_duration).unwrap();
+        let (collector_hpke_config, collector_hpke_recipient) =
+            generate_hpke_config_and_private_key();
+        task.collector_hpke_config = collector_hpke_config;
+
+        let leader_aggregate_share = AggregateShare::from(vec![Field64::from(64)]);
+        let helper_aggregate_share = AggregateShare::from(vec![Field64::from(32)]);
 
         let (datastore, _db_handle) = ephemeral_datastore().await;
+        let datastore = Arc::new(datastore);
 
         datastore
             .run_tx(|tx| {
@@ -3892,15 +4068,11 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter = aggregator_filter(datastore.clone(), MockClock::default()).unwrap();
 
         let request = CollectReq {
             task_id,
-            batch_interval: Interval::new(
-                Time::from_seconds_since_epoch(0),
-                task.min_batch_duration,
-            )
-            .unwrap(),
+            batch_interval,
             agg_param: vec![],
         };
 
@@ -3920,10 +4092,147 @@ mod tests {
         assert_eq!(collect_uri.host_str().unwrap(), "leader.endpoint");
         let mut path_segments = collect_uri.path_segments().unwrap();
         assert_eq!(path_segments.next(), Some("collect_jobs"));
-        assert_matches!(path_segments.next(), Some(uuid) => {
-            Uuid::parse_str(uuid).unwrap();
-        });
+        let collect_job_id = Uuid::parse_str(path_segments.next().unwrap()).unwrap();
         assert!(path_segments.next().is_none());
+
+        let collect_job_response = warp::test::request()
+            .method("GET")
+            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(collect_job_response.status(), StatusCode::ACCEPTED);
+
+        // Update the collect job with the leader share. Collect job should still not be complete.
+        datastore
+            .run_tx(|tx| {
+                let leader_aggregate_share = leader_aggregate_share.clone();
+                Box::pin(async move {
+                    tx.update_collect_job_leader_aggregate_share::<Prio3Aes128Count, _>(
+                        collect_job_id,
+                        &leader_aggregate_share,
+                        10,
+                        [1; 32],
+                    )
+                    .await
+                    .unwrap();
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let collect_job_response = warp::test::request()
+            .method("GET")
+            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(collect_job_response.status(), StatusCode::ACCEPTED);
+
+        // Update the collect job with the helper's share. Collect job should now be complete.
+        datastore
+            .run_tx(|tx| {
+                let collector_hpke_config = task.collector_hpke_config.clone();
+                let helper_aggregate_share_bytes: Vec<u8> = (&helper_aggregate_share).into();
+                Box::pin(async move {
+                    let encrypted_helper_aggregate_share = hpke::seal(
+                        &collector_hpke_config,
+                        &HpkeApplicationInfo::new(
+                            task.id,
+                            Label::AggregateShare,
+                            Role::Helper,
+                            Role::Collector,
+                        ),
+                        &helper_aggregate_share_bytes,
+                        &batch_interval.get_encoded(),
+                    )
+                    .unwrap();
+
+                    tx.update_collect_job_helper_aggregate_share::<Prio3Aes128Count, _>(
+                        collect_job_id,
+                        &encrypted_helper_aggregate_share,
+                    )
+                    .await
+                    .unwrap();
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let (parts, body) = warp::test::request()
+            .method("GET")
+            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::OK);
+        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+
+        let collect_resp = CollectResp::get_decoded(body_bytes.as_ref()).unwrap();
+        assert_eq!(collect_resp.encrypted_agg_shares.len(), 2);
+
+        let decrypted_leader_aggregate_share = hpke::open(
+            &task.collector_hpke_config,
+            &collector_hpke_recipient,
+            &HpkeApplicationInfo::new(
+                task_id,
+                Label::AggregateShare,
+                Role::Leader,
+                Role::Collector,
+            ),
+            &collect_resp.encrypted_agg_shares[0],
+            &batch_interval.get_encoded(),
+        )
+        .unwrap();
+        assert_eq!(
+            leader_aggregate_share,
+            AggregateShare::try_from(decrypted_leader_aggregate_share.as_ref()).unwrap()
+        );
+
+        let decrypted_helper_aggregate_share = hpke::open(
+            &task.collector_hpke_config,
+            &collector_hpke_recipient,
+            &HpkeApplicationInfo::new(
+                task_id,
+                Label::AggregateShare,
+                Role::Helper,
+                Role::Collector,
+            ),
+            &collect_resp.encrypted_agg_shares[1],
+            &batch_interval.get_encoded(),
+        )
+        .unwrap();
+        assert_eq!(
+            helper_aggregate_share,
+            AggregateShare::try_from(decrypted_helper_aggregate_share.as_ref()).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn no_such_collect_job() {
+        install_test_trace_subscriber();
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+
+        let no_such_collect_job_id = Uuid::new_v4();
+
+        let response = warp::test::request()
+            .method("GET")
+            .path(&format!("/collect_jobs/{no_such_collect_job_id}"))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
