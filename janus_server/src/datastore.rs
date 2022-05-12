@@ -6,7 +6,7 @@ use self::models::{
 };
 use crate::{
     message::{AggregateShareReq, AggregationJobId, Interval, ReportShare},
-    task::{self, AggregatorAuthKey, Task, Vdaf},
+    task::{self, AggregatorAuthKey, Task, VdafInstance},
 };
 use chrono::NaiveDateTime;
 use futures::try_join;
@@ -362,7 +362,7 @@ impl Transaction<'_> {
             .into_iter()
             .map(|endpoint| Ok(Url::parse(&endpoint)?))
             .collect::<Result<_, Error>>()?;
-        let vdaf = row.try_get::<_, Json<Vdaf>>("vdaf")?.0;
+        let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
         let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
         let max_batch_lifetime = row.get_bigint_and_convert("max_batch_lifetime")?;
         let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
@@ -1912,7 +1912,7 @@ mod tests {
         aggregator::test_util::fake,
         datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
         message::{Interval, TransitionError},
-        task::{test_util::new_dummy_task, Vdaf},
+        task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
     use ::test_util::generate_aead_key;
@@ -1935,33 +1935,45 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore().await;
 
         let values = [
-            (TaskId::random(), Vdaf::Prio3Aes128Count, Role::Leader),
             (
                 TaskId::random(),
-                Vdaf::Prio3Aes128Sum { bits: 64 },
+                VdafInstance::Prio3Aes128Count,
+                Role::Leader,
+            ),
+            (
+                TaskId::random(),
+                VdafInstance::Prio3Aes128Sum { bits: 64 },
                 Role::Helper,
             ),
             (
                 TaskId::random(),
-                Vdaf::Prio3Aes128Sum { bits: 32 },
+                VdafInstance::Prio3Aes128Sum { bits: 32 },
                 Role::Helper,
             ),
             (
                 TaskId::random(),
-                Vdaf::Prio3Aes128Histogram {
+                VdafInstance::Prio3Aes128Histogram {
                     buckets: vec![0, 100, 200, 400],
                 },
                 Role::Leader,
             ),
             (
                 TaskId::random(),
-                Vdaf::Prio3Aes128Histogram {
+                VdafInstance::Prio3Aes128Histogram {
                     buckets: vec![0, 25, 50, 75, 100],
                 },
                 Role::Leader,
             ),
-            (TaskId::random(), Vdaf::Poplar1 { bits: 8 }, Role::Helper),
-            (TaskId::random(), Vdaf::Poplar1 { bits: 64 }, Role::Helper),
+            (
+                TaskId::random(),
+                VdafInstance::Poplar1 { bits: 8 },
+                Role::Helper,
+            ),
+            (
+                TaskId::random(),
+                VdafInstance::Poplar1 { bits: 64 },
+                Role::Helper,
+            ),
         ];
 
         // Insert tasks, check that they can be retrieved by ID.
@@ -2028,7 +2040,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     report.task_id(),
-                    Vdaf::Prio3Aes128Count,
+                    VdafInstance::Prio3Aes128Count,
                     Role::Leader,
                 ))
                 .await?;
@@ -2136,13 +2148,13 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     task_id,
-                    Vdaf::Prio3Aes128Count,
+                    VdafInstance::Prio3Aes128Count,
                     Role::Leader,
                 ))
                 .await?;
                 tx.put_task(&new_dummy_task(
                     unrelated_task_id,
-                    Vdaf::Prio3Aes128Count,
+                    VdafInstance::Prio3Aes128Count,
                     Role::Leader,
                 ))
                 .await?;
@@ -2221,7 +2233,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     task_id,
-                    Vdaf::Prio3Aes128Count,
+                    VdafInstance::Prio3Aes128Count,
                     Role::Leader,
                 ))
                 .await?;
@@ -2285,7 +2297,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     aggregation_job.task_id,
-                    Vdaf::Poplar1 { bits: 64 },
+                    VdafInstance::Poplar1 { bits: 64 },
                     Role::Leader,
                 ))
                 .await?;
@@ -2405,7 +2417,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     task_id,
-                    Vdaf::Poplar1 { bits: 64 },
+                    VdafInstance::Poplar1 { bits: 64 },
                     Role::Leader,
                 ))
                 .await?;
@@ -2417,7 +2429,7 @@ mod tests {
                 let unrelated_task_id = TaskId::random();
                 tx.put_task(&new_dummy_task(
                     unrelated_task_id,
-                    Vdaf::Poplar1 { bits: 64 },
+                    VdafInstance::Poplar1 { bits: 64 },
                     Role::Leader,
                 ))
                 .await?;
@@ -2482,7 +2494,7 @@ mod tests {
                     Box::pin(async move {
                         tx.put_task(&new_dummy_task(
                             task_id,
-                            Vdaf::Prio3Aes128Count,
+                            VdafInstance::Prio3Aes128Count,
                             Role::Leader,
                         ))
                         .await?;
@@ -2629,7 +2641,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&new_dummy_task(
                         task_id,
-                        Vdaf::Prio3Aes128Count,
+                        VdafInstance::Prio3Aes128Count,
                         Role::Leader,
                     ))
                     .await?;
@@ -2761,7 +2773,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     task_id,
-                    Vdaf::Prio3Aes128Count,
+                    VdafInstance::Prio3Aes128Count,
                     Role::Leader,
                 ))
                 .await
@@ -2877,13 +2889,14 @@ mod tests {
                 let (aggregate_share, aggregation_param) =
                     (aggregate_share.clone(), aggregation_param.clone());
                 Box::pin(async move {
-                    let mut task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Leader);
+                    let mut task =
+                        new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
                     task.min_batch_duration = Duration::from_seconds(100);
                     tx.put_task(&task).await?;
 
                     tx.put_task(&new_dummy_task(
                         other_task_id,
-                        Vdaf::Prio3Aes128Count,
+                        VdafInstance::Prio3Aes128Count,
                         Role::Leader,
                     ))
                     .await?;
@@ -3034,7 +3047,7 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let task_id = TaskId::random();
-                let task = new_dummy_task(task_id, Vdaf::Prio3Aes128Count, Role::Helper);
+                let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
                 tx.put_task(&task).await?;
 
                 let aggregate_share = AggregateShare::from(vec![Field64::from(17)]);
@@ -3106,14 +3119,15 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let first_task_id = TaskId::random();
-                let mut task = new_dummy_task(first_task_id, Vdaf::Prio3Aes128Count, Role::Helper);
+                let mut task =
+                    new_dummy_task(first_task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
                 task.max_batch_lifetime = 2;
                 task.min_batch_duration = Duration::from_seconds(100);
                 tx.put_task(&task).await?;
 
                 let second_task_id = TaskId::random();
                 let other_task =
-                    new_dummy_task(second_task_id, Vdaf::Prio3Aes128Count, Role::Helper);
+                    new_dummy_task(second_task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
                 tx.put_task(&other_task).await?;
 
                 let aggregate_share = AggregateShare::from(vec![Field64::from(17)]);
