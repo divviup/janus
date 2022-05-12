@@ -1,9 +1,9 @@
 //! PPM protocol client
 
-use crate::hpke::{self, HpkeApplicationInfo, Label};
 use http::StatusCode;
 use janus::{
     hpke::associated_data_for_report_share,
+    hpke::{self, HpkeApplicationInfo, Label},
     message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
     time::Clock,
 };
@@ -29,7 +29,7 @@ pub enum Error {
     #[error("VDAF error: {0}")]
     Vdaf(#[from] prio::vdaf::VdafError),
     #[error("HPKE error: {0}")]
-    Hpke(#[from] crate::hpke::Error),
+    Hpke(#[from] janus::hpke::Error),
     #[error("invalid task parameters: {0}")]
     TaskParameters(#[from] crate::task::Error),
 }
@@ -213,12 +213,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        hpke::test_util::generate_hpke_config_and_private_key,
-        trace::test_util::install_test_trace_subscriber,
-    };
+    use crate::trace::test_util::install_test_trace_subscriber;
     use assert_matches::assert_matches;
-    use janus::message::TaskId;
+    use janus::{hpke::test_util::generate_hpke_config_and_private_key, message::TaskId};
     use mockito::mock;
     use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Sum};
     use test_util::MockClock;

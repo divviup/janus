@@ -5,7 +5,6 @@ pub mod binary_utils;
 pub mod client;
 pub mod config;
 pub mod datastore;
-pub mod hpke;
 pub mod message;
 pub mod metrics;
 pub mod task;

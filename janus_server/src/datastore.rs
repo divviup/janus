@@ -5,14 +5,14 @@ use self::models::{
     ReportAggregationState, ReportAggregationStateCode,
 };
 use crate::{
-    hpke::HpkePrivateKey,
     message::{AggregateShareReq, AggregationJobId, Interval, ReportShare},
     task::{self, AggregatorAuthKey, Task, Vdaf},
 };
 use chrono::NaiveDateTime;
 use futures::try_join;
-use janus::message::{
-    Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId, Time,
+use janus::{
+    hpke::HpkePrivateKey,
+    message::{Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId, Time},
 };
 use postgres_types::{Json, ToSql};
 use prio::{
