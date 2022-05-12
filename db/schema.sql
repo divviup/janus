@@ -45,11 +45,14 @@ CREATE TABLE task_hpke_keys(
 CREATE TABLE task_vdaf_verify_params(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id BIGINT NOT NULL,           -- task ID the verification parameter is associated with
-    ord BIGINT NOT NULL,               -- a value used to specify the ordering of verification parameters
     vdaf_verify_param BYTEA NOT NULL,  -- the VDAF verification parameter (opaque VDAF message, encrypted)
 
-    CONSTRAINT vdaf_verify_param_unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT vdaf_verify_param_unique_task_id UNIQUE(task_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+
+    -- TODO(dcook): Once verification parameter rotation is defined in the protocol, add additional
+    -- relevant columns to this table, and change the UNIQUE constraint to allow more than one row
+    -- per task.
 );
 
 -- Individual reports received from clients.

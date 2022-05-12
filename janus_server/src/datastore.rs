@@ -212,35 +212,25 @@ impl Transaction<'_> {
         let hpke_configs_future = self.tx.execute(&stmt, hpke_configs_params);
 
         // VDAF verification parameters.
-        let mut vdaf_verify_param_ords: Vec<i64> = Vec::new();
         let mut vdaf_verify_params: Vec<Vec<u8>> = Vec::new();
-        for (ord, vdaf_verify_param) in task.vdaf_verify_parameters.iter().enumerate() {
-            let ord = i64::try_from(ord)?;
-
-            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_bytes());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
-
+        for vdaf_verify_param in task.vdaf_verify_parameters.iter() {
             let encrypted_vdaf_verify_param = self.crypter.encrypt(
                 "task_vdaf_verify_params",
-                &row_id,
+                task.id.as_bytes(),
                 "vdaf_verify_param",
                 vdaf_verify_param.as_ref(),
             )?;
-
-            vdaf_verify_param_ords.push(ord);
             vdaf_verify_params.push(encrypted_vdaf_verify_param);
         }
         let stmt = self
             .tx
             .prepare_cached(
-                "INSERT INTO task_vdaf_verify_params (task_id, ord, vdaf_verify_param)
-                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], $3::BYTEA[])",
+                "INSERT INTO task_vdaf_verify_params (task_id, vdaf_verify_param)
+                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BYTEA[])",
             )
             .await?;
         let vdaf_verify_params_params: &[&(dyn ToSql + Sync)] = &[
             /* task_id */ &task.id.as_bytes(),
-            /* ords */ &vdaf_verify_param_ords,
             /* vdaf_verify_params */ &vdaf_verify_params,
         ];
         let vdaf_verify_params_future = self.tx.execute(&stmt, vdaf_verify_params_params);
@@ -289,8 +279,8 @@ impl Transaction<'_> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT ord, vdaf_verify_param FROM task_vdaf_verify_params
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
+                "SELECT vdaf_verify_param FROM task_vdaf_verify_params
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
         let vdaf_verify_param_rows = self.tx.query(&stmt, params);
@@ -350,7 +340,7 @@ impl Transaction<'_> {
 
         let stmt = self.tx.prepare_cached(
             "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_vdaf_verify_params.task_id),
-            ord, vdaf_verify_param FROM task_vdaf_verify_params ORDER BY ord ASC"
+            vdaf_verify_param FROM task_vdaf_verify_params"
         ).await?;
         let vdaf_verify_param_rows = self.tx.query(&stmt, &[]);
 
@@ -483,16 +473,11 @@ impl Transaction<'_> {
 
         let mut vdaf_verify_params = Vec::new();
         for row in vdaf_verify_param_rows {
-            let ord: i64 = row.get("ord");
             let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
-
-            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task_id.as_bytes());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
 
             vdaf_verify_params.push(self.crypter.decrypt(
                 "task_vdaf_verify_params",
-                &row_id,
+                task_id.as_bytes(),
                 "vdaf_verify_param",
                 &encrypted_vdaf_verify_param,
             )?);

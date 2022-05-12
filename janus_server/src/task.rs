@@ -248,8 +248,7 @@ pub mod test_util {
             aggregator_config_1.public_key().clone(),
         );
 
-        let vdaf_verify_parameter_0 = verify_param_dispatch(&vdaf, role);
-        let vdaf_verify_parameter_1 = verify_param_dispatch(&vdaf, role);
+        let vdaf_verify_parameter = verify_param_dispatch(&vdaf, role);
 
         Task::new(
             task_id,
@@ -259,7 +258,7 @@ pub mod test_util {
             ],
             vdaf,
             role,
-            vec![vdaf_verify_parameter_0, vdaf_verify_parameter_1],
+            vec![vdaf_verify_parameter],
             0,
             0,
             Duration::from_hours(8).unwrap(),
