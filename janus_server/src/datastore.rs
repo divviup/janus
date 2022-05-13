@@ -12,7 +12,10 @@ use chrono::NaiveDateTime;
 use futures::try_join;
 use janus::{
     hpke::HpkePrivateKey,
-    message::{Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId, Time},
+    message::{
+        Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, NonceChecksum, Report, Role,
+        TaskId, Time,
+    },
 };
 use postgres_types::{Json, ToSql};
 use prio::{
@@ -1022,7 +1025,7 @@ impl Transaction<'_> {
                     /* aggregation_param */ &encoded_aggregation_param,
                     /* aggregate_share */ &encoded_aggregate_share,
                     &report_count,
-                    /* checksum */ &&batch_unit_aggregation.checksum[..],
+                    /* checksum */ &batch_unit_aggregation.checksum.get_encoded(),
                 ],
             )
             .await?;
@@ -1081,13 +1084,7 @@ impl Transaction<'_> {
                     Time::from_naive_date_time(row.get("unit_interval_start"));
                 let aggregate_share = row.get_bytea_and_convert("aggregate_share")?;
                 let report_count = row.get_bigint_and_convert("report_count")?;
-                let checksum: &[u8] = row.get("checksum");
-                let checksum: [u8; 32] = checksum.try_into().map_err(|e| {
-                    Error::DbState(format!(
-                        "checksum byte array in database has wrong length: {}",
-                        e
-                    ))
-                })?;
+                let checksum = NonceChecksum::get_decoded(row.get("checksum"))?;
 
                 Ok(BatchUnitAggregation {
                     task_id,
@@ -1151,7 +1148,7 @@ impl Transaction<'_> {
         let aggregation_param = A::AggregationParam::get_decoded(&request.aggregation_param)?;
         let helper_aggregate_share = row.get_bytea_and_convert("helper_aggregate_share")?;
         let report_count = row.get_bigint_and_convert("report_count")?;
-        let checksum: [u8; 32] = row.get_bytea_and_convert("checksum")?;
+        let checksum = NonceChecksum::get_decoded(row.get("checksum"))?;
 
         Ok(Some(AggregateShareJob {
             task_id: request.task_id,
@@ -1265,7 +1262,7 @@ impl Transaction<'_> {
                     /* aggregation_param */ &encoded_aggregation_param,
                     /* aggregate_share */ &encoded_aggregate_share,
                     &report_count,
-                    /* checksum */ &&job.checksum[..],
+                    /* checksum */ &job.checksum.get_encoded(),
                 ],
             )
             .await?;
@@ -1595,7 +1592,7 @@ pub mod models {
         task,
     };
     use derivative::Derivative;
-    use janus::message::{Nonce, Role, TaskId, Time};
+    use janus::message::{Nonce, NonceChecksum, Role, TaskId, Time};
     use postgres_types::{FromSql, ToSql};
     use prio::vdaf;
 
@@ -1821,7 +1818,7 @@ pub mod models {
         pub(crate) report_count: u64,
         /// Checksum over the aggregated report shares, as described in §4.4.4.3.
         #[derivative(Debug = "ignore")]
-        pub(crate) checksum: [u8; 32],
+        pub(crate) checksum: NonceChecksum,
     }
 
     impl<A: vdaf::Aggregator> PartialEq for BatchUnitAggregation<A>
@@ -1870,7 +1867,7 @@ pub mod models {
         pub(crate) report_count: u64,
         /// Checksum over the aggregated report shares, as described in §4.4.4.3.
         #[derivative(Debug = "ignore")]
-        pub(crate) checksum: [u8; 32],
+        pub(crate) checksum: NonceChecksum,
     }
 
     impl<A: vdaf::Aggregator> PartialEq for AggregateShareJob<A>
@@ -2895,7 +2892,7 @@ mod tests {
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
-                        checksum: [0; 32],
+                        checksum: NonceChecksum::default(),
                     })
                     .await?;
 
@@ -2906,7 +2903,7 @@ mod tests {
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
-                        checksum: [0; 32],
+                        checksum: NonceChecksum::default(),
                     })
                     .await?;
 
@@ -2916,7 +2913,7 @@ mod tests {
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
-                        checksum: [0; 32],
+                        checksum: NonceChecksum::default(),
                     })
                     .await?;
 
@@ -2927,7 +2924,7 @@ mod tests {
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
-                        checksum: [0; 32],
+                        checksum: NonceChecksum::default(),
                     })
                     .await?;
 
@@ -2941,7 +2938,7 @@ mod tests {
                         ]),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
-                        checksum: [0; 32],
+                        checksum: NonceChecksum::default(),
                     })
                     .await?;
 
@@ -2952,7 +2949,7 @@ mod tests {
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
-                        checksum: [0; 32],
+                        checksum: NonceChecksum::default(),
                     })
                     .await?;
 
@@ -2963,7 +2960,7 @@ mod tests {
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
-                        checksum: [0; 32],
+                        checksum: NonceChecksum::default(),
                     })
                     .await?;
 
@@ -2974,7 +2971,7 @@ mod tests {
                         aggregation_param: aggregation_param.clone(),
                         aggregate_share: aggregate_share.clone(),
                         report_count: 0,
-                        checksum: [0; 32],
+                        checksum: NonceChecksum::default(),
                     })
                     .await?;
 
@@ -3006,7 +3003,7 @@ mod tests {
                 aggregation_param: aggregation_param.clone(),
                 aggregate_share: aggregate_share.clone(),
                 report_count: 0,
-                checksum: [0u8; 32],
+                checksum: NonceChecksum::default(),
             }),
             "{:#?}",
             batch_unit_aggregations,
@@ -3018,7 +3015,7 @@ mod tests {
                 aggregation_param: aggregation_param.clone(),
                 aggregate_share: aggregate_share.clone(),
                 report_count: 0,
-                checksum: [0u8; 32],
+                checksum: NonceChecksum::default(),
             }),
             "{:#?}",
             batch_unit_aggregations,
@@ -3049,7 +3046,7 @@ mod tests {
                 )
                 .unwrap();
                 let report_count = 10;
-                let checksum = [1; 32];
+                let checksum = NonceChecksum::get_decoded(&[1; 32]).unwrap();
 
                 let aggregate_share_job = AggregateShareJob {
                     task_id,
@@ -3157,7 +3154,7 @@ mod tests {
                         aggregation_param: (),
                         helper_aggregate_share: aggregate_share.clone(),
                         report_count: 10,
-                        checksum: [1; 32],
+                        checksum: NonceChecksum::get_decoded(&[1; 32]).unwrap(),
                     })
                     .await
                     .unwrap();

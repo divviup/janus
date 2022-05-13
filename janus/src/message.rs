@@ -11,6 +11,7 @@ use hpke::{
 use num_enum::TryFromPrimitive;
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use rand::{thread_rng, Rng};
+use ring::digest::{digest, SHA256, SHA256_OUTPUT_LEN};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display, Formatter},
@@ -223,6 +224,57 @@ impl Decode for Nonce {
         bytes.read_exact(&mut rand)?;
 
         Ok(Self { time, rand })
+    }
+}
+
+/// Checksum over DAP report nonces, defined in §4.4.4.3.
+#[derive(Copy, Clone, Debug, Default, Hash, PartialEq, Eq)]
+pub struct NonceChecksum([u8; SHA256_OUTPUT_LEN]);
+
+impl NonceChecksum {
+    /// Initialize a checksum from a single nonce.
+    pub fn from_nonce(nonce: Nonce) -> Self {
+        Self(Self::nonce_digest(nonce))
+    }
+
+    /// Compute SHA256 over a nonce.
+    fn nonce_digest(nonce: Nonce) -> [u8; SHA256_OUTPUT_LEN] {
+        digest(&SHA256, &nonce.get_encoded())
+            .as_ref()
+            .try_into()
+            // panic if somehow the digest ring computes isn't 32 bytes long.
+            .unwrap()
+    }
+
+    /// Incorporate the provided nonce into this checksum.
+    pub fn update(&mut self, nonce: Nonce) {
+        self.combine(Self::from_nonce(nonce))
+    }
+
+    /// Combine another checksum with this one.
+    pub fn combine(&mut self, other: NonceChecksum) {
+        self.0.iter_mut().zip(other.0).for_each(|(x, y)| *x ^= y)
+    }
+}
+
+impl Display for NonceChecksum {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
+}
+
+impl Encode for NonceChecksum {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(&self.0)
+    }
+}
+
+impl Decode for NonceChecksum {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let mut checksum = Self::default();
+        bytes.read_exact(&mut checksum.0)?;
+
+        Ok(checksum)
     }
 }
 
