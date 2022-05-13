@@ -25,7 +25,7 @@ use http::{
 };
 use janus::{
     hpke::{self, HpkeApplicationInfo, Label},
-    message::{HpkeConfig, HpkeConfigId, Nonce, Report, Role, TaskId},
+    message::{HpkeConfig, HpkeConfigId, Nonce, NonceChecksum, Report, Role, TaskId},
     time::Clock,
 };
 use opentelemetry::{
@@ -123,9 +123,9 @@ peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
     )]
     BatchMisalignment {
         task_id: TaskId,
-        own_checksum: [u8; 32],
+        own_checksum: NonceChecksum,
         own_report_count: u64,
-        peer_checksum: [u8; 32],
+        peer_checksum: NonceChecksum,
         peer_report_count: u64,
     },
     /// Too many queries against a single batch.
@@ -1252,15 +1252,12 @@ impl VdafOps {
         // See issue #104 for more discussion.
 
         let mut total_report_count = 0;
-        let mut total_checksum = [0u8; 32];
+        let mut total_checksum = NonceChecksum::default();
         let mut total_aggregate_share: Option<A::AggregateShare> = None;
 
         for batch_unit_aggregation in &batch_unit_aggregations {
             // §4.4.4.3: XOR this batch interval's checksum into the overall checksum
-            total_checksum
-                .iter_mut()
-                .zip(batch_unit_aggregation.checksum)
-                .for_each(|(x, y)| *x ^= y);
+            total_checksum.combine(batch_unit_aggregation.checksum);
 
             // §4.4.4.3: Sum all the report counts
             total_report_count += batch_unit_aggregation.report_count;
@@ -3952,7 +3949,7 @@ mod tests {
                         aggregation_param: (),
                         aggregate_share: fake::AggregateShare(),
                         report_count: 10,
-                        checksum: [2; 32],
+                        checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
                     })
                     .await
                 })
@@ -4050,7 +4047,7 @@ mod tests {
             .unwrap(),
             aggregation_param: vec![],
             report_count: 0,
-            checksum: [0; 32],
+            checksum: NonceChecksum::default(),
         };
 
         let (parts, body) = warp::test::request()
@@ -4111,7 +4108,7 @@ mod tests {
             .unwrap(),
             aggregation_param: vec![],
             report_count: 0,
-            checksum: [0; 32],
+            checksum: NonceChecksum::default(),
         };
 
         let (parts, body) = warp::test::request()
@@ -4180,7 +4177,7 @@ mod tests {
             .unwrap(),
             aggregation_param: vec![],
             report_count: 0,
-            checksum: [0; 32],
+            checksum: NonceChecksum::default(),
         };
 
         let (parts, body) = warp::test::request()
@@ -4218,7 +4215,7 @@ mod tests {
                         aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(64)]),
                         report_count: 5,
-                        checksum: [3; 32],
+                        checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
                     })
                     .await?;
 
@@ -4228,7 +4225,7 @@ mod tests {
                         aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(128)]),
                         report_count: 5,
-                        checksum: [2; 32],
+                        checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
                     })
                     .await?;
 
@@ -4238,7 +4235,7 @@ mod tests {
                         aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(256)]),
                         report_count: 5,
-                        checksum: [4; 32],
+                        checksum: NonceChecksum::get_decoded(&[4; 32]).unwrap(),
                     })
                     .await?;
 
@@ -4248,7 +4245,7 @@ mod tests {
                         aggregation_param,
                         aggregate_share: AggregateShare::from(vec![Field64::from(512)]),
                         report_count: 5,
-                        checksum: [8; 32],
+                        checksum: NonceChecksum::get_decoded(&[8; 32]).unwrap(),
                     })
                     .await?;
 
@@ -4268,7 +4265,7 @@ mod tests {
             .unwrap(),
             aggregation_param: vec![],
             report_count: 5,
-            checksum: [0; 32],
+            checksum: NonceChecksum::default(),
         };
 
         let (parts, body) = warp::test::request()
@@ -4309,7 +4306,7 @@ mod tests {
                 .unwrap(),
                 aggregation_param: vec![],
                 report_count: 10,
-                checksum: [3; 32],
+                checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
             }, // Interval is big enough, but report count doesn't match
             AggregateShareReq {
                 task_id,
@@ -4320,7 +4317,7 @@ mod tests {
                 .unwrap(),
                 aggregation_param: vec![],
                 report_count: 20,
-                checksum: [3 ^ 2; 32],
+                checksum: NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
             },
         ];
 
@@ -4364,7 +4361,7 @@ mod tests {
                     .unwrap(),
                     aggregation_param: vec![],
                     report_count: 10,
-                    checksum: [3 ^ 2; 32],
+                    checksum: NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
                 },
                 Field64::from(64 + 128),
             ),
@@ -4379,7 +4376,7 @@ mod tests {
                     .unwrap(),
                     aggregation_param: vec![],
                     report_count: 10,
-                    checksum: [8 ^ 4; 32],
+                    checksum: NonceChecksum::get_decoded(&[8 ^ 4; 32]).unwrap(),
                 },
                 // Should get sum over the third and fourth batch units
                 Field64::from(256 + 512),
@@ -4395,7 +4392,7 @@ mod tests {
                     .unwrap(),
                     aggregation_param: vec![],
                     report_count: 20,
-                    checksum: [8 ^ 4 ^ 3 ^ 2; 32],
+                    checksum: NonceChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
                 },
                 // Should get sum over the third and fourth batch units
                 Field64::from(64 + 128 + 256 + 512),
@@ -4471,7 +4468,7 @@ mod tests {
             .unwrap(),
             aggregation_param: vec![],
             report_count: 10,
-            checksum: [3 ^ 2; 32],
+            checksum: NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
         };
         let (parts, body) = warp::test::request()
             .method("POST")

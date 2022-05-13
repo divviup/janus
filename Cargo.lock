@@ -1284,6 +1284,7 @@ dependencies = [
  "num_enum",
  "prio",
  "rand",
+ "ring",
  "serde",
  "serde_json",
  "thiserror",
