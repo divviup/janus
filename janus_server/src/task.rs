@@ -1,9 +1,12 @@
 //! Shared parameters for a PPM task.
 
-use crate::{hpke::HpkePrivateKey, message::Interval};
+use crate::message::Interval;
 use ::rand::{thread_rng, Rng};
 use derivative::Derivative;
-use janus::message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
+use janus::{
+    hpke::HpkePrivateKey,
+    message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
+};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
     hmac::{self, HMAC_SHA256},
@@ -29,7 +32,8 @@ pub enum Error {
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-patton-cfrg-vdaf/
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Vdaf {
+#[serde(rename = "Vdaf")]
+pub enum VdafInstance {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
     Prio3Aes128Count,
     /// A `prio3` sum using the AES 128 pseudorandom generator.
@@ -116,7 +120,7 @@ pub struct Task {
     /// entry is the leader's.
     pub(crate) aggregator_endpoints: Vec<Url>,
     /// The VDAF this task executes.
-    pub vdaf: Vdaf,
+    pub vdaf: VdafInstance,
     /// The role performed by the aggregator.
     pub role: Role,
     /// Secret verification parameters shared by the aggregators.
@@ -147,7 +151,7 @@ impl Task {
     pub fn new<I: IntoIterator<Item = (HpkeConfig, HpkePrivateKey)>>(
         task_id: TaskId,
         aggregator_endpoints: Vec<Url>,
-        vdaf: Vdaf,
+        vdaf: VdafInstance,
         role: Role,
         vdaf_verify_parameters: Vec<Vec<u8>>,
         max_batch_lifetime: u64,
@@ -217,9 +221,12 @@ impl Task {
 // This is public to allow use in integration tests.
 #[doc(hidden)]
 pub mod test_util {
-    use super::{Task, Vdaf};
-    use crate::{hpke::test_util::generate_hpke_config_and_private_key, task::AggregatorAuthKey};
-    use janus::message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
+    use super::{Task, VdafInstance};
+    use crate::task::AggregatorAuthKey;
+    use janus::{
+        hpke::test_util::generate_hpke_config_and_private_key,
+        message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
+    };
     use prio::{
         codec::Encode,
         field::Field128,
@@ -234,7 +241,7 @@ pub mod test_util {
     /// Create a dummy [`Task`] from the provided [`TaskId`], with
     /// dummy values for the other fields. This is pub because it is needed for
     /// integration tests.
-    pub fn new_dummy_task(task_id: TaskId, vdaf: Vdaf, role: Role) -> Task {
+    pub fn new_dummy_task(task_id: TaskId, vdaf: VdafInstance, role: Role) -> Task {
         let (collector_config, _) = generate_hpke_config_and_private_key();
         let (aggregator_config_0, aggregator_private_key_0) =
             generate_hpke_config_and_private_key();
@@ -273,22 +280,24 @@ pub mod test_util {
         .unwrap()
     }
 
-    fn verify_param_dispatch(vdaf: &Vdaf, role: Role) -> Vec<u8> {
+    fn verify_param_dispatch(vdaf: &VdafInstance, role: Role) -> Vec<u8> {
         match &vdaf {
-            Vdaf::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),
-            Vdaf::Prio3Aes128Sum { bits } => {
+            VdafInstance::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),
+            VdafInstance::Prio3Aes128Sum { bits } => {
                 verify_param(Prio3Aes128Sum::new(2, *bits).unwrap(), role)
             }
-            Vdaf::Prio3Aes128Histogram { buckets } => {
+            VdafInstance::Prio3Aes128Histogram { buckets } => {
                 verify_param(Prio3Aes128Histogram::new(2, &*buckets).unwrap(), role)
             }
-            Vdaf::Poplar1 { bits } => verify_param(
+            VdafInstance::Poplar1 { bits } => verify_param(
                 Poplar1::<ToyIdpf<Field128>, PrgAes128, 16>::new(*bits),
                 role,
             ),
 
             #[cfg(test)]
-            Vdaf::Fake | Vdaf::FakeFailsPrepInit | Vdaf::FakeFailsPrepStep => Vec::new(),
+            VdafInstance::Fake
+            | VdafInstance::FakeFailsPrepInit
+            | VdafInstance::FakeFailsPrepStep => Vec::new(),
         }
     }
 
@@ -314,7 +323,7 @@ mod tests {
 
     #[test]
     fn validate_batch_interval() {
-        let mut task = new_dummy_task(TaskId::random(), Vdaf::Fake, Role::Leader);
+        let mut task = new_dummy_task(TaskId::random(), VdafInstance::Fake, Role::Leader);
         let min_batch_duration_secs = 3600;
         task.min_batch_duration = Duration::from_seconds(min_batch_duration_secs);
 
@@ -387,14 +396,14 @@ mod tests {
         // The `Vdaf` type must have a stable serialization, as it gets stored in a JSON database
         // column.
         assert_tokens(
-            &Vdaf::Prio3Aes128Count,
+            &VdafInstance::Prio3Aes128Count,
             &[Token::UnitVariant {
                 name: "Vdaf",
                 variant: "Prio3Aes128Count",
             }],
         );
         assert_tokens(
-            &Vdaf::Prio3Aes128Sum { bits: 64 },
+            &VdafInstance::Prio3Aes128Sum { bits: 64 },
             &[
                 Token::StructVariant {
                     name: "Vdaf",
@@ -407,7 +416,7 @@ mod tests {
             ],
         );
         assert_tokens(
-            &Vdaf::Prio3Aes128Histogram {
+            &VdafInstance::Prio3Aes128Histogram {
                 buckets: vec![0, 100, 200, 400],
             },
             &[
@@ -427,7 +436,7 @@ mod tests {
             ],
         );
         assert_tokens(
-            &Vdaf::Poplar1 { bits: 64 },
+            &VdafInstance::Poplar1 { bits: 64 },
             &[
                 Token::StructVariant {
                     name: "Vdaf",
@@ -440,21 +449,21 @@ mod tests {
             ],
         );
         assert_tokens(
-            &Vdaf::Fake,
+            &VdafInstance::Fake,
             &[Token::UnitVariant {
                 name: "Vdaf",
                 variant: "Fake",
             }],
         );
         assert_tokens(
-            &Vdaf::FakeFailsPrepInit,
+            &VdafInstance::FakeFailsPrepInit,
             &[Token::UnitVariant {
                 name: "Vdaf",
                 variant: "FakeFailsPrepInit",
             }],
         );
         assert_tokens(
-            &Vdaf::FakeFailsPrepStep,
+            &VdafInstance::FakeFailsPrepStep,
             &[Token::UnitVariant {
                 name: "Vdaf",
                 variant: "FakeFailsPrepStep",
