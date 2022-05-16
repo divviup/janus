@@ -22,7 +22,7 @@ use std::{
 use tokio::task::JoinHandle;
 use url::Url;
 
-test_util::define_ephemeral_datastore!();
+janus_test_util::define_ephemeral_datastore!();
 
 fn endpoint_from_socket_addr(addr: &SocketAddr) -> Url {
     assert!(addr.ip().is_loopback());

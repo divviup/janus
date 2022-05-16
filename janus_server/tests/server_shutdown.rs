@@ -18,7 +18,7 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
-test_util::define_ephemeral_datastore!();
+janus_test_util::define_ephemeral_datastore!();
 
 /// Try to find an open port by binding to an ephemeral port, saving the port
 /// number, and closing the listening socket. This may still fail due to race
