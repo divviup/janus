@@ -980,7 +980,10 @@ impl Transaction<'_> {
                 let leader_aggregate_share =
                     row.get_nullable_bytea_and_convert("leader_aggregate_share")?;
                 let report_count = row.get_nullable_bigint_and_convert("report_count")?;
-                let checksum = row.get_nullable_bytea_and_convert("checksum")?;
+                let checksum_bytes: Option<Vec<u8>> = row.get("checksum");
+                let checksum = checksum_bytes
+                    .map(|bytes| NonceChecksum::get_decoded(&bytes))
+                    .transpose()?;
 
                 Ok(CollectJob {
                     collect_job_id,
@@ -1081,7 +1084,7 @@ impl Transaction<'_> {
         collect_job_id: Uuid,
         leader_aggregate_share: &A::AggregateShare,
         report_count: u64,
-        checksum: [u8; 32],
+        checksum: NonceChecksum,
     ) -> Result<(), Error>
     where
         A: vdaf::Aggregator,
@@ -1091,7 +1094,7 @@ impl Transaction<'_> {
     {
         let leader_aggregate_share: Option<Vec<u8>> = Some(leader_aggregate_share.into());
         let report_count = Some(i64::try_from(report_count)?);
-        let checksum = Some(&checksum[..]);
+        let checksum = Some(checksum.get_encoded());
 
         let stmt = self
             .tx
@@ -2125,7 +2128,7 @@ pub mod models {
         /// Checksum over the aggregated report shares, as described in §4.4.4.3, or `None` until
         /// the leader has computed it.
         #[derivative(Debug = "ignore")]
-        pub(crate) checksum: Option<[u8; 32]>,
+        pub(crate) checksum: Option<NonceChecksum>,
     }
 
     impl<A: vdaf::Aggregator> CollectJob<A>
@@ -3325,7 +3328,10 @@ mod tests {
                     Some(leader_aggregate_share.clone())
                 );
                 assert_eq!(first_collect_job.report_count, Some(10));
-                assert_eq!(first_collect_job.checksum, Some([1; 32]));
+                assert_eq!(
+                    first_collect_job.checksum,
+                    Some(NonceChecksum::get_decoded(&[1; 32]).unwrap())
+                );
 
                 let encrypted_helper_aggregate_share = hpke::seal(
                     &task.collector_hpke_config,
@@ -3364,7 +3370,10 @@ mod tests {
                     Some(leader_aggregate_share)
                 );
                 assert_eq!(first_collect_job.report_count, Some(10));
-                assert_eq!(first_collect_job.checksum, Some([1; 32]));
+                assert_eq!(
+                    first_collect_job.checksum,
+                    Some(NonceChecksum::get_decoded(&[1; 32]).unwrap())
+                );
 
                 Ok(())
             })

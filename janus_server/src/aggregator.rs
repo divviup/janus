@@ -4573,7 +4573,7 @@ mod tests {
                         collect_job_id,
                         &leader_aggregate_share,
                         10,
-                        [1; 32],
+                        NonceChecksum::get_decoded(&[1; 32]).unwrap(),
                     )
                     .await
                     .unwrap();
