@@ -2208,7 +2208,7 @@ pub mod models {
 pub mod test_util {
     use super::{Crypter, Datastore};
 
-    test_util::define_ephemeral_datastore!();
+    janus_test_util::define_ephemeral_datastore!();
 }
 
 #[cfg(test)]
@@ -2221,7 +2221,7 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
-    use ::test_util::generate_aead_key;
+    use ::janus_test_util::generate_aead_key;
     use assert_matches::assert_matches;
     use janus::{
         hpke::{self, HpkeApplicationInfo, Label},

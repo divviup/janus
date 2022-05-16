@@ -2137,7 +2137,7 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
-    use ::test_util::MockClock;
+    use ::janus_test_util::MockClock;
     use assert_matches::assert_matches;
     use http::Method;
     use janus::{

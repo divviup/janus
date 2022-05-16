@@ -16,7 +16,7 @@ lazy_static = "1"
 prio = { git = "https://github.com/divviup/libprio-rs", rev = "229cd9c45924c7dae3ba754a6eb46b2a05ca8451" }  # TODO(brandon): use a numbered version, once a release is cut >0.7.0
 ring = "0.16.20"
 testcontainers = "0.13.0"
-test_util = { path = "../test_util" }
+janus_test_util = { path = "../test_util" }
 tokio = { version = "^1.18", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
 tracing = "0.1.34"
