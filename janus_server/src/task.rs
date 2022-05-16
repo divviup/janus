@@ -1,16 +1,12 @@
 //! Shared parameters for a PPM task.
 
 use crate::message::Interval;
-use ::rand::{thread_rng, Rng};
 use derivative::Derivative;
 use janus::{
     hpke::HpkePrivateKey,
     message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
 };
-use ring::{
-    digest::SHA256_OUTPUT_LEN,
-    hmac::{self, HMAC_SHA256},
-};
+use ring::constant_time;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use url::Url;
@@ -51,64 +47,35 @@ pub enum VdafInstance {
     FakeFailsPrepStep,
 }
 
-/// An HMAC-SHA-256 key used to authenticate messages exchanged between
-/// aggregators. See `agg_auth_key` in draft-gpew-priv-ppm §4.2.
-// We define the type this way because while we can use `ring::hmac::Key::new`
-// to get a `ring::hmac::Key` from a slice of bytes, we can't get the bytes
-// back out of the key.
-#[derive(Clone, Debug)]
-pub struct AggregatorAuthKey {
-    bytes: Vec<u8>,
-    hmac_key: hmac::Key,
-}
+/// An authentication (bearer) token used by aggregators for aggregator-to-aggregator
+/// authentication.
+#[derive(Clone)]
+pub struct AggregatorAuthenticationToken(Vec<u8>);
 
-// TODO(brandon): use a ring constant once one is exposed. This is the correct value per ring:
-//   https://docs.rs/ring/0.16.20/src/ring/digest.rs.html#339
-// (but we can't use the value in ring as a const because it's not const, it's static)
-const SHA256_BLOCK_LEN: usize = 512 / 8;
-
-impl AggregatorAuthKey {
-    pub fn new(key_bytes: &[u8]) -> Result<Self, Error> {
-        if key_bytes.len() < SHA256_OUTPUT_LEN || key_bytes.len() > SHA256_BLOCK_LEN {
-            return Err(Error::AggregatorAuthKeySize);
-        }
-        Ok(Self {
-            bytes: Vec::from(key_bytes),
-            hmac_key: hmac::Key::new(HMAC_SHA256, key_bytes),
-        })
-    }
-
-    /// Randomly generate an [`AggregatorAuthKey`].
-    pub fn generate() -> Self {
-        let mut key_bytes = [0u8; SHA256_BLOCK_LEN];
-        thread_rng().fill(&mut key_bytes);
-        // Won't panic: key_bytes is constructed as SHA256_BLOCK_LEN bytes, which will pass the
-        // validation check.
-        Self::new(&key_bytes).unwrap()
+impl From<Vec<u8>> for AggregatorAuthenticationToken {
+    fn from(token: Vec<u8>) -> Self {
+        Self(token)
     }
 }
 
-impl AsRef<[u8]> for AggregatorAuthKey {
-    fn as_ref(&self) -> &[u8] {
-        &self.bytes
+impl AggregatorAuthenticationToken {
+    /// Returns a view of the aggregator authentication token as a byte slice.
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 }
 
-impl AsRef<hmac::Key> for AggregatorAuthKey {
-    fn as_ref(&self) -> &hmac::Key {
-        &self.hmac_key
-    }
-}
-
-impl PartialEq for AggregatorAuthKey {
+impl PartialEq for AggregatorAuthenticationToken {
     fn eq(&self, other: &Self) -> bool {
-        // The key is ignored because it is derived from the key bytes.
-        // (also, ring::hmac::Key doesn't implement PartialEq)
-        self.bytes == other.bytes
+        // We attempt constant-time comparisons of the token data. Note that this function still
+        // leaks whether the lengths of the tokens are equal -- this is acceptable because we expect
+        // the length of the tokens to provide enough randomness that needs to be guessed even if
+        // the length is known.
+        constant_time::verify_slices_are_equal(&self.0, &other.0).is_ok()
     }
 }
 
-impl Eq for AggregatorAuthKey {}
+impl Eq for AggregatorAuthenticationToken {}
 
 /// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
 #[derive(Clone, Derivative, PartialEq, Eq)]
@@ -138,10 +105,9 @@ pub struct Task {
     pub(crate) tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
     pub(crate) collector_hpke_config: HpkeConfig,
-    /// Key used to authenticate messages sent to or received from the other
-    /// aggregators.
+    /// Tokens used to authenticate messages sent to or received from the other aggregators.
     #[derivative(Debug = "ignore")]
-    pub(crate) agg_auth_keys: Vec<AggregatorAuthKey>,
+    pub(crate) agg_auth_tokens: Vec<AggregatorAuthenticationToken>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
     pub(crate) hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
@@ -159,7 +125,7 @@ impl Task {
         min_batch_duration: Duration,
         tolerable_clock_skew: Duration,
         collector_hpke_config: HpkeConfig,
-        agg_auth_keys: Vec<AggregatorAuthKey>,
+        agg_auth_tokens: Vec<AggregatorAuthenticationToken>,
         hpke_keys: I,
     ) -> Result<Self, Error> {
         // PPM currently only supports configurations of exactly two aggregators.
@@ -169,8 +135,8 @@ impl Task {
         if !role.is_aggregator() {
             return Err(Error::InvalidParameter("role"));
         }
-        if agg_auth_keys.is_empty() {
-            return Err(Error::InvalidParameter("agg_auth_keys"));
+        if agg_auth_tokens.is_empty() {
+            return Err(Error::InvalidParameter("agg_auth_tokens"));
         }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
@@ -193,7 +159,7 @@ impl Task {
             min_batch_duration,
             tolerable_clock_skew,
             collector_hpke_config,
-            agg_auth_keys,
+            agg_auth_tokens,
             hpke_keys: hpke_configs,
         })
     }
@@ -213,13 +179,23 @@ impl Task {
         let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
         Ok(&self.aggregator_endpoints[index])
     }
+
+    pub fn primary_aggregator_auth_token(&self) -> &AggregatorAuthenticationToken {
+        self.agg_auth_tokens.iter().rev().next().unwrap()
+    }
+
+    pub(crate) fn check_aggregator_auth_token(
+        &self,
+        auth_token: AggregatorAuthenticationToken,
+    ) -> bool {
+        self.agg_auth_tokens.iter().rev().any(|t| t == &auth_token)
+    }
 }
 
 // This is public to allow use in integration tests.
 #[doc(hidden)]
 pub mod test_util {
-    use super::{Task, VdafInstance};
-    use crate::task::AggregatorAuthKey;
+    use super::{AggregatorAuthenticationToken, Task, VdafInstance};
     use janus::{
         hpke::test_util::generate_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
@@ -234,6 +210,7 @@ pub mod test_util {
             prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
         },
     };
+    use rand::{thread_rng, Rng};
 
     /// Create a dummy [`Task`] from the provided [`TaskId`], with
     /// dummy values for the other fields. This is pub because it is needed for
@@ -285,13 +262,24 @@ pub mod test_util {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             collector_config,
-            vec![AggregatorAuthKey::generate(), AggregatorAuthKey::generate()],
+            vec![
+                generate_aggregator_auth_token(),
+                generate_aggregator_auth_token(),
+            ],
             vec![
                 (aggregator_config_0, aggregator_private_key_0),
                 (aggregator_config_1, aggregator_private_key_1),
             ],
         )
         .unwrap()
+    }
+
+    pub fn generate_aggregator_auth_token() -> AggregatorAuthenticationToken {
+        let mut buf = [0; 16];
+        thread_rng().fill(&mut buf);
+        base64::encode_config(&buf, base64::URL_SAFE_NO_PAD)
+            .into_bytes()
+            .into()
     }
 
     fn verify_param<V: vdaf::Vdaf>(vdaf: V, role: Role) -> Vec<u8>

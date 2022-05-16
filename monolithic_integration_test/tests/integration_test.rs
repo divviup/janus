@@ -8,7 +8,7 @@ use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
     datastore::{Crypter, Datastore},
-    task::{AggregatorAuthKey, Task, VdafInstance},
+    task::{test_util::generate_aggregator_auth_token, Task, VdafInstance},
     trace::{install_trace_subscriber, TraceConfiguration},
 };
 use prio::{
@@ -57,7 +57,7 @@ async fn setup_test() -> TestCase {
     let helper_verify_param = verify_params_iter.next().unwrap();
 
     let (collector_hpke_config, _) = generate_hpke_config_and_private_key();
-    let agg_auth_key = AggregatorAuthKey::generate();
+    let agg_auth_token = generate_aggregator_auth_token();
     let leader_hpke_key = generate_hpke_config_and_private_key();
     let helper_hpke_key = generate_hpke_config_and_private_key();
 
@@ -90,7 +90,7 @@ async fn setup_test() -> TestCase {
         Duration::from_hours(8).unwrap(),
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
-        vec![agg_auth_key.clone()],
+        vec![agg_auth_token.clone()],
         vec![leader_hpke_key],
     )
     .unwrap();
@@ -123,7 +123,7 @@ async fn setup_test() -> TestCase {
         Duration::from_hours(8).unwrap(),
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config,
-        vec![agg_auth_key],
+        vec![agg_auth_token],
         vec![helper_hpke_key],
     )
     .unwrap();
