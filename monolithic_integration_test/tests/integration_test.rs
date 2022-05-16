@@ -2,7 +2,7 @@ use futures::channel::oneshot::Sender;
 use janus::{
     hpke::test_util::generate_hpke_config_and_private_key,
     message::{Duration, Role, TaskId},
-    time::RealClock,
+    time::{Clock, RealClock},
 };
 use janus_server::{
     aggregator::aggregator_server,
@@ -61,9 +61,9 @@ async fn setup_test() -> TestCase {
     let leader_hpke_key = generate_hpke_config_and_private_key();
     let helper_hpke_key = generate_hpke_config_and_private_key();
 
-    let (leader_datastore, _leader_db_handle) = ephemeral_datastore().await;
+    let (leader_datastore, _leader_db_handle) = ephemeral_datastore(RealClock::default()).await;
     let leader_datastore = Arc::new(leader_datastore);
-    let (helper_datastore, _helper_db_handle) = ephemeral_datastore().await;
+    let (helper_datastore, _helper_db_handle) = ephemeral_datastore(RealClock::default()).await;
 
     let (leader_shutdown_sender, leader_shutdown_receiver) = futures::channel::oneshot::channel();
     let (helper_shutdown_sender, helper_shutdown_receiver) = futures::channel::oneshot::channel();

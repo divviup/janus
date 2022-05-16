@@ -15,7 +15,7 @@ use crate::{
         AuthenticatedDecodeError, AuthenticatedEncoder, AuthenticatedRequestDecoder, CollectReq,
         Interval, ReportShare, Transition, TransitionError, TransitionTypeSpecificData,
     },
-    task::{AggregatorAuthKey, Task, VdafInstance},
+    task::{Task, VdafInstance},
 };
 use bytes::Bytes;
 use futures::try_join;
@@ -160,9 +160,9 @@ impl From<datastore::Error> for Error {
 }
 
 /// Aggregator implements a PPM aggregator.
-pub struct Aggregator<C> {
+pub struct Aggregator<C: Clock> {
     /// Datastore used for durable storage.
-    datastore: Arc<Datastore>,
+    datastore: Arc<Datastore<C>>,
     /// Clock used to sample time.
     clock: C,
     /// Cache of task aggregators.
@@ -170,7 +170,7 @@ pub struct Aggregator<C> {
 }
 
 impl<C: Clock> Aggregator<C> {
-    fn new(datastore: Arc<Datastore>, clock: C) -> Self {
+    fn new(datastore: Arc<Datastore<C>>, clock: C) -> Self {
         Self {
             datastore,
             clock,
@@ -207,7 +207,12 @@ impl<C: Clock> Aggregator<C> {
         let resp = task_aggregator
             .handle_aggregate(&self.datastore, req)
             .await?;
-        let key = task_aggregator.current_aggregator_auth_key();
+        let key = task_aggregator
+            .task
+            .primary_aggregator_auth_key()
+            .ok_or_else(|| {
+                Error::Internal("task has no aggregator auth keys configured".to_string())
+            })?;
         Ok(AuthenticatedEncoder::new(resp).encode(key.as_ref()))
     }
 
@@ -222,15 +227,18 @@ impl<C: Clock> Aggregator<C> {
         if required_role.is_some() && required_role.unwrap() != task_aggregator.task.role {
             return Err(Error::UnrecognizedTask(task_id));
         }
-        for key in task_aggregator.task.agg_auth_keys.iter().rev() {
-            match decoder.decode(key.as_ref()) {
-                Ok(decoded_body) => return Ok((task_aggregator, decoded_body)),
-                Err(AuthenticatedDecodeError::InvalidHmac) => continue, // try the next key
-                Err(AuthenticatedDecodeError::Codec(err)) => return Err(Error::MessageDecode(err)),
-            }
+        match decoder.decode(
+            task_aggregator
+                .task
+                .agg_auth_keys
+                .iter()
+                .map(|k| k.as_ref())
+                .rev(),
+        ) {
+            Ok(decoded_body) => Ok((task_aggregator, decoded_body)),
+            Err(AuthenticatedDecodeError::InvalidHmac) => Err(Error::InvalidHmac(task_id)),
+            Err(AuthenticatedDecodeError::Codec(err)) => Err(Error::MessageDecode(err)),
         }
-        // If we get here, every available key returned InvalidHmac.
-        Err(Error::InvalidHmac(task_id))
     }
 
     async fn handle_collect(&self, req_bytes: &[u8]) -> Result<Url, Error> {
@@ -268,8 +276,13 @@ impl<C: Clock> Aggregator<C> {
         let resp = task_aggregator
             .handle_aggregate_share(&self.datastore, &req)
             .await?;
-        Ok(AuthenticatedEncoder::new(resp)
-            .encode(task_aggregator.current_aggregator_auth_key().as_ref()))
+        let key = task_aggregator
+            .task
+            .primary_aggregator_auth_key()
+            .ok_or_else(|| {
+                Error::Internal("task has no aggregator auth keys configured".to_string())
+            })?;
+        Ok(AuthenticatedEncoder::new(resp).encode(key.as_ref()))
     }
 
     async fn task_aggregator_for(&self, task_id: TaskId) -> Result<Arc<TaskAggregator>, Error> {
@@ -369,12 +382,6 @@ impl TaskAggregator {
         Ok(Self { task, vdaf_ops })
     }
 
-    /// Returns the [`AggregatorAuthKey`] currently used by this aggregator's task to authenticate
-    /// aggregate messages.
-    fn current_aggregator_auth_key(&self) -> &AggregatorAuthKey {
-        self.task.agg_auth_keys.last().unwrap()
-    }
-
     fn handle_hpke_config(&self) -> HpkeConfig {
         // TODO(brandon): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
         // config/key -- right now it's the one with the maximal config ID, but that will run into
@@ -391,7 +398,7 @@ impl TaskAggregator {
 
     async fn handle_upload<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         clock: &C,
         report: Report,
     ) -> Result<(), Error> {
@@ -479,9 +486,9 @@ impl TaskAggregator {
         Ok(())
     }
 
-    async fn handle_aggregate(
+    async fn handle_aggregate<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         req: AggregateReq,
     ) -> Result<AggregateResp, Error> {
         self.vdaf_ops
@@ -489,7 +496,11 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_collect(&self, datastore: &Datastore, req: CollectReq) -> Result<Url, Error> {
+    async fn handle_collect<C: Clock>(
+        &self,
+        datastore: &Datastore<C>,
+        req: CollectReq,
+    ) -> Result<Url, Error> {
         let collect_job_uuid = self
             .vdaf_ops
             .handle_collect(datastore, &self.task, &req)
@@ -502,9 +513,9 @@ impl TaskAggregator {
             .join(&collect_job_uuid.to_string())?)
     }
 
-    async fn handle_aggregate_share(
+    async fn handle_aggregate_share<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         req: &AggregateShareReq,
     ) -> Result<AggregateShareResp, Error> {
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
@@ -538,9 +549,9 @@ enum VdafOps {
 impl VdafOps {
     /// Implements the `/aggregate` endpoint for the helper, described in §4.4.4.1 & §4.4.4.2 of
     /// draft-gpew-priv-ppm.
-    async fn handle_aggregate(
+    async fn handle_aggregate<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         task: &Task,
         req: AggregateReq,
     ) -> Result<AggregateResp, Error> {
@@ -562,8 +573,8 @@ impl VdafOps {
         }
     }
 
-    async fn handle_aggregate_generic<A: vdaf::Aggregator>(
-        datastore: &Datastore,
+    async fn handle_aggregate_generic<A: vdaf::Aggregator, C: Clock>(
+        datastore: &Datastore<C>,
         vdaf: &A,
         task: &Task,
         verify_param: &A::VerifyParam,
@@ -608,8 +619,8 @@ impl VdafOps {
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
-    async fn handle_aggregate_init_generic<A: vdaf::Aggregator>(
-        datastore: &Datastore,
+    async fn handle_aggregate_init_generic<A: vdaf::Aggregator, C: Clock>(
+        datastore: &Datastore<C>,
         vdaf: &A,
         task: &Task,
         verify_param: &A::VerifyParam,
@@ -621,6 +632,7 @@ impl VdafOps {
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::PrepareMessage: Send + Sync,
         A::PrepareStep: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
@@ -729,7 +741,7 @@ impl VdafOps {
                         trans_data: TransitionTypeSpecificData::Continued {
                             payload: prep_msg.get_encoded(),
                         },
-                        agg_state: ReportAggregationState::<A>::Waiting(prep_step),
+                        agg_state: ReportAggregationState::<A>::Waiting(prep_step, None),
                     }
                 }
 
@@ -818,8 +830,8 @@ impl VdafOps {
         })
     }
 
-    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator>(
-        datastore: &Datastore,
+    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator, C: Clock>(
+        datastore: &Datastore<C>,
         vdaf: &A,
         task: &Task,
         verify_param: &A::VerifyParam,
@@ -883,7 +895,7 @@ impl VdafOps {
                                 // This report was omitted by the leader because of a prior failure.
                                 // Note that the report was dropped (if it's not already in an error
                                 // state) and continue.
-                                if matches!(report_agg.state, ReportAggregationState::Waiting(_)) {
+                                if matches!(report_agg.state, ReportAggregationState::Waiting(_, _)) {
                                     report_agg.state = ReportAggregationState::Failed(TransitionError::ReportDropped);
                                     tx.update_report_aggregation(&report_agg).await?;
                                 }
@@ -893,7 +905,7 @@ impl VdafOps {
                         };
                         let prep_step =
                             match report_aggregation.state {
-                                ReportAggregationState::Waiting(prep_step) => prep_step,
+                                ReportAggregationState::Waiting(prep_step, _) => prep_step,
                                 _ => {
                                     warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent transition for non-WAITING report aggregation");
                                     return Err(datastore::Error::User(
@@ -931,7 +943,7 @@ impl VdafOps {
                             PrepareTransition::Continue(prep_step, prep_msg) => {
                                 saw_continue = true;
                                 report_aggregation.state =
-                                    ReportAggregationState::Waiting(prep_step);
+                                    ReportAggregationState::Waiting(prep_step, None);
                                 response_transitions.push(Transition {
                                     nonce: transition.nonce,
                                     trans_data: TransitionTypeSpecificData::Continued {
@@ -973,7 +985,7 @@ impl VdafOps {
                         // This report was omitted by the leader because of a prior failure.
                         // Note that the report was dropped (if it's not already in an error state)
                         // and continue.
-                        if matches!(report_agg.state, ReportAggregationState::Waiting(_)) {
+                        if matches!(report_agg.state, ReportAggregationState::Waiting(_, _)) {
                             report_agg.state = ReportAggregationState::Failed(TransitionError::ReportDropped);
                             tx.update_report_aggregation(&report_agg).await?;
                         }
@@ -1000,23 +1012,23 @@ impl VdafOps {
             .await?)
     }
 
-    async fn handle_collect(
+    async fn handle_collect<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         task: &Task,
         collect_req: &CollectReq,
     ) -> Result<Uuid, Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
-                Self::handle_collect_generic::<Prio3Aes128Count, _>(datastore, task, collect_req)
+                Self::handle_collect_generic::<Prio3Aes128Count, _, _>(datastore, task, collect_req)
                     .await
             }
             VdafOps::Prio3Aes128Sum(_, _) => {
-                Self::handle_collect_generic::<Prio3Aes128Sum, _>(datastore, task, collect_req)
+                Self::handle_collect_generic::<Prio3Aes128Sum, _, _>(datastore, task, collect_req)
                     .await
             }
             VdafOps::Prio3Aes128Histogram(_, _) => {
-                Self::handle_collect_generic::<Prio3Aes128Histogram, _>(
+                Self::handle_collect_generic::<Prio3Aes128Histogram, _, _>(
                     datastore,
                     task,
                     collect_req,
@@ -1026,14 +1038,14 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_collect_generic::<fake::Vdaf, _>(datastore, task, collect_req).await
+                Self::handle_collect_generic::<fake::Vdaf, _, _>(datastore, task, collect_req).await
             }
         }
     }
 
     #[tracing::instrument(skip(datastore), err)]
-    async fn handle_collect_generic<A, E>(
-        datastore: &Datastore,
+    async fn handle_collect_generic<A, E, C>(
+        datastore: &Datastore<C>,
         task: &Task,
         req: &CollectReq,
     ) -> Result<Uuid, Error>
@@ -1044,6 +1056,7 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         E: std::fmt::Display,
         for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        C: Clock,
     {
         // §4.5: check that the batch interval meets the requirements from §4.6
         if !task.validate_batch_interval(req.batch_interval) {
@@ -1094,15 +1107,15 @@ impl VdafOps {
     }
 
     /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
-    async fn handle_aggregate_share(
+    async fn handle_aggregate_share<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         task: &Task,
         aggregate_share_req: &AggregateShareReq,
     ) -> Result<AggregateShareResp, Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
-                Self::handle_aggregate_share_generic::<Prio3Aes128Count, FieldError>(
+                Self::handle_aggregate_share_generic::<Prio3Aes128Count, FieldError, C>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1110,7 +1123,7 @@ impl VdafOps {
                 .await
             }
             VdafOps::Prio3Aes128Sum(_, _) => {
-                Self::handle_aggregate_share_generic::<Prio3Aes128Sum, FieldError>(
+                Self::handle_aggregate_share_generic::<Prio3Aes128Sum, FieldError, C>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1118,7 +1131,7 @@ impl VdafOps {
                 .await
             }
             VdafOps::Prio3Aes128Histogram(_, _) => {
-                Self::handle_aggregate_share_generic::<Prio3Aes128Histogram, FieldError>(
+                Self::handle_aggregate_share_generic::<Prio3Aes128Histogram, FieldError, C>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1128,7 +1141,7 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_aggregate_share_generic::<fake::Vdaf, Infallible>(
+                Self::handle_aggregate_share_generic::<fake::Vdaf, Infallible, C>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1141,8 +1154,8 @@ impl VdafOps {
     /// Check whether any member of `batch_unit_aggregations` has been included in enough collect
     /// jobs (for `task.role` == [`Role::Leader`]) or aggregate share jobs (for `task.role` ==
     /// [`Role::Helper`]) to violate the task's maximum batch lifetime.
-    async fn validate_batch_lifetime_for_unit_aggregations<A, E>(
-        tx: &Transaction<'_>,
+    async fn validate_batch_lifetime_for_unit_aggregations<A, E, C>(
+        tx: &Transaction<'_, C>,
         task: &Task,
         batch_unit_aggregations: &[BatchUnitAggregation<A>],
     ) -> Result<(), datastore::Error>
@@ -1151,6 +1164,7 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         E: std::fmt::Display,
         for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        C: Clock,
     {
         // Check how many rows in the relevant table have a batch interval that includes each batch
         // unit. Each such row consumes one unit of batch lifetime (§4.6).
@@ -1206,8 +1220,8 @@ impl VdafOps {
     }
 
     #[tracing::instrument(skip(tx), err)]
-    async fn service_aggregate_share_request<A, E>(
-        tx: &Transaction<'_>,
+    async fn service_aggregate_share_request<A, E, C>(
+        tx: &Transaction<'_, C>,
         task: &Task,
         aggregate_share_req: &AggregateShareReq,
     ) -> Result<AggregateShareJob<A>, datastore::Error>
@@ -1218,6 +1232,7 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         E: std::fmt::Display,
         for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        C: Clock,
     {
         let aggregation_param =
             A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
@@ -1308,8 +1323,8 @@ impl VdafOps {
         Ok(aggregate_share_job)
     }
 
-    async fn handle_aggregate_share_generic<A, E>(
-        datastore: &Datastore,
+    async fn handle_aggregate_share_generic<A, E, C>(
+        datastore: &Datastore<C>,
         task: &Task,
         aggregate_share_req: &AggregateShareReq,
     ) -> Result<AggregateShareResp, Error>
@@ -1320,6 +1335,7 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         E: std::fmt::Display,
         for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        C: Clock,
     {
         let aggregate_share_job = datastore
             .run_tx(move |tx| {
@@ -1344,7 +1360,7 @@ impl VdafOps {
                                 ?aggregate_share_req,
                                 "Cache miss, computing aggregate share job result"
                             );
-                            Self::service_aggregate_share_request::<A, E>(
+                            Self::service_aggregate_share_request::<A, E, C>(
                                 tx,
                                 &task,
                                 &aggregate_share_req,
@@ -1621,7 +1637,7 @@ where
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
 fn aggregator_filter<C: Clock>(
-    datastore: Arc<Datastore>,
+    datastore: Arc<Datastore<C>>,
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
     let aggregator = Arc::new(Aggregator::new(datastore, clock));
@@ -1742,7 +1758,7 @@ fn aggregator_filter<C: Clock>(
 /// `SocketAddr` representing the address and port the server are listening on
 /// and a future that can be `await`ed to begin serving requests.
 pub fn aggregator_server<C: Clock>(
-    datastore: Arc<Datastore>,
+    datastore: Arc<Datastore<C>>,
     clock: C,
     listen_address: SocketAddr,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
@@ -1940,7 +1956,7 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
-    use ::test_util::MockClock;
+    use ::test_util::{run_vdaf, MockClock, PrepareTransition};
     use assert_matches::assert_matches;
     use http::Method;
     use janus::{
@@ -1951,8 +1967,8 @@ mod tests {
     use prio::{
         codec::Decode,
         field::Field64,
+        vdaf::Vdaf as VdafTrait,
         vdaf::{prio3::Prio3Aes128Count, AggregateShare},
-        vdaf::{Vdaf as VdafTrait, VdafError},
     };
     use rand::{thread_rng, Rng};
     use ring::{
@@ -1963,19 +1979,14 @@ mod tests {
     use uuid::Uuid;
     use warp::{reply::Reply, Rejection};
 
-    type PrepareTransition<V> = vdaf::PrepareTransition<
-        <V as vdaf::Aggregator>::PrepareStep,
-        <V as vdaf::Aggregator>::PrepareMessage,
-        <V as vdaf::Vdaf>::OutputShare,
-    >;
-
     #[tokio::test]
     async fn hpke_config() {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -1990,7 +2001,7 @@ mod tests {
         let response = warp::test::request()
             .path(&format!("/hpke_config?task_id={}", task_id))
             .method("GET")
-            .filter(&aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap())
+            .filter(&aggregator_filter(Arc::new(datastore), clock).unwrap())
             .await
             .unwrap()
             .into_response();
@@ -2023,7 +2034,11 @@ mod tests {
         assert_eq!(&plaintext, message);
     }
 
-    async fn setup_report(task: &Task, datastore: &Datastore, clock: &MockClock) -> Report {
+    async fn setup_report(
+        task: &Task,
+        datastore: &Datastore<MockClock>,
+        clock: &MockClock,
+    ) -> Report {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
@@ -2089,11 +2104,11 @@ mod tests {
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         );
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let report = setup_report(&task, &datastore, &clock).await;
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock.clone()).unwrap();
 
         let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
@@ -2219,7 +2234,7 @@ mod tests {
         );
 
         // reports from the future should be rejected.
-        let bad_report_time = MockClock::default()
+        let bad_report_time = clock
             .now()
             .add(Duration::from_minutes(10).unwrap())
             .unwrap()
@@ -2247,8 +2262,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let report = setup_report(&task, &datastore, &clock).await;
 
@@ -2294,7 +2309,7 @@ mod tests {
         Aggregator<MockClock>,
         Task,
         Report,
-        Arc<Datastore>,
+        Arc<Datastore<MockClock>>,
         DbHandle,
     ) {
         let task = new_dummy_task(
@@ -2302,9 +2317,9 @@ mod tests {
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         );
-        let (datastore, db_handle) = ephemeral_datastore().await;
-        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
+        let (datastore, db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
         let report = setup_report(&task, &datastore, &clock).await;
 
         let aggregator = Aggregator::new(datastore.clone(), clock);
@@ -2497,8 +2512,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
@@ -2564,8 +2579,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -2620,11 +2635,11 @@ mod tests {
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (_, verify_params) = vdaf.setup().unwrap();
+        let (public_param, verify_params) = vdaf.setup().unwrap();
         task.vdaf_verify_parameter = verify_params.iter().last().unwrap().get_encoded();
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
@@ -2639,8 +2654,8 @@ mod tests {
             .unwrap();
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(clock);
-        let input_share = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0)
+        let nonce_0 = Nonce::generate(&clock);
+        let input_share = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce_0, &0)
             .input_shares
             .remove(1);
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -2652,7 +2667,7 @@ mod tests {
 
         // report_share_1 fails decryption.
         let mut report_share_1 = report_share_0.clone();
-        report_share_1.nonce = Nonce::generate(clock);
+        report_share_1.nonce = Nonce::generate(&clock);
         let mut corrupted_payload = report_share_1.encrypted_input_share.payload().to_vec();
         corrupted_payload[0] ^= 0xFF;
         report_share_1.encrypted_input_share = HpkeCiphertext::new(
@@ -2665,7 +2680,7 @@ mod tests {
         );
 
         // report_share_2 fails decoding.
-        let nonce_2 = Nonce::generate(clock);
+        let nonce_2 = Nonce::generate(&clock);
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
         let associated_data = associated_data_for_report_share(nonce_2, &[]);
@@ -2678,7 +2693,7 @@ mod tests {
         );
 
         // report_share_3 has an unknown HPKE config ID.
-        let nonce_3 = Nonce::generate(clock);
+        let nonce_3 = Nonce::generate(&clock);
         let wrong_hpke_config = HpkeConfig::new(
             HpkeConfigId::from(u8::from(hpke_key.0.id()) + 1),
             hpke_key.0.kem_id(),
@@ -2723,7 +2738,7 @@ mod tests {
         let aggregate_resp: AggregateResp =
             AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
                 .unwrap()
-                .decode(&hmac_key)
+                .decode([&hmac_key])
                 .unwrap();
 
         // Validate response.
@@ -2771,8 +2786,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepInit, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
@@ -2788,7 +2803,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
-            Nonce::generate(clock),
+            Nonce::generate(&clock),
             &hpke_key.0,
             &(),
         );
@@ -2817,7 +2832,7 @@ mod tests {
         let aggregate_resp: AggregateResp =
             AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
                 .unwrap()
-                .decode(&hmac_key)
+                .decode([&hmac_key])
                 .unwrap();
 
         // Validate response.
@@ -2840,8 +2855,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepInit, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
@@ -2857,7 +2872,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
-            Nonce::generate(clock),
+            Nonce::generate(&clock),
             &hpke_key.0,
             &(),
         );
@@ -2886,7 +2901,7 @@ mod tests {
         let aggregate_resp: AggregateResp =
             AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
                 .unwrap()
-                .decode(&hmac_key)
+                .decode([&hmac_key])
                 .unwrap();
 
         // Validate response.
@@ -2908,8 +2923,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepInit, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
@@ -2982,23 +2997,23 @@ mod tests {
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
-        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (_, verify_params) = vdaf.setup().unwrap();
+        let (public_param, verify_params) = vdaf.setup().unwrap();
         task.vdaf_verify_parameter = verify_params.iter().last().unwrap().get_encoded();
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(clock);
-        let transcript_0 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0);
+        let nonce_0 = Nonce::generate(&clock);
+        let transcript_0 = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce_0, &0);
         let prep_step_0 = assert_matches!(&transcript_0.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_0 = assert_matches!(&transcript_0.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
-        let prep_msg_0 = transcript_0.messages[0].clone();
+        let prep_msg_0 = transcript_0.combined_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_0,
@@ -3007,7 +3022,7 @@ mod tests {
         );
 
         // report_share_1 is omitted by the leader's request.
-        let nonce_1 = Nonce::generate(clock);
+        let nonce_1 = Nonce::generate(&clock);
         let transcript_1 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_1, &0);
         let prep_step_1 = assert_matches!(&transcript_1.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -3043,7 +3058,7 @@ mod tests {
                         task_id,
                         nonce: nonce_0,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(prep_step_0),
+                        state: ReportAggregationState::Waiting(prep_step_0, None),
                     })
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
@@ -3051,7 +3066,7 @@ mod tests {
                         task_id,
                         nonce: nonce_1,
                         ord: 1,
-                        state: ReportAggregationState::Waiting(prep_step_1),
+                        state: ReportAggregationState::Waiting(prep_step_1, None),
                     })
                     .await
                 })
@@ -3088,7 +3103,7 @@ mod tests {
         let aggregate_resp: AggregateResp =
             AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
                 .unwrap()
-                .decode(&hmac_key)
+                .decode([&hmac_key])
                 .unwrap();
 
         // Validate response.
@@ -3167,9 +3182,9 @@ mod tests {
             [1, 2, 3, 4, 5, 6, 7, 8],
         );
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
-        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
 
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
@@ -3206,7 +3221,7 @@ mod tests {
                         task_id,
                         nonce,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await
                 })
@@ -3268,9 +3283,9 @@ mod tests {
             [1, 2, 3, 4, 5, 6, 7, 8],
         );
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepStep, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
-        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
 
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
@@ -3307,7 +3322,7 @@ mod tests {
                         task_id,
                         nonce,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await
                 })
@@ -3347,7 +3362,7 @@ mod tests {
         let aggregate_resp: AggregateResp =
             AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
                 .unwrap()
-                .decode(&hmac_key)
+                .decode([&hmac_key])
                 .unwrap();
         assert_eq!(
             aggregate_resp,
@@ -3416,8 +3431,8 @@ mod tests {
             [1, 2, 3, 4, 5, 6, 7, 8],
         );
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
@@ -3454,7 +3469,7 @@ mod tests {
                         task_id,
                         nonce,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await
                 })
@@ -3526,8 +3541,8 @@ mod tests {
         );
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
@@ -3580,7 +3595,7 @@ mod tests {
                         task_id,
                         nonce: nonce_0,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
@@ -3588,7 +3603,7 @@ mod tests {
                         task_id,
                         nonce: nonce_1,
                         ord: 1,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await
                 })
@@ -3662,8 +3677,8 @@ mod tests {
         );
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
@@ -3762,8 +3777,8 @@ mod tests {
         let task_id = TaskId::random();
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -3820,8 +3835,8 @@ mod tests {
         let task_id = TaskId::random();
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -3884,7 +3899,8 @@ mod tests {
         ];
         task.max_batch_lifetime = 1;
 
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -3895,7 +3911,7 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let request = CollectReq {
             task_id,
@@ -3937,7 +3953,7 @@ mod tests {
         let mut task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
         task.max_batch_lifetime = 1;
 
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         datastore
             .run_tx(|tx| {
@@ -4028,7 +4044,8 @@ mod tests {
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
 
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -4039,7 +4056,7 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let request = AggregateShareReq {
             task_id,
@@ -4088,7 +4105,8 @@ mod tests {
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
 
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -4099,7 +4117,7 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let request = AggregateShareReq {
             task_id,
@@ -4156,7 +4174,8 @@ mod tests {
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let aggregation_param = ();
 
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
         datastore
@@ -4168,7 +4187,7 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(datastore.clone(), MockClock::default()).unwrap();
+        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
 
         // There are no batch unit_aggregations in the datastore yet
         let request = AggregateShareReq {
@@ -4429,7 +4448,7 @@ mod tests {
                 let aggregate_share_resp: AggregateShareResp =
                     AuthenticatedResponseDecoder::new(body_bytes.as_ref())
                         .unwrap()
-                        .decode(hmac_key)
+                        .decode([hmac_key])
                         .unwrap();
 
                 let aggregate_share = hpke::open(
@@ -4496,79 +4515,6 @@ mod tests {
                 "taskid": format!("{}", task_id),
             })
         );
-    }
-
-    /// A transcript of a VDAF run. All fields are indexed by participant index (in PPM terminology,
-    /// index 0 = leader, index 1 = helper).
-    struct VdafTranscript<V: vdaf::Aggregator>
-    where
-        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-    {
-        input_shares: Vec<V::InputShare>,
-        transitions: Vec<Vec<PrepareTransition<V>>>,
-        messages: Vec<V::PrepareMessage>,
-    }
-
-    // run_vdaf runs a VDAF state machine from sharding through to generating an output share,
-    // returning a "transcript" of all states & messages.
-    fn run_vdaf<V: vdaf::Aggregator + vdaf::Client>(
-        vdaf: &V,
-        public_param: &V::PublicParam,
-        verify_params: &[V::VerifyParam],
-        aggregation_param: &V::AggregationParam,
-        nonce: Nonce,
-        measurement: &V::Measurement,
-    ) -> VdafTranscript<V>
-    where
-        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-    {
-        // Shard inputs into input shares, and initialize the initial PrepareTransitions.
-        let input_shares = vdaf.shard(public_param, measurement).unwrap();
-        let mut prep_trans: Vec<Vec<PrepareTransition<V>>> = input_shares
-            .iter()
-            .enumerate()
-            .map(|(idx, input_share)| {
-                let prep_step = vdaf.prepare_init(
-                    &verify_params[idx],
-                    aggregation_param,
-                    &nonce.get_encoded(),
-                    input_share,
-                )?;
-                let prep_trans = vdaf.prepare_step(prep_step, None);
-                Ok(vec![prep_trans])
-            })
-            .collect::<Result<Vec<Vec<PrepareTransition<V>>>, VdafError>>()
-            .unwrap();
-        let mut combined_prep_msgs = Vec::new();
-
-        // Repeatedly step the VDAF until we reach a terminal state.
-        loop {
-            // Gather messages from last round & combine them into next round's message; if any
-            // participants have reached a terminal state (Finish or Fail), we are done.
-            let mut prep_msgs = Vec::new();
-            for pts in &prep_trans {
-                match pts.last().unwrap() {
-                    PrepareTransition::<V>::Continue(_, prep_msg) => {
-                        prep_msgs.push(prep_msg.clone())
-                    }
-                    _ => {
-                        return VdafTranscript {
-                            input_shares,
-                            transitions: prep_trans,
-                            messages: combined_prep_msgs,
-                        }
-                    }
-                }
-            }
-            let combined_prep_msg = vdaf.prepare_preprocess(prep_msgs).unwrap();
-            combined_prep_msgs.push(combined_prep_msg.clone());
-
-            // Compute each participant's next transition.
-            for pts in &mut prep_trans {
-                let prep_step = assert_matches!(pts.last().unwrap(), PrepareTransition::<V>::Continue(prep_step, _) => prep_step).clone();
-                pts.push(vdaf.prepare_step(prep_step, Some(combined_prep_msg.clone())));
-            }
-        }
     }
 
     fn current_hpke_key(

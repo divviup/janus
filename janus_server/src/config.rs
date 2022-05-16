@@ -89,6 +89,55 @@ pub struct AggregationJobCreatorConfig {
     pub max_aggregation_job_size: usize,
 }
 
+/// Non-secret configuration options for the Janus Aggregation Job Driver job.
+///
+/// # Examples
+///
+/// ```
+/// use janus_server::config::AggregationJobDriverConfig;
+///
+/// let yaml_config = r#"
+/// ---
+/// database:
+///   url: "postgres://postgres:postgres@localhost:5432/postgres"
+/// logging_config: # logging_config is optional
+///   force_json_output: true
+/// min_aggregation_job_discovery_delay_secs: 10
+/// max_aggregation_job_discovery_delay_secs: 60
+/// max_concurrent_aggregation_job_workers: 10
+/// aggregation_worker_lease_duration_secs: 600
+/// aggregation_worker_lease_clock_skew_allowance_secs: 60
+/// "#;
+///
+/// let _decoded: AggregationJobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AggregationJobDriverConfig {
+    /// Configuration for the database backend to connect to.
+    pub database: DbConfig,
+    /// Logging configuration.
+    #[serde(default)]
+    pub logging_config: TraceConfiguration,
+    /// The minimum delay between checking for aggregation jobs ready to be stepped, in seconds.
+    /// Applies only when there are no aggregation jobs to be stepped.
+    pub min_aggregation_job_discovery_delay_secs: u64,
+    /// The maximum delay between checking for aggregation jobs ready to be stepped, in seconds.
+    /// Applies only when there are no aggregation jobs to be stepped.
+    pub max_aggregation_job_discovery_delay_secs: u64,
+    /// The maximum number of aggregation jobs being stepped at once. This parameter determines the
+    /// amount of per-process concurrency.
+    pub max_concurrent_aggregation_job_workers: usize,
+    /// The length of time, in seconds, workers will acquire a lease for the aggregation jobs they
+    /// are stepping. Along with aggregation_worker_lease_clock_skew_allowance, determines the
+    /// effective timeout of stepping a single aggregation job.
+    pub aggregation_worker_lease_duration_secs: u64,
+    /// The length of time, in seconds, workers decrease their timeouts from the lease length in
+    /// order to guard against the possibility of clock skew. Along with
+    /// aggregation_worker_lease_duration_secs, determines the effective timeout of stepping
+    /// a single aggregation job.
+    pub aggregation_worker_lease_clock_skew_allowance_secs: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +193,23 @@ mod tests {
 
         let encoded = serde_yaml::to_string(&config).unwrap();
         let decoded_config: AggregationJobCreatorConfig = serde_yaml::from_str(&encoded).unwrap();
+        assert_eq!(config, decoded_config);
+    }
+
+    #[test]
+    fn roundtrip_aggregation_job_driver_config() {
+        let config = AggregationJobDriverConfig {
+            database: generate_db_config(),
+            logging_config: TraceConfiguration::default(),
+            min_aggregation_job_discovery_delay_secs: 10,
+            max_aggregation_job_discovery_delay_secs: 60,
+            max_concurrent_aggregation_job_workers: 10,
+            aggregation_worker_lease_duration_secs: 600,
+            aggregation_worker_lease_clock_skew_allowance_secs: 60,
+        };
+
+        let encoded = serde_yaml::to_string(&config).unwrap();
+        let decoded_config: AggregationJobDriverConfig = serde_yaml::from_str(&encoded).unwrap();
         assert_eq!(config, decoded_config);
     }
 

@@ -11,7 +11,6 @@ use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode
 use rand::{thread_rng, Rng};
 use ring::{
     digest::SHA256_OUTPUT_LEN,
-    error::Unspecified,
     hmac::{self, HMAC_SHA256},
 };
 use std::{
@@ -87,20 +86,12 @@ impl<B: AsRef<[u8]>, M: Decode> AuthenticatedRequestDecoder<B, M> {
     }
 
     /// decode authenticates & decodes the message using the given key.
-    pub fn decode(&self, key: &hmac::Key) -> Result<M, AuthenticatedDecodeError> {
-        authenticated_decode(key, self.buf.as_ref())
+    pub fn decode<'a>(
+        &self,
+        keys: impl IntoIterator<Item = &'a hmac::Key>,
+    ) -> Result<M, AuthenticatedDecodeError> {
+        authenticated_decode(keys, self.buf.as_ref())
     }
-}
-
-/// Errors that may occur when decoding an authenticated PPM structure. This may indicate that
-/// either the authentication tag was invalid or that there was a parsing error reading the
-/// envelope or the message contained within.
-#[derive(Debug, thiserror::Error)]
-pub enum AuthenticatedDecodeError {
-    #[error(transparent)]
-    Codec(#[from] CodecError),
-    #[error("invalid HMAC tag")]
-    InvalidHmac,
 }
 
 /// AuthenticatedResponseDecoder can decode messages in the "authenticated response" format used by
@@ -132,19 +123,36 @@ impl<B: AsRef<[u8]>, M: Decode> AuthenticatedResponseDecoder<B, M> {
     }
 
     /// decode authenticates & decodes the message using the given key.
-    pub fn decode(&self, key: &hmac::Key) -> Result<M, AuthenticatedDecodeError> {
-        authenticated_decode(key, self.buf.as_ref())
+    pub fn decode<'a>(
+        &self,
+        keys: impl IntoIterator<Item = &'a hmac::Key>,
+    ) -> Result<M, AuthenticatedDecodeError> {
+        authenticated_decode(keys, self.buf.as_ref())
     }
 }
 
-fn authenticated_decode<M: Decode>(
-    key: &hmac::Key,
+fn authenticated_decode<'a, M: Decode>(
+    keys: impl IntoIterator<Item = &'a hmac::Key>,
     buf: &[u8],
 ) -> Result<M, AuthenticatedDecodeError> {
     let (msg_bytes, tag) = buf.split_at(buf.len() - SHA256_OUTPUT_LEN);
-    hmac::verify(key, msg_bytes, tag)
-        .map_err(|_: Unspecified| AuthenticatedDecodeError::InvalidHmac)?;
-    M::get_decoded(msg_bytes).map_err(AuthenticatedDecodeError::from)
+    for key in keys {
+        if hmac::verify(key, msg_bytes, tag).is_ok() {
+            return Ok(M::get_decoded(msg_bytes)?);
+        }
+    }
+    Err(AuthenticatedDecodeError::InvalidHmac)
+}
+
+/// Errors that may occur when decoding an authenticated PPM structure. This may indicate that
+/// either the authentication tag was invalid or that there was a parsing error reading the
+/// envelope or the message contained within.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthenticatedDecodeError {
+    #[error(transparent)]
+    Codec(#[from] CodecError),
+    #[error("invalid HMAC tag")]
+    InvalidHmac,
 }
 
 /// PPM protocol message representing a half-open interval of time with a resolution of seconds;
@@ -208,9 +216,9 @@ impl Display for Interval {
 /// PPM protocol message representing one aggregator's share of a single client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportShare {
-    pub(crate) nonce: Nonce,
-    pub(crate) extensions: Vec<Extension>,
-    pub(crate) encrypted_input_share: HpkeCiphertext,
+    pub nonce: Nonce,
+    pub extensions: Vec<Extension>,
+    pub encrypted_input_share: HpkeCiphertext,
 }
 
 impl ReportShare {
@@ -244,8 +252,8 @@ impl Decode for ReportShare {
 /// PPM protocol message representing a transition in the state machine of a VDAF.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transition {
-    pub(crate) nonce: Nonce,
-    pub(crate) trans_data: TransitionTypeSpecificData,
+    pub nonce: Nonce,
+    pub trans_data: TransitionTypeSpecificData,
 }
 
 impl Encode for Transition {
@@ -351,7 +359,21 @@ impl AggregationJobId {
 
 impl Debug for AggregationJobId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(
+            f,
+            "AggregationJobId({})",
+            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+        )
+    }
+}
+
+impl Display for AggregationJobId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+        )
     }
 }
 
@@ -384,9 +406,9 @@ impl AggregationJobId {
 /// PPM protocol message representing an aggregation request from the leader to a helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateReq {
-    pub(crate) task_id: TaskId,
-    pub(crate) job_id: AggregationJobId,
-    pub(crate) body: AggregateReqBody,
+    pub task_id: TaskId,
+    pub job_id: AggregationJobId,
+    pub body: AggregateReqBody,
 }
 
 impl Encode for AggregateReq {
@@ -456,7 +478,7 @@ pub enum AggregateReqBody {
 /// or continue aggregation of a sequence of client reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateResp {
-    pub(crate) seq: Vec<Transition>,
+    pub seq: Vec<Transition>,
 }
 
 impl Encode for AggregateResp {
@@ -611,6 +633,7 @@ mod tests {
     use assert_matches::assert_matches;
     use janus::message::{Duration, ExtensionType, HpkeConfigId, Time};
     use lazy_static::lazy_static;
+    use ring::rand::SystemRandom;
 
     lazy_static! {
         static ref HMAC_KEY: hmac::Key = hmac::Key::new(
@@ -680,7 +703,8 @@ mod tests {
 
         let decoder = AuthenticatedRequestDecoder::new(encoded_bytes).unwrap();
         assert_eq!(msg.task_id, decoder.task_id());
-        let got_msg = decoder.decode(&*HMAC_KEY).unwrap();
+        let unrelated_hmac_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap();
+        let got_msg = decoder.decode([&unrelated_hmac_key, &*HMAC_KEY]).unwrap();
         assert_eq!(msg, got_msg);
     }
 
@@ -697,7 +721,7 @@ mod tests {
         // Verify we can decode the unmodified bytes back to the original message.
         let got_msg = AuthenticatedRequestDecoder::new(encoded_bytes.clone())
             .unwrap()
-            .decode(&*HMAC_KEY)
+            .decode([&*HMAC_KEY])
             .unwrap();
         assert_eq!(msg, got_msg);
 
@@ -707,7 +731,33 @@ mod tests {
         let rslt: Result<AggregateReq, AuthenticatedDecodeError> =
             AuthenticatedRequestDecoder::new(encoded_bytes.clone())
                 .unwrap()
-                .decode(&*HMAC_KEY);
+                .decode([&*HMAC_KEY]);
+        assert_matches!(rslt, Err(AuthenticatedDecodeError::InvalidHmac));
+    }
+
+    #[test]
+    fn authenticated_request_wrong_key() {
+        let msg = AggregateReq {
+            task_id: TaskId::new([u8::MIN; 32]),
+            job_id: AggregationJobId([u8::MAX; 32]),
+            body: AggregateReqBody::AggregateContinueReq { seq: Vec::new() },
+        };
+
+        let encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
+
+        // Verify we can decode the unmodified bytes back to the original message.
+        let got_msg = AuthenticatedRequestDecoder::new(encoded_bytes.clone())
+            .unwrap()
+            .decode([&*HMAC_KEY])
+            .unwrap();
+        assert_eq!(msg, got_msg);
+
+        // Verify that modifying the bytes causes decoding to fail.
+        let unrelated_hmac_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap();
+        let rslt: Result<AggregateReq, AuthenticatedDecodeError> =
+            AuthenticatedRequestDecoder::new(encoded_bytes)
+                .unwrap()
+                .decode([&unrelated_hmac_key]);
         assert_matches!(rslt, Err(AuthenticatedDecodeError::InvalidHmac));
     }
 
@@ -738,7 +788,8 @@ mod tests {
         assert_eq!(want_tag.as_ref(), got_tag);
 
         let decoder = AuthenticatedResponseDecoder::new(encoded_bytes).unwrap();
-        let got_msg = decoder.decode(&*HMAC_KEY).unwrap();
+        let unrelated_hmac_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap();
+        let got_msg = decoder.decode([&unrelated_hmac_key, &*HMAC_KEY]).unwrap();
         assert_eq!(msg, got_msg);
     }
 
@@ -751,7 +802,7 @@ mod tests {
         // Verify we can decode the unmodified bytes back to the original message.
         let got_msg = AuthenticatedResponseDecoder::new(encoded_bytes.clone())
             .unwrap()
-            .decode(&*HMAC_KEY)
+            .decode([&*HMAC_KEY])
             .unwrap();
         assert_eq!(msg, got_msg);
 
@@ -761,7 +812,29 @@ mod tests {
         let rslt: Result<AggregateReq, AuthenticatedDecodeError> =
             AuthenticatedResponseDecoder::new(encoded_bytes.clone())
                 .unwrap()
-                .decode(&*HMAC_KEY);
+                .decode([&*HMAC_KEY]);
+        assert_matches!(rslt, Err(AuthenticatedDecodeError::InvalidHmac));
+    }
+
+    #[test]
+    fn authenticated_response_wrong_key() {
+        let msg = AggregateResp { seq: Vec::new() };
+
+        let encoded_bytes = AuthenticatedEncoder::new(msg.clone()).encode(&*HMAC_KEY);
+
+        // Verify we can decode the unmodified bytes back to the original message.
+        let got_msg = AuthenticatedResponseDecoder::new(encoded_bytes.clone())
+            .unwrap()
+            .decode([&*HMAC_KEY])
+            .unwrap();
+        assert_eq!(msg, got_msg);
+
+        // Verify that modifying the bytes causes decoding to fail.
+        let unrelated_hmac_key = hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap();
+        let rslt: Result<AggregateReq, AuthenticatedDecodeError> =
+            AuthenticatedResponseDecoder::new(encoded_bytes)
+                .unwrap()
+                .decode([&unrelated_hmac_key]);
         assert_matches!(rslt, Err(AuthenticatedDecodeError::InvalidHmac));
     }
 

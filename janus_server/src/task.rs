@@ -31,7 +31,7 @@ pub enum Error {
 /// [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-patton-cfrg-vdaf/
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename = "Vdaf")]
 pub enum VdafInstance {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
@@ -118,14 +118,14 @@ pub struct Task {
     pub id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
-    pub(crate) aggregator_endpoints: Vec<Url>,
+    pub aggregator_endpoints: Vec<Url>,
     /// The VDAF this task executes.
     pub vdaf: VdafInstance,
     /// The role performed by the aggregator.
     pub role: Role,
     /// Secret verification parameter shared by the aggregators.
     #[derivative(Debug = "ignore")]
-    pub(crate) vdaf_verify_parameter: Vec<u8>,
+    pub vdaf_verify_parameter: Vec<u8>,
     /// The maximum number of times a given batch may be collected.
     pub(crate) max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
@@ -141,9 +141,9 @@ pub struct Task {
     /// Key used to authenticate messages sent to or received from the other
     /// aggregators.
     #[derivative(Debug = "ignore")]
-    pub(crate) agg_auth_keys: Vec<AggregatorAuthKey>,
+    pub agg_auth_keys: Vec<AggregatorAuthKey>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
-    pub(crate) hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
+    pub hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
 
 impl Task {
@@ -209,9 +209,15 @@ impl Task {
     }
 
     /// Returns the [`Url`] relative to which the server performing `role` serves its API.
-    pub(crate) fn aggregator_url(&self, role: Role) -> Result<&Url, Error> {
+    pub fn aggregator_url(&self, role: Role) -> Result<&Url, Error> {
         let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
         Ok(&self.aggregator_endpoints[index])
+    }
+
+    /// Returns the [`AggregatorAuthKey`] currently used by this task to authenticate aggregate
+    /// messages. It returns None if there is no current aggregator auth key.
+    pub fn primary_aggregator_auth_key(&self) -> Option<&AggregatorAuthKey> {
+        self.agg_auth_keys.last()
     }
 }
 

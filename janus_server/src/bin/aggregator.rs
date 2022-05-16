@@ -164,8 +164,10 @@ async fn main() -> Result<()> {
     info!(?options, ?config, "starting aggregator");
 
     // Connect to database.
+    let clock = RealClock::default();
     let datastore = Arc::new(
         datastore(
+            clock,
             config.database,
             options.database_password,
             options.datastore_keys,
@@ -176,13 +178,9 @@ async fn main() -> Result<()> {
     let shutdown_signal =
         setup_signal_handler().context("failed to register SIGTERM signal handler")?;
 
-    let (bound_address, server) = aggregator_server(
-        datastore,
-        RealClock::default(),
-        config.listen_address,
-        shutdown_signal,
-    )
-    .context("failed to create aggregator server")?;
+    let (bound_address, server) =
+        aggregator_server(datastore, clock, config.listen_address, shutdown_signal)
+            .context("failed to create aggregator server")?;
     info!(?bound_address, "running aggregator");
 
     server.await;

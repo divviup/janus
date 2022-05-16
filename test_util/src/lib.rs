@@ -1,17 +1,25 @@
-use chrono::NaiveDate;
-use janus::{message::Time, time::Clock};
+use assert_matches::assert_matches;
+use janus::{
+    message::{Duration, Nonce, Time},
+    time::Clock,
+};
+use prio::{
+    codec::Encode,
+    vdaf::{self, VdafError},
+};
 use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
+use std::sync::{Arc, Mutex};
 
 /// The Janus database schema.
 pub static SCHEMA: &str = include_str!("../../db/schema.sql");
 
 /// This macro injects definitions of `DbHandle` and `ephemeral_datastore()`, for use in tests.
 /// It should be invoked once per binary target, and then `ephemeral_datastore()` can be called
-/// to set up a database for test purposes. This depends on `janus_server::datastore::Datastore`
-/// and `janus_server::datastore::Crypter` already being imported into scope, and it expects the
-/// following crates to be available: `deadpool_postgres`, `lazy_static`, `ring`, `testcontainers`,
-/// `tokio_postgres`, and `tracing`.
+/// to set up a database for test purposes. This depends on `janus_server::datastore::Datastore`,
+/// `janus_server::datastore::Crypter`, and `janus_server::time::Clock` already being imported into
+/// scope, and it expects the following crates to be available: `deadpool_postgres`, `lazy_static`,
+/// `ring`, `testcontainers`, `tokio_postgres`, and `tracing`.
 #[macro_export]
 macro_rules! define_ephemeral_datastore {
     () => {
@@ -47,7 +55,7 @@ macro_rules! define_ephemeral_datastore {
         /// has the Janus schema applied but is otherwise empty.
         ///
         /// Dropping the second return value causes the database to be shut down & cleaned up.
-        pub async fn ephemeral_datastore() -> (Datastore, DbHandle) {
+        pub async fn ephemeral_datastore<C: Clock>(clock: C) -> (Datastore<C>, DbHandle) {
             // Start an instance of Postgres running in a container.
             let db_container =
                 CONTAINER_CLIENT.run(::testcontainers::RunnableImage::from(::testcontainers::images::postgres::Postgres::default()).with_tag("14-alpine"));
@@ -78,7 +86,7 @@ macro_rules! define_ephemeral_datastore {
             client.batch_execute(::test_util::SCHEMA).await.unwrap();
 
             (
-                Datastore::new(pool, crypter),
+                Datastore::new(pool, crypter, clock),
                 DbHandle {
                     _db_container: db_container,
                     connection_string,
@@ -100,32 +108,119 @@ pub fn generate_aead_key() -> LessSafeKey {
     LessSafeKey::new(unbound_key)
 }
 
-/// A mock clock for use in testing.
-#[derive(Clone, Copy, Debug)]
+/// A mock clock for use in testing. Clones are identical: all clones of a given MockClock will
+/// be controlled by a controller retrieved from any of the clones.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct MockClock {
-    /// The time that this clock will always return from [`Self::now`]
-    current_time: Time,
+    /// The time that this clock will return from [`Self::now`].
+    current_time: Arc<Mutex<Time>>,
 }
 
 impl MockClock {
-    /// Create a new [`MockClock`] that will always return the provided [`Time`].
-    pub fn new(current_time: Time) -> Self {
-        Self { current_time }
+    pub fn advance(&self, dur: Duration) {
+        let mut current_time = self.current_time.lock().unwrap();
+        *current_time = current_time.add(dur).unwrap();
     }
 }
 
 impl Clock for MockClock {
     fn now(&self) -> Time {
-        self.current_time
+        let current_time = self.current_time.lock().unwrap();
+        *current_time
     }
 }
 
 impl Default for MockClock {
     fn default() -> Self {
         Self {
-            current_time: Time::from_naive_date_time(
-                NaiveDate::from_ymd(2001, 9, 9).and_hms(1, 46, 40),
-            ),
+            // Sunday, September 9, 2001 1:46:40 AM UTC
+            current_time: Arc::new(Mutex::new(Time::from_seconds_since_epoch(1000000000))),
+        }
+    }
+}
+
+/// A type alias for libprio-rs' PrepareTransition that dereives the appropriate generic types based
+/// on a single aggregator parameter.
+// TODO(brandon): change libprio-rs' PrepareTransition to be generic only on a vdaf::Aggregator.
+pub type PrepareTransition<V> = vdaf::PrepareTransition<
+    <V as vdaf::Aggregator>::PrepareStep,
+    <V as vdaf::Aggregator>::PrepareMessage,
+    <V as vdaf::Vdaf>::OutputShare,
+>;
+
+/// A transcript of a VDAF run. All fields are indexed by natural role index (i.e., index 0 =
+/// leader, index 1 = helper).
+pub struct VdafTranscript<V: vdaf::Aggregator>
+where
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+{
+    pub input_shares: Vec<V::InputShare>,
+    pub transitions: Vec<Vec<PrepareTransition<V>>>,
+    pub combined_messages: Vec<V::PrepareMessage>,
+}
+
+/// run_vdaf runs a VDAF state machine from sharding through to generating an output share,
+/// returning a "transcript" of all states & messages. Both the public parameter & aggregation
+/// parameter are assumed to take on their default values.
+pub fn run_vdaf<V: vdaf::Aggregator + vdaf::Client>(
+    vdaf: &V,
+    public_param: &V::PublicParam,
+    verify_params: &[V::VerifyParam],
+    aggregation_param: &V::AggregationParam,
+    nonce: Nonce,
+    measurement: &V::Measurement,
+) -> VdafTranscript<V>
+where
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+{
+    // Implementation notes: this could be expanded to handle non-default public/aggregation
+    // parameters fairly easily, at the cost of needing to accept them as parameters.
+    assert_eq!(vdaf.num_aggregators(), verify_params.len());
+
+    // Shard inputs into input shares, and initialize the initial PrepareTransitions.
+    let input_shares = vdaf.shard(public_param, measurement).unwrap();
+    let mut prep_trans: Vec<Vec<PrepareTransition<V>>> = input_shares
+        .iter()
+        .zip(verify_params)
+        .map(|(input_share, verify_param)| {
+            let prep_step = vdaf.prepare_init(
+                verify_param,
+                aggregation_param,
+                &nonce.get_encoded(),
+                input_share,
+            )?;
+            let prep_trans = vdaf.prepare_step(prep_step, None);
+            Ok(vec![prep_trans])
+        })
+        .collect::<Result<Vec<Vec<PrepareTransition<V>>>, VdafError>>()
+        .unwrap();
+    let mut combined_prep_msgs = Vec::new();
+
+    // Repeatedly step the VDAF until we reach a terminal state.
+    loop {
+        // Gather messages from last round & combine them into next round's message; if any
+        // participants have reached a terminal state (Finish or Fail), we are done.
+        let mut prep_msgs = Vec::new();
+        for pts in &prep_trans {
+            match pts.last().unwrap() {
+                PrepareTransition::<V>::Continue(_, prep_msg) => prep_msgs.push(prep_msg.clone()),
+                _ => {
+                    return VdafTranscript {
+                        input_shares,
+                        transitions: prep_trans,
+                        combined_messages: combined_prep_msgs,
+                    }
+                }
+            }
+        }
+        let combined_prep_msg = vdaf.prepare_preprocess(prep_msgs).unwrap();
+        combined_prep_msgs.push(combined_prep_msg.clone());
+
+        // Compute each participant's next transition.
+        for pts in &mut prep_trans {
+            let prep_step = assert_matches!(pts.last().unwrap(), PrepareTransition::<V>::Continue(prep_step, _) => prep_step).clone();
+            pts.push(vdaf.prepare_step(prep_step, Some(combined_prep_msg.clone())));
         }
     }
 }
