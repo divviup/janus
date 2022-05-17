@@ -3385,7 +3385,7 @@ mod tests {
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let (_, verify_params) = vdaf.setup().unwrap();
-        task.vdaf_verify_parameter = verify_params.iter().last().unwrap().get_encoded();
+        task.vdaf_verify_parameters = vec![verify_params.iter().last().unwrap().get_encoded()];
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
