@@ -3,7 +3,7 @@
 use anyhow::anyhow;
 use janus::{
     hpke::associated_data_for_report_share,
-    message::{Duration, Error, Extension, HpkeCiphertext, Nonce, TaskId, Time},
+    message::{Duration, Error, Extension, HpkeCiphertext, Nonce, NonceChecksum, TaskId, Time},
 };
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
@@ -502,7 +502,7 @@ pub struct AggregateShareReq {
     pub(crate) batch_interval: Interval,
     pub(crate) aggregation_param: Vec<u8>,
     pub(crate) report_count: u64,
-    pub(crate) checksum: [u8; 32],
+    pub(crate) checksum: NonceChecksum,
 }
 
 impl Encode for AggregateShareReq {
@@ -511,7 +511,7 @@ impl Encode for AggregateShareReq {
         self.batch_interval.encode(bytes);
         encode_u16_items(bytes, &(), &self.aggregation_param);
         self.report_count.encode(bytes);
-        bytes.extend_from_slice(&self.checksum);
+        self.checksum.encode(bytes);
     }
 }
 
@@ -521,8 +521,7 @@ impl Decode for AggregateShareReq {
         let batch_interval = Interval::decode(bytes)?;
         let agg_param = decode_u16_items(&(), bytes)?;
         let report_count = u64::decode(bytes)?;
-        let mut checksum = [0u8; 32];
-        bytes.read_exact(&mut checksum)?;
+        let checksum = NonceChecksum::decode(bytes)?;
 
         Ok(Self {
             task_id,
@@ -1255,7 +1254,7 @@ mod tests {
                     .unwrap(),
                     aggregation_param: vec![],
                     report_count: 439,
-                    checksum: [u8::MIN; 32],
+                    checksum: NonceChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
                 },
                 concat!(
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
@@ -1283,7 +1282,7 @@ mod tests {
                     .unwrap(),
                     aggregation_param: Vec::from("012345"),
                     report_count: 8725,
-                    checksum: [u8::MAX; 32],
+                    checksum: NonceChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
                 },
                 concat!(
                     "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id

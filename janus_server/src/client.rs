@@ -216,9 +216,9 @@ mod tests {
     use crate::trace::test_util::install_test_trace_subscriber;
     use assert_matches::assert_matches;
     use janus::{hpke::test_util::generate_hpke_config_and_private_key, message::TaskId};
+    use janus_test_util::MockClock;
     use mockito::mock;
     use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Sum};
-    use test_util::MockClock;
     use url::Url;
 
     fn setup_client<V: vdaf::Client>(

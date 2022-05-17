@@ -333,8 +333,10 @@ impl<C: Clock> AggregationJobDriver<C> {
                     let task = tx.get_task(task_id).await?.ok_or_else(|| {
                         datastore::Error::User(anyhow!("couldn't find task {}", task_id).into())
                     })?;
-                    let verify_param =
-                        A::VerifyParam::get_decoded_with_param(&vdaf, &task.vdaf_verify_parameter)?;
+                    let verify_param = A::VerifyParam::get_decoded_with_param(
+                        &vdaf,
+                        &task.vdaf_verify_parameters.iter().next().unwrap(),
+                    )?;
 
                     let aggregation_job_future =
                         tx.get_aggregation_job::<A>(task_id, aggregation_job_id);
@@ -896,6 +898,7 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
+    use janus_test_util::{run_vdaf, MockClock};
     use mockito::mock;
     use prio::{
         codec::Encode,
@@ -906,10 +909,9 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
-    use test_util::{run_vdaf, MockClock};
     use tokio::{task, time};
 
-    test_util::define_ephemeral_datastore!();
+    janus_test_util::define_ephemeral_datastore!();
 
     #[tokio::test]
     async fn aggregation_job_driver() {
@@ -935,10 +937,10 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        task.vdaf_verify_parameter = verify_params
+        task.vdaf_verify_parameters = vec![verify_params
             .get(Role::Leader.index().unwrap())
             .unwrap()
-            .get_encoded();
+            .get_encoded()];
 
         let agg_auth_key = task.primary_aggregator_auth_key().unwrap().clone();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
@@ -1095,7 +1097,7 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        task.vdaf_verify_parameter = leader_verify_param.get_encoded();
+        task.vdaf_verify_parameters = vec![leader_verify_param.get_encoded()];
 
         let agg_auth_key = task.primary_aggregator_auth_key().unwrap();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
@@ -1252,7 +1254,7 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        task.vdaf_verify_parameter = leader_verify_param.get_encoded();
+        task.vdaf_verify_parameters = vec![leader_verify_param.get_encoded()];
 
         let agg_auth_key = task.primary_aggregator_auth_key().unwrap();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;

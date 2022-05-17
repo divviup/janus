@@ -22,7 +22,7 @@ use std::{
 use tokio::task::JoinHandle;
 use url::Url;
 
-test_util::define_ephemeral_datastore!();
+janus_test_util::define_ephemeral_datastore!();
 
 fn endpoint_from_socket_addr(addr: &SocketAddr) -> Url {
     assert!(addr.ip().is_loopback());
@@ -84,7 +84,7 @@ async fn setup_test() -> TestCase {
         ],
         VdafInstance::Prio3Aes128Count,
         Role::Leader,
-        leader_verify_param.get_encoded(),
+        vec![leader_verify_param.get_encoded()],
         1,
         0,
         Duration::from_hours(8).unwrap(),
@@ -117,7 +117,7 @@ async fn setup_test() -> TestCase {
         ],
         VdafInstance::Prio3Aes128Count,
         Role::Helper,
-        helper_verify_param.get_encoded(),
+        vec![helper_verify_param.get_encoded()],
         1,
         0,
         Duration::from_hours(8).unwrap(),

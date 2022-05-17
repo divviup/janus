@@ -359,6 +359,7 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
+    use janus_test_util::MockClock;
     use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf as _};
     use std::{
         collections::{HashMap, HashSet},
@@ -366,10 +367,9 @@ mod tests {
         sync::Arc,
         time::Duration,
     };
-    use test_util::MockClock;
     use tokio::{task, time};
 
-    test_util::define_ephemeral_datastore!();
+    janus_test_util::define_ephemeral_datastore!();
 
     #[tokio::test]
     async fn aggregation_job_creator() {

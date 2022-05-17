@@ -76,14 +76,14 @@ macro_rules! define_ephemeral_datastore {
             let pool = ::deadpool_postgres::Pool::builder(conn_mgr).build().unwrap();
 
             // Create a crypter with a random (ephemeral) key.
-            let datastore_key_bytes = ::test_util::generate_aead_key_bytes();
+            let datastore_key_bytes = ::janus_test_util::generate_aead_key_bytes();
             let datastore_key =
                 ::ring::aead::LessSafeKey::new(::ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &datastore_key_bytes).unwrap());
             let crypter = Crypter::new(vec![datastore_key]);
 
             // Connect to the database & run our schema.
             let client = pool.get().await.unwrap();
-            client.batch_execute(::test_util::SCHEMA).await.unwrap();
+            client.batch_execute(::janus_test_util::SCHEMA).await.unwrap();
 
             (
                 Datastore::new(pool, crypter, clock),
@@ -118,6 +118,12 @@ pub struct MockClock {
 }
 
 impl MockClock {
+    pub fn new(when: Time) -> MockClock {
+        MockClock {
+            current_time: Arc::new(Mutex::new(when)),
+        }
+    }
+
     pub fn advance(&self, dur: Duration) {
         let mut current_time = self.current_time.lock().unwrap();
         *current_time = current_time.add(dur).unwrap();
