@@ -122,21 +122,14 @@ impl Transaction<'_> {
         let min_batch_duration = i64::try_from(task.min_batch_duration.as_seconds())?;
         let tolerable_clock_skew = i64::try_from(task.tolerable_clock_skew.as_seconds())?;
 
-        let encrypted_vdaf_verify_param = self.crypter.encrypt(
-            "tasks",
-            task.id.as_bytes(),
-            "vdaf_verify_param",
-            &task.vdaf_verify_parameter,
-        )?;
-
         // Main task insert.
         let stmt = self
             .tx
             .prepare_cached(
                 "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, vdaf,
-                vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
-                tolerable_clock_skew, collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
+                collector_hpke_config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .await?;
         self.tx
@@ -147,7 +140,6 @@ impl Transaction<'_> {
                     &aggregator_role,                          // aggregator_role
                     &endpoints,                                // aggregator_endpoints
                     &Json(&task.vdaf),                         // vdaf
-                    &encrypted_vdaf_verify_param,              // verify param
                     &max_batch_lifetime,                       // max batch lifetime
                     &min_batch_size,                           // min batch size
                     &min_batch_duration,                       // min batch duration
@@ -222,7 +214,35 @@ impl Transaction<'_> {
         ];
         let hpke_configs_future = self.tx.execute(&stmt, hpke_configs_params);
 
-        try_join!(auth_keys_future, hpke_configs_future)?;
+        // VDAF verification parameters.
+        let mut vdaf_verify_params: Vec<Vec<u8>> = Vec::new();
+        for vdaf_verify_param in task.vdaf_verify_parameters.iter() {
+            let encrypted_vdaf_verify_param = self.crypter.encrypt(
+                "task_vdaf_verify_params",
+                task.id.as_bytes(),
+                "vdaf_verify_param",
+                vdaf_verify_param.as_ref(),
+            )?;
+            vdaf_verify_params.push(encrypted_vdaf_verify_param);
+        }
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "INSERT INTO task_vdaf_verify_params (task_id, vdaf_verify_param)
+                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BYTEA[])",
+            )
+            .await?;
+        let vdaf_verify_params_params: &[&(dyn ToSql + Sync)] = &[
+            /* task_id */ &task.id.as_bytes(),
+            /* vdaf_verify_params */ &vdaf_verify_params,
+        ];
+        let vdaf_verify_params_future = self.tx.execute(&stmt, vdaf_verify_params_params);
+
+        try_join!(
+            auth_keys_future,
+            hpke_configs_future,
+            vdaf_verify_params_future
+        )?;
 
         Ok(())
     }
@@ -234,9 +254,8 @@ impl Transaction<'_> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
-                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
-                collector_hpke_config
+                "SELECT aggregator_role, aggregator_endpoints, vdaf, max_batch_lifetime,
+                min_batch_size, min_batch_duration, tolerable_clock_skew, collector_hpke_config
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -260,11 +279,30 @@ impl Transaction<'_> {
             .await?;
         let hpke_key_rows = self.tx.query(&stmt, params);
 
-        let (task_row, agg_auth_key_rows, hpke_key_rows) =
-            try_join!(task_row, agg_auth_key_rows, hpke_key_rows)?;
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT vdaf_verify_param FROM task_vdaf_verify_params
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        let vdaf_verify_param_rows = self.tx.query(&stmt, params);
+
+        let (task_row, agg_auth_key_rows, hpke_key_rows, vdaf_verify_param_rows) = try_join!(
+            task_row,
+            agg_auth_key_rows,
+            hpke_key_rows,
+            vdaf_verify_param_rows,
+        )?;
         task_row
             .map(|task_row| {
-                self.task_from_rows(task_id, task_row, agg_auth_key_rows, hpke_key_rows)
+                self.task_from_rows(
+                    task_id,
+                    task_row,
+                    agg_auth_key_rows,
+                    hpke_key_rows,
+                    vdaf_verify_param_rows,
+                )
             })
             .transpose()
     }
@@ -278,7 +316,7 @@ impl Transaction<'_> {
             .tx
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf,
-                vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
+                max_batch_lifetime, min_batch_size, min_batch_duration,
                 tolerable_clock_skew, collector_hpke_config 
                 FROM tasks",
             )
@@ -303,8 +341,18 @@ impl Transaction<'_> {
             .await?;
         let hpke_config_rows = self.tx.query(&stmt, &[]);
 
-        let (task_rows, agg_auth_key_rows, hpke_config_rows) =
-            try_join!(task_rows, agg_auth_key_rows, hpke_config_rows)?;
+        let stmt = self.tx.prepare_cached(
+            "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_vdaf_verify_params.task_id),
+            vdaf_verify_param FROM task_vdaf_verify_params"
+        ).await?;
+        let vdaf_verify_param_rows = self.tx.query(&stmt, &[]);
+
+        let (task_rows, agg_auth_key_rows, hpke_config_rows, vdaf_verify_param_rows) = try_join!(
+            task_rows,
+            agg_auth_key_rows,
+            hpke_config_rows,
+            vdaf_verify_param_rows
+        )?;
 
         let mut task_row_by_id = Vec::new();
         for row in task_rows {
@@ -330,6 +378,15 @@ impl Transaction<'_> {
                 .push(row);
         }
 
+        let mut vdaf_verify_param_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
+        for row in vdaf_verify_param_rows {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            vdaf_verify_param_rows_by_task_id
+                .entry(task_id)
+                .or_default()
+                .push(row);
+        }
+
         task_row_by_id
             .into_iter()
             .map(|(task_id, row)| {
@@ -340,6 +397,9 @@ impl Transaction<'_> {
                         .remove(&task_id)
                         .unwrap_or_default(),
                     hpke_config_rows_by_task_id
+                        .remove(&task_id)
+                        .unwrap_or_default(),
+                    vdaf_verify_param_rows_by_task_id
                         .remove(&task_id)
                         .unwrap_or_default(),
                 )
@@ -357,6 +417,7 @@ impl Transaction<'_> {
         row: Row,
         agg_auth_key_rows: Vec<Row>,
         hpke_key_rows: Vec<Row>,
+        vdaf_verify_param_rows: Vec<Row>,
     ) -> Result<Task, Error> {
         // Scalar task parameters.
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
@@ -366,7 +427,6 @@ impl Transaction<'_> {
             .map(|endpoint| Ok(Url::parse(&endpoint)?))
             .collect::<Result<_, Error>>()?;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-        let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
         let max_batch_lifetime = row.get_bigint_and_convert("max_batch_lifetime")?;
         let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
         let min_batch_duration =
@@ -374,13 +434,6 @@ impl Transaction<'_> {
         let tolerable_clock_skew =
             Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
-
-        let vdaf_verify_param = self.crypter.decrypt(
-            "tasks",
-            task_id.as_bytes(),
-            "vdaf_verify_param",
-            &encrypted_vdaf_verify_param,
-        )?;
 
         // Aggregator authentication keys.
         let mut agg_auth_keys = Vec::new();
@@ -421,12 +474,24 @@ impl Transaction<'_> {
             hpke_configs.push((config, private_key));
         }
 
+        let mut vdaf_verify_params = Vec::new();
+        for row in vdaf_verify_param_rows {
+            let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
+
+            vdaf_verify_params.push(self.crypter.decrypt(
+                "task_vdaf_verify_params",
+                task_id.as_bytes(),
+                "vdaf_verify_param",
+                &encrypted_vdaf_verify_param,
+            )?);
+        }
+
         Ok(Task::new(
             task_id,
             endpoints,
             vdaf,
             aggregator_role.as_role(),
-            vdaf_verify_param,
+            vdaf_verify_params,
             max_batch_lifetime,
             min_batch_size,
             min_batch_duration,

@@ -347,12 +347,13 @@ impl TaskAggregator {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
     fn new(task: Task) -> Result<Self, Error> {
+        let current_vdaf_verify_parameter = task.vdaf_verify_parameters.last().unwrap();
         let vdaf_ops = match &task.vdaf {
             VdafInstance::Prio3Aes128Count => {
                 let vdaf = Prio3Aes128Count::new(2)?;
                 let verify_param = <Prio3Aes128Count as Vdaf>::VerifyParam::get_decoded_with_param(
                     &vdaf,
-                    &task.vdaf_verify_parameter,
+                    current_vdaf_verify_parameter,
                 )?;
                 VdafOps::Prio3Aes128Count(vdaf, verify_param)
             }
@@ -361,7 +362,7 @@ impl TaskAggregator {
                 let vdaf = Prio3Aes128Sum::new(2, *bits)?;
                 let verify_param = <Prio3Aes128Sum as Vdaf>::VerifyParam::get_decoded_with_param(
                     &vdaf,
-                    &task.vdaf_verify_parameter,
+                    current_vdaf_verify_parameter,
                 )?;
                 VdafOps::Prio3Aes128Sum(vdaf, verify_param)
             }
@@ -371,7 +372,7 @@ impl TaskAggregator {
                 let verify_param =
                     <Prio3Aes128Histogram as Vdaf>::VerifyParam::get_decoded_with_param(
                         &vdaf,
-                        &task.vdaf_verify_parameter,
+                        current_vdaf_verify_parameter,
                     )?;
                 VdafOps::Prio3Aes128Histogram(vdaf, verify_param)
             }
@@ -2832,7 +2833,7 @@ mod tests {
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let (_, verify_params) = vdaf.setup().unwrap();
-        task.vdaf_verify_parameter = verify_params.iter().last().unwrap().get_encoded();
+        task.vdaf_verify_parameters = vec![verify_params.iter().last().unwrap().get_encoded()];
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
@@ -3195,7 +3196,7 @@ mod tests {
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let (_, verify_params) = vdaf.setup().unwrap();
-        task.vdaf_verify_parameter = verify_params.iter().last().unwrap().get_encoded();
+        task.vdaf_verify_parameters = vec![verify_params.iter().last().unwrap().get_encoded()];
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let hmac_key = hmac_key.clone();
