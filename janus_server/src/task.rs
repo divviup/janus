@@ -69,7 +69,7 @@ impl PartialEq for AggregatorAuthenticationToken {
     fn eq(&self, other: &Self) -> bool {
         // We attempt constant-time comparisons of the token data. Note that this function still
         // leaks whether the lengths of the tokens are equal -- this is acceptable because we expect
-        // the length of the tokens to provide enough randomness that needs to be guessed even if
+        // the content of the tokens to provide enough randomness that needs to be guessed even if
         // the length is known.
         constant_time::verify_slices_are_equal(&self.0, &other.0).is_ok()
     }
