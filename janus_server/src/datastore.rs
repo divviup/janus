@@ -767,9 +767,8 @@ impl<C: Clock> Transaction<'_, C> {
                         JOIN tasks on tasks.id = aggregation_jobs.task_id
                         WHERE tasks.aggregator_role = 'LEADER'
                         AND aggregation_jobs.state = 'IN_PROGRESS'
-                        AND (aggregation_jobs.lease_expiry IS NULL
-                          OR aggregation_jobs.lease_expiry <= $2)
-                        LIMIT $3)
+                        AND aggregation_jobs.lease_expiry <= $2
+                        ORDER BY aggregation_jobs.id DESC LIMIT $3)
                     RETURNING tasks.task_id, tasks.vdaf, aggregation_jobs.aggregation_job_id",
             )
             .await?;
@@ -805,7 +804,7 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "UPDATE aggregation_jobs SET lease_expiry = NULL
+                "UPDATE aggregation_jobs SET lease_expiry = TIMESTAMP '-infinity'
                 FROM tasks
                 WHERE tasks.id = aggregation_jobs.task_id
                   AND tasks.task_id = $1
@@ -986,22 +985,7 @@ impl<C: Clock> Transaction<'_, C> {
         let nonce_time = report_aggregation.nonce.time().as_naive_date_time();
         let nonce_rand = &report_aggregation.nonce.rand()[..];
         let state_code = report_aggregation.state.state_code();
-        let (prep_state, prep_msg, out_share, error_code) = match &report_aggregation.state {
-            ReportAggregationState::Start => (None, None, None, None),
-            ReportAggregationState::Waiting(prep_step, prep_msg) => (
-                Some(prep_step.get_encoded()),
-                prep_msg.as_ref().map(|msg| msg.get_encoded()),
-                None,
-                None,
-            ),
-            ReportAggregationState::Finished(output_share) => {
-                (None, None, Some(output_share.into()), None)
-            }
-            ReportAggregationState::Failed(trans_err) => {
-                (None, None, None, Some(*trans_err as i64))
-            }
-            ReportAggregationState::Invalid => (None, None, None, None),
-        };
+        let encoded_state_values = report_aggregation.state.encoded_values_from_state();
 
         let stmt = self.tx.prepare_cached(
             "INSERT INTO report_aggregations
@@ -1023,10 +1007,10 @@ impl<C: Clock> Transaction<'_, C> {
                     /* nonce_rand */ &nonce_rand,
                     /* ord */ &report_aggregation.ord,
                     /* state */ &state_code,
-                    /* prep_state */ &prep_state,
-                    /* prep_msg */ &prep_msg,
-                    /* out_share */ &out_share,
-                    /* error_code */ &error_code,
+                    /* prep_state */ &encoded_state_values.prep_state,
+                    /* prep_msg */ &encoded_state_values.prep_msg,
+                    /* out_share */ &encoded_state_values.output_share,
+                    /* error_code */ &encoded_state_values.trans_err,
                 ],
             )
             .await?;
@@ -1046,22 +1030,7 @@ impl<C: Clock> Transaction<'_, C> {
         let nonce_time = report_aggregation.nonce.time().as_naive_date_time();
         let nonce_rand = &report_aggregation.nonce.rand()[..];
         let state_code = report_aggregation.state.state_code();
-        let (prep_state, prep_msg, out_share, error_code) = match &report_aggregation.state {
-            ReportAggregationState::Start => (None, None, None, None),
-            ReportAggregationState::Waiting(prep_step, prep_msg) => (
-                Some(prep_step.get_encoded()),
-                prep_msg.as_ref().map(|msg| msg.get_encoded()),
-                None,
-                None,
-            ),
-            ReportAggregationState::Finished(output_share) => {
-                (None, None, Some(output_share.into()), None)
-            }
-            ReportAggregationState::Failed(trans_err) => {
-                (None, None, None, Some(*trans_err as i64))
-            }
-            ReportAggregationState::Invalid => (None, None, None, None),
-        };
+        let encoded_state_values = report_aggregation.state.encoded_values_from_state();
 
         let stmt = self
             .tx
@@ -1080,10 +1049,10 @@ impl<C: Clock> Transaction<'_, C> {
                     &[
                         /* ord */ &report_aggregation.ord,
                         /* state */ &state_code,
-                        /* prep_state */ &prep_state,
-                        /* prep_msg */ &prep_msg,
-                        /* out_share */ &out_share,
-                        /* error_code */ &error_code,
+                        /* prep_state */ &encoded_state_values.prep_state,
+                        /* prep_msg */ &encoded_state_values.prep_msg,
+                        /* out_share */ &encoded_state_values.output_share,
+                        /* error_code */ &encoded_state_values.trans_err,
                         /* aggregation_job_id */
                         &report_aggregation.aggregation_job_id.as_bytes(),
                         /* task_id */ &report_aggregation.task_id.as_bytes(),
@@ -2029,7 +1998,7 @@ pub mod models {
     use derivative::Derivative;
     use janus::message::{HpkeCiphertext, Nonce, NonceChecksum, Role, TaskId, Time};
     use postgres_types::{FromSql, ToSql};
-    use prio::vdaf;
+    use prio::{codec::Encode, vdaf};
     use uuid::Uuid;
 
     // We have to manually implement [Partial]Eq for a number of types because the dervied
@@ -2176,6 +2145,46 @@ pub mod models {
                 ReportAggregationState::Invalid => ReportAggregationStateCode::Invalid,
             }
         }
+
+        /// Returns the encoded values for the various messages which might be included in a
+        /// ReportAggregationState. The order of returned values is preparation state, preparation
+        /// message, output share, transition error.
+        pub(super) fn encoded_values_from_state(&self) -> EncodedReportAggregationStateValues
+        where
+            A::PrepareStep: Encode,
+            for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+            for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        {
+            let (prep_state, prep_msg, output_share, trans_err) = match self {
+                ReportAggregationState::Start => (None, None, None, None),
+                ReportAggregationState::Waiting(prep_step, prep_msg) => (
+                    Some(prep_step.get_encoded()),
+                    prep_msg.as_ref().map(|msg| msg.get_encoded()),
+                    None,
+                    None,
+                ),
+                ReportAggregationState::Finished(output_share) => {
+                    (None, None, Some(output_share.into()), None)
+                }
+                ReportAggregationState::Failed(trans_err) => {
+                    (None, None, None, Some(*trans_err as i64))
+                }
+                ReportAggregationState::Invalid => (None, None, None, None),
+            };
+            EncodedReportAggregationStateValues {
+                prep_state,
+                prep_msg,
+                output_share,
+                trans_err,
+            }
+        }
+    }
+
+    pub(super) struct EncodedReportAggregationStateValues {
+        pub(super) prep_state: Option<Vec<u8>>,
+        pub(super) prep_msg: Option<Vec<u8>>,
+        pub(super) output_share: Option<Vec<u8>>,
+        pub(super) trans_err: Option<i64>,
     }
 
     // The private ReportAggregationStateCode exists alongside the public ReportAggregationState
@@ -3000,7 +3009,7 @@ mod tests {
         .await
         .unwrap();
 
-        let got_aggregation_jobs = ds
+        let mut got_aggregation_jobs = ds
             .run_tx(|tx| {
                 Box::pin(async move {
                     tx.acquire_incomplete_aggregation_jobs(LEASE_DURATION, MAXIMUM_ACQUIRE_COUNT)
@@ -3009,6 +3018,7 @@ mod tests {
             })
             .await
             .unwrap();
+        got_aggregation_jobs.sort();
 
         // Verify: we should have re-acquired the jobs we released.
         assert_eq!(jobs_to_release, got_aggregation_jobs);

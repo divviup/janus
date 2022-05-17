@@ -1,6 +1,7 @@
 //! PPM protocol message definitions with serialization/deserialization support.
 
 use anyhow::anyhow;
+use base64::display::Base64Display;
 use janus::{
     hpke::associated_data_for_report_share,
     message::{Duration, Error, Extension, HpkeCiphertext, Nonce, NonceChecksum, TaskId, Time},
@@ -362,7 +363,7 @@ impl Debug for AggregationJobId {
         write!(
             f,
             "AggregationJobId({})",
-            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+            Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
         )
     }
 }
@@ -372,7 +373,7 @@ impl Display for AggregationJobId {
         write!(
             f,
             "{}",
-            base64::display::Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+            Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
         )
     }
 }

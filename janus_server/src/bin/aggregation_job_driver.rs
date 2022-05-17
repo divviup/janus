@@ -44,7 +44,7 @@ use tokio::{
     task,
     time::{self},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, info_span, Instrument};
 
 #[derive(StructOpt)]
 #[structopt(
@@ -227,12 +227,6 @@ impl<C: Clock> AggregationJobDriver<C> {
             // Start up tasks for each acquired aggregation job.
             job_discovery_delay = Duration::ZERO;
             for (task_id, vdaf, aggregation_job_id, lease_expiry) in acquired_jobs {
-                info!(
-                    ?task_id,
-                    ?aggregation_job_id,
-                    ?lease_expiry,
-                    "Stepping aggregation job"
-                );
                 task::spawn({
                     // We acquire a semaphore in the job-discovery task rather than inside the new
                     // job-stepper task to ensure that acquiring a permit does not race with
@@ -245,6 +239,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                     let permit = Arc::clone(&sem).try_acquire_owned().unwrap();
                     let this = Arc::clone(&self);
                     async move {
+                        info!(?lease_expiry, "Stepping aggregation job");
                         match time::timeout(
                             this.effective_lease_duration(lease_expiry),
                             this.step_aggregation_job(vdaf, task_id, aggregation_job_id),
@@ -252,27 +247,22 @@ impl<C: Clock> AggregationJobDriver<C> {
                         .await
                         {
                             Ok(Ok(_)) => {
-                                debug!(?task_id, ?aggregation_job_id, "Aggregation job stepped")
+                                debug!("Aggregation job stepped")
                             }
 
                             Ok(Err(err)) => {
-                                error!(
-                                    ?task_id,
-                                    ?aggregation_job_id,
-                                    ?err,
-                                    "Couldn't step aggregation job"
-                                )
+                                error!(?err, "Couldn't step aggregation job")
                             }
 
-                            Err(err) => error!(
-                                ?task_id,
-                                ?aggregation_job_id,
-                                ?err,
-                                "Couldn't step aggregation job"
-                            ),
+                            Err(err) => error!(?err, "Stepping aggregation job timed out"),
                         }
                         drop(permit);
                     }
+                    .instrument(info_span!(
+                        "Aggregation job stepper",
+                        ?task_id,
+                        ?aggregation_job_id,
+                    ))
                 });
             }
         }
@@ -335,7 +325,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                     })?;
                     let verify_param = A::VerifyParam::get_decoded_with_param(
                         &vdaf,
-                        &task.vdaf_verify_parameters.iter().next().unwrap(),
+                        task.vdaf_verify_parameters.get(0).unwrap(),
                     )?;
 
                     let aggregation_job_future =
@@ -474,8 +464,7 @@ impl<C: Clock> AggregationJobDriver<C> {
             {
                 Some(leader_encrypted_input_share) => leader_encrypted_input_share,
                 None => {
-                    error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                        report_nonce = %report_aggregation.nonce, "Client report missing leader encrypted input share");
+                    error!(report_nonce = %report_aggregation.nonce, "Client report missing leader encrypted input share");
                     report_aggregation.state = ReportAggregationState::Invalid;
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
@@ -488,8 +477,7 @@ impl<C: Clock> AggregationJobDriver<C> {
             {
                 Some(helper_encrypted_input_share) => helper_encrypted_input_share,
                 None => {
-                    error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                        report_nonce = %report_aggregation.nonce, "Client report missing helper encrypted input share");
+                    error!(report_nonce = %report_aggregation.nonce, "Client report missing helper encrypted input share");
                     report_aggregation.state = ReportAggregationState::Invalid;
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
@@ -503,8 +491,7 @@ impl<C: Clock> AggregationJobDriver<C> {
             {
                 Some((hpke_config, hpke_private_key)) => (hpke_config, hpke_private_key),
                 None => {
-                    error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                        report_nonce = %report_aggregation.nonce, hpke_config_id = %leader_encrypted_input_share.config_id(), "Leader encrypted input share references unknown HPKE config ID");
+                    error!(report_nonce = %report_aggregation.nonce, hpke_config_id = %leader_encrypted_input_share.config_id(), "Leader encrypted input share references unknown HPKE config ID");
                     report_aggregation.state =
                         ReportAggregationState::Failed(TransitionError::HpkeUnknownConfigId);
                     report_aggregations_to_write.push(report_aggregation);
@@ -524,8 +511,7 @@ impl<C: Clock> AggregationJobDriver<C> {
             ) {
                 Ok(leader_input_share_bytes) => leader_input_share_bytes,
                 Err(err) => {
-                    error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                        report_nonce = %report_aggregation.nonce, ?err, "Couldn't decrypt leader's encrypted input share");
+                    error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decrypt leader's encrypted input share");
                     report_aggregation.state =
                         ReportAggregationState::Failed(TransitionError::HpkeDecryptError);
                     report_aggregations_to_write.push(report_aggregation);
@@ -539,9 +525,8 @@ impl<C: Clock> AggregationJobDriver<C> {
                 Ok(leader_input_share) => leader_input_share,
                 Err(err) => {
                     // TODO(brandon): is moving to Invalid on a decoding error appropriate?
-                    // (may want to define a TransitionError for this, or decide to overload an existing one)
-                    error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                        report_nonce = %report_aggregation.nonce, ?err, "Couldn't decode leader's input share");
+                    // [https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255]
+                    error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decode leader's input share");
                     report_aggregation.state = ReportAggregationState::Invalid;
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
@@ -557,8 +542,7 @@ impl<C: Clock> AggregationJobDriver<C> {
             ) {
                 Ok(prep_state) => prep_state,
                 Err(err) => {
-                    error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                        report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
+                    error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
                     report_aggregation.state =
                         ReportAggregationState::Failed(TransitionError::VdafPrepError);
                     report_aggregations_to_write.push(report_aggregation);
@@ -567,8 +551,7 @@ impl<C: Clock> AggregationJobDriver<C> {
             };
             let leader_transition = vdaf.prepare_step(prep_state, None);
             if let PrepareTransition::Fail(err) = leader_transition {
-                error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                    report_nonce = %report_aggregation.nonce, ?err, "Couldn't step leader's initial preparation state");
+                error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't step leader's initial preparation state");
                 report_aggregation.state =
                     ReportAggregationState::Failed(TransitionError::VdafPrepError);
                 report_aggregations_to_write.push(report_aggregation);
@@ -638,8 +621,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                 let leader_transition =
                     vdaf.prepare_step(prep_state.clone(), Some(prep_msg.clone()));
                 if let PrepareTransition::Fail(err) = leader_transition {
-                    error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                        report_nonce = %report_aggregation.nonce, ?err, "Couldn't step report aggregation");
+                    error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't step report aggregation");
                     report_aggregation.state =
                         ReportAggregationState::Failed(TransitionError::VdafPrepError);
                     report_aggregations_to_write.push(report_aggregation);
@@ -750,14 +732,12 @@ impl<C: Clock> AggregationJobDriver<C> {
                                 Some(combined_prep_msg),
                             ),
                             Err(err) => {
-                                error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                                    report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute combined prepare message");
+                                error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute combined prepare message");
                                 ReportAggregationState::Failed(TransitionError::VdafPrepError)
                             }
                         }
                     } else {
-                        error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                            report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper continued but leader did not");
+                        error!(report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper continued but leader did not");
                         report_aggregation.state = ReportAggregationState::Invalid;
                     }
                 }
@@ -768,8 +748,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                     if let PrepareTransition::Finish(out_share) = leader_transition {
                         report_aggregation.state = ReportAggregationState::Finished(out_share);
                     } else {
-                        error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                            report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper finished but leader did not");
+                        error!(report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper finished but leader did not");
                         report_aggregation.state = ReportAggregationState::Invalid;
                     }
                 }
@@ -777,8 +756,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                 TransitionTypeSpecificData::Failed { error } => {
                     // If the helper failed, we move to FAILED immediately.
                     // TODO(brandon): is it correct to just record the transition error that the helper reports?
-                    error!(task_id = %task.id, aggregation_job_id = %aggregation_job.aggregation_job_id,
-                        report_nonce = %report_aggregation.nonce, helper_err = ?error, "Helper couldn't step report aggregation");
+                    error!(report_nonce = %report_aggregation.nonce, helper_err = ?error, "Helper couldn't step report aggregation");
                     report_aggregation.state = ReportAggregationState::Failed(error);
                 }
             }
@@ -905,10 +883,7 @@ mod tests {
         vdaf::{prio3::Prio3Aes128Count, PrepareTransition, Vdaf},
     };
     use reqwest::Url;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
+    use std::sync::Arc;
     use tokio::{task, time};
 
     janus_test_util::define_ephemeral_datastore!();
@@ -997,17 +972,15 @@ mod tests {
                 }],
             },
         ];
-        let next_helper_response_idx = AtomicUsize::new(0);
-        let mocked_aggregate = mock("POST", "/aggregate")
-            .with_status(200)
-            .with_body_from_fn(move |w| {
-                let idx = next_helper_response_idx.fetch_add(1, Ordering::SeqCst);
-                let resp = helper_responses[idx].clone();
-                let resp_bytes = AuthenticatedEncoder::new(resp).encode(agg_auth_key.as_ref());
-                w.write_all(&resp_bytes)
+        let mocked_aggregates: Vec<_> = helper_responses
+            .into_iter()
+            .map(|resp| {
+                mock("POST", "/aggregate")
+                    .with_status(200)
+                    .with_body(AuthenticatedEncoder::new(resp).encode(agg_auth_key.as_ref()))
+                    .create()
             })
-            .expect(2)
-            .create();
+            .collect();
 
         // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
         let aggregation_job_driver = Arc::new(AggregationJobDriver {
@@ -1034,7 +1007,9 @@ mod tests {
         task_handle.abort();
 
         // Verify.
-        mocked_aggregate.assert();
+        for mocked_aggregate in mocked_aggregates {
+            mocked_aggregate.assert();
+        }
 
         let want_aggregation_job = AggregationJob::<Prio3Aes128Count> {
             aggregation_job_id,

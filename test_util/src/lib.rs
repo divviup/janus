@@ -146,8 +146,8 @@ impl Default for MockClock {
     }
 }
 
-/// A type alias for libprio-rs' PrepareTransition that dereives the appropriate generic types based
-/// on a single aggregator parameter.
+/// A type alias for [`prio::vdaf::PrepareTransition`] that derives the appropriate generic types
+/// based on a single aggregator parameter.
 // TODO(brandon): change libprio-rs' PrepareTransition to be generic only on a vdaf::Aggregator.
 pub type PrepareTransition<V> = vdaf::PrepareTransition<
     <V as vdaf::Aggregator>::PrepareStep,
@@ -167,8 +167,7 @@ where
 }
 
 /// run_vdaf runs a VDAF state machine from sharding through to generating an output share,
-/// returning a "transcript" of all states & messages. Both the public parameter & aggregation
-/// parameter are assumed to take on their default values.
+/// returning a "transcript" of all states & messages.
 pub fn run_vdaf<V: vdaf::Aggregator + vdaf::Client>(
     vdaf: &V,
     public_param: &V::PublicParam,
@@ -180,8 +179,6 @@ pub fn run_vdaf<V: vdaf::Aggregator + vdaf::Client>(
 where
     for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
-    // Implementation notes: this could be expanded to handle non-default public/aggregation
-    // parameters fairly easily, at the cost of needing to accept them as parameters.
     assert_eq!(vdaf.num_aggregators(), verify_params.len());
 
     // Shard inputs into input shares, and initialize the initial PrepareTransitions.
