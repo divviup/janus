@@ -1311,6 +1311,7 @@ dependencies = [
  "hyper",
  "itertools",
  "janus",
+ "janus_test_util",
  "lazy_static",
  "libc",
  "mockito",
@@ -1334,7 +1335,6 @@ dependencies = [
  "signal-hook-tokio",
  "structopt",
  "tempfile",
- "test_util",
  "testcontainers",
  "thiserror",
  "tokio",
@@ -1349,6 +1349,17 @@ dependencies = [
  "uuid",
  "wait-timeout",
  "warp",
+]
+
+[[package]]
+name = "janus_test_util"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "janus",
+ "rand",
+ "ring",
 ]
 
 [[package]]
@@ -1530,10 +1541,10 @@ dependencies = [
  "futures",
  "janus",
  "janus_server",
+ "janus_test_util",
  "lazy_static",
  "prio",
  "ring",
- "test_util",
  "testcontainers",
  "tokio",
  "tokio-postgres",
@@ -2732,17 +2743,6 @@ dependencies = [
  "redox_syscall",
  "remove_dir_all",
  "winapi",
-]
-
-[[package]]
-name = "test_util"
-version = "0.1.0"
-dependencies = [
- "base64",
- "chrono",
- "janus",
- "rand",
- "ring",
 ]
 
 [[package]]

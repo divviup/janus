@@ -1,5 +1,9 @@
 //! Common functionality for PPM aggregators
+
+mod accumulator;
+
 use crate::{
+    aggregator::accumulator::Accumulator,
     datastore::{
         self,
         models::{
@@ -612,7 +616,7 @@ impl VdafOps {
         }
     }
 
-    async fn handle_aggregate_generic<A: vdaf::Aggregator>(
+    async fn handle_aggregate_generic<A: vdaf::Aggregator, E>(
         datastore: &Datastore,
         vdaf: &A,
         task: &Task,
@@ -622,12 +626,14 @@ impl VdafOps {
     where
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync + for<'a> TryFrom<&'a [u8], Error = E>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
         A::PrepareMessage: Send + Sync,
         A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::VerifyParam: Send + Sync,
+        E: std::fmt::Display,
     {
         match req.body {
             AggregateInitReq { agg_param, seq } => {
@@ -658,7 +664,7 @@ impl VdafOps {
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
-    async fn handle_aggregate_init_generic<A: vdaf::Aggregator>(
+    async fn handle_aggregate_init_generic<A: vdaf::Aggregator, E>(
         datastore: &Datastore,
         vdaf: &A,
         task: &Task,
@@ -670,12 +676,15 @@ impl VdafOps {
     where
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync + for<'a> TryFrom<&'a [u8], Error = E>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareStep: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+        E: std::fmt::Display,
     {
         let task_id = task.id;
+        let min_batch_duration = task.min_batch_duration;
 
         // If two ReportShare messages have the same nonce, then the helper MUST abort with
         // error "unrecognizedMessage". (§4.4.4.1)
@@ -833,9 +842,16 @@ impl VdafOps {
             .run_tx(|tx| {
                 let aggregation_job = aggregation_job.clone();
                 let report_share_data = report_share_data.clone();
+
                 Box::pin(async move {
                     // Write aggregation job.
                     tx.put_aggregation_job(&aggregation_job).await?;
+
+                    let mut accumulator = Accumulator::<A>::new(
+                        task_id,
+                        min_batch_duration,
+                        &aggregation_job.aggregation_param,
+                    );
 
                     for (ord, share_data) in report_share_data.as_ref().iter().enumerate() {
                         // Write client report & report aggregation.
@@ -849,7 +865,16 @@ impl VdafOps {
                             state: share_data.agg_state.clone(),
                         })
                         .await?;
+
+                        if let ReportAggregationState::<A>::Finished(ref output_share) =
+                            share_data.agg_state
+                        {
+                            accumulator.update(output_share, share_data.report_share.nonce)?;
+                        }
                     }
+
+                    accumulator.flush_to_datastore(tx).await?;
+
                     Ok(())
                 })
             })
@@ -868,7 +893,7 @@ impl VdafOps {
         })
     }
 
-    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator>(
+    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator, E>(
         datastore: &Datastore,
         vdaf: &A,
         task: &Task,
@@ -879,6 +904,8 @@ impl VdafOps {
     where
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
+        E: std::fmt::Display,
+        A::AggregateShare: Send + Sync + for<'a> TryFrom<&'a [u8], Error = E>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
         A::PrepareMessage: Send + Sync,
@@ -887,6 +914,7 @@ impl VdafOps {
         A::VerifyParam: Send + Sync,
     {
         let task_id = task.id;
+        let min_batch_duration = task.min_batch_duration;
         let vdaf = Arc::new(vdaf.clone());
         let verify_param = Arc::new(verify_param.clone());
         let transitions = Arc::new(transitions);
@@ -918,6 +946,9 @@ impl VdafOps {
                     let mut report_aggregations = report_aggregations.into_iter();
                     let (mut saw_continue, mut saw_finish) = (false, false);
                     let mut response_transitions = Vec::new();
+
+                    let mut accumulator = Accumulator::<A>::new(task_id, min_batch_duration, &aggregation_job.aggregation_param);
+
                     for transition in transitions.iter() {
                         // Match transition received from leader to stored report aggregation, and
                         // extract the stored preparation step.
@@ -992,15 +1023,15 @@ impl VdafOps {
 
                             PrepareTransition::Finish(output_share) => {
                                 saw_finish = true;
+
+                                accumulator.update(&output_share, transition.nonce)?;
+
                                 report_aggregation.state =
                                     ReportAggregationState::Finished(output_share);
                                 response_transitions.push(Transition {
                                     nonce: transition.nonce,
                                     trans_data: TransitionTypeSpecificData::Finished,
                                 });
-
-                                // TODO(timg): when a report's preparation is done, its value should
-                                // be accumulated into a batch_unit_aggregations row
                             }
 
                             PrepareTransition::Fail(err) => {
@@ -1041,6 +1072,8 @@ impl VdafOps {
                         }
                     };
                     tx.update_aggregation_job(&aggregation_job).await?;
+
+                    accumulator.flush_to_datastore(tx).await?;
 
                     Ok(AggregateResp {
                         seq: response_transitions,
@@ -2123,7 +2156,7 @@ mod tests {
         },
         trace::test_util::install_test_trace_subscriber,
     };
-    use ::test_util::MockClock;
+    use ::janus_test_util::MockClock;
     use assert_matches::assert_matches;
     use http::Method;
     use janus::{
@@ -2135,7 +2168,7 @@ mod tests {
         codec::Decode,
         field::Field64,
         vdaf::{prio3::Prio3Aes128Count, AggregateShare},
-        vdaf::{Vdaf as VdafTrait, VdafError},
+        vdaf::{Aggregator as AggregatorTrait, Vdaf as VdafTrait, VdafError},
     };
     use rand::{thread_rng, Rng};
     use std::{collections::HashMap, io::Cursor};
@@ -3254,7 +3287,9 @@ mod tests {
                         ord: 1,
                         state: ReportAggregationState::Waiting(prep_step_1),
                     })
-                    .await
+                    .await?;
+
+                    Ok(())
                 })
             })
             .await
@@ -3319,6 +3354,7 @@ mod tests {
                             aggregation_job_id,
                         )
                         .await?;
+
                     Ok((aggregation_job, report_aggregations))
                 })
             })
@@ -3342,7 +3378,7 @@ mod tests {
                     task_id,
                     nonce: nonce_0,
                     ord: 0,
-                    state: ReportAggregationState::Finished(out_share_0),
+                    state: ReportAggregationState::Finished(out_share_0.clone()),
                 },
                 ReportAggregation {
                     aggregation_job_id,
@@ -3350,6 +3386,436 @@ mod tests {
                     nonce: nonce_1,
                     ord: 1,
                     state: ReportAggregationState::Failed(TransitionError::ReportDropped),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_continue_accumulate_batch_unit_aggregation() {
+        install_test_trace_subscriber();
+
+        let task_id = TaskId::random();
+        let aggregation_job_id_0 = AggregationJobId::random();
+        let aggregation_job_id_1 = AggregationJobId::random();
+        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
+        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let datastore = Arc::new(datastore);
+        let first_batch_unit_interval_clock = MockClock::default();
+        let second_batch_unit_interval_clock = MockClock::new(
+            first_batch_unit_interval_clock
+                .now()
+                .add(task.min_batch_duration)
+                .unwrap(),
+        );
+
+        let vdaf = Prio3Aes128Count::new(2).unwrap();
+        let (_, verify_params) = vdaf.setup().unwrap();
+        task.vdaf_verify_parameter = verify_params.iter().last().unwrap().get_encoded();
+        let hpke_key = current_hpke_key(&task.hpke_keys);
+
+        // report_share_0 is a "happy path" report.
+        let nonce_0 = Nonce::generate(first_batch_unit_interval_clock);
+        let transcript_0 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0);
+        let prep_step_0 = assert_matches!(&transcript_0.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
+        let out_share_0 = assert_matches!(&transcript_0.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
+        let prep_msg_0 = transcript_0.messages[0].clone();
+        let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_0,
+            &hpke_key.0,
+            &transcript_0.input_shares[1],
+        );
+
+        // report_share_1 is another "happy path" report to exercise in-memory accumulation of
+        // output shares
+        let nonce_1 = Nonce::generate(first_batch_unit_interval_clock);
+        let transcript_1 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_1, &0);
+        let prep_step_1 = assert_matches!(&transcript_1.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
+        let out_share_1 = assert_matches!(&transcript_1.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
+        let prep_msg_1 = transcript_1.messages[0].clone();
+        let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_1,
+            &hpke_key.0,
+            &transcript_1.input_shares[1],
+        );
+
+        // report share 2 aggregates successfully, but into a distinct batch unit aggregation.
+        let nonce_2 = Nonce::generate(second_batch_unit_interval_clock);
+        let transcript_2 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_2, &0);
+        let prep_step_2 = assert_matches!(&transcript_2.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
+        let out_share_2 = assert_matches!(&transcript_2.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
+        let prep_msg_2 = transcript_2.messages[0].clone();
+        let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_2,
+            &hpke_key.0,
+            &transcript_2.input_shares[1],
+        );
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                let (report_share_0, report_share_1, report_share_2) = (
+                    report_share_0.clone(),
+                    report_share_1.clone(),
+                    report_share_2.clone(),
+                );
+                let (prep_step_0, prep_step_1, prep_step_2) = (
+                    prep_step_0.clone(),
+                    prep_step_1.clone(),
+                    prep_step_2.clone(),
+                );
+
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+
+                    tx.put_report_share(task_id, &report_share_0).await?;
+                    tx.put_report_share(task_id, &report_share_1).await?;
+                    tx.put_report_share(task_id, &report_share_2).await?;
+
+                    tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                        aggregation_job_id: aggregation_job_id_0,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id: aggregation_job_id_0,
+                        task_id,
+                        nonce: nonce_0,
+                        ord: 0,
+                        state: ReportAggregationState::Waiting(prep_step_0),
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id: aggregation_job_id_0,
+                        task_id,
+                        nonce: nonce_1,
+                        ord: 1,
+                        state: ReportAggregationState::Waiting(prep_step_1),
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id: aggregation_job_id_0,
+                        task_id,
+                        nonce: nonce_2,
+                        ord: 2,
+                        state: ReportAggregationState::Waiting(prep_step_2),
+                    })
+                    .await?;
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let request = AggregateReq {
+            task_id,
+            job_id: aggregation_job_id_0,
+            body: AggregateContinueReq {
+                seq: vec![
+                    Transition {
+                        nonce: nonce_0,
+                        trans_data: TransitionTypeSpecificData::Continued {
+                            payload: prep_msg_0.get_encoded(),
+                        },
+                    },
+                    Transition {
+                        nonce: nonce_1,
+                        trans_data: TransitionTypeSpecificData::Continued {
+                            payload: prep_msg_1.get_encoded(),
+                        },
+                    },
+                    Transition {
+                        nonce: nonce_2,
+                        trans_data: TransitionTypeSpecificData::Continued {
+                            payload: prep_msg_2.get_encoded(),
+                        },
+                    },
+                ],
+            },
+        };
+
+        // Create aggregator filter, send request, and parse response.
+        let filter = aggregator_filter(datastore.clone(), first_batch_unit_interval_clock).unwrap();
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let batch_unit_aggregations = datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_batch_unit_aggregations_for_task_in_interval::<Prio3Aes128Count, _>(
+                        task_id,
+                        Interval::new(
+                            nonce_0
+                                .time()
+                                .to_batch_unit_interval_start(task.min_batch_duration)
+                                .unwrap(),
+                            // Make interval big enough to capture both batch unit aggregations
+                            Duration::from_seconds(task.min_batch_duration.as_seconds() * 2),
+                        )
+                        .unwrap(),
+                        &(),
+                    )
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let aggregate_share = vdaf
+            .aggregate(&(), [out_share_0.clone(), out_share_1.clone()])
+            .unwrap();
+        let mut checksum = NonceChecksum::from_nonce(nonce_0);
+        checksum.update(nonce_1);
+
+        assert_eq!(
+            batch_unit_aggregations,
+            vec![
+                BatchUnitAggregation::<Prio3Aes128Count> {
+                    task_id,
+                    unit_interval_start: nonce_0
+                        .time()
+                        .to_batch_unit_interval_start(task.min_batch_duration)
+                        .unwrap(),
+                    aggregation_param: (),
+                    aggregate_share,
+                    report_count: 2,
+                    checksum,
+                },
+                BatchUnitAggregation::<Prio3Aes128Count> {
+                    task_id,
+                    unit_interval_start: nonce_2
+                        .time()
+                        .to_batch_unit_interval_start(task.min_batch_duration)
+                        .unwrap(),
+                    aggregation_param: (),
+                    aggregate_share: AggregateShare::from(out_share_2.clone()),
+                    report_count: 1,
+                    checksum: NonceChecksum::from_nonce(nonce_2),
+                }
+            ]
+        );
+
+        // Aggregate some more reports, which should get accumulated into the
+        // batch_unit_aggregations rows created earlier.
+        // report_share_3 gets aggreated into the first batch unit interval.
+        let nonce_3 = Nonce::generate(first_batch_unit_interval_clock);
+        let transcript_3 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_3, &0);
+        let prep_step_3 = assert_matches!(&transcript_3.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
+        let out_share_3 = assert_matches!(&transcript_3.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
+        let prep_msg_3 = transcript_3.messages[0].clone();
+        let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_3,
+            &hpke_key.0,
+            &transcript_3.input_shares[1],
+        );
+
+        // report_share_4 gets aggregated into the second batch unit interval
+        let nonce_4 = Nonce::generate(second_batch_unit_interval_clock);
+        let transcript_4 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_4, &0);
+        let prep_step_4 = assert_matches!(&transcript_4.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
+        let out_share_4 = assert_matches!(&transcript_4.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
+        let prep_msg_4 = transcript_4.messages[0].clone();
+        let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_4,
+            &hpke_key.0,
+            &transcript_4.input_shares[1],
+        );
+
+        // report share 5 also gets aggregated into the second batch unit interval
+        let nonce_5 = Nonce::generate(second_batch_unit_interval_clock);
+        let transcript_5 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_5, &0);
+        let prep_step_5 = assert_matches!(&transcript_5.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
+        let out_share_5 = assert_matches!(&transcript_5.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
+        let prep_msg_5 = transcript_5.messages[0].clone();
+        let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_5,
+            &hpke_key.0,
+            &transcript_5.input_shares[1],
+        );
+
+        datastore
+            .run_tx(|tx| {
+                let (report_share_3, report_share_4, report_share_5) = (
+                    report_share_3.clone(),
+                    report_share_4.clone(),
+                    report_share_5.clone(),
+                );
+                let (prep_step_3, prep_step_4, prep_step_5) = (
+                    prep_step_3.clone(),
+                    prep_step_4.clone(),
+                    prep_step_5.clone(),
+                );
+
+                Box::pin(async move {
+                    tx.put_report_share(task_id, &report_share_3).await?;
+                    tx.put_report_share(task_id, &report_share_4).await?;
+                    tx.put_report_share(task_id, &report_share_5).await?;
+
+                    tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                        aggregation_job_id: aggregation_job_id_1,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id: aggregation_job_id_1,
+                        task_id,
+                        nonce: nonce_3,
+                        ord: 3,
+                        state: ReportAggregationState::Waiting(prep_step_3),
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id: aggregation_job_id_1,
+                        task_id,
+                        nonce: nonce_4,
+                        ord: 4,
+                        state: ReportAggregationState::Waiting(prep_step_4),
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id: aggregation_job_id_1,
+                        task_id,
+                        nonce: nonce_5,
+                        ord: 5,
+                        state: ReportAggregationState::Waiting(prep_step_5),
+                    })
+                    .await?;
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let request = AggregateReq {
+            task_id,
+            job_id: aggregation_job_id_1,
+            body: AggregateContinueReq {
+                seq: vec![
+                    Transition {
+                        nonce: nonce_3,
+                        trans_data: TransitionTypeSpecificData::Continued {
+                            payload: prep_msg_3.get_encoded(),
+                        },
+                    },
+                    Transition {
+                        nonce: nonce_4,
+                        trans_data: TransitionTypeSpecificData::Continued {
+                            payload: prep_msg_4.get_encoded(),
+                        },
+                    },
+                    Transition {
+                        nonce: nonce_5,
+                        trans_data: TransitionTypeSpecificData::Continued {
+                            payload: prep_msg_5.get_encoded(),
+                        },
+                    },
+                ],
+            },
+        };
+
+        // Create aggregator filter, send request, and parse response.
+        let filter = aggregator_filter(datastore.clone(), first_batch_unit_interval_clock).unwrap();
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let batch_unit_aggregations = datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_batch_unit_aggregations_for_task_in_interval::<Prio3Aes128Count, _>(
+                        task_id,
+                        Interval::new(
+                            nonce_0
+                                .time()
+                                .to_batch_unit_interval_start(task.min_batch_duration)
+                                .unwrap(),
+                            // Make interval big enough to capture both batch unit aggregations
+                            Duration::from_seconds(task.min_batch_duration.as_seconds() * 2),
+                        )
+                        .unwrap(),
+                        &(),
+                    )
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let first_aggregate_share = vdaf
+            .aggregate(&(), [out_share_0, out_share_1, out_share_3])
+            .unwrap();
+        let mut first_checksum = NonceChecksum::from_nonce(nonce_0);
+        first_checksum.update(nonce_1);
+        first_checksum.update(nonce_3);
+
+        let second_aggregate_share = vdaf
+            .aggregate(&(), [out_share_2, out_share_4, out_share_5])
+            .unwrap();
+        let mut second_checksum = NonceChecksum::from_nonce(nonce_2);
+        second_checksum.update(nonce_4);
+        second_checksum.update(nonce_5);
+
+        assert_eq!(
+            batch_unit_aggregations,
+            vec![
+                BatchUnitAggregation::<Prio3Aes128Count> {
+                    task_id,
+                    unit_interval_start: nonce_0
+                        .time()
+                        .to_batch_unit_interval_start(task.min_batch_duration)
+                        .unwrap(),
+                    aggregation_param: (),
+                    aggregate_share: first_aggregate_share,
+                    report_count: 3,
+                    checksum: first_checksum,
+                },
+                BatchUnitAggregation::<Prio3Aes128Count> {
+                    task_id,
+                    unit_interval_start: nonce_2
+                        .time()
+                        .to_batch_unit_interval_start(task.min_batch_duration)
+                        .unwrap(),
+                    aggregation_param: (),
+                    aggregate_share: second_aggregate_share,
+                    report_count: 3,
+                    checksum: second_checksum,
                 }
             ]
         );

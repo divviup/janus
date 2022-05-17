@@ -1154,7 +1154,6 @@ impl Transaction<'_> {
     }
 
     /// Store a new `batch_unit_aggregations` row in the datastore.
-    #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
     pub(crate) async fn put_batch_unit_aggregation<A>(
         &self,
@@ -1194,6 +1193,57 @@ impl Transaction<'_> {
                 ],
             )
             .await?;
+
+        Ok(())
+    }
+
+    /// Update an existing `batch_unit_aggregations` row with the `aggregate_share`, `checksum` and
+    /// `report_count` values in `batch_unit_aggregation`.
+    #[tracing::instrument(skip(self), err)]
+    pub(crate) async fn update_batch_unit_aggregation<A>(
+        &self,
+        batch_unit_aggregation: &BatchUnitAggregation<A>,
+    ) -> Result<(), Error>
+    where
+        A: vdaf::Aggregator,
+        A::AggregationParam: Encode + std::fmt::Debug,
+        A::AggregateShare: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let encoded_aggregate_share: Vec<u8> = (&batch_unit_aggregation.aggregate_share).into();
+        let report_count = i64::try_from(batch_unit_aggregation.report_count)?;
+        let encoded_checksum = batch_unit_aggregation.checksum.get_encoded();
+        let unit_interval_start = batch_unit_aggregation
+            .unit_interval_start
+            .as_naive_date_time();
+        let encoded_aggregation_param = batch_unit_aggregation.aggregation_param.get_encoded();
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "UPDATE batch_unit_aggregations
+                SET aggregate_share = $1, report_count = $2, checksum = $3
+                WHERE
+                    task_id = (SELECT id from TASKS WHERE task_id = $4)
+                    AND unit_interval_start = $5
+                    AND aggregation_param = $6",
+            )
+            .await?;
+        check_update(
+            self.tx
+                .execute(
+                    &stmt,
+                    &[
+                        /* aggregate_share */ &encoded_aggregate_share,
+                        &report_count,
+                        /* checksum */ &encoded_checksum,
+                        /* task_id */ &batch_unit_aggregation.task_id.as_bytes(),
+                        &unit_interval_start,
+                        /* aggregation_param */ &encoded_aggregation_param,
+                    ],
+                )
+                .await?,
+        )?;
 
         Ok(())
     }
@@ -2161,7 +2211,7 @@ pub mod models {
 pub mod test_util {
     use super::{Crypter, Datastore};
 
-    test_util::define_ephemeral_datastore!();
+    janus_test_util::define_ephemeral_datastore!();
 }
 
 #[cfg(test)]
@@ -2174,7 +2224,7 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
-    use ::test_util::generate_aead_key;
+    use ::janus_test_util::generate_aead_key;
     use assert_matches::assert_matches;
     use janus::{
         hpke::{self, HpkeApplicationInfo, Label},
@@ -3342,114 +3392,118 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore().await;
 
-        let batch_unit_aggregations: Vec<BatchUnitAggregation<ToyPoplar1>> = ds
-            .run_tx(|tx| {
-                let (aggregate_share, aggregation_param) =
-                    (aggregate_share.clone(), aggregation_param.clone());
-                Box::pin(async move {
-                    let mut task =
-                        new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
-                    task.min_batch_duration = Duration::from_seconds(100);
-                    tx.put_task(&task).await?;
+        ds.run_tx(|tx| {
+            let (aggregate_share, aggregation_param) =
+                (aggregate_share.clone(), aggregation_param.clone());
+            Box::pin(async move {
+                let mut task =
+                    new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+                task.min_batch_duration = Duration::from_seconds(100);
+                tx.put_task(&task).await?;
 
-                    tx.put_task(&new_dummy_task(
-                        other_task_id,
-                        VdafInstance::Prio3Aes128Count,
-                        Role::Leader,
-                    ))
+                tx.put_task(&new_dummy_task(
+                    other_task_id,
+                    VdafInstance::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
+
+                let first_batch_unit_aggregation = BatchUnitAggregation::<ToyPoplar1> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(100),
+                    aggregation_param: aggregation_param.clone(),
+                    aggregate_share: aggregate_share.clone(),
+                    report_count: 0,
+                    checksum: NonceChecksum::default(),
+                };
+
+                let second_batch_unit_aggregation = BatchUnitAggregation::<ToyPoplar1> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(150),
+                    aggregation_param: aggregation_param.clone(),
+                    aggregate_share: aggregate_share.clone(),
+                    report_count: 0,
+                    checksum: NonceChecksum::default(),
+                };
+
+                let third_batch_unit_aggregation = BatchUnitAggregation::<ToyPoplar1> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(200),
+                    aggregation_param: aggregation_param.clone(),
+                    aggregate_share: aggregate_share.clone(),
+                    report_count: 0,
+                    checksum: NonceChecksum::default(),
+                };
+
+                // Start of this aggregation's interval is before the interval queried below.
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(25),
+                    aggregation_param: aggregation_param.clone(),
+                    aggregate_share: aggregate_share.clone(),
+                    report_count: 0,
+                    checksum: NonceChecksum::default(),
+                })
+                .await?;
+
+                // Following three batch units are within the interval queried below.
+                tx.put_batch_unit_aggregation(&first_batch_unit_aggregation)
+                    .await?;
+                tx.put_batch_unit_aggregation(&second_batch_unit_aggregation)
                     .await?;
 
-                    // Start of this aggregation's interval is before the interval queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(25),
-                        aggregation_param: aggregation_param.clone(),
-                        aggregate_share: aggregate_share.clone(),
-                        report_count: 0,
-                        checksum: NonceChecksum::default(),
-                    })
+                // The end of this batch unit is exactly the end of the interval queried below.
+                tx.put_batch_unit_aggregation(&third_batch_unit_aggregation)
                     .await?;
+                // Aggregation parameter differs from the one queried below.
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(100),
+                    aggregation_param: BTreeSet::from([
+                        IdpfInput::new("gh".as_bytes(), 2).unwrap(),
+                        IdpfInput::new("jk".as_bytes(), 3).unwrap(),
+                    ]),
+                    aggregate_share: aggregate_share.clone(),
+                    report_count: 0,
+                    checksum: NonceChecksum::default(),
+                })
+                .await?;
 
-                    // Following three batch units are within the interval queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(100),
-                        aggregation_param: aggregation_param.clone(),
-                        aggregate_share: aggregate_share.clone(),
-                        report_count: 0,
-                        checksum: NonceChecksum::default(),
-                    })
-                    .await?;
+                // End of this aggregation's interval is after the interval queried below.
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(250),
+                    aggregation_param: aggregation_param.clone(),
+                    aggregate_share: aggregate_share.clone(),
+                    report_count: 0,
+                    checksum: NonceChecksum::default(),
+                })
+                .await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(150),
-                        aggregation_param: aggregation_param.clone(),
-                        aggregate_share: aggregate_share.clone(),
-                        report_count: 0,
-                        checksum: NonceChecksum::default(),
-                    })
-                    .await?;
+                // Start of this aggregation's interval is after the interval queried below.
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(400),
+                    aggregation_param: aggregation_param.clone(),
+                    aggregate_share: aggregate_share.clone(),
+                    report_count: 0,
+                    checksum: NonceChecksum::default(),
+                })
+                .await?;
 
-                    // The end of this batch unit is exactly the end of the interval queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(200),
-                        aggregation_param: aggregation_param.clone(),
-                        aggregate_share: aggregate_share.clone(),
-                        report_count: 0,
-                        checksum: NonceChecksum::default(),
-                    })
-                    .await?;
+                // Task ID differs from that queried below.
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
+                    task_id: other_task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(200),
+                    aggregation_param: aggregation_param.clone(),
+                    aggregate_share: aggregate_share.clone(),
+                    report_count: 0,
+                    checksum: NonceChecksum::default(),
+                })
+                .await?;
 
-                    // Aggregation parameter differs from the one queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(100),
-                        aggregation_param: BTreeSet::from([
-                            IdpfInput::new("gh".as_bytes(), 2).unwrap(),
-                            IdpfInput::new("jk".as_bytes(), 3).unwrap(),
-                        ]),
-                        aggregate_share: aggregate_share.clone(),
-                        report_count: 0,
-                        checksum: NonceChecksum::default(),
-                    })
-                    .await?;
-
-                    // End of this aggregation's interval is after the interval queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(250),
-                        aggregation_param: aggregation_param.clone(),
-                        aggregate_share: aggregate_share.clone(),
-                        report_count: 0,
-                        checksum: NonceChecksum::default(),
-                    })
-                    .await?;
-
-                    // Start of this aggregation's interval is after the interval queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(400),
-                        aggregation_param: aggregation_param.clone(),
-                        aggregate_share: aggregate_share.clone(),
-                        report_count: 0,
-                        checksum: NonceChecksum::default(),
-                    })
-                    .await?;
-
-                    // Task ID differs from that queried below.
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<ToyPoplar1> {
-                        task_id: other_task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(200),
-                        aggregation_param: aggregation_param.clone(),
-                        aggregate_share: aggregate_share.clone(),
-                        report_count: 0,
-                        checksum: NonceChecksum::default(),
-                    })
-                    .await?;
-
-                    tx.get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1, _>(
+                let batch_unit_aggregations = tx
+                    .get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1, _>(
                         task_id,
                         Interval::new(
                             Time::from_seconds_since_epoch(50),
@@ -3458,42 +3512,71 @@ mod tests {
                         .unwrap(),
                         &aggregation_param,
                     )
-                    .await
-                })
-            })
-            .await
-            .unwrap();
+                    .await?;
 
-        assert_eq!(
-            batch_unit_aggregations.len(),
-            3,
-            "{:#?}",
-            batch_unit_aggregations,
-        );
-        assert!(
-            batch_unit_aggregations.contains(&BatchUnitAggregation {
-                task_id,
-                unit_interval_start: Time::from_seconds_since_epoch(100),
-                aggregation_param: aggregation_param.clone(),
-                aggregate_share: aggregate_share.clone(),
-                report_count: 0,
-                checksum: NonceChecksum::default(),
-            }),
-            "{:#?}",
-            batch_unit_aggregations,
-        );
-        assert!(
-            batch_unit_aggregations.contains(&BatchUnitAggregation {
-                task_id,
-                unit_interval_start: Time::from_seconds_since_epoch(150),
-                aggregation_param: aggregation_param.clone(),
-                aggregate_share: aggregate_share.clone(),
-                report_count: 0,
-                checksum: NonceChecksum::default(),
-            }),
-            "{:#?}",
-            batch_unit_aggregations,
-        );
+                assert_eq!(
+                    batch_unit_aggregations.len(),
+                    3,
+                    "{:#?}",
+                    batch_unit_aggregations,
+                );
+                assert!(
+                    batch_unit_aggregations.contains(&first_batch_unit_aggregation),
+                    "{:#?}",
+                    batch_unit_aggregations,
+                );
+                assert!(
+                    batch_unit_aggregations.contains(&second_batch_unit_aggregation),
+                    "{:#?}",
+                    batch_unit_aggregations,
+                );
+                assert!(batch_unit_aggregations.contains(&third_batch_unit_aggregation));
+
+                let updated_first_batch_unit_aggregation = BatchUnitAggregation::<ToyPoplar1> {
+                    aggregate_share: AggregateShare::from(vec![Field64::from(25)]),
+                    report_count: 1,
+                    checksum: NonceChecksum::get_decoded(&[1; 32]).unwrap(),
+                    ..first_batch_unit_aggregation
+                };
+
+                tx.update_batch_unit_aggregation(&updated_first_batch_unit_aggregation)
+                    .await?;
+
+                let batch_unit_aggregations = tx
+                    .get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1, _>(
+                        task_id,
+                        Interval::new(
+                            Time::from_seconds_since_epoch(50),
+                            Duration::from_seconds(250),
+                        )
+                        .unwrap(),
+                        &aggregation_param,
+                    )
+                    .await?;
+
+                assert_eq!(
+                    batch_unit_aggregations.len(),
+                    3,
+                    "{:#?}",
+                    batch_unit_aggregations,
+                );
+                assert!(
+                    batch_unit_aggregations.contains(&updated_first_batch_unit_aggregation),
+                    "{:#?}",
+                    batch_unit_aggregations,
+                );
+                assert!(
+                    batch_unit_aggregations.contains(&second_batch_unit_aggregation),
+                    "{:#?}",
+                    batch_unit_aggregations,
+                );
+                assert!(batch_unit_aggregations.contains(&third_batch_unit_aggregation));
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
