@@ -39,7 +39,6 @@ use opentelemetry::{
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
-    field::FieldError,
     vdaf::{
         self,
         prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
@@ -591,23 +590,44 @@ impl VdafOps {
     ) -> Result<AggregateResp, Error> {
         match self {
             VdafOps::Prio3Aes128Count(vdaf, verify_param) => {
-                Self::handle_aggregate_generic(datastore, vdaf, task, verify_param, req).await
+                Self::handle_aggregate_generic::<Prio3Aes128Count>(
+                    datastore,
+                    vdaf,
+                    task,
+                    verify_param,
+                    req,
+                )
+                .await
             }
             VdafOps::Prio3Aes128Sum(vdaf, verify_param) => {
-                Self::handle_aggregate_generic(datastore, vdaf, task, verify_param, req).await
+                Self::handle_aggregate_generic::<Prio3Aes128Sum>(
+                    datastore,
+                    vdaf,
+                    task,
+                    verify_param,
+                    req,
+                )
+                .await
             }
             VdafOps::Prio3Aes128Histogram(vdaf, verify_param) => {
-                Self::handle_aggregate_generic(datastore, vdaf, task, verify_param, req).await
+                Self::handle_aggregate_generic::<Prio3Aes128Histogram>(
+                    datastore,
+                    vdaf,
+                    task,
+                    verify_param,
+                    req,
+                )
+                .await
             }
 
             #[cfg(test)]
             VdafOps::Fake(vdaf) => {
-                Self::handle_aggregate_generic(datastore, vdaf, task, &(), req).await
+                Self::handle_aggregate_generic::<fake::Vdaf>(datastore, vdaf, task, &(), req).await
             }
         }
     }
 
-    async fn handle_aggregate_generic<A: vdaf::Aggregator, E>(
+    async fn handle_aggregate_generic<A: vdaf::Aggregator>(
         datastore: &Datastore,
         vdaf: &A,
         task: &Task,
@@ -617,14 +637,14 @@ impl VdafOps {
     where
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync + for<'a> TryFrom<&'a [u8], Error = E>,
+        A::AggregateShare: Send + Sync,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
         A::PrepareMessage: Send + Sync,
         A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::VerifyParam: Send + Sync,
-        E: std::fmt::Display,
     {
         match req.body {
             AggregateInitReq { agg_param, seq } => {
@@ -640,7 +660,7 @@ impl VdafOps {
                 .await
             }
             AggregateContinueReq { seq } => {
-                Self::handle_aggregate_continue_generic(
+                Self::handle_aggregate_continue_generic::<A>(
                     datastore,
                     vdaf,
                     task,
@@ -655,7 +675,7 @@ impl VdafOps {
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
-    async fn handle_aggregate_init_generic<A: vdaf::Aggregator, E>(
+    async fn handle_aggregate_init_generic<A: vdaf::Aggregator>(
         datastore: &Datastore,
         vdaf: &A,
         task: &Task,
@@ -667,12 +687,12 @@ impl VdafOps {
     where
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync + for<'a> TryFrom<&'a [u8], Error = E>,
+        A::AggregateShare: Send + Sync,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareStep: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
-        E: std::fmt::Display,
     {
         let task_id = task.id;
         let min_batch_duration = task.min_batch_duration;
@@ -884,7 +904,7 @@ impl VdafOps {
         })
     }
 
-    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator, E>(
+    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator>(
         datastore: &Datastore,
         vdaf: &A,
         task: &Task,
@@ -895,8 +915,8 @@ impl VdafOps {
     where
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
-        E: std::fmt::Display,
-        A::AggregateShare: Send + Sync + for<'a> TryFrom<&'a [u8], Error = E>,
+        A::AggregateShare: Send + Sync,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareStep: Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
         A::PrepareMessage: Send + Sync,
@@ -1083,31 +1103,25 @@ impl VdafOps {
     ) -> Result<Uuid, Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
-                Self::handle_collect_generic::<Prio3Aes128Count, _>(datastore, task, collect_req)
-                    .await
+                Self::handle_collect_generic::<Prio3Aes128Count>(datastore, task, collect_req).await
             }
             VdafOps::Prio3Aes128Sum(_, _) => {
-                Self::handle_collect_generic::<Prio3Aes128Sum, _>(datastore, task, collect_req)
-                    .await
+                Self::handle_collect_generic::<Prio3Aes128Sum>(datastore, task, collect_req).await
             }
             VdafOps::Prio3Aes128Histogram(_, _) => {
-                Self::handle_collect_generic::<Prio3Aes128Histogram, _>(
-                    datastore,
-                    task,
-                    collect_req,
-                )
-                .await
+                Self::handle_collect_generic::<Prio3Aes128Histogram>(datastore, task, collect_req)
+                    .await
             }
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_collect_generic::<fake::Vdaf, _>(datastore, task, collect_req).await
+                Self::handle_collect_generic::<fake::Vdaf>(datastore, task, collect_req).await
             }
         }
     }
 
     #[tracing::instrument(skip(datastore), err)]
-    async fn handle_collect_generic<A, E>(
+    async fn handle_collect_generic<A>(
         datastore: &Datastore,
         task: &Task,
         req: &CollectReq,
@@ -1117,8 +1131,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     {
         // §4.5: check that the batch interval meets the requirements from §4.6
         if !task.validate_batch_interval(req.batch_interval) {
@@ -1141,7 +1154,7 @@ impl VdafOps {
                     debug!(collect_request = ?req, "Cache miss, creating new collect job UUID");
                     let aggregation_param = A::AggregationParam::get_decoded(&req.agg_param)?;
                     let batch_unit_aggregations = tx
-                        .get_batch_unit_aggregations_for_task_in_interval::<A, E>(
+                        .get_batch_unit_aggregations_for_task_in_interval::<A>(
                             task.id,
                             req.batch_interval,
                             &aggregation_param,
@@ -1219,14 +1232,14 @@ impl VdafOps {
             .run_tx(move |tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    let collect_job = tx
-                        .get_collect_job::<A, _>(collect_job_id)
-                        .await?
-                        .ok_or_else(|| {
-                            datastore::Error::User(
-                                Error::UnrecognizedCollectJob(collect_job_id).into(),
-                            )
-                        })?;
+                    let collect_job =
+                        tx.get_collect_job::<A>(collect_job_id)
+                            .await?
+                            .ok_or_else(|| {
+                                datastore::Error::User(
+                                    Error::UnrecognizedCollectJob(collect_job_id).into(),
+                                )
+                            })?;
 
                     if collect_job.has_run()? {
                         debug!(?collect_job_id, ?task.id, "serving cached collect job response");
@@ -1281,7 +1294,7 @@ impl VdafOps {
     ) -> Result<AggregateShareResp, Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
-                Self::handle_aggregate_share_generic::<Prio3Aes128Count, FieldError>(
+                Self::handle_aggregate_share_generic::<Prio3Aes128Count>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1289,7 +1302,7 @@ impl VdafOps {
                 .await
             }
             VdafOps::Prio3Aes128Sum(_, _) => {
-                Self::handle_aggregate_share_generic::<Prio3Aes128Sum, FieldError>(
+                Self::handle_aggregate_share_generic::<Prio3Aes128Sum>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1297,7 +1310,7 @@ impl VdafOps {
                 .await
             }
             VdafOps::Prio3Aes128Histogram(_, _) => {
-                Self::handle_aggregate_share_generic::<Prio3Aes128Histogram, FieldError>(
+                Self::handle_aggregate_share_generic::<Prio3Aes128Histogram>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1307,7 +1320,7 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_aggregate_share_generic::<fake::Vdaf, Infallible>(
+                Self::handle_aggregate_share_generic::<fake::Vdaf>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1320,7 +1333,7 @@ impl VdafOps {
     /// Check whether any member of `batch_unit_aggregations` has been included in enough collect
     /// jobs (for `task.role` == [`Role::Leader`]) or aggregate share jobs (for `task.role` ==
     /// [`Role::Helper`]) to violate the task's maximum batch lifetime.
-    async fn validate_batch_lifetime_for_unit_aggregations<A, E>(
+    async fn validate_batch_lifetime_for_unit_aggregations<A>(
         tx: &Transaction<'_>,
         task: &Task,
         batch_unit_aggregations: &[BatchUnitAggregation<A>],
@@ -1328,8 +1341,7 @@ impl VdafOps {
     where
         A: vdaf::Aggregator,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     {
         // Check how many rows in the relevant table have a batch interval that includes each batch
         // unit. Each such row consumes one unit of batch lifetime (§4.6).
@@ -1385,7 +1397,7 @@ impl VdafOps {
     }
 
     #[tracing::instrument(skip(tx), err)]
-    async fn service_aggregate_share_request<A, E>(
+    async fn service_aggregate_share_request<A>(
         tx: &Transaction<'_>,
         task: &Task,
         aggregate_share_req: &AggregateShareReq,
@@ -1395,13 +1407,12 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     {
         let aggregation_param =
             A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
         let batch_unit_aggregations = tx
-            .get_batch_unit_aggregations_for_task_in_interval::<A, E>(
+            .get_batch_unit_aggregations_for_task_in_interval::<A>(
                 task.id,
                 aggregate_share_req.batch_interval,
                 &aggregation_param,
@@ -1484,7 +1495,7 @@ impl VdafOps {
         Ok(aggregate_share_job)
     }
 
-    async fn handle_aggregate_share_generic<A, E>(
+    async fn handle_aggregate_share_generic<A>(
         datastore: &Datastore,
         task: &Task,
         aggregate_share_req: &AggregateShareReq,
@@ -1494,8 +1505,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     {
         let aggregate_share_job = datastore
             .run_tx(move |tx| {
@@ -1520,7 +1530,7 @@ impl VdafOps {
                                 ?aggregate_share_req,
                                 "Cache miss, computing aggregate share job result"
                             );
-                            Self::service_aggregate_share_request::<A, E>(
+                            Self::service_aggregate_share_request::<A>(
                                 tx,
                                 &task,
                                 &aggregate_share_req,
@@ -3522,7 +3532,7 @@ mod tests {
         let batch_unit_aggregations = datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_batch_unit_aggregations_for_task_in_interval::<Prio3Aes128Count, _>(
+                    tx.get_batch_unit_aggregations_for_task_in_interval::<Prio3Aes128Count>(
                         task_id,
                         Interval::new(
                             nonce_0
@@ -3716,7 +3726,7 @@ mod tests {
         let batch_unit_aggregations = datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_batch_unit_aggregations_for_task_in_interval::<Prio3Aes128Count, _>(
+                    tx.get_batch_unit_aggregations_for_task_in_interval::<Prio3Aes128Count>(
                         task_id,
                         Interval::new(
                             nonce_0
@@ -4569,11 +4579,11 @@ mod tests {
             .run_tx(|tx| {
                 let leader_aggregate_share = leader_aggregate_share.clone();
                 Box::pin(async move {
-                    tx.update_collect_job_leader_aggregate_share::<Prio3Aes128Count, _>(
+                    tx.update_collect_job_leader_aggregate_share::<Prio3Aes128Count>(
                         collect_job_id,
                         &leader_aggregate_share,
                         10,
-                        [1; 32],
+                        NonceChecksum::get_decoded(&[1; 32]).unwrap(),
                     )
                     .await
                     .unwrap();
