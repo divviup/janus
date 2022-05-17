@@ -122,21 +122,14 @@ impl Transaction<'_> {
         let min_batch_duration = i64::try_from(task.min_batch_duration.as_seconds())?;
         let tolerable_clock_skew = i64::try_from(task.tolerable_clock_skew.as_seconds())?;
 
-        let encrypted_vdaf_verify_param = self.crypter.encrypt(
-            "tasks",
-            task.id.as_bytes(),
-            "vdaf_verify_param",
-            &task.vdaf_verify_parameter,
-        )?;
-
         // Main task insert.
         let stmt = self
             .tx
             .prepare_cached(
                 "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, vdaf,
-                vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
-                tolerable_clock_skew, collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
+                collector_hpke_config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .await?;
         self.tx
@@ -147,7 +140,6 @@ impl Transaction<'_> {
                     &aggregator_role,                          // aggregator_role
                     &endpoints,                                // aggregator_endpoints
                     &Json(&task.vdaf),                         // vdaf
-                    &encrypted_vdaf_verify_param,              // verify param
                     &max_batch_lifetime,                       // max batch lifetime
                     &min_batch_size,                           // min batch size
                     &min_batch_duration,                       // min batch duration
@@ -225,7 +217,35 @@ impl Transaction<'_> {
         ];
         let hpke_configs_future = self.tx.execute(&stmt, hpke_configs_params);
 
-        try_join!(auth_tokens_future, hpke_configs_future)?;
+        // VDAF verification parameters.
+        let mut vdaf_verify_params: Vec<Vec<u8>> = Vec::new();
+        for vdaf_verify_param in task.vdaf_verify_parameters.iter() {
+            let encrypted_vdaf_verify_param = self.crypter.encrypt(
+                "task_vdaf_verify_params",
+                task.id.as_bytes(),
+                "vdaf_verify_param",
+                vdaf_verify_param.as_ref(),
+            )?;
+            vdaf_verify_params.push(encrypted_vdaf_verify_param);
+        }
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "INSERT INTO task_vdaf_verify_params (task_id, vdaf_verify_param)
+                SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BYTEA[])",
+            )
+            .await?;
+        let vdaf_verify_params_params: &[&(dyn ToSql + Sync)] = &[
+            /* task_id */ &task.id.as_bytes(),
+            /* vdaf_verify_params */ &vdaf_verify_params,
+        ];
+        let vdaf_verify_params_future = self.tx.execute(&stmt, vdaf_verify_params_params);
+
+        try_join!(
+            auth_tokens_future,
+            hpke_configs_future,
+            vdaf_verify_params_future
+        )?;
 
         Ok(())
     }
@@ -237,9 +257,8 @@ impl Transaction<'_> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT aggregator_role, aggregator_endpoints, vdaf, vdaf_verify_param,
-                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
-                collector_hpke_config
+                "SELECT aggregator_role, aggregator_endpoints, vdaf, max_batch_lifetime,
+                min_batch_size, min_batch_duration, tolerable_clock_skew, collector_hpke_config
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -263,11 +282,30 @@ impl Transaction<'_> {
             .await?;
         let hpke_key_rows = self.tx.query(&stmt, params);
 
-        let (task_row, agg_auth_token_rows, hpke_key_rows) =
-            try_join!(task_row, agg_auth_token_rows, hpke_key_rows)?;
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT vdaf_verify_param FROM task_vdaf_verify_params
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        let vdaf_verify_param_rows = self.tx.query(&stmt, params);
+
+        let (task_row, agg_auth_token_rows, hpke_key_rows, vdaf_verify_param_rows) = try_join!(
+            task_row,
+            agg_auth_token_rows,
+            hpke_key_rows,
+            vdaf_verify_param_rows,
+        )?;
         task_row
             .map(|task_row| {
-                self.task_from_rows(task_id, task_row, agg_auth_token_rows, hpke_key_rows)
+                self.task_from_rows(
+                    task_id,
+                    task_row,
+                    agg_auth_token_rows,
+                    hpke_key_rows,
+                    vdaf_verify_param_rows,
+                )
             })
             .transpose()
     }
@@ -281,7 +319,7 @@ impl Transaction<'_> {
             .tx
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf,
-                vdaf_verify_param, max_batch_lifetime, min_batch_size, min_batch_duration,
+                max_batch_lifetime, min_batch_size, min_batch_duration,
                 tolerable_clock_skew, collector_hpke_config 
                 FROM tasks",
             )
@@ -306,8 +344,18 @@ impl Transaction<'_> {
             .await?;
         let hpke_config_rows = self.tx.query(&stmt, &[]);
 
-        let (task_rows, agg_auth_token_rows, hpke_config_rows) =
-            try_join!(task_rows, agg_auth_token_rows, hpke_config_rows)?;
+        let stmt = self.tx.prepare_cached(
+            "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_vdaf_verify_params.task_id),
+            vdaf_verify_param FROM task_vdaf_verify_params"
+        ).await?;
+        let vdaf_verify_param_rows = self.tx.query(&stmt, &[]);
+
+        let (task_rows, agg_auth_token_rows, hpke_config_rows, vdaf_verify_param_rows) = try_join!(
+            task_rows,
+            agg_auth_token_rows,
+            hpke_config_rows,
+            vdaf_verify_param_rows
+        )?;
 
         let mut task_row_by_id = Vec::new();
         for row in task_rows {
@@ -333,6 +381,15 @@ impl Transaction<'_> {
                 .push(row);
         }
 
+        let mut vdaf_verify_param_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
+        for row in vdaf_verify_param_rows {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            vdaf_verify_param_rows_by_task_id
+                .entry(task_id)
+                .or_default()
+                .push(row);
+        }
+
         task_row_by_id
             .into_iter()
             .map(|(task_id, row)| {
@@ -343,6 +400,9 @@ impl Transaction<'_> {
                         .remove(&task_id)
                         .unwrap_or_default(),
                     hpke_config_rows_by_task_id
+                        .remove(&task_id)
+                        .unwrap_or_default(),
+                    vdaf_verify_param_rows_by_task_id
                         .remove(&task_id)
                         .unwrap_or_default(),
                 )
@@ -360,6 +420,7 @@ impl Transaction<'_> {
         row: Row,
         agg_auth_token_rows: Vec<Row>,
         hpke_key_rows: Vec<Row>,
+        vdaf_verify_param_rows: Vec<Row>,
     ) -> Result<Task, Error> {
         // Scalar task parameters.
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
@@ -369,7 +430,6 @@ impl Transaction<'_> {
             .map(|endpoint| Ok(Url::parse(&endpoint)?))
             .collect::<Result<_, Error>>()?;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-        let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
         let max_batch_lifetime = row.get_bigint_and_convert("max_batch_lifetime")?;
         let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
         let min_batch_duration =
@@ -377,13 +437,6 @@ impl Transaction<'_> {
         let tolerable_clock_skew =
             Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
-
-        let vdaf_verify_param = self.crypter.decrypt(
-            "tasks",
-            task_id.as_bytes(),
-            "vdaf_verify_param",
-            &encrypted_vdaf_verify_param,
-        )?;
 
         // Aggregator authentication keys.
         let mut agg_auth_tokens = Vec::new();
@@ -424,12 +477,24 @@ impl Transaction<'_> {
             hpke_configs.push((config, private_key));
         }
 
+        let mut vdaf_verify_params = Vec::new();
+        for row in vdaf_verify_param_rows {
+            let encrypted_vdaf_verify_param: Vec<u8> = row.get("vdaf_verify_param");
+
+            vdaf_verify_params.push(self.crypter.decrypt(
+                "task_vdaf_verify_params",
+                task_id.as_bytes(),
+                "vdaf_verify_param",
+                &encrypted_vdaf_verify_param,
+            )?);
+        }
+
         Ok(Task::new(
             task_id,
             endpoints,
             vdaf,
             aggregator_role.as_role(),
-            vdaf_verify_param,
+            vdaf_verify_params,
             max_batch_lifetime,
             min_batch_size,
             min_batch_duration,
@@ -938,14 +1003,13 @@ impl Transaction<'_> {
 
     /// Returns the collect job for the provided UUID, or `None` if no such collect job exists.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn get_collect_job<A: vdaf::Aggregator, E>(
+    pub(crate) async fn get_collect_job<A: vdaf::Aggregator>(
         &self,
         collect_job_id: Uuid,
     ) -> Result<Option<CollectJob<A>>, Error>
     where
         A: vdaf::Aggregator,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
@@ -983,7 +1047,10 @@ impl Transaction<'_> {
                 let leader_aggregate_share =
                     row.get_nullable_bytea_and_convert("leader_aggregate_share")?;
                 let report_count = row.get_nullable_bigint_and_convert("report_count")?;
-                let checksum = row.get_nullable_bytea_and_convert("checksum")?;
+                let checksum_bytes: Option<Vec<u8>> = row.get("checksum");
+                let checksum = checksum_bytes
+                    .map(|bytes| NonceChecksum::get_decoded(&bytes))
+                    .transpose()?;
 
                 Ok(CollectJob {
                     collect_job_id,
@@ -1079,22 +1146,21 @@ impl Transaction<'_> {
 
     /// Updates an existing collect job with the provided leader aggregate share.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn update_collect_job_leader_aggregate_share<A: vdaf::Aggregator, E>(
+    pub(crate) async fn update_collect_job_leader_aggregate_share<A: vdaf::Aggregator>(
         &self,
         collect_job_id: Uuid,
         leader_aggregate_share: &A::AggregateShare,
         report_count: u64,
-        checksum: [u8; 32],
+        checksum: NonceChecksum,
     ) -> Result<(), Error>
     where
         A: vdaf::Aggregator,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let leader_aggregate_share: Option<Vec<u8>> = Some(leader_aggregate_share.into());
         let report_count = Some(i64::try_from(report_count)?);
-        let checksum = Some(&checksum[..]);
+        let checksum = Some(checksum.get_encoded());
 
         let stmt = self
             .tx
@@ -1251,7 +1317,7 @@ impl Transaction<'_> {
     /// Fetch all the `batch_unit_aggregations` rows whose `unit_interval_start` describes an
     /// interval that falls within the provided `interval` and whose `aggregation_param` matches.
     #[tracing::instrument(skip(self, aggregation_param), err)]
-    pub(crate) async fn get_batch_unit_aggregations_for_task_in_interval<A, E>(
+    pub(crate) async fn get_batch_unit_aggregations_for_task_in_interval<A>(
         &self,
         task_id: TaskId,
         interval: Interval,
@@ -1260,8 +1326,7 @@ impl Transaction<'_> {
     where
         A: vdaf::Aggregator,
         A::AggregationParam: Encode + Clone,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let unit_interval_start = interval.start().as_naive_date_time();
@@ -1318,14 +1383,13 @@ impl Transaction<'_> {
     /// Fetch an `aggregate_share_jobs` row from the datastore corresponding to the provided
     /// [`AggregateShareRequest`], or `None` if no such job exists.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn get_aggregate_share_job_by_request<A, E>(
+    pub(crate) async fn get_aggregate_share_job_by_request<A>(
         &self,
         request: &AggregateShareReq,
     ) -> Result<Option<AggregateShareJob<A>>, Error>
     where
         A: vdaf::Aggregator,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let batch_interval_start = request.batch_interval.start().as_naive_date_time();
@@ -1441,15 +1505,14 @@ impl Transaction<'_> {
 
     /// Put an `aggregate_share_job` row into the datastore.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn put_aggregate_share_job<A, E>(
+    pub(crate) async fn put_aggregate_share_job<A>(
         &self,
         job: &AggregateShareJob<A>,
     ) -> Result<(), Error>
     where
         A: vdaf::Aggregator,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     {
         let batch_interval_start = job.batch_interval.start().as_naive_date_time();
         let batch_interval_duration = i64::try_from(job.batch_interval.duration().as_seconds())?;
@@ -1595,16 +1658,16 @@ trait RowExt {
         I: RowIndex + Display;
 
     /// Get a PostgreSQL `BYTEA` from the row and attempt to convert it to `T`.
-    fn get_bytea_and_convert<T, E>(&self, idx: &'static str) -> Result<T, Error>
+    fn get_bytea_and_convert<T>(&self, idx: &'static str) -> Result<T, Error>
     where
-        E: Display,
-        for<'a> T: TryFrom<&'a [u8], Error = E>;
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> T: TryFrom<&'a [u8]>;
 
     /// Like [`Self::get_bytea_and_convert`] but handles nullable columns.
-    fn get_nullable_bytea_and_convert<T, E>(&self, idx: &'static str) -> Result<Option<T>, Error>
+    fn get_nullable_bytea_and_convert<T>(&self, idx: &'static str) -> Result<Option<T>, Error>
     where
-        E: Display,
-        for<'a> T: TryFrom<&'a [u8], Error = E>;
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> T: TryFrom<&'a [u8]>;
 }
 
 impl RowExt for Row {
@@ -1642,10 +1705,10 @@ impl RowExt for Row {
         )?))
     }
 
-    fn get_bytea_and_convert<T, E>(&self, idx: &'static str) -> Result<T, Error>
+    fn get_bytea_and_convert<T>(&self, idx: &'static str) -> Result<T, Error>
     where
-        E: Display,
-        for<'a> T: TryFrom<&'a [u8], Error = E>,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> T: TryFrom<&'a [u8]>,
     {
         let encoded: Vec<u8> = self.try_get(idx)?;
         let decoded = T::try_from(&encoded)
@@ -1653,10 +1716,10 @@ impl RowExt for Row {
         Ok(decoded)
     }
 
-    fn get_nullable_bytea_and_convert<T, E>(&self, idx: &'static str) -> Result<Option<T>, Error>
+    fn get_nullable_bytea_and_convert<T>(&self, idx: &'static str) -> Result<Option<T>, Error>
     where
-        E: Display,
-        for<'a> T: TryFrom<&'a [u8], Error = E>,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> T: TryFrom<&'a [u8]>,
     {
         let encoded: Option<Vec<u8>> = self.try_get(idx)?;
         encoded
@@ -2128,7 +2191,7 @@ pub mod models {
         /// Checksum over the aggregated report shares, as described in §4.4.4.3, or `None` until
         /// the leader has computed it.
         #[derivative(Debug = "ignore")]
-        pub(crate) checksum: Option<[u8; 32]>,
+        pub(crate) checksum: Option<NonceChecksum>,
     }
 
     impl<A: vdaf::Aggregator> CollectJob<A>
@@ -3278,8 +3341,8 @@ mod tests {
                     .await
                     .unwrap();
 
-                let first_collect_job: CollectJob<Prio3Aes128Count> = tx
-                    .get_collect_job(first_collect_job_id)
+                let first_collect_job = tx
+                    .get_collect_job::<Prio3Aes128Count>(first_collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -3291,8 +3354,8 @@ mod tests {
                 assert!(first_collect_job.report_count.is_none());
                 assert!(first_collect_job.checksum.is_none());
 
-                let second_collect_job: CollectJob<Prio3Aes128Count> = tx
-                    .get_collect_job(second_collect_job_id)
+                let second_collect_job = tx
+                    .get_collect_job::<Prio3Aes128Count>(second_collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -3305,17 +3368,17 @@ mod tests {
                 assert!(second_collect_job.checksum.is_none());
 
                 let leader_aggregate_share = AggregateShare::from(vec![Field64::from(1)]);
-                tx.update_collect_job_leader_aggregate_share::<Prio3Aes128Count, _>(
+                tx.update_collect_job_leader_aggregate_share::<Prio3Aes128Count>(
                     first_collect_job_id,
                     &leader_aggregate_share,
                     10,
-                    [1; 32],
+                    NonceChecksum::get_decoded(&[1; 32]).unwrap(),
                 )
                 .await
                 .unwrap();
 
-                let first_collect_job: CollectJob<Prio3Aes128Count> = tx
-                    .get_collect_job(first_collect_job_id)
+                let first_collect_job = tx
+                    .get_collect_job::<Prio3Aes128Count>(first_collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -3328,7 +3391,10 @@ mod tests {
                     Some(leader_aggregate_share.clone())
                 );
                 assert_eq!(first_collect_job.report_count, Some(10));
-                assert_eq!(first_collect_job.checksum, Some([1; 32]));
+                assert_eq!(
+                    first_collect_job.checksum,
+                    Some(NonceChecksum::get_decoded(&[1; 32]).unwrap())
+                );
 
                 let encrypted_helper_aggregate_share = hpke::seal(
                     &task.collector_hpke_config,
@@ -3350,8 +3416,8 @@ mod tests {
                 .await
                 .unwrap();
 
-                let first_collect_job: CollectJob<Prio3Aes128Count> = tx
-                    .get_collect_job(first_collect_job_id)
+                let first_collect_job = tx
+                    .get_collect_job::<Prio3Aes128Count>(first_collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -3367,7 +3433,10 @@ mod tests {
                     Some(leader_aggregate_share)
                 );
                 assert_eq!(first_collect_job.report_count, Some(10));
-                assert_eq!(first_collect_job.checksum, Some([1; 32]));
+                assert_eq!(
+                    first_collect_job.checksum,
+                    Some(NonceChecksum::get_decoded(&[1; 32]).unwrap())
+                );
 
                 Ok(())
             })
@@ -3503,7 +3572,7 @@ mod tests {
                 .await?;
 
                 let batch_unit_aggregations = tx
-                    .get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1, _>(
+                    .get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1>(
                         task_id,
                         Interval::new(
                             Time::from_seconds_since_epoch(50),
@@ -3543,7 +3612,7 @@ mod tests {
                     .await?;
 
                 let batch_unit_aggregations = tx
-                    .get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1, _>(
+                    .get_batch_unit_aggregations_for_task_in_interval::<ToyPoplar1>(
                         task_id,
                         Interval::new(
                             Time::from_seconds_since_epoch(50),
@@ -3614,12 +3683,12 @@ mod tests {
                     checksum,
                 };
 
-                tx.put_aggregate_share_job(&aggregate_share_job)
+                tx.put_aggregate_share_job::<Prio3Aes128Count>(&aggregate_share_job)
                     .await
                     .unwrap();
 
                 let aggregate_share_job_again = tx
-                    .get_aggregate_share_job_by_request::<Prio3Aes128Count, _>(&AggregateShareReq {
+                    .get_aggregate_share_job_by_request::<Prio3Aes128Count>(&AggregateShareReq {
                         task_id,
                         batch_interval,
                         aggregation_param: ().get_encoded(),
@@ -3633,7 +3702,7 @@ mod tests {
                 assert_eq!(aggregate_share_job, aggregate_share_job_again);
 
                 assert!(tx
-                    .get_aggregate_share_job_by_request::<Prio3Aes128Count, _>(&AggregateShareReq {
+                    .get_aggregate_share_job_by_request::<Prio3Aes128Count>(&AggregateShareReq {
                         task_id,
                         batch_interval: other_batch_interval,
                         aggregation_param: ().get_encoded(),
@@ -3706,7 +3775,7 @@ mod tests {
                 ];
 
                 for (task_id, interval) in aggregate_share_jobs {
-                    tx.put_aggregate_share_job::<Prio3Aes128Count, _>(&AggregateShareJob {
+                    tx.put_aggregate_share_job::<Prio3Aes128Count>(&AggregateShareJob {
                         task_id,
                         batch_interval: interval,
                         aggregation_param: (),

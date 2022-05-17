@@ -54,6 +54,7 @@ where
 impl<A: vdaf::Aggregator> Accumulator<A>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
 {
     /// Create a new accumulator
     pub(super) fn new(
@@ -101,19 +102,15 @@ where
     /// batch unit aggregation already exists for some accumulator, it is updated. If no batch unit
     /// aggregation exists, one is created and initialized with the accumulated values.
     #[tracing::instrument(skip(self, tx), err)]
-    pub(super) async fn flush_to_datastore<E>(
+    pub(super) async fn flush_to_datastore(
         self,
         tx: &Transaction<'_>,
-    ) -> Result<(), datastore::Error>
-    where
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
-        E: std::fmt::Display,
-    {
+    ) -> Result<(), datastore::Error> {
         for (unit_interval_start, accumulate) in self.accumulations {
             let unit_interval = Interval::new(unit_interval_start, self.min_batch_duration)?;
 
             let mut batch_unit_aggregations = tx
-                .get_batch_unit_aggregations_for_task_in_interval::<A, _>(
+                .get_batch_unit_aggregations_for_task_in_interval::<A>(
                     self.task_id,
                     unit_interval,
                     &self.aggregation_param,

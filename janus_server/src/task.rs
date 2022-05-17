@@ -90,9 +90,9 @@ pub struct Task {
     pub vdaf: VdafInstance,
     /// The role performed by the aggregator.
     pub role: Role,
-    /// Secret verification parameter shared by the aggregators.
+    /// Secret verification parameters shared by the aggregators.
     #[derivative(Debug = "ignore")]
-    pub(crate) vdaf_verify_parameter: Vec<u8>,
+    pub(crate) vdaf_verify_parameters: Vec<Vec<u8>>,
     /// The maximum number of times a given batch may be collected.
     pub(crate) max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
@@ -119,7 +119,7 @@ impl Task {
         aggregator_endpoints: Vec<Url>,
         vdaf: VdafInstance,
         role: Role,
-        vdaf_verify_parameter: Vec<u8>,
+        vdaf_verify_parameters: Vec<Vec<u8>>,
         max_batch_lifetime: u64,
         min_batch_size: u64,
         min_batch_duration: Duration,
@@ -138,6 +138,9 @@ impl Task {
         if agg_auth_tokens.is_empty() {
             return Err(Error::InvalidParameter("agg_auth_tokens"));
         }
+        if vdaf_verify_parameters.is_empty() {
+            return Err(Error::InvalidParameter("vdaf_verify_parameters"));
+        }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
         let hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_keys
@@ -153,7 +156,7 @@ impl Task {
             aggregator_endpoints,
             vdaf,
             role,
-            vdaf_verify_parameter,
+            vdaf_verify_parameters,
             max_batch_lifetime,
             min_batch_size,
             min_batch_duration,
@@ -229,24 +232,7 @@ pub mod test_util {
             aggregator_config_1.public_key().clone(),
         );
 
-        let vdaf_verify_parameter = match &vdaf {
-            VdafInstance::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),
-            VdafInstance::Prio3Aes128Sum { bits } => {
-                verify_param(Prio3Aes128Sum::new(2, *bits).unwrap(), role)
-            }
-            VdafInstance::Prio3Aes128Histogram { buckets } => {
-                verify_param(Prio3Aes128Histogram::new(2, &*buckets).unwrap(), role)
-            }
-            VdafInstance::Poplar1 { bits } => verify_param(
-                Poplar1::<ToyIdpf<Field128>, PrgAes128, 16>::new(*bits),
-                role,
-            ),
-
-            #[cfg(test)]
-            VdafInstance::Fake
-            | VdafInstance::FakeFailsPrepInit
-            | VdafInstance::FakeFailsPrepStep => Vec::new(),
-        };
+        let vdaf_verify_parameter = verify_param_dispatch(&vdaf, role);
 
         Task::new(
             task_id,
@@ -256,7 +242,7 @@ pub mod test_util {
             ],
             vdaf,
             role,
-            vdaf_verify_parameter,
+            vec![vdaf_verify_parameter],
             0,
             0,
             Duration::from_hours(8).unwrap(),
@@ -280,6 +266,27 @@ pub mod test_util {
         base64::encode_config(&buf, base64::URL_SAFE_NO_PAD)
             .into_bytes()
             .into()
+    }
+
+    fn verify_param_dispatch(vdaf: &VdafInstance, role: Role) -> Vec<u8> {
+        match &vdaf {
+            VdafInstance::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),
+            VdafInstance::Prio3Aes128Sum { bits } => {
+                verify_param(Prio3Aes128Sum::new(2, *bits).unwrap(), role)
+            }
+            VdafInstance::Prio3Aes128Histogram { buckets } => {
+                verify_param(Prio3Aes128Histogram::new(2, &*buckets).unwrap(), role)
+            }
+            VdafInstance::Poplar1 { bits } => verify_param(
+                Poplar1::<ToyIdpf<Field128>, PrgAes128, 16>::new(*bits),
+                role,
+            ),
+
+            #[cfg(test)]
+            VdafInstance::Fake
+            | VdafInstance::FakeFailsPrepInit
+            | VdafInstance::FakeFailsPrepStep => Vec::new(),
+        }
     }
 
     fn verify_param<V: vdaf::Vdaf>(vdaf: V, role: Role) -> Vec<u8>
