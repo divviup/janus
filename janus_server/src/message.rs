@@ -1,6 +1,7 @@
 //! PPM protocol message definitions with serialization/deserialization support.
 
 use anyhow::anyhow;
+use base64::display::Base64Display;
 use janus::{
     hpke::associated_data_for_report_share,
     message::{Duration, Error, Extension, HpkeCiphertext, Nonce, NonceChecksum, TaskId, Time},
@@ -75,9 +76,9 @@ impl Display for Interval {
 /// PPM protocol message representing one aggregator's share of a single client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportShare {
-    pub(crate) nonce: Nonce,
-    pub(crate) extensions: Vec<Extension>,
-    pub(crate) encrypted_input_share: HpkeCiphertext,
+    pub nonce: Nonce,
+    pub extensions: Vec<Extension>,
+    pub encrypted_input_share: HpkeCiphertext,
 }
 
 impl ReportShare {
@@ -111,8 +112,8 @@ impl Decode for ReportShare {
 /// PPM protocol message representing a transition in the state machine of a VDAF.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transition {
-    pub(crate) nonce: Nonce,
-    pub(crate) trans_data: TransitionTypeSpecificData,
+    pub nonce: Nonce,
+    pub trans_data: TransitionTypeSpecificData,
 }
 
 impl Encode for Transition {
@@ -218,7 +219,21 @@ impl AggregationJobId {
 
 impl Debug for AggregationJobId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
+        write!(
+            f,
+            "AggregationJobId({})",
+            Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+        )
+    }
+}
+
+impl Display for AggregationJobId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+        )
     }
 }
 
@@ -251,9 +266,9 @@ impl AggregationJobId {
 /// PPM protocol message representing an aggregation request from the leader to a helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateReq {
-    pub(crate) task_id: TaskId,
-    pub(crate) job_id: AggregationJobId,
-    pub(crate) body: AggregateReqBody,
+    pub task_id: TaskId,
+    pub job_id: AggregationJobId,
+    pub body: AggregateReqBody,
 }
 
 impl Encode for AggregateReq {
@@ -323,7 +338,7 @@ pub enum AggregateReqBody {
 /// or continue aggregation of a sequence of client reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateResp {
-    pub(crate) seq: Vec<Transition>,
+    pub seq: Vec<Transition>,
 }
 
 impl Encode for AggregateResp {

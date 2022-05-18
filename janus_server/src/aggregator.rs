@@ -166,9 +166,9 @@ impl From<datastore::Error> for Error {
 }
 
 /// Aggregator implements a PPM aggregator.
-pub struct Aggregator<C> {
+pub struct Aggregator<C: Clock> {
     /// Datastore used for durable storage.
-    datastore: Arc<Datastore>,
+    datastore: Arc<Datastore<C>>,
     /// Clock used to sample time.
     clock: C,
     /// Cache of task aggregators.
@@ -176,7 +176,7 @@ pub struct Aggregator<C> {
 }
 
 impl<C: Clock> Aggregator<C> {
-    fn new(datastore: Arc<Datastore>, clock: C) -> Self {
+    fn new(datastore: Arc<Datastore<C>>, clock: C) -> Self {
         Self {
             datastore,
             clock,
@@ -219,7 +219,7 @@ impl<C: Clock> Aggregator<C> {
             .map(|t| {
                 task_aggregator
                     .task
-                    .check_aggregator_auth_token(t.into_bytes().into())
+                    .check_aggregator_auth_token(&t.into_bytes().into())
             })
             .unwrap_or(false)
         {
@@ -298,7 +298,7 @@ impl<C: Clock> Aggregator<C> {
             .map(|t| {
                 task_aggregator
                     .task
-                    .check_aggregator_auth_token(t.into_bytes().into())
+                    .check_aggregator_auth_token(&t.into_bytes().into())
             })
             .unwrap_or(false)
         {
@@ -435,7 +435,7 @@ impl TaskAggregator {
 
     async fn handle_upload<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         clock: &C,
         report: Report,
     ) -> Result<(), Error> {
@@ -523,9 +523,9 @@ impl TaskAggregator {
         Ok(())
     }
 
-    async fn handle_aggregate(
+    async fn handle_aggregate<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         req: AggregateReq,
     ) -> Result<AggregateResp, Error> {
         self.vdaf_ops
@@ -533,7 +533,11 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_collect(&self, datastore: &Datastore, req: CollectReq) -> Result<Url, Error> {
+    async fn handle_collect<C: Clock>(
+        &self,
+        datastore: &Datastore<C>,
+        req: CollectReq,
+    ) -> Result<Url, Error> {
         let collect_job_id = self
             .vdaf_ops
             .handle_collect(datastore, &self.task, &req)
@@ -546,9 +550,9 @@ impl TaskAggregator {
             .join(&collect_job_id.to_string())?)
     }
 
-    async fn handle_collect_job(
+    async fn handle_collect_job<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         collect_job_id: Uuid,
     ) -> Result<Option<CollectResp>, Error> {
         self.vdaf_ops
@@ -556,9 +560,9 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_share(
+    async fn handle_aggregate_share<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         req: &AggregateShareReq,
     ) -> Result<AggregateShareResp, Error> {
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
@@ -592,15 +596,15 @@ enum VdafOps {
 impl VdafOps {
     /// Implements the `/aggregate` endpoint for the helper, described in §4.4.4.1 & §4.4.4.2 of
     /// draft-gpew-priv-ppm.
-    async fn handle_aggregate(
+    async fn handle_aggregate<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         task: &Task,
         req: AggregateReq,
     ) -> Result<AggregateResp, Error> {
         match self {
             VdafOps::Prio3Aes128Count(vdaf, verify_param) => {
-                Self::handle_aggregate_generic::<Prio3Aes128Count>(
+                Self::handle_aggregate_generic::<Prio3Aes128Count, _>(
                     datastore,
                     vdaf,
                     task,
@@ -610,7 +614,7 @@ impl VdafOps {
                 .await
             }
             VdafOps::Prio3Aes128Sum(vdaf, verify_param) => {
-                Self::handle_aggregate_generic::<Prio3Aes128Sum>(
+                Self::handle_aggregate_generic::<Prio3Aes128Sum, _>(
                     datastore,
                     vdaf,
                     task,
@@ -620,7 +624,7 @@ impl VdafOps {
                 .await
             }
             VdafOps::Prio3Aes128Histogram(vdaf, verify_param) => {
-                Self::handle_aggregate_generic::<Prio3Aes128Histogram>(
+                Self::handle_aggregate_generic::<Prio3Aes128Histogram, _>(
                     datastore,
                     vdaf,
                     task,
@@ -632,13 +636,14 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(vdaf) => {
-                Self::handle_aggregate_generic::<fake::Vdaf>(datastore, vdaf, task, &(), req).await
+                Self::handle_aggregate_generic::<fake::Vdaf, _>(datastore, vdaf, task, &(), req)
+                    .await
             }
         }
     }
 
-    async fn handle_aggregate_generic<A: vdaf::Aggregator>(
-        datastore: &Datastore,
+    async fn handle_aggregate_generic<A: vdaf::Aggregator, C: Clock>(
+        datastore: &Datastore<C>,
         vdaf: &A,
         task: &Task,
         verify_param: &A::VerifyParam,
@@ -670,7 +675,7 @@ impl VdafOps {
                 .await
             }
             AggregateContinueReq { seq } => {
-                Self::handle_aggregate_continue_generic::<A>(
+                Self::handle_aggregate_continue_generic(
                     datastore,
                     vdaf,
                     task,
@@ -685,8 +690,8 @@ impl VdafOps {
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
-    async fn handle_aggregate_init_generic<A: vdaf::Aggregator>(
-        datastore: &Datastore,
+    async fn handle_aggregate_init_generic<A: vdaf::Aggregator, C: Clock>(
+        datastore: &Datastore<C>,
         vdaf: &A,
         task: &Task,
         verify_param: &A::VerifyParam,
@@ -700,6 +705,7 @@ impl VdafOps {
         A::AggregateShare: Send + Sync,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::PrepareMessage: Send + Sync,
         A::PrepareStep: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
@@ -809,7 +815,7 @@ impl VdafOps {
                         trans_data: TransitionTypeSpecificData::Continued {
                             payload: prep_msg.get_encoded(),
                         },
-                        agg_state: ReportAggregationState::<A>::Waiting(prep_step),
+                        agg_state: ReportAggregationState::<A>::Waiting(prep_step, None),
                     }
                 }
 
@@ -914,8 +920,8 @@ impl VdafOps {
         })
     }
 
-    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator>(
-        datastore: &Datastore,
+    async fn handle_aggregate_continue_generic<A: vdaf::Aggregator, C: Clock>(
+        datastore: &Datastore<C>,
         vdaf: &A,
         task: &Task,
         verify_param: &A::VerifyParam,
@@ -985,7 +991,7 @@ impl VdafOps {
                                 // This report was omitted by the leader because of a prior failure.
                                 // Note that the report was dropped (if it's not already in an error
                                 // state) and continue.
-                                if matches!(report_agg.state, ReportAggregationState::Waiting(_)) {
+                                if matches!(report_agg.state, ReportAggregationState::Waiting(_, _)) {
                                     report_agg.state = ReportAggregationState::Failed(TransitionError::ReportDropped);
                                     tx.update_report_aggregation(&report_agg).await?;
                                 }
@@ -995,7 +1001,7 @@ impl VdafOps {
                         };
                         let prep_step =
                             match report_aggregation.state {
-                                ReportAggregationState::Waiting(prep_step) => prep_step,
+                                ReportAggregationState::Waiting(prep_step, _) => prep_step,
                                 _ => {
                                     warn!(?task_id, ?job_id, nonce = %transition.nonce, "Leader sent transition for non-WAITING report aggregation");
                                     return Err(datastore::Error::User(
@@ -1033,7 +1039,7 @@ impl VdafOps {
                             PrepareTransition::Continue(prep_step, prep_msg) => {
                                 saw_continue = true;
                                 report_aggregation.state =
-                                    ReportAggregationState::Waiting(prep_step);
+                                    ReportAggregationState::Waiting(prep_step, None);
                                 response_transitions.push(Transition {
                                     nonce: transition.nonce,
                                     trans_data: TransitionTypeSpecificData::Continued {
@@ -1075,7 +1081,7 @@ impl VdafOps {
                         // This report was omitted by the leader because of a prior failure.
                         // Note that the report was dropped (if it's not already in an error state)
                         // and continue.
-                        if matches!(report_agg.state, ReportAggregationState::Waiting(_)) {
+                        if matches!(report_agg.state, ReportAggregationState::Waiting(_, _)) {
                             report_agg.state = ReportAggregationState::Failed(TransitionError::ReportDropped);
                             tx.update_report_aggregation(&report_agg).await?;
                         }
@@ -1105,34 +1111,40 @@ impl VdafOps {
     }
 
     /// Handle requests to the leader `/collect` endpoint (§4.5).
-    async fn handle_collect(
+    async fn handle_collect<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         task: &Task,
         collect_req: &CollectReq,
     ) -> Result<Uuid, Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
-                Self::handle_collect_generic::<Prio3Aes128Count>(datastore, task, collect_req).await
+                Self::handle_collect_generic::<Prio3Aes128Count, _>(datastore, task, collect_req)
+                    .await
             }
             VdafOps::Prio3Aes128Sum(_, _) => {
-                Self::handle_collect_generic::<Prio3Aes128Sum>(datastore, task, collect_req).await
+                Self::handle_collect_generic::<Prio3Aes128Sum, _>(datastore, task, collect_req)
+                    .await
             }
             VdafOps::Prio3Aes128Histogram(_, _) => {
-                Self::handle_collect_generic::<Prio3Aes128Histogram>(datastore, task, collect_req)
-                    .await
+                Self::handle_collect_generic::<Prio3Aes128Histogram, _>(
+                    datastore,
+                    task,
+                    collect_req,
+                )
+                .await
             }
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_collect_generic::<fake::Vdaf>(datastore, task, collect_req).await
+                Self::handle_collect_generic::<fake::Vdaf, _>(datastore, task, collect_req).await
             }
         }
     }
 
     #[tracing::instrument(skip(datastore), err)]
-    async fn handle_collect_generic<A>(
-        datastore: &Datastore,
+    async fn handle_collect_generic<A, C>(
+        datastore: &Datastore<C>,
         task: &Task,
         req: &CollectReq,
     ) -> Result<Uuid, Error>
@@ -1142,6 +1154,7 @@ impl VdafOps {
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        C: Clock,
     {
         // §4.5: check that the batch interval meets the requirements from §4.6
         if !task.validate_batch_interval(req.batch_interval) {
@@ -1185,9 +1198,9 @@ impl VdafOps {
     }
 
     /// Handle requests to a collect job URI obtained from the leader's `/collect` endpoint (§4.5).
-    async fn handle_collect_job(
+    async fn handle_collect_job<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         task: &Task,
         collect_job_id: Uuid,
     ) -> Result<Option<CollectResp>, Error> {
@@ -1225,8 +1238,8 @@ impl VdafOps {
         }
     }
 
-    async fn handle_collect_job_generic<A, E>(
-        datastore: &Datastore,
+    async fn handle_collect_job_generic<A, C>(
+        datastore: &Datastore<C>,
         task: &Task,
         collect_job_id: Uuid,
     ) -> Result<Option<CollectResp>, Error>
@@ -1235,8 +1248,8 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        C: Clock,
     {
         let collect_job = datastore
             .run_tx(move |tx| {
@@ -1296,15 +1309,15 @@ impl VdafOps {
     }
 
     /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
-    async fn handle_aggregate_share(
+    async fn handle_aggregate_share<C: Clock>(
         &self,
-        datastore: &Datastore,
+        datastore: &Datastore<C>,
         task: &Task,
         aggregate_share_req: &AggregateShareReq,
     ) -> Result<AggregateShareResp, Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
-                Self::handle_aggregate_share_generic::<Prio3Aes128Count>(
+                Self::handle_aggregate_share_generic::<Prio3Aes128Count, C>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1312,7 +1325,7 @@ impl VdafOps {
                 .await
             }
             VdafOps::Prio3Aes128Sum(_, _) => {
-                Self::handle_aggregate_share_generic::<Prio3Aes128Sum>(
+                Self::handle_aggregate_share_generic::<Prio3Aes128Sum, C>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1320,7 +1333,7 @@ impl VdafOps {
                 .await
             }
             VdafOps::Prio3Aes128Histogram(_, _) => {
-                Self::handle_aggregate_share_generic::<Prio3Aes128Histogram>(
+                Self::handle_aggregate_share_generic::<Prio3Aes128Histogram, C>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1330,7 +1343,7 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_aggregate_share_generic::<fake::Vdaf>(
+                Self::handle_aggregate_share_generic::<fake::Vdaf, C>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -1343,8 +1356,8 @@ impl VdafOps {
     /// Check whether any member of `batch_unit_aggregations` has been included in enough collect
     /// jobs (for `task.role` == [`Role::Leader`]) or aggregate share jobs (for `task.role` ==
     /// [`Role::Helper`]) to violate the task's maximum batch lifetime.
-    async fn validate_batch_lifetime_for_unit_aggregations<A>(
-        tx: &Transaction<'_>,
+    async fn validate_batch_lifetime_for_unit_aggregations<A, C>(
+        tx: &Transaction<'_, C>,
         task: &Task,
         batch_unit_aggregations: &[BatchUnitAggregation<A>],
     ) -> Result<(), datastore::Error>
@@ -1352,6 +1365,7 @@ impl VdafOps {
         A: vdaf::Aggregator,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        C: Clock,
     {
         // Check how many rows in the relevant table have a batch interval that includes each batch
         // unit. Each such row consumes one unit of batch lifetime (§4.6).
@@ -1407,8 +1421,8 @@ impl VdafOps {
     }
 
     #[tracing::instrument(skip(tx), err)]
-    async fn service_aggregate_share_request<A>(
-        tx: &Transaction<'_>,
+    async fn service_aggregate_share_request<A, C>(
+        tx: &Transaction<'_, C>,
         task: &Task,
         aggregate_share_req: &AggregateShareReq,
     ) -> Result<AggregateShareJob<A>, datastore::Error>
@@ -1418,6 +1432,7 @@ impl VdafOps {
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        C: Clock,
     {
         let aggregation_param =
             A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
@@ -1505,8 +1520,8 @@ impl VdafOps {
         Ok(aggregate_share_job)
     }
 
-    async fn handle_aggregate_share_generic<A>(
-        datastore: &Datastore,
+    async fn handle_aggregate_share_generic<A, C>(
+        datastore: &Datastore<C>,
         task: &Task,
         aggregate_share_req: &AggregateShareReq,
     ) -> Result<AggregateShareResp, Error>
@@ -1516,6 +1531,7 @@ impl VdafOps {
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        C: Clock,
     {
         let aggregate_share_job = datastore
             .run_tx(move |tx| {
@@ -1540,7 +1556,7 @@ impl VdafOps {
                                 ?aggregate_share_req,
                                 "Cache miss, computing aggregate share job result"
                             );
-                            Self::service_aggregate_share_request::<A>(
+                            Self::service_aggregate_share_request::<A, C>(
                                 tx,
                                 &task,
                                 &aggregate_share_req,
@@ -1818,7 +1834,7 @@ where
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
 fn aggregator_filter<C: Clock>(
-    datastore: Arc<Datastore>,
+    datastore: Arc<Datastore<C>>,
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
     const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -1967,7 +1983,7 @@ fn aggregator_filter<C: Clock>(
 /// `SocketAddr` representing the address and port the server are listening on
 /// and a future that can be `await`ed to begin serving requests.
 pub fn aggregator_server<C: Clock>(
-    datastore: Arc<Datastore>,
+    datastore: Arc<Datastore<C>>,
     clock: C,
     listen_address: SocketAddr,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
@@ -2167,7 +2183,7 @@ mod tests {
         },
         trace::test_util::install_test_trace_subscriber,
     };
-    use ::janus_test_util::MockClock;
+    use ::janus_test_util::{run_vdaf, MockClock, PrepareTransition};
     use assert_matches::assert_matches;
     use http::Method;
     use janus::{
@@ -2178,19 +2194,12 @@ mod tests {
     use prio::{
         codec::Decode,
         field::Field64,
-        vdaf::{prio3::Prio3Aes128Count, AggregateShare},
-        vdaf::{Aggregator as AggregatorTrait, Vdaf as VdafTrait, VdafError},
+        vdaf::{prio3::Prio3Aes128Count, AggregateShare, Aggregator as _},
     };
     use rand::{thread_rng, Rng};
     use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
     use warp::{reply::Reply, Rejection};
-
-    type PrepareTransition<V> = vdaf::PrepareTransition<
-        <V as vdaf::Aggregator>::PrepareStep,
-        <V as vdaf::Aggregator>::PrepareMessage,
-        <V as vdaf::Vdaf>::OutputShare,
-    >;
 
     #[tokio::test]
     async fn hpke_config() {
@@ -2198,7 +2207,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -2213,7 +2223,7 @@ mod tests {
         let response = warp::test::request()
             .path(&format!("/hpke_config?task_id={}", task_id))
             .method("GET")
-            .filter(&aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap())
+            .filter(&aggregator_filter(Arc::new(datastore), clock).unwrap())
             .await
             .unwrap()
             .into_response();
@@ -2246,7 +2256,11 @@ mod tests {
         assert_eq!(&plaintext, message);
     }
 
-    async fn setup_report(task: &Task, datastore: &Datastore, clock: &MockClock) -> Report {
+    async fn setup_report(
+        task: &Task,
+        datastore: &Datastore<MockClock>,
+        clock: &MockClock,
+    ) -> Report {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
@@ -2312,11 +2326,11 @@ mod tests {
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         );
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let report = setup_report(&task, &datastore, &clock).await;
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock.clone()).unwrap();
 
         let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
@@ -2442,7 +2456,7 @@ mod tests {
         );
 
         // reports from the future should be rejected.
-        let bad_report_time = MockClock::default()
+        let bad_report_time = clock
             .now()
             .add(Duration::from_minutes(10).unwrap())
             .unwrap()
@@ -2470,8 +2484,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let report = setup_report(&task, &datastore, &clock).await;
 
@@ -2517,7 +2531,7 @@ mod tests {
         Aggregator<MockClock>,
         Task,
         Report,
-        Arc<Datastore>,
+        Arc<Datastore<MockClock>>,
         DbHandle,
     ) {
         let task = new_dummy_task(
@@ -2525,9 +2539,9 @@ mod tests {
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         );
-        let (datastore, db_handle) = ephemeral_datastore().await;
-        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
+        let (datastore, db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
         let report = setup_report(&task, &datastore, &clock).await;
 
         let aggregator = Aggregator::new(datastore.clone(), clock);
@@ -2720,8 +2734,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -2788,8 +2802,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -2874,11 +2888,11 @@ mod tests {
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (_, verify_params) = vdaf.setup().unwrap();
+        let (public_param, verify_params) = vdaf.setup().unwrap();
         task.vdaf_verify_parameters = vec![verify_params.iter().last().unwrap().get_encoded()];
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
@@ -2891,8 +2905,8 @@ mod tests {
             .unwrap();
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(clock);
-        let input_share = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0)
+        let nonce_0 = Nonce::generate(&clock);
+        let input_share = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce_0, &0)
             .input_shares
             .remove(1);
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -2904,7 +2918,7 @@ mod tests {
 
         // report_share_1 fails decryption.
         let mut report_share_1 = report_share_0.clone();
-        report_share_1.nonce = Nonce::generate(clock);
+        report_share_1.nonce = Nonce::generate(&clock);
         let mut corrupted_payload = report_share_1.encrypted_input_share.payload().to_vec();
         corrupted_payload[0] ^= 0xFF;
         report_share_1.encrypted_input_share = HpkeCiphertext::new(
@@ -2917,7 +2931,7 @@ mod tests {
         );
 
         // report_share_2 fails decoding.
-        let nonce_2 = Nonce::generate(clock);
+        let nonce_2 = Nonce::generate(&clock);
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
         let associated_data = associated_data_for_report_share(nonce_2, &[]);
@@ -2930,7 +2944,7 @@ mod tests {
         );
 
         // report_share_3 has an unknown HPKE config ID.
-        let nonce_3 = Nonce::generate(clock);
+        let nonce_3 = Nonce::generate(&clock);
         let wrong_hpke_config = HpkeConfig::new(
             HpkeConfigId::from(u8::from(hpke_key.0.id()) + 1),
             hpke_key.0.kem_id(),
@@ -3023,8 +3037,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepInit, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         datastore
@@ -3037,7 +3051,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
-            Nonce::generate(clock),
+            Nonce::generate(&clock),
             &hpke_key.0,
             &(),
         );
@@ -3089,8 +3103,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepInit, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         datastore
@@ -3103,7 +3117,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<fake::Vdaf>(
             task_id,
-            Nonce::generate(clock),
+            Nonce::generate(&clock),
             &hpke_key.0,
             &(),
         );
@@ -3154,8 +3168,8 @@ mod tests {
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepInit, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -3229,21 +3243,21 @@ mod tests {
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
-        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (_, verify_params) = vdaf.setup().unwrap();
+        let (public_param, verify_params) = vdaf.setup().unwrap();
         task.vdaf_verify_parameters = vec![verify_params.iter().last().unwrap().get_encoded()];
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(clock);
-        let transcript_0 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0);
+        let nonce_0 = Nonce::generate(&clock);
+        let transcript_0 = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce_0, &0);
         let prep_step_0 = assert_matches!(&transcript_0.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_0 = assert_matches!(&transcript_0.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
-        let prep_msg_0 = transcript_0.messages[0].clone();
+        let prep_msg_0 = transcript_0.combined_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_0,
@@ -3252,7 +3266,7 @@ mod tests {
         );
 
         // report_share_1 is omitted by the leader's request.
-        let nonce_1 = Nonce::generate(clock);
+        let nonce_1 = Nonce::generate(&clock);
         let transcript_1 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_1, &0);
         let prep_step_1 = assert_matches!(&transcript_1.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -3288,7 +3302,7 @@ mod tests {
                         task_id,
                         nonce: nonce_0,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(prep_step_0),
+                        state: ReportAggregationState::Waiting(prep_step_0, None),
                     })
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
@@ -3296,7 +3310,7 @@ mod tests {
                         task_id,
                         nonce: nonce_1,
                         ord: 1,
-                        state: ReportAggregationState::Waiting(prep_step_1),
+                        state: ReportAggregationState::Waiting(prep_step_1, None),
                     })
                     .await?;
 
@@ -3410,7 +3424,7 @@ mod tests {
         let aggregation_job_id_0 = AggregationJobId::random();
         let aggregation_job_id_1 = AggregationJobId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
         let datastore = Arc::new(datastore);
         let first_batch_unit_interval_clock = MockClock::default();
         let second_batch_unit_interval_clock = MockClock::new(
@@ -3426,11 +3440,11 @@ mod tests {
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(first_batch_unit_interval_clock);
+        let nonce_0 = Nonce::generate(&first_batch_unit_interval_clock);
         let transcript_0 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_0, &0);
         let prep_step_0 = assert_matches!(&transcript_0.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_0 = assert_matches!(&transcript_0.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
-        let prep_msg_0 = transcript_0.messages[0].clone();
+        let prep_msg_0 = transcript_0.combined_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_0,
@@ -3440,11 +3454,11 @@ mod tests {
 
         // report_share_1 is another "happy path" report to exercise in-memory accumulation of
         // output shares
-        let nonce_1 = Nonce::generate(first_batch_unit_interval_clock);
+        let nonce_1 = Nonce::generate(&first_batch_unit_interval_clock);
         let transcript_1 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_1, &0);
         let prep_step_1 = assert_matches!(&transcript_1.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_1 = assert_matches!(&transcript_1.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
-        let prep_msg_1 = transcript_1.messages[0].clone();
+        let prep_msg_1 = transcript_1.combined_messages[0].clone();
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_1,
@@ -3453,11 +3467,11 @@ mod tests {
         );
 
         // report share 2 aggregates successfully, but into a distinct batch unit aggregation.
-        let nonce_2 = Nonce::generate(second_batch_unit_interval_clock);
+        let nonce_2 = Nonce::generate(&second_batch_unit_interval_clock);
         let transcript_2 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_2, &0);
         let prep_step_2 = assert_matches!(&transcript_2.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_2 = assert_matches!(&transcript_2.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
-        let prep_msg_2 = transcript_2.messages[0].clone();
+        let prep_msg_2 = transcript_2.combined_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_2,
@@ -3499,7 +3513,7 @@ mod tests {
                         task_id,
                         nonce: nonce_0,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(prep_step_0),
+                        state: ReportAggregationState::Waiting(prep_step_0, None),
                     })
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
@@ -3507,7 +3521,7 @@ mod tests {
                         task_id,
                         nonce: nonce_1,
                         ord: 1,
-                        state: ReportAggregationState::Waiting(prep_step_1),
+                        state: ReportAggregationState::Waiting(prep_step_1, None),
                     })
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
@@ -3515,7 +3529,7 @@ mod tests {
                         task_id,
                         nonce: nonce_2,
                         ord: 2,
-                        state: ReportAggregationState::Waiting(prep_step_2),
+                        state: ReportAggregationState::Waiting(prep_step_2, None),
                     })
                     .await?;
 
@@ -3553,7 +3567,8 @@ mod tests {
         };
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(datastore.clone(), first_batch_unit_interval_clock).unwrap();
+        let filter =
+            aggregator_filter(datastore.clone(), first_batch_unit_interval_clock.clone()).unwrap();
 
         let response = warp::test::request()
             .method("POST")
@@ -3628,11 +3643,11 @@ mod tests {
         // Aggregate some more reports, which should get accumulated into the
         // batch_unit_aggregations rows created earlier.
         // report_share_3 gets aggreated into the first batch unit interval.
-        let nonce_3 = Nonce::generate(first_batch_unit_interval_clock);
+        let nonce_3 = Nonce::generate(&first_batch_unit_interval_clock);
         let transcript_3 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_3, &0);
         let prep_step_3 = assert_matches!(&transcript_3.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_3 = assert_matches!(&transcript_3.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
-        let prep_msg_3 = transcript_3.messages[0].clone();
+        let prep_msg_3 = transcript_3.combined_messages[0].clone();
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_3,
@@ -3641,11 +3656,11 @@ mod tests {
         );
 
         // report_share_4 gets aggregated into the second batch unit interval
-        let nonce_4 = Nonce::generate(second_batch_unit_interval_clock);
+        let nonce_4 = Nonce::generate(&second_batch_unit_interval_clock);
         let transcript_4 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_4, &0);
         let prep_step_4 = assert_matches!(&transcript_4.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_4 = assert_matches!(&transcript_4.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
-        let prep_msg_4 = transcript_4.messages[0].clone();
+        let prep_msg_4 = transcript_4.combined_messages[0].clone();
         let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_4,
@@ -3654,11 +3669,11 @@ mod tests {
         );
 
         // report share 5 also gets aggregated into the second batch unit interval
-        let nonce_5 = Nonce::generate(second_batch_unit_interval_clock);
+        let nonce_5 = Nonce::generate(&second_batch_unit_interval_clock);
         let transcript_5 = run_vdaf(&vdaf, &(), &verify_params, &(), nonce_5, &0);
         let prep_step_5 = assert_matches!(&transcript_5.transitions[1][0], PrepareTransition::<Prio3Aes128Count>::Continue(prep_step, _) => prep_step.clone());
         let out_share_5 = assert_matches!(&transcript_5.transitions[1][1], PrepareTransition::<Prio3Aes128Count>::Finish(out_share) => out_share.clone());
-        let prep_msg_5 = transcript_5.messages[0].clone();
+        let prep_msg_5 = transcript_5.combined_messages[0].clone();
         let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_5,
@@ -3697,7 +3712,7 @@ mod tests {
                         task_id,
                         nonce: nonce_3,
                         ord: 3,
-                        state: ReportAggregationState::Waiting(prep_step_3),
+                        state: ReportAggregationState::Waiting(prep_step_3, None),
                     })
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
@@ -3705,7 +3720,7 @@ mod tests {
                         task_id,
                         nonce: nonce_4,
                         ord: 4,
-                        state: ReportAggregationState::Waiting(prep_step_4),
+                        state: ReportAggregationState::Waiting(prep_step_4, None),
                     })
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
@@ -3713,7 +3728,7 @@ mod tests {
                         task_id,
                         nonce: nonce_5,
                         ord: 5,
-                        state: ReportAggregationState::Waiting(prep_step_5),
+                        state: ReportAggregationState::Waiting(prep_step_5, None),
                     })
                     .await?;
 
@@ -3845,9 +3860,9 @@ mod tests {
             [1, 2, 3, 4, 5, 6, 7, 8],
         );
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
-        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
 
         // Setup datastore.
         datastore
@@ -3881,7 +3896,7 @@ mod tests {
                         task_id,
                         nonce,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await
                 })
@@ -3947,9 +3962,9 @@ mod tests {
             [1, 2, 3, 4, 5, 6, 7, 8],
         );
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepStep, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
-        let datastore = Arc::new(datastore);
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
 
         // Setup datastore.
         datastore
@@ -3983,7 +3998,7 @@ mod tests {
                         task_id,
                         nonce,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await
                 })
@@ -4092,8 +4107,8 @@ mod tests {
             [1, 2, 3, 4, 5, 6, 7, 8],
         );
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -4127,7 +4142,7 @@ mod tests {
                         task_id,
                         nonce,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await
                 })
@@ -4203,8 +4218,8 @@ mod tests {
         );
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -4254,7 +4269,7 @@ mod tests {
                         task_id,
                         nonce: nonce_0,
                         ord: 0,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
@@ -4262,7 +4277,7 @@ mod tests {
                         task_id,
                         nonce: nonce_1,
                         ord: 1,
-                        state: ReportAggregationState::Waiting(()),
+                        state: ReportAggregationState::Waiting((), None),
                     })
                     .await
                 })
@@ -4340,8 +4355,8 @@ mod tests {
         );
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         // Setup datastore.
         datastore
@@ -4441,8 +4456,8 @@ mod tests {
         let task_id = TaskId::random();
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -4499,8 +4514,8 @@ mod tests {
         let task_id = TaskId::random();
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -4571,7 +4586,8 @@ mod tests {
         let leader_aggregate_share = AggregateShare::from(vec![Field64::from(64)]);
         let helper_aggregate_share = AggregateShare::from(vec![Field64::from(32)]);
 
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
         datastore
@@ -4583,7 +4599,7 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(datastore.clone(), MockClock::default()).unwrap();
+        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
 
         let request = CollectReq {
             task_id,
@@ -4735,7 +4751,7 @@ mod tests {
     #[tokio::test]
     async fn no_such_collect_job() {
         install_test_trace_subscriber();
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
         let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
 
         let no_such_collect_job_id = Uuid::new_v4();
@@ -4758,7 +4774,7 @@ mod tests {
         let mut task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
         task.max_batch_lifetime = 1;
 
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         datastore
             .run_tx(|tx| {
@@ -4847,7 +4863,8 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -4858,7 +4875,7 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let request = AggregateShareReq {
             task_id,
@@ -4909,7 +4926,8 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore
             .run_tx(|tx| {
@@ -4920,7 +4938,7 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         let request = AggregateShareReq {
             task_id,
@@ -4980,7 +4998,8 @@ mod tests {
         task.collector_hpke_config = collector_hpke_config.clone();
         let aggregation_param = ();
 
-        let (datastore, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
         datastore
@@ -4992,7 +5011,7 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(datastore.clone(), MockClock::default()).unwrap();
+        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
 
         // There are no batch unit_aggregations in the datastore yet
         let request = AggregateShareReq {
@@ -5335,79 +5354,6 @@ mod tests {
                 "taskid": format!("{}", task_id),
             })
         );
-    }
-
-    /// A transcript of a VDAF run. All fields are indexed by participant index (in PPM terminology,
-    /// index 0 = leader, index 1 = helper).
-    struct VdafTranscript<V: vdaf::Aggregator>
-    where
-        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-    {
-        input_shares: Vec<V::InputShare>,
-        transitions: Vec<Vec<PrepareTransition<V>>>,
-        messages: Vec<V::PrepareMessage>,
-    }
-
-    // run_vdaf runs a VDAF state machine from sharding through to generating an output share,
-    // returning a "transcript" of all states & messages.
-    fn run_vdaf<V: vdaf::Aggregator + vdaf::Client>(
-        vdaf: &V,
-        public_param: &V::PublicParam,
-        verify_params: &[V::VerifyParam],
-        aggregation_param: &V::AggregationParam,
-        nonce: Nonce,
-        measurement: &V::Measurement,
-    ) -> VdafTranscript<V>
-    where
-        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-    {
-        // Shard inputs into input shares, and initialize the initial PrepareTransitions.
-        let input_shares = vdaf.shard(public_param, measurement).unwrap();
-        let mut prep_trans: Vec<Vec<PrepareTransition<V>>> = input_shares
-            .iter()
-            .enumerate()
-            .map(|(idx, input_share)| {
-                let prep_step = vdaf.prepare_init(
-                    &verify_params[idx],
-                    aggregation_param,
-                    &nonce.get_encoded(),
-                    input_share,
-                )?;
-                let prep_trans = vdaf.prepare_step(prep_step, None);
-                Ok(vec![prep_trans])
-            })
-            .collect::<Result<Vec<Vec<PrepareTransition<V>>>, VdafError>>()
-            .unwrap();
-        let mut combined_prep_msgs = Vec::new();
-
-        // Repeatedly step the VDAF until we reach a terminal state.
-        loop {
-            // Gather messages from last round & combine them into next round's message; if any
-            // participants have reached a terminal state (Finish or Fail), we are done.
-            let mut prep_msgs = Vec::new();
-            for pts in &prep_trans {
-                match pts.last().unwrap() {
-                    PrepareTransition::<V>::Continue(_, prep_msg) => {
-                        prep_msgs.push(prep_msg.clone())
-                    }
-                    _ => {
-                        return VdafTranscript {
-                            input_shares,
-                            transitions: prep_trans,
-                            messages: combined_prep_msgs,
-                        }
-                    }
-                }
-            }
-            let combined_prep_msg = vdaf.prepare_preprocess(prep_msgs).unwrap();
-            combined_prep_msgs.push(combined_prep_msg.clone());
-
-            // Compute each participant's next transition.
-            for pts in &mut prep_trans {
-                let prep_step = assert_matches!(pts.last().unwrap(), PrepareTransition::<V>::Continue(prep_step, _) => prep_step).clone();
-                pts.push(vdaf.prepare_step(prep_step, Some(combined_prep_msg.clone())));
-            }
-        }
     }
 
     fn current_hpke_key(

@@ -6,7 +6,10 @@ use crate::{
     message::Interval,
 };
 use derivative::Derivative;
-use janus::message::{Duration, Nonce, NonceChecksum, TaskId, Time};
+use janus::{
+    message::{Duration, Nonce, NonceChecksum, TaskId, Time},
+    time::Clock,
+};
 use prio::vdaf::{self, Aggregatable};
 use std::collections::HashMap;
 use tracing::debug;
@@ -102,9 +105,9 @@ where
     /// batch unit aggregation already exists for some accumulator, it is updated. If no batch unit
     /// aggregation exists, one is created and initialized with the accumulated values.
     #[tracing::instrument(skip(self, tx), err)]
-    pub(super) async fn flush_to_datastore(
+    pub(super) async fn flush_to_datastore<C: Clock>(
         self,
-        tx: &Transaction<'_>,
+        tx: &Transaction<'_, C>,
     ) -> Result<(), datastore::Error> {
         for (unit_interval_start, accumulate) in self.accumulations {
             let unit_interval = Interval::new(unit_interval_start, self.min_batch_duration)?;

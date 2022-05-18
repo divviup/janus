@@ -3,7 +3,10 @@
 //! The server should promptly shut down, and this test will fail if it times
 //! out waiting for the server to do so.
 
-use janus::message::{Role, TaskId};
+use janus::{
+    message::{Role, TaskId},
+    time::{Clock, RealClock},
+};
 use janus_server::{
     config::{AggregatorConfig, DbConfig},
     datastore::{Crypter, Datastore},
@@ -52,7 +55,7 @@ async fn server_shutdown() {
 
     // This datastore will be used indirectly by the aggregator process, which
     // will connect to its backing database separately.
-    let (datastore, db_handle) = ephemeral_datastore().await;
+    let (datastore, db_handle) = ephemeral_datastore(RealClock::default()).await;
 
     let aggregator_port = select_open_port().unwrap();
 

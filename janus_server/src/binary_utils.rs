@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use deadpool_postgres::{Manager, Pool};
+use janus::time::Clock;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::str::FromStr;
 use tokio_postgres::NoTls;
@@ -14,11 +15,12 @@ use tokio_postgres::NoTls;
 /// exclusive with the database password specified in the connection URL in `db_config`. `ds_keys`
 /// are a list of AES-128-GCM keys, encoded in base64 with no padding, used to protect secret values
 /// stored in the datastore; it must not be empty.
-pub fn datastore(
+pub fn datastore<C: Clock>(
+    clock: C,
     db_config: DbConfig,
     db_password: Option<String>,
     ds_keys: Vec<String>,
-) -> Result<Datastore> {
+) -> Result<Datastore<C>> {
     let mut database_config = tokio_postgres::Config::from_str(db_config.url.as_str())
         .with_context(|| {
             format!(
@@ -56,5 +58,5 @@ pub fn datastore(
     if ds_keys.is_empty() {
         return Err(anyhow!("ds_keys is empty"));
     }
-    Ok(Datastore::new(pool, Crypter::new(ds_keys)))
+    Ok(Datastore::new(pool, Crypter::new(ds_keys), clock))
 }

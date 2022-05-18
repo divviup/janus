@@ -32,8 +32,10 @@ pub enum Error {
 pub struct Duration(u64);
 
 impl Duration {
+    pub const ZERO: Duration = Duration::from_seconds(0);
+
     /// Create a duration representing the provided number of seconds.
-    pub fn from_seconds(seconds: u64) -> Self {
+    pub const fn from_seconds(seconds: u64) -> Self {
         Self(seconds)
     }
 
@@ -186,7 +188,7 @@ impl Nonce {
     }
 
     /// Generate a fresh nonce with the current time.
-    pub fn generate<C: Clock>(clock: C) -> Nonce {
+    pub fn generate<C: Clock>(clock: &C) -> Nonce {
         Nonce {
             time: clock.now(),
             rand: rand::random(),
@@ -383,7 +385,7 @@ impl From<HpkeConfigId> for u8 {
 }
 
 /// PPM protocol message representing an identifier for a PPM task.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TaskId([u8; Self::ENCODED_LEN]);
 
 impl Debug for TaskId {

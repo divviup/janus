@@ -27,7 +27,7 @@ pub enum Error {
 /// [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-patton-cfrg-vdaf/
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename = "Vdaf")]
 pub enum VdafInstance {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
@@ -60,7 +60,7 @@ impl From<Vec<u8>> for AggregatorAuthenticationToken {
 
 impl AggregatorAuthenticationToken {
     /// Returns a view of the aggregator authentication token as a byte slice.
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }
@@ -85,14 +85,14 @@ pub struct Task {
     pub id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
-    pub(crate) aggregator_endpoints: Vec<Url>,
+    pub aggregator_endpoints: Vec<Url>,
     /// The VDAF this task executes.
     pub vdaf: VdafInstance,
     /// The role performed by the aggregator.
     pub role: Role,
     /// Secret verification parameters shared by the aggregators.
     #[derivative(Debug = "ignore")]
-    pub(crate) vdaf_verify_parameters: Vec<Vec<u8>>,
+    pub vdaf_verify_parameters: Vec<Vec<u8>>,
     /// The maximum number of times a given batch may be collected.
     pub(crate) max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
@@ -107,9 +107,9 @@ pub struct Task {
     pub(crate) collector_hpke_config: HpkeConfig,
     /// Tokens used to authenticate messages sent to or received from the other aggregators.
     #[derivative(Debug = "ignore")]
-    pub(crate) agg_auth_tokens: Vec<AggregatorAuthenticationToken>,
+    pub agg_auth_tokens: Vec<AggregatorAuthenticationToken>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
-    pub(crate) hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
+    pub hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
 
 impl Task {
@@ -178,20 +178,24 @@ impl Task {
     }
 
     /// Returns the [`Url`] relative to which the server performing `role` serves its API.
-    pub(crate) fn aggregator_url(&self, role: Role) -> Result<&Url, Error> {
+    pub fn aggregator_url(&self, role: Role) -> Result<&Url, Error> {
         let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
         Ok(&self.aggregator_endpoints[index])
     }
 
+    /// Returns the [`AggregatorAuthenticationToken`] currently used by this task to authenticate
+    /// aggregate messages.
     pub fn primary_aggregator_auth_token(&self) -> &AggregatorAuthenticationToken {
         self.agg_auth_tokens.iter().rev().next().unwrap()
     }
 
+    /// Checks if the given aggregator authentication token is valid (i.e. matches with an
+    /// authentication token recognized by this task).
     pub(crate) fn check_aggregator_auth_token(
         &self,
-        auth_token: AggregatorAuthenticationToken,
+        auth_token: &AggregatorAuthenticationToken,
     ) -> bool {
-        self.agg_auth_tokens.iter().rev().any(|t| t == &auth_token)
+        self.agg_auth_tokens.iter().rev().any(|t| t == auth_token)
     }
 }
 

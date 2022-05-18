@@ -16,11 +16,12 @@ use janus::{
         Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, NonceChecksum, Report, Role,
         TaskId, Time,
     },
+    time::Clock,
 };
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
-    vdaf,
+    vdaf::{self},
 };
 use rand::{thread_rng, Rng};
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
@@ -36,16 +37,21 @@ use uuid::Uuid;
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
-pub struct Datastore {
+pub struct Datastore<C: Clock> {
     pool: deadpool_postgres::Pool,
     crypter: Crypter,
+    clock: C,
 }
 
-impl Datastore {
+impl<C: Clock> Datastore<C> {
     /// new creates a new Datastore using the given Client for backing storage. It is assumed that
     /// the Client is connected to a database with a compatible version of the Janus database schema.
-    pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter) -> Datastore {
-        Self { pool, crypter }
+    pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter, clock: C) -> Datastore<C> {
+        Self {
+            pool,
+            crypter,
+            clock,
+        }
     }
 
     /// run_tx runs a transaction, whose body is determined by the given function. The transaction
@@ -59,7 +65,7 @@ impl Datastore {
     pub async fn run_tx<F, T>(&self, f: F) -> Result<T, Error>
     where
         for<'a> F:
-            Fn(&'a Transaction) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
+            Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
         loop {
             let rslt = self.run_tx_once(&f).await;
@@ -76,7 +82,7 @@ impl Datastore {
     async fn run_tx_once<F, T>(&self, f: &F) -> Result<T, Error>
     where
         for<'a> F:
-            Fn(&'a Transaction) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
+            Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
         // Open transaction.
         let mut client = self.pool.get().await?;
@@ -87,6 +93,7 @@ impl Datastore {
                 .start()
                 .await?,
             crypter: &self.crypter,
+            clock: &self.clock,
         };
 
         // Run user-provided function with the transaction.
@@ -99,12 +106,13 @@ impl Datastore {
 }
 
 /// Transaction represents an ongoing datastore transaction.
-pub struct Transaction<'a> {
+pub struct Transaction<'a, C: Clock> {
     tx: deadpool_postgres::Transaction<'a>,
     crypter: &'a Crypter,
+    clock: &'a C,
 }
 
-impl Transaction<'_> {
+impl<C: Clock> Transaction<'_, C> {
     // This is pub to be used in integration tests
     #[doc(hidden)]
     #[tracing::instrument(skip(self), err)]
@@ -252,7 +260,7 @@ impl Transaction<'_> {
 
     /// Fetch the task parameters corresponing to the provided `task_id`.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn get_task(&self, task_id: TaskId) -> Result<Option<Task>, Error> {
+    pub async fn get_task(&self, task_id: TaskId) -> Result<Option<Task>, Error> {
         let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_bytes()];
         let stmt = self
             .tx
@@ -736,6 +744,89 @@ impl Transaction<'_> {
         })
     }
 
+    // acquire_incomplete_aggregation_jobs retrieves & acquires the IDs of unclaimed incomplete
+    // aggregation jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired with
+    // a "lease" that will time out; the desired duration of the lease is a parameter, and the lease
+    // expiration time is returned.
+    pub async fn acquire_incomplete_aggregation_jobs(
+        &self,
+        lease_duration: Duration,
+        maximum_acquire_count: usize,
+    ) -> Result<Vec<(TaskId, VdafInstance, AggregationJobId, Time)>, Error> {
+        let now = self.clock.now();
+        let lease_expiry_time = now.add(lease_duration)?;
+        let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
+
+        // TODO(brandon): verify that this query is efficient. I am not sure if we would currently
+        // scan over every (in-progress, not-leased) aggregation job for tasks where we are in the
+        // HELPER role.
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "UPDATE aggregation_jobs SET lease_expiry = $1
+                    FROM tasks
+                    WHERE tasks.id = aggregation_jobs.task_id
+                    AND aggregation_jobs.id IN (SELECT aggregation_jobs.id FROM aggregation_jobs
+                        JOIN tasks on tasks.id = aggregation_jobs.task_id
+                        WHERE tasks.aggregator_role = 'LEADER'
+                        AND aggregation_jobs.state = 'IN_PROGRESS'
+                        AND aggregation_jobs.lease_expiry <= $2
+                        ORDER BY aggregation_jobs.id DESC LIMIT $3)
+                    RETURNING tasks.task_id, tasks.vdaf, aggregation_jobs.aggregation_job_id",
+            )
+            .await?;
+        self.tx
+            .query(
+                &stmt,
+                &[
+                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time(),
+                    /* now */ &now.as_naive_date_time(),
+                    /* limit */ &maximum_acquire_count,
+                ],
+            )
+            .await?
+            .into_iter()
+            .map(|row| {
+                let task_id = TaskId::get_decoded(row.get("task_id"))?;
+                let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+                let aggregation_job_id =
+                    AggregationJobId::get_decoded(row.get("aggregation_job_id"))?;
+                Ok((task_id, vdaf, aggregation_job_id, lease_expiry_time))
+            })
+            .collect()
+    }
+
+    /// release_aggregation_job releases an acquired (via e.g. acquire_incomplete_aggregation_jobs)
+    /// aggregation job. It returns an error if the aggregation job has no current lease.
+    pub async fn release_aggregation_job(
+        &self,
+        task_id: TaskId,
+        aggregation_job_id: AggregationJobId,
+    ) -> Result<(), Error> {
+        // TODO(brandon): sanity-check that the aggregation job is leased?
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "UPDATE aggregation_jobs SET lease_expiry = TIMESTAMP '-infinity'
+                FROM tasks
+                WHERE tasks.id = aggregation_jobs.task_id
+                  AND tasks.task_id = $1
+                  AND aggregation_jobs.aggregation_job_id = $2",
+            )
+            .await?;
+        check_update(
+            self.tx
+                .execute(
+                    &stmt,
+                    &[
+                        /* task_id */ &task_id.as_bytes(),
+                        /* aggregation_job_id */ &aggregation_job_id.as_bytes(),
+                    ],
+                )
+                .await?,
+        )
+    }
+
     /// put_aggregation_job stores an aggregation job.
     #[tracing::instrument(skip(self), err)]
     pub async fn put_aggregation_job<A: vdaf::Aggregator>(
@@ -816,7 +907,9 @@ impl Transaction<'_> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT client_reports.nonce_time, client_reports.nonce_rand, report_aggregations.ord, report_aggregations.state, report_aggregations.vdaf_message, report_aggregations.error_code
+                "SELECT client_reports.nonce_time, client_reports.nonce_rand,
+                report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
+                report_aggregations.prep_msg, report_aggregations.out_share, report_aggregations.error_code
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 WHERE report_aggregations.aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1)
@@ -857,7 +950,9 @@ impl Transaction<'_> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT client_reports.nonce_time, client_reports.nonce_rand, report_aggregations.ord, report_aggregations.state, report_aggregations.vdaf_message, report_aggregations.error_code
+                "SELECT client_reports.nonce_time, client_reports.nonce_rand,
+                report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
+                report_aggregations.prep_msg, report_aggregations.out_share, report_aggregations.error_code
                 FROM report_aggregations
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 WHERE report_aggregations.aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1)
@@ -893,22 +988,16 @@ impl Transaction<'_> {
         let nonce_time = report_aggregation.nonce.time().as_naive_date_time();
         let nonce_rand = &report_aggregation.nonce.rand()[..];
         let state_code = report_aggregation.state.state_code();
-        let (vdaf_message, error_code) = match &report_aggregation.state {
-            ReportAggregationState::Start => (None, None),
-            ReportAggregationState::Waiting(prep_step) => (Some(prep_step.get_encoded()), None),
-            ReportAggregationState::Finished(output_share) => (Some(output_share.into()), None),
-            ReportAggregationState::Failed(trans_err) => (None, Some(*trans_err)),
-            ReportAggregationState::Invalid => (None, None),
-        };
-        let error_code = error_code.map(|err| err as i64);
+        let encoded_state_values = report_aggregation.state.encoded_values_from_state();
 
         let stmt = self.tx.prepare_cached(
-            "INSERT INTO report_aggregations (aggregation_job_id, client_report_id, ord, state, vdaf_message, error_code)
+            "INSERT INTO report_aggregations
+            (aggregation_job_id, client_report_id, ord, state, prep_state, prep_msg, out_share, error_code)
             VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
                     (SELECT id FROM client_reports
                      WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
                      AND nonce_time = $3 AND nonce_rand = $4),
-                    $5, $6, $7, $8)"
+                    $5, $6, $7, $8, $9, $10)"
         ).await?;
         self.tx
             .execute(
@@ -921,8 +1010,10 @@ impl Transaction<'_> {
                     /* nonce_rand */ &nonce_rand,
                     /* ord */ &report_aggregation.ord,
                     /* state */ &state_code,
-                    /* vdaf_message */ &vdaf_message,
-                    /* error_code */ &error_code,
+                    /* prep_state */ &encoded_state_values.prep_state,
+                    /* prep_msg */ &encoded_state_values.prep_msg,
+                    /* out_share */ &encoded_state_values.output_share,
+                    /* error_code */ &encoded_state_values.trans_err,
                 ],
             )
             .await?;
@@ -942,23 +1033,17 @@ impl Transaction<'_> {
         let nonce_time = report_aggregation.nonce.time().as_naive_date_time();
         let nonce_rand = &report_aggregation.nonce.rand()[..];
         let state_code = report_aggregation.state.state_code();
-        let (vdaf_message, error_code) = match &report_aggregation.state {
-            ReportAggregationState::Start => (None, None),
-            ReportAggregationState::Waiting(prep_step) => (Some(prep_step.get_encoded()), None),
-            ReportAggregationState::Finished(output_share) => (Some(output_share.into()), None),
-            ReportAggregationState::Failed(trans_err) => (None, Some(*trans_err)),
-            ReportAggregationState::Invalid => (None, None),
-        };
-        let error_code = error_code.map(|err| err as i64);
+        let encoded_state_values = report_aggregation.state.encoded_values_from_state();
 
         let stmt = self
             .tx
             .prepare_cached(
-                "UPDATE report_aggregations SET ord = $1, state = $2, vdaf_message = $3, error_code = $4
-                WHERE aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $5)
+                "UPDATE report_aggregations SET ord = $1, state = $2, prep_state = $3,
+                prep_msg = $4, out_share = $5, error_code = $6
+                WHERE aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $7)
                 AND client_report_id = (SELECT id FROM client_reports
-                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $6)
-                    AND nonce_time = $7 AND nonce_rand = $8)")
+                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $8)
+                    AND nonce_time = $9 AND nonce_rand = $10)")
             .await?;
         check_update(
             self.tx
@@ -967,8 +1052,10 @@ impl Transaction<'_> {
                     &[
                         /* ord */ &report_aggregation.ord,
                         /* state */ &state_code,
-                        /* vdaf_message */ &vdaf_message,
-                        /* error_code */ &error_code,
+                        /* prep_state */ &encoded_state_values.prep_state,
+                        /* prep_msg */ &encoded_state_values.prep_msg,
+                        /* out_share */ &encoded_state_values.output_share,
+                        /* error_code */ &encoded_state_values.trans_err,
                         /* aggregation_job_id */
                         &report_aggregation.aggregation_job_id.as_bytes(),
                         /* task_id */ &report_aggregation.task_id.as_bytes(),
@@ -1580,7 +1667,9 @@ where
     );
     let ord: i64 = row.get("ord");
     let state: ReportAggregationStateCode = row.get("state");
-    let vdaf_message_bytes: Option<Vec<u8>> = row.get("vdaf_message");
+    let prep_state_bytes: Option<Vec<u8>> = row.get("prep_state");
+    let prep_msg_bytes: Option<Vec<u8>> = row.get("prep_msg");
+    let out_share_bytes: Option<Vec<u8>> = row.get("out_share");
     let error_code: Option<i64> = row.get("error_code");
 
     let error_code = match error_code {
@@ -1598,19 +1687,23 @@ where
     let agg_state = match state {
         ReportAggregationStateCode::Start => ReportAggregationState::Start,
         ReportAggregationStateCode::Waiting => {
-            ReportAggregationState::Waiting(A::PrepareStep::get_decoded_with_param(
+            let prep_state = A::PrepareStep::get_decoded_with_param(
                 verify_param,
-                &vdaf_message_bytes.ok_or_else(|| {
+                &prep_state_bytes.ok_or_else(|| {
                     Error::DbState(
-                        "report aggregation in state WAITING but vdaf_message is NULL".to_string(),
+                        "report aggregation in state WAITING but prep_state is NULL".to_string(),
                     )
                 })?,
-            )?)
+            )?;
+            let prep_msg = prep_msg_bytes
+                .map(|bytes| A::PrepareMessage::get_decoded_with_param(&prep_state, &bytes))
+                .transpose()?;
+            ReportAggregationState::Waiting(prep_state, prep_msg)
         }
         ReportAggregationStateCode::Finished => ReportAggregationState::Finished(
-            A::OutputShare::try_from(&vdaf_message_bytes.ok_or_else(|| {
+            A::OutputShare::try_from(&out_share_bytes.ok_or_else(|| {
                 Error::DbState(
-                    "report aggregation in state FINISHED but vdaf_message is NULL".to_string(),
+                    "report aggregation in state FINISHED but out_share is NULL".to_string(),
                 )
             })?)
             .map_err(|_| Error::Decode(CodecError::Other("couldn't decode output share".into())))?,
@@ -1908,7 +2001,7 @@ pub mod models {
     use derivative::Derivative;
     use janus::message::{HpkeCiphertext, Nonce, NonceChecksum, Role, TaskId, Time};
     use postgres_types::{FromSql, ToSql};
-    use prio::vdaf;
+    use prio::{codec::Encode, vdaf};
     use uuid::Uuid;
 
     // We have to manually implement [Partial]Eq for a number of types because the dervied
@@ -2006,6 +2099,7 @@ pub mod models {
     impl<A: vdaf::Aggregator> PartialEq for ReportAggregation<A>
     where
         A::PrepareStep: PartialEq,
+        A::PrepareMessage: PartialEq,
         A::OutputShare: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
@@ -2021,6 +2115,7 @@ pub mod models {
     impl<A: vdaf::Aggregator> Eq for ReportAggregation<A>
     where
         A::PrepareStep: Eq,
+        A::PrepareMessage: Eq,
         A::OutputShare: Eq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
@@ -2034,7 +2129,7 @@ pub mod models {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         Start,
-        Waiting(A::PrepareStep),
+        Waiting(A::PrepareStep, Option<A::PrepareMessage>),
         Finished(A::OutputShare),
         Failed(TransitionError),
         Invalid,
@@ -2047,12 +2142,52 @@ pub mod models {
         pub(super) fn state_code(&self) -> ReportAggregationStateCode {
             match self {
                 ReportAggregationState::Start => ReportAggregationStateCode::Start,
-                ReportAggregationState::Waiting(_) => ReportAggregationStateCode::Waiting,
+                ReportAggregationState::Waiting(_, _) => ReportAggregationStateCode::Waiting,
                 ReportAggregationState::Finished(_) => ReportAggregationStateCode::Finished,
                 ReportAggregationState::Failed(_) => ReportAggregationStateCode::Failed,
                 ReportAggregationState::Invalid => ReportAggregationStateCode::Invalid,
             }
         }
+
+        /// Returns the encoded values for the various messages which might be included in a
+        /// ReportAggregationState. The order of returned values is preparation state, preparation
+        /// message, output share, transition error.
+        pub(super) fn encoded_values_from_state(&self) -> EncodedReportAggregationStateValues
+        where
+            A::PrepareStep: Encode,
+            for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+            for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        {
+            let (prep_state, prep_msg, output_share, trans_err) = match self {
+                ReportAggregationState::Start => (None, None, None, None),
+                ReportAggregationState::Waiting(prep_step, prep_msg) => (
+                    Some(prep_step.get_encoded()),
+                    prep_msg.as_ref().map(|msg| msg.get_encoded()),
+                    None,
+                    None,
+                ),
+                ReportAggregationState::Finished(output_share) => {
+                    (None, None, Some(output_share.into()), None)
+                }
+                ReportAggregationState::Failed(trans_err) => {
+                    (None, None, None, Some(*trans_err as i64))
+                }
+                ReportAggregationState::Invalid => (None, None, None, None),
+            };
+            EncodedReportAggregationStateValues {
+                prep_state,
+                prep_msg,
+                output_share,
+                trans_err,
+            }
+        }
+    }
+
+    pub(super) struct EncodedReportAggregationStateValues {
+        pub(super) prep_state: Option<Vec<u8>>,
+        pub(super) prep_msg: Option<Vec<u8>>,
+        pub(super) output_share: Option<Vec<u8>>,
+        pub(super) trans_err: Option<i64>,
     }
 
     // The private ReportAggregationStateCode exists alongside the public ReportAggregationState
@@ -2077,14 +2212,16 @@ pub mod models {
     impl<A: vdaf::Aggregator> PartialEq for ReportAggregationState<A>
     where
         A::PrepareStep: PartialEq,
+        A::PrepareMessage: PartialEq,
         A::OutputShare: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         fn eq(&self, other: &Self) -> bool {
             match (self, other) {
-                (Self::Waiting(lhs_prep_step), Self::Waiting(rhs_prep_step)) => {
-                    lhs_prep_step == rhs_prep_step
-                }
+                (
+                    Self::Waiting(lhs_prep_step, lhs_prep_msg),
+                    Self::Waiting(rhs_prep_step, rhs_prep_msg),
+                ) => lhs_prep_step == rhs_prep_step && lhs_prep_msg == rhs_prep_msg,
                 (Self::Finished(lhs_out_share), Self::Finished(rhs_out_share)) => {
                     lhs_out_share == rhs_out_share
                 }
@@ -2099,6 +2236,7 @@ pub mod models {
     impl<A: vdaf::Aggregator> Eq for ReportAggregationState<A>
     where
         A::PrepareStep: Eq,
+        A::PrepareMessage: Eq,
         A::OutputShare: Eq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
@@ -2273,6 +2411,7 @@ pub mod models {
 #[cfg(test)]
 pub mod test_util {
     use super::{Crypter, Datastore};
+    use janus::time::Clock;
 
     janus_test_util::define_ephemeral_datastore!();
 }
@@ -2287,8 +2426,9 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
-    use ::janus_test_util::generate_aead_key;
+    use ::janus_test_util::{generate_aead_key, MockClock};
     use assert_matches::assert_matches;
+    use futures::future::try_join_all;
     use janus::{
         hpke::{self, HpkeApplicationInfo, Label},
         message::{Duration, ExtensionType, HpkeConfigId, Role, Time},
@@ -2302,12 +2442,15 @@ mod tests {
             AggregateShare, PrepareTransition,
         },
     };
-    use std::collections::{BTreeSet, HashMap, HashSet};
+    use std::{
+        collections::{BTreeSet, HashMap, HashSet},
+        iter,
+    };
 
     #[tokio::test]
     async fn roundtrip_task() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let values = [
             (
@@ -2384,7 +2527,7 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let report = Report::new(
             TaskId::random(),
@@ -2440,7 +2583,7 @@ mod tests {
     #[tokio::test]
     async fn report_not_found() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let rslt = ds
             .run_tx(|tx| {
@@ -2464,7 +2607,7 @@ mod tests {
     #[tokio::test]
     async fn get_unaggregated_client_report_nonces_for_task() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let task_id = TaskId::random();
         let unrelated_task_id = TaskId::random();
@@ -2584,7 +2727,7 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report_share() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let task_id = TaskId::random();
         let report_share = ReportShare {
@@ -2652,7 +2795,7 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_aggregation_job() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         // We use Poplar1 for this test as it has a non-trivial aggregation parameter, to allow
         // better exercising the serialization/deserialization roundtrip of the aggregation_param.
@@ -2721,9 +2864,204 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn aggregation_job_acquire_release() {
+        // Setup: insert a few aggregation jobs.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        const AGGREGATION_JOB_COUNT: usize = 10;
+        let task_id = TaskId::random();
+        let mut aggregation_job_ids: Vec<_> = iter::repeat_with(AggregationJobId::random)
+            .take(AGGREGATION_JOB_COUNT)
+            .collect();
+        aggregation_job_ids.sort();
+
+        ds.run_tx(|tx| {
+            let aggregation_job_ids = aggregation_job_ids.clone();
+            Box::pin(async move {
+                // Write a few aggregation jobs we expect to be able to retrieve with
+                // acquire_incomplete_aggregation_jobs().
+                tx.put_task(&new_dummy_task(
+                    task_id,
+                    VdafInstance::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
+                for aggregation_job_id in aggregation_job_ids {
+                    tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+                }
+
+                // Write an aggregation job that is finished. We don't want to retrieve this one.
+                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                    aggregation_job_id: AggregationJobId::random(),
+                    task_id,
+                    aggregation_param: (),
+                    state: AggregationJobState::Finished,
+                })
+                .await?;
+
+                // Write an aggregation job for a task that we are taking on the helper role for.
+                // We don't want to retrieve this one, either.
+                let helper_task_id = TaskId::random();
+                tx.put_task(&new_dummy_task(
+                    helper_task_id,
+                    VdafInstance::Prio3Aes128Count,
+                    Role::Helper,
+                ))
+                .await?;
+                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                    aggregation_job_id: AggregationJobId::random(),
+                    task_id: helper_task_id,
+                    aggregation_param: (),
+                    state: AggregationJobState::InProgress,
+                })
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run: run several transactions that all call acquire_incomplete_aggregation_jobs
+        // concurrently. (We do things concurrently in an attempt to make sure the
+        // mutual-exclusivity works properly.)
+        const TX_COUNT: usize = 10;
+        const LEASE_DURATION: Duration = Duration::from_seconds(300);
+        const MAXIMUM_ACQUIRE_COUNT: usize = 4;
+
+        // Sanity check constants: ensure we acquire jobs across multiple calls to exercise the
+        // maximum-jobs-per-call functionality. Make sure we're attempting to acquire enough jobs
+        // in total to cover the number of acquirable jobs we created.
+        #[allow(clippy::assertions_on_constants)]
+        {
+            assert!(MAXIMUM_ACQUIRE_COUNT < AGGREGATION_JOB_COUNT);
+            assert!(MAXIMUM_ACQUIRE_COUNT.checked_mul(TX_COUNT).unwrap() >= AGGREGATION_JOB_COUNT);
+        }
+
+        let results = try_join_all(
+            iter::repeat_with(|| {
+                ds.run_tx(|tx| {
+                    Box::pin(async move {
+                        tx.acquire_incomplete_aggregation_jobs(
+                            LEASE_DURATION,
+                            MAXIMUM_ACQUIRE_COUNT,
+                        )
+                        .await
+                    })
+                })
+            })
+            .take(TX_COUNT),
+        )
+        .await
+        .unwrap();
+
+        // Verify: check that we got all of the desired aggregation jobs, with no duplication, and
+        // the expected lease expiry.
+        let want_expiry_time = clock.now().add(LEASE_DURATION).unwrap();
+        let want_aggregation_jobs: Vec<_> = aggregation_job_ids
+            .iter()
+            .map(|&agg_job_id| {
+                (
+                    task_id,
+                    VdafInstance::Prio3Aes128Count,
+                    agg_job_id,
+                    want_expiry_time,
+                )
+            })
+            .collect();
+        let mut got_aggregation_jobs = Vec::new();
+        for result in results {
+            assert!(result.len() <= MAXIMUM_ACQUIRE_COUNT);
+            got_aggregation_jobs.extend(result.into_iter())
+        }
+        got_aggregation_jobs.sort();
+
+        assert_eq!(want_aggregation_jobs, got_aggregation_jobs);
+
+        // Run: release a few jobs, then attempt to acquire jobs again.
+        const RELEASE_COUNT: usize = 2;
+
+        // Sanity check constants: ensure we release fewer jobs than we're about to acquire to
+        // ensure we can acquire them in all in a single call, while leaving headroom to acquire
+        // at least one unwanted job if there is a logic bug.
+        #[allow(clippy::assertions_on_constants)]
+        {
+            assert!(RELEASE_COUNT < MAXIMUM_ACQUIRE_COUNT);
+        }
+
+        let jobs_to_release: Vec<_> = got_aggregation_jobs
+            .into_iter()
+            .take(RELEASE_COUNT)
+            .collect();
+        ds.run_tx(|tx| {
+            let jobs_to_release = jobs_to_release.clone();
+            Box::pin(async move {
+                for (task_id, _, aggregation_job_id, _) in jobs_to_release {
+                    tx.release_aggregation_job(task_id, aggregation_job_id)
+                        .await?;
+                }
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        let mut got_aggregation_jobs = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.acquire_incomplete_aggregation_jobs(LEASE_DURATION, MAXIMUM_ACQUIRE_COUNT)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        got_aggregation_jobs.sort();
+
+        // Verify: we should have re-acquired the jobs we released.
+        assert_eq!(jobs_to_release, got_aggregation_jobs);
+
+        // Run: advance time by the lease duration (which implicitly releases the jobs), and attempt
+        // to acquire aggregation jobs again.
+        clock.advance(LEASE_DURATION);
+        let want_expiry_time = clock.now().add(LEASE_DURATION).unwrap();
+        let want_aggregation_jobs: Vec<_> = aggregation_job_ids
+            .iter()
+            .map(|&agg_job_id| {
+                (
+                    task_id,
+                    VdafInstance::Prio3Aes128Count,
+                    agg_job_id,
+                    want_expiry_time,
+                )
+            })
+            .collect();
+        let mut got_aggregation_jobs = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    // This time, we just acquire all jobs in a single go for simplicity -- we've
+                    // already tested the maximum acquire count functionality above.
+                    tx.acquire_incomplete_aggregation_jobs(LEASE_DURATION, AGGREGATION_JOB_COUNT)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        got_aggregation_jobs.sort();
+
+        // Verify: we got all the jobs.
+        assert_eq!(want_aggregation_jobs, got_aggregation_jobs);
+    }
+
+    #[tokio::test]
     async fn aggregation_job_not_found() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let rslt = ds
             .run_tx(|tx| {
@@ -2759,7 +3097,7 @@ mod tests {
     async fn get_aggregation_jobs_for_task_id() {
         // Setup.
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         // We use Poplar1 for this test as it has a non-trivial aggregation parameter, to allow
         // better exercising the serialization/deserialization roundtrip of the aggregation_param.
@@ -2841,14 +3179,15 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report_aggregation() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (verify_param, prep_step, output_share) = generate_vdaf_values(vdaf, (), 0);
+        let (verify_param, prep_step, prep_msg, output_share) = generate_vdaf_values(vdaf, (), 0);
 
         for (ord, state) in [
             ReportAggregationState::<Prio3Aes128Count>::Start,
-            ReportAggregationState::Waiting(prep_step),
+            ReportAggregationState::Waiting(prep_step.clone(), None),
+            ReportAggregationState::Waiting(prep_step, Some(prep_msg)),
             ReportAggregationState::Finished(output_share),
             ReportAggregationState::Failed(TransitionError::VdafPrepError),
             ReportAggregationState::Invalid,
@@ -2956,7 +3295,7 @@ mod tests {
     #[tokio::test]
     async fn report_aggregation_not_found() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let rslt = ds
             .run_tx(|tx| {
@@ -3000,16 +3339,17 @@ mod tests {
     #[tokio::test]
     async fn get_report_aggregations_for_aggregation_job() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (verify_param, prep_step, output_share) = generate_vdaf_values(vdaf, (), 0);
+        let (verify_param, prep_step, prep_msg, output_share) = generate_vdaf_values(vdaf, (), 0);
 
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
 
         let report_aggregations = ds
             .run_tx(|tx| {
+                let prep_msg = prep_msg.clone();
                 let prep_step = prep_step.clone();
                 let output_share = output_share.clone();
 
@@ -3031,7 +3371,8 @@ mod tests {
                     let mut report_aggregations = Vec::new();
                     for (ord, state) in [
                         ReportAggregationState::<Prio3Aes128Count>::Start,
-                        ReportAggregationState::Waiting(prep_step),
+                        ReportAggregationState::Waiting(prep_step.clone(), None),
+                        ReportAggregationState::Waiting(prep_step, Some(prep_msg)),
                         ReportAggregationState::Finished(output_share),
                         ReportAggregationState::Failed(TransitionError::VdafPrepError),
                         ReportAggregationState::Invalid,
@@ -3142,7 +3483,7 @@ mod tests {
         )
         .unwrap();
 
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -3255,7 +3596,7 @@ mod tests {
         )
         .unwrap();
 
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -3325,7 +3666,7 @@ mod tests {
         .unwrap();
         let agg_param = ();
 
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -3459,7 +3800,7 @@ mod tests {
             IdpfInput::new("def".as_bytes(), 1).unwrap(),
         ]);
 
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
             let (aggregate_share, aggregation_param) =
@@ -3652,7 +3993,7 @@ mod tests {
     async fn roundtrip_aggregate_share_job() {
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -3724,7 +4065,7 @@ mod tests {
     async fn aggregate_share_job_count_by_interval() {
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -3895,7 +4236,12 @@ mod tests {
         vdaf: A,
         agg_param: A::AggregationParam,
         measurement: A::Measurement,
-    ) -> (A::VerifyParam, A::PrepareStep, A::OutputShare)
+    ) -> (
+        A::VerifyParam,
+        A::PrepareStep,
+        A::PrepareMessage,
+        A::OutputShare,
+    )
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
@@ -3940,6 +4286,7 @@ mod tests {
         (
             verify_params.remove(0),
             prep_states.remove(0),
+            prep_msg,
             output_shares.remove(0),
         )
     }

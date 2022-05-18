@@ -78,14 +78,16 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 -- An aggregation job, representing the aggregation of a number of client reports.
 CREATE TABLE aggregation_jobs(
     id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id            BIGINT NOT NULL,                 -- ID of related task
-    aggregation_job_id BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the PPM specification
-    aggregation_param  BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
-    state              AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
+    task_id            BIGINT NOT NULL,                                   -- ID of related task
+    aggregation_job_id BYTEA NOT NULL,                                    -- 32-byte AggregationJobID as defined by the PPM specification
+    aggregation_param  BYTEA NOT NULL,                                    -- encoded aggregation parameter (opaque VDAF message)
+    state              AGGREGATION_JOB_STATE NOT NULL,                    -- current state of the aggregation job
+    lease_expiry       TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
 
     CONSTRAINT unique_aggregation_job_id UNIQUE(aggregation_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
+CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
 
 -- Specifies the possible state of aggregating a single report.
 CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
@@ -105,7 +107,9 @@ CREATE TABLE report_aggregations(
     client_report_id    BIGINT NOT NULL,                    -- the client report ID this report aggregation is associated with
     ord                 BIGINT NOT NULL,                    -- a value used to specify the ordering of client reports in the aggregation job
     state               REPORT_AGGREGATION_STATE NOT NULL,  -- the current state of this report aggregation
-    vdaf_message        BYTEA,                              -- opaque VDAF message: the current preparation state if in state WAITING, the output share if in state FINISHED, null otherwise
+    prep_state          BYTEA,                              -- the current preparation state (opaque VDAF message, only if in state WAITING)
+    prep_msg            BYTEA,                              -- the next preparation message to be sent to the helper (opaque VDAF message, only if in state WAITING if this aggregator is the leader)
+    out_share           BYTEA,                              -- the output share (opaque VDAF message, only if in state FINISHED)
     error_code          BIGINT,                             -- error code corresponding to a PPM TransitionError value; null if in a state other than FAILED
 
     CONSTRAINT unique_ord UNIQUE(aggregation_job_id, ord),

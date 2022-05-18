@@ -1,0 +1,20 @@
+```
+$ aggregation_job_driver --help
+janus-aggregation-job-driver 0.1.0
+Janus aggregation job driver
+
+USAGE:
+    aggregation_job_driver [OPTIONS] --config-file <config-file> --datastore-keys <datastore-keys>...
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+OPTIONS:
+        --config-file <config-file>                path to configuration file [env: CONFIG_FILE=]
+        --database-password <database-password>    PostgreSQL password [env: PGPASSWORD=]
+        --datastore-keys <datastore-keys>...
+            datastore encryption keys, encoded in base64 then comma-separated [env: DATASTORE_KEYS=]
+
+
+```

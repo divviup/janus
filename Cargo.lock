@@ -1355,8 +1355,10 @@ dependencies = [
 name = "janus_test_util"
 version = "0.1.0"
 dependencies = [
+ "assert_matches",
  "chrono",
  "janus",
+ "prio",
  "rand",
  "ring",
 ]

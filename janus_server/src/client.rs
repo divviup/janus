@@ -162,7 +162,7 @@ where
             .shard(&self.vdaf_public_parameter, measurement)?;
         assert_eq!(input_shares.len(), 2); // PPM only supports VDAFs using two aggregators.
 
-        let nonce = Nonce::generate(self.clock);
+        let nonce = Nonce::generate(&self.clock);
         let extensions = vec![]; // No extensions supported yet
         let associated_data = associated_data_for_report_share(nonce, &extensions);
 

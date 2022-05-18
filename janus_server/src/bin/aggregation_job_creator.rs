@@ -89,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Connect to database.
     let datastore = datastore(
+        RealClock::default(),
         config.database,
         options.database_password,
         options.datastore_keys,
@@ -110,9 +111,9 @@ async fn main() -> anyhow::Result<()> {
     .await
 }
 
-struct AggregationJobCreator<C: Clock + 'static> {
+struct AggregationJobCreator<C: Clock> {
     // Dependencies.
-    datastore: Datastore,
+    datastore: Datastore<C>,
     clock: C,
 
     // Configuration values.
@@ -251,6 +252,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> anyhow::Result<()>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::PrepareMessage: Send + Sync,
         A::PrepareStep: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
@@ -346,7 +348,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 #[cfg(test)]
 mod tests {
     use crate::AggregationJobCreator;
-    use chrono::NaiveDateTime;
     use futures::{future::try_join_all, TryFutureExt};
     use janus::{
         message::{Nonce, Report, Role, TaskId, Time},
@@ -378,7 +379,8 @@ mod tests {
 
         // Setup.
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore().await;
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         // TODO(brandon): consider using tokio::time::pause() to make time deterministic, and allow
         // this test to run without the need for a (racy, wallclock-consuming) real sleep.
@@ -386,7 +388,7 @@ mod tests {
         // with the database -- the task-loader transaction deadlocks on attempting to start a
         // transaction, even if the main test loops on calling yield_now().
 
-        let report_time = Time::from_naive_date_time(NaiveDateTime::from_timestamp(0, 0));
+        let report_time = Time::from_seconds_since_epoch(0);
 
         let leader_task_id = TaskId::random();
         let leader_task =
@@ -417,7 +419,7 @@ mod tests {
         const AGGREGATION_JOB_CREATION_INTERVAL: Duration = Duration::from_secs(1);
         let job_creator = Arc::new(AggregationJobCreator {
             datastore: ds,
-            clock: MockClock::default(),
+            clock,
             tasks_update_frequency: Duration::from_secs(3600),
             aggregation_job_creation_interval: AGGREGATION_JOB_CREATION_INTERVAL,
             min_aggregation_job_size: 0,
@@ -436,9 +438,9 @@ mod tests {
             .run_tx(|tx| {
                 Box::pin(async move {
                     let leader_agg_jobs =
-                        read_aggregate_jobs_for_task::<HashSet<_>>(tx, leader_task_id).await;
+                        read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, leader_task_id).await;
                     let helper_agg_jobs =
-                        read_aggregate_jobs_for_task::<HashSet<_>>(tx, helper_task_id).await;
+                        read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, helper_task_id).await;
                     Ok((leader_agg_jobs, helper_agg_jobs))
                 })
             })
@@ -453,8 +455,8 @@ mod tests {
     #[tokio::test]
     async fn create_aggregation_jobs_for_task() {
         // Setup.
-        let (ds, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -547,7 +549,7 @@ mod tests {
             .datastore
             .run_tx(|tx| {
                 Box::pin(
-                    async move { Ok(read_aggregate_jobs_for_task::<Vec<_>>(tx, task_id).await) },
+                    async move { Ok(read_aggregate_jobs_for_task::<Vec<_>, _>(tx, task_id).await) },
                 )
             })
             .await
@@ -587,8 +589,8 @@ mod tests {
     #[tokio::test]
     async fn create_aggregation_jobs_for_task_not_enough_reports() {
         // Setup.
-        let (ds, _db_handle) = ephemeral_datastore().await;
         let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
@@ -624,7 +626,7 @@ mod tests {
             .datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    Ok(read_aggregate_jobs_for_task::<HashSet<_>>(tx, task_id).await)
+                    Ok(read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, task_id).await)
                 })
             })
             .await
@@ -652,7 +654,7 @@ mod tests {
             .datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    Ok(read_aggregate_jobs_for_task::<HashSet<_>>(tx, task_id).await)
+                    Ok(read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, task_id).await)
                 })
             })
             .await
@@ -669,8 +671,8 @@ mod tests {
     // from aggregation job ID to the report nonces included in the aggregation job. The container
     // used to store the nonces is up to the caller; ordered containers will store nonces in the
     // order they are included in the aggregate job.
-    async fn read_aggregate_jobs_for_task<T: FromIterator<Nonce>>(
-        tx: &Transaction<'_>,
+    async fn read_aggregate_jobs_for_task<T: FromIterator<Nonce>, C: Clock>(
+        tx: &Transaction<'_, C>,
         task_id: TaskId,
     ) -> HashMap<AggregationJobId, T> {
         // For this test, all of the report aggregations will be in the Start state, so the verify
