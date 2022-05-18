@@ -9,7 +9,7 @@ use janus::{
     time::{Clock, RealClock},
 };
 use janus_server::{
-    binary_utils::datastore,
+    binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
     config::AggregationJobDriverConfig,
     datastore::{
         self,
@@ -21,7 +21,6 @@ use janus_server::{
         TransitionError, TransitionTypeSpecificData,
     },
     task::{Task, VdafInstance},
-    trace::install_trace_subscriber,
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -31,21 +30,12 @@ use prio::{
         PrepareTransition,
     },
 };
-use std::{
-    fmt::{self, Debug, Formatter},
-    fs,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{fmt::Debug, sync::Arc};
 use structopt::StructOpt;
-use tokio::{
-    sync::Semaphore,
-    task,
-    time::{self},
-};
+use tokio::{sync::Semaphore, task, time};
 use tracing::{debug, error, info, info_span, Instrument};
 
-#[derive(StructOpt)]
+#[derive(Debug, StructOpt)]
 #[structopt(
     name = "janus-aggregation-job-driver",
     about = "Janus aggregation job driver",
@@ -53,39 +43,13 @@ use tracing::{debug, error, info, info_span, Instrument};
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    /// Path to configuration YAML.
-    #[structopt(
-        long,
-        env = "CONFIG_FILE",
-        parse(from_os_str),
-        takes_value = true,
-        required(true),
-        help = "path to configuration file"
-    )]
-    config_file: PathBuf,
-
-    /// Password for the PostgreSQL database connection. If specified, must not be specified in the
-    /// connection string.
-    #[structopt(long, env = "PGPASSWORD", help = "PostgreSQL password")]
-    database_password: Option<String>,
-
-    /// Datastore encryption keys.
-    #[structopt(
-        long,
-        env = "DATASTORE_KEYS",
-        takes_value = true,
-        use_delimiter = true,
-        required(true),
-        help = "datastore encryption keys, encoded in base64 then comma-separated"
-    )]
-    datastore_keys: Vec<String>,
+    #[structopt(flatten)]
+    common: CommonBinaryOptions,
 }
 
-impl Debug for Options {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Options")
-            .field("config_file", &self.config_file)
-            .finish()
+impl BinaryOptions for Options {
+    fn common_options(&self) -> &CommonBinaryOptions {
+        &self.common
     }
 }
 
@@ -100,54 +64,40 @@ const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Read arguments, read & parse config.
-    let options = Options::from_args();
-    let config: AggregationJobDriverConfig = {
-        let config_content = fs::read_to_string(&options.config_file)
-            .with_context(|| format!("couldn't read config file {:?}", options.config_file))?;
-        serde_yaml::from_str(&config_content)
-            .with_context(|| format!("couldn't parse config file {:?}", options.config_file))?
-    };
-    install_trace_subscriber(&config.logging_config)
-        .context("couldn't install tracing subscriber")?;
+    janus_main::<Options, _, _, _, _>(
+        RealClock::default(),
+        |clock, config: AggregationJobDriverConfig, datastore| async move {
+            let http_client = reqwest::Client::builder()
+                .user_agent(CLIENT_USER_AGENT)
+                .build()
+                .context("couldn't create HTTP client")?;
 
-    info!(?options, ?config, "Starting aggregation job driver");
+            // Start running.
+            Arc::new(AggregationJobDriver {
+                datastore,
+                clock,
+                http_client,
+                min_aggregation_job_discovery_delay: Duration::from_seconds(
+                    config.min_aggregation_job_discovery_delay_secs,
+                ),
+                max_aggregation_job_discovery_delay: Duration::from_seconds(
+                    config.max_aggregation_job_discovery_delay_secs,
+                ),
+                max_concurrent_aggregation_job_workers: config
+                    .max_concurrent_aggregation_job_workers,
+                aggregation_worker_lease_duration: Duration::from_seconds(
+                    config.aggregation_worker_lease_duration_secs,
+                ),
+                aggregation_worker_lease_clock_skew_allowance: Duration::from_seconds(
+                    config.aggregation_worker_lease_clock_skew_allowance_secs,
+                ),
+            })
+            .run()
+            .await;
 
-    // Connect to database & create other dependencies for AggregationJobDriver.
-    let clock = RealClock::default();
-    let datastore = datastore(
-        clock,
-        config.database,
-        options.database_password,
-        options.datastore_keys,
+            Ok(())
+        },
     )
-    .context("couldn't connect to database")?;
-
-    let http_client = reqwest::Client::builder()
-        .user_agent(CLIENT_USER_AGENT)
-        .build()
-        .context("couldn't create HTTP client")?;
-
-    // Start running.
-    Arc::new(AggregationJobDriver {
-        datastore,
-        clock,
-        http_client,
-        min_aggregation_job_discovery_delay: Duration::from_seconds(
-            config.min_aggregation_job_discovery_delay_secs,
-        ),
-        max_aggregation_job_discovery_delay: Duration::from_seconds(
-            config.max_aggregation_job_discovery_delay_secs,
-        ),
-        max_concurrent_aggregation_job_workers: config.max_concurrent_aggregation_job_workers,
-        aggregation_worker_lease_duration: Duration::from_seconds(
-            config.aggregation_worker_lease_duration_secs,
-        ),
-        aggregation_worker_lease_clock_skew_allowance: Duration::from_seconds(
-            config.aggregation_worker_lease_clock_skew_allowance_secs,
-        ),
-    })
-    .run()
     .await
 }
 
