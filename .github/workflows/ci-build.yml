@@ -46,5 +46,9 @@ jobs:
     - env:
         DOCKER_BUILDKIT: 1
       run: docker build --tag janus_aggregation_job_creator --build-arg BINARY=aggregation_job_creator .
+    - env:
+        DOCKER_BUILDKIT: 1
+      run: docker build --tag janus_aggregation_job_driver --build-arg BINARY=aggregation_job_driver .
     - run: docker run --rm janus_server --help
     - run: docker run --rm janus_aggregation_job_creator --help
+    - run: docker run --rm janus_aggregation_job_driver --help
