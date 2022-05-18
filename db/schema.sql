@@ -78,11 +78,11 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 -- An aggregation job, representing the aggregation of a number of client reports.
 CREATE TABLE aggregation_jobs(
     id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id            BIGINT NOT NULL,                         -- ID of related task
-    aggregation_job_id BYTEA NOT NULL,                          -- 32-byte AggregationJobID as defined by the PPM specification
-    aggregation_param  BYTEA NOT NULL,                          -- encoded aggregation parameter (opaque VDAF message)
-    state              AGGREGATION_JOB_STATE NOT NULL,          -- current state of the aggregation job
-    lease_expiry       TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; NULL if no current lease
+    task_id            BIGINT NOT NULL,                                   -- ID of related task
+    aggregation_job_id BYTEA NOT NULL,                                    -- 32-byte AggregationJobID as defined by the PPM specification
+    aggregation_param  BYTEA NOT NULL,                                    -- encoded aggregation parameter (opaque VDAF message)
+    state              AGGREGATION_JOB_STATE NOT NULL,                    -- current state of the aggregation job
+    lease_expiry       TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
 
     CONSTRAINT unique_aggregation_job_id UNIQUE(aggregation_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
