@@ -17,15 +17,14 @@ use janus_server::{
         Datastore,
     },
     message::{
-        AggregateReq, AggregateReqBody, AggregateResp, AggregationJobId, AuthenticatedEncoder,
-        AuthenticatedResponseDecoder, ReportShare, Transition, TransitionError,
-        TransitionTypeSpecificData,
+        AggregateReq, AggregateReqBody, AggregateResp, AggregationJobId, ReportShare, Transition,
+        TransitionError, TransitionTypeSpecificData,
     },
     task::{Task, VdafInstance},
     trace::install_trace_subscriber,
 };
 use prio::{
-    codec::{Encode, ParameterizedDecode},
+    codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
         self,
         prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
@@ -96,6 +95,8 @@ const CLIENT_USER_AGENT: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "/aggregation_job_driver",
 );
+
+const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -678,17 +679,17 @@ impl<C: Clock> AggregationJobDriver<C> {
     {
         // Send request to helper & parse the response.
         // TODO(brandon): what HTTP errors should cause us to abort/stop retrying the aggregation job?
-        let key = task
-            .primary_aggregator_auth_key()
-            .ok_or_else(|| anyhow!("task has no aggregator auth keys"))?;
         let response = self
             .http_client
             .post(task.aggregator_url(Role::Helper)?.join("/aggregate")?)
-            .body(AuthenticatedEncoder::new(req).encode(key.as_ref()))
+            .header(
+                DAP_AUTH_HEADER,
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(req.get_encoded())
             .send()
             .await?;
-        let resp: AggregateResp = AuthenticatedResponseDecoder::new(response.bytes().await?)?
-            .decode(task.agg_auth_keys.iter().map(|k| k.as_ref()).rev())?;
+        let resp = AggregateResp::get_decoded(&response.bytes().await?)?;
 
         // Handle response, computing the new report aggregations to be stored.
         if stepped_aggregations.len() != resp.seq.len() {
@@ -870,8 +871,8 @@ mod tests {
             Crypter, Datastore,
         },
         message::{
-            AggregateReq, AggregateReqBody, AggregateResp, AggregationJobId, AuthenticatedEncoder,
-            ReportShare, Transition, TransitionTypeSpecificData,
+            AggregateReq, AggregateReqBody, AggregateResp, AggregationJobId, ReportShare,
+            Transition, TransitionTypeSpecificData,
         },
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
@@ -883,7 +884,7 @@ mod tests {
         vdaf::{prio3::Prio3Aes128Count, PrepareTransition, Vdaf},
     };
     use reqwest::Url;
-    use std::sync::Arc;
+    use std::{str, sync::Arc};
     use tokio::{task, time};
 
     janus_test_util::define_ephemeral_datastore!();
@@ -917,7 +918,7 @@ mod tests {
             .unwrap()
             .get_encoded()];
 
-        let agg_auth_key = task.primary_aggregator_auth_key().unwrap().clone();
+        let agg_auth_token = task.primary_aggregator_auth_token().clone();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
         let report = generate_report(
@@ -976,8 +977,12 @@ mod tests {
             .into_iter()
             .map(|resp| {
                 mock("POST", "/aggregate")
+                    .match_header(
+                        "DAP-Auth-Token",
+                        str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                    )
                     .with_status(200)
-                    .with_body(AuthenticatedEncoder::new(resp).encode(agg_auth_key.as_ref()))
+                    .with_body(resp.get_encoded())
                     .create()
             })
             .collect();
@@ -1074,7 +1079,7 @@ mod tests {
         ];
         task.vdaf_verify_parameters = vec![leader_verify_param.get_encoded()];
 
-        let agg_auth_key = task.primary_aggregator_auth_key().unwrap();
+        let agg_auth_token = task.primary_aggregator_auth_token();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
         let report = generate_report(
@@ -1142,9 +1147,13 @@ mod tests {
             }],
         };
         let mocked_aggregate = mock("POST", "/aggregate")
-            .match_body(AuthenticatedEncoder::new(leader_request).encode(agg_auth_key.as_ref()))
+            .match_header(
+                "DAP-Auth-Token",
+                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+            )
+            .match_body(leader_request.get_encoded())
             .with_status(200)
-            .with_body(AuthenticatedEncoder::new(helper_response).encode(agg_auth_key.as_ref()))
+            .with_body(helper_response.get_encoded())
             .create();
 
         // Run: create an aggregation job driver & step the aggregation we've created.
@@ -1231,7 +1240,7 @@ mod tests {
         ];
         task.vdaf_verify_parameters = vec![leader_verify_param.get_encoded()];
 
-        let agg_auth_key = task.primary_aggregator_auth_key().unwrap();
+        let agg_auth_token = task.primary_aggregator_auth_token();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
         let report = generate_report(
@@ -1300,9 +1309,13 @@ mod tests {
             }],
         };
         let mocked_aggregate = mock("POST", "/aggregate")
-            .match_body(AuthenticatedEncoder::new(leader_request).encode(agg_auth_key.as_ref()))
+            .match_header(
+                "DAP-Auth-Token",
+                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+            )
+            .match_body(leader_request.get_encoded())
             .with_status(200)
-            .with_body(AuthenticatedEncoder::new(helper_response).encode(agg_auth_key.as_ref()))
+            .with_body(helper_response.get_encoded())
             .create();
 
         // Run: create an aggregation job driver & step the aggregation we've created.

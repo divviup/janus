@@ -18,12 +18,12 @@ CREATE TABLE tasks(
     collector_hpke_config  BYTEA NOT NULL             -- the HPKE config of the collector (encoded HpkeConfig message)
 );
 
--- The aggregator authentication keys used by a given task.
-CREATE TABLE task_aggregator_auth_keys(
+-- The aggregator authentication tokens used by a given task.
+CREATE TABLE task_aggregator_auth_tokens(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id BIGINT NOT NULL,  -- task ID the key is associated with
-    ord BIGINT NOT NULL,      -- a value used to specify the ordering of the authentication keys
-    key BYTEA NOT NULL,       -- HMAC key used to authenticate messages to/from the other aggregator (encrypted)
+    task_id BIGINT NOT NULL,  -- task ID the token is associated with
+    ord BIGINT NOT NULL,      -- a value used to specify the ordering of the authentication tokens
+    token BYTEA NOT NULL,     -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
 
     CONSTRAINT auth_key_unique_task_id_and_ord UNIQUE(task_id, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)

@@ -15,8 +15,7 @@ use crate::{
     message::{
         AggregateReq,
         AggregateReqBody::{AggregateContinueReq, AggregateInitReq},
-        AggregateResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
-        AuthenticatedDecodeError, AuthenticatedEncoder, AuthenticatedRequestDecoder, CollectReq,
+        AggregateResp, AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq,
         CollectResp, Interval, ReportShare, Transition, TransitionError,
         TransitionTypeSpecificData,
     },
@@ -105,9 +104,9 @@ pub enum Error {
     // rejecting future reports
     #[error("report from the future: {0} {1:?}")]
     ReportFromTheFuture(Nonce, TaskId),
-    /// Corresponds to `invalidHmac`, §3.1
-    #[error("invalid HMAC tag: {0:?}")]
-    InvalidHmac(TaskId),
+    /// Corresponds to `unauthorizedRequest`, §3.1
+    #[error("unauthorized request: {0:?}")]
+    UnauthorizedRequest(TaskId),
     /// An error from the datastore.
     #[error("datastore error: {0}")]
     Datastore(datastore::Error),
@@ -207,45 +206,36 @@ impl<C: Clock> Aggregator<C> {
             .await
     }
 
-    async fn handle_aggregate(&self, req_bytes: &[u8]) -> Result<Vec<u8>, Error> {
-        let (task_aggregator, req) = self
-            .authenticated_decode(req_bytes, Some(Role::Helper))
-            .await?;
+    async fn handle_aggregate(
+        &self,
+        req_bytes: &[u8],
+        auth_token: Option<String>,
+    ) -> Result<Vec<u8>, Error> {
+        // Parse task ID early to avoid parsing the entire message before performing authentication.
+        // This assumes that the task ID is at the start of the message content.
+        let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
+        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if !auth_token
+            .map(|t| {
+                task_aggregator
+                    .task
+                    .check_aggregator_auth_token(&t.into_bytes().into())
+            })
+            .unwrap_or(false)
+        {
+            return Err(Error::UnauthorizedRequest(task_id));
+        }
+
+        let req = AggregateReq::get_decoded(req_bytes)?;
+        assert_eq!(req.task_id, task_id);
+
+        if task_aggregator.task.role != Role::Helper {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         let resp = task_aggregator
             .handle_aggregate(&self.datastore, req)
             .await?;
-        let key = task_aggregator
-            .task
-            .primary_aggregator_auth_key()
-            .ok_or_else(|| {
-                Error::Internal("task has no aggregator auth keys configured".to_string())
-            })?;
-        Ok(AuthenticatedEncoder::new(resp).encode(key.as_ref()))
-    }
-
-    async fn authenticated_decode<T: Decode>(
-        &self,
-        buf: &[u8],
-        required_role: Option<Role>,
-    ) -> Result<(Arc<TaskAggregator>, T), Error> {
-        let decoder = AuthenticatedRequestDecoder::new(buf).map_err(Error::from)?;
-        let task_id = decoder.task_id();
-        let task_aggregator = self.task_aggregator_for(task_id).await?;
-        if required_role.is_some() && required_role.unwrap() != task_aggregator.task.role {
-            return Err(Error::UnrecognizedTask(task_id));
-        }
-        match decoder.decode(
-            task_aggregator
-                .task
-                .agg_auth_keys
-                .iter()
-                .map(|k| k.as_ref())
-                .rev(),
-        ) {
-            Ok(decoded_body) => Ok((task_aggregator, decoded_body)),
-            Err(AuthenticatedDecodeError::InvalidHmac) => Err(Error::InvalidHmac(task_id)),
-            Err(AuthenticatedDecodeError::Codec(err)) => Err(Error::MessageDecode(err)),
-        }
+        Ok(resp.get_encoded())
     }
 
     /// Handle a collect request. Only supported by the leader. `req_bytes` is an encoded
@@ -295,10 +285,28 @@ impl<C: Clock> Aggregator<C> {
     /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded,
     /// authenticated [`AggregateShareReq`]. Returns an encoded, authenticated
     /// [`AggregateShareResp`].
-    async fn handle_aggregate_share(&self, req_bytes: &[u8]) -> Result<Vec<u8>, Error> {
-        let (task_aggregator, req): (_, AggregateShareReq) = self
-            .authenticated_decode(req_bytes, Some(Role::Helper))
-            .await?;
+    async fn handle_aggregate_share(
+        &self,
+        req_bytes: &[u8],
+        auth_token: Option<String>,
+    ) -> Result<Vec<u8>, Error> {
+        // Parse task ID early to avoid parsing the entire message before performing authentication.
+        // This assumes that the task ID is at the start of the message content.
+        let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
+        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if !auth_token
+            .map(|t| {
+                task_aggregator
+                    .task
+                    .check_aggregator_auth_token(&t.into_bytes().into())
+            })
+            .unwrap_or(false)
+        {
+            return Err(Error::UnauthorizedRequest(task_id));
+        }
+
+        let req = AggregateShareReq::get_decoded(req_bytes)?;
+        assert_eq!(req.task_id, task_id);
 
         // Only the helper supports /aggregate_share.
         if task_aggregator.task.role != Role::Helper {
@@ -310,13 +318,7 @@ impl<C: Clock> Aggregator<C> {
         let resp = task_aggregator
             .handle_aggregate_share(&self.datastore, &req)
             .await?;
-        let key = task_aggregator
-            .task
-            .primary_aggregator_auth_key()
-            .ok_or_else(|| {
-                Error::Internal("task has no aggregator auth keys configured".to_string())
-            })?;
-        Ok(AuthenticatedEncoder::new(resp).encode(key.as_ref()))
+        Ok(resp.get_encoded())
     }
 
     async fn task_aggregator_for(&self, task_id: TaskId) -> Result<Arc<TaskAggregator>, Error> {
@@ -1627,7 +1629,7 @@ enum PpmProblemType {
     UnrecognizedAggregationJob, // TODO: standardize this value
     OutdatedConfig,
     StaleReport,
-    InvalidHmac,
+    UnauthorizedRequest,
     InvalidBatchInterval,
     InsufficientBatchSize,
     BatchMisaligned,
@@ -1645,7 +1647,7 @@ impl PpmProblemType {
             }
             PpmProblemType::OutdatedConfig => "urn:ietf:params:ppm:error:outdatedConfig",
             PpmProblemType::StaleReport => "urn:ietf:params:ppm:error:staleReport",
-            PpmProblemType::InvalidHmac => "urn:ietf:params:ppm:error:invalidHmac",
+            PpmProblemType::UnauthorizedRequest => "urn:ietf:params:ppm:error:unauthorizedRequest",
             PpmProblemType::InvalidBatchInterval => {
                 "urn:ietf:params:ppm:error:invalidBatchInterval"
             }
@@ -1677,7 +1679,7 @@ impl PpmProblemType {
             PpmProblemType::StaleReport => {
                 "Report could not be processed because it arrived too late."
             }
-            PpmProblemType::InvalidHmac => "The aggregate message's HMAC was not valid.",
+            PpmProblemType::UnauthorizedRequest => "The request's authorization is not valid.",
             PpmProblemType::InvalidBatchInterval => {
                 "The batch interval in the collect or aggregate share request is not valid for the task."
             }
@@ -1777,8 +1779,8 @@ fn error_handler<R: Reply>(
                 // with timestamps too far in the future.
                 StatusCode::BAD_REQUEST.into_response()
             }
-            Err(Error::InvalidHmac(task_id)) => {
-                build_problem_details_response(PpmProblemType::InvalidHmac, Some(task_id))
+            Err(Error::UnauthorizedRequest(task_id)) => {
+                build_problem_details_response(PpmProblemType::UnauthorizedRequest, Some(task_id))
             }
             Err(Error::InvalidBatchInterval(_, task_id)) => {
                 build_problem_details_response(PpmProblemType::InvalidBatchInterval, Some(task_id))
@@ -1835,6 +1837,8 @@ fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
+    const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
+
     let aggregator = Arc::new(Aggregator::new(datastore, clock));
 
     let meter = opentelemetry::global::meter("janus_server");
@@ -1892,10 +1896,13 @@ fn aggregator_filter<C: Clock>(
         .and(warp::post())
         .and(with_cloned_value(aggregator.clone()))
         .and(warp::body::bytes())
-        .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
-            let resp_bytes = aggregator.handle_aggregate(&body).await?;
-            Ok(reply::with_status(resp_bytes, StatusCode::OK))
-        })
+        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+        .then(
+            |aggregator: Arc<Aggregator<C>>, body: Bytes, auth_token: Option<String>| async move {
+                let resp_bytes = aggregator.handle_aggregate(&body, auth_token).await?;
+                Ok(reply::with_status(resp_bytes, StatusCode::OK))
+            },
+        )
         .map(error_handler(&response_counter, "aggregate"))
         .with(warp::wrap_fn(timing_wrapper(
             &time_value_recorder,
@@ -1946,12 +1953,15 @@ fn aggregator_filter<C: Clock>(
         .and(warp::post())
         .and(with_cloned_value(aggregator))
         .and(warp::body::bytes())
-        .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
-            let resp_bytes = aggregator.handle_aggregate_share(&body).await?;
+        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+        .then(
+            |aggregator: Arc<Aggregator<C>>, body: Bytes, auth_token: Option<String>| async move {
+                let resp_bytes = aggregator.handle_aggregate_share(&body, auth_token).await?;
 
-            // §4.4.4.3: Response is HTTP 200 OK
-            Ok(reply::with_status(resp_bytes, StatusCode::OK))
-        })
+                // §4.4.4.3: Response is HTTP 200 OK
+                Ok(reply::with_status(resp_bytes, StatusCode::OK))
+            },
+        )
         .map(error_handler(&response_counter, "aggregate_share"))
         .with(warp::wrap_fn(timing_wrapper(
             &time_value_recorder,
@@ -2167,8 +2177,10 @@ mod tests {
             models::BatchUnitAggregation,
             test_util::{ephemeral_datastore, DbHandle},
         },
-        message::AuthenticatedResponseDecoder,
-        task::{test_util::new_dummy_task, VdafInstance},
+        task::{
+            test_util::{generate_aggregator_auth_token, new_dummy_task},
+            VdafInstance,
+        },
         trace::test_util::install_test_trace_subscriber,
     };
     use ::janus_test_util::{run_vdaf, MockClock, PrepareTransition};
@@ -2185,10 +2197,6 @@ mod tests {
         vdaf::{prio3::Prio3Aes128Count, AggregateShare, Aggregator as _},
     };
     use rand::{thread_rng, Rng};
-    use ring::{
-        hmac::{self, HMAC_SHA256},
-        rand::SystemRandom,
-    };
     use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
     use warp::{reply::Reply, Rejection};
@@ -2729,9 +2737,6 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
-
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
@@ -2754,7 +2759,11 @@ mod tests {
         let (part, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -2788,7 +2797,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregate_wrong_agg_auth_key() {
+    async fn aggregate_wrong_agg_auth_token() {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
@@ -2818,7 +2827,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&generate_hmac_key()))
+            .header(
+                "DAP-Auth-Token",
+                generate_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -2832,9 +2845,35 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": want_status,
-                "type": "urn:ietf:params:ppm:error:invalidHmac",
-                "title": "The aggregate message's HMAC was not valid.",
-                "detail": "The aggregate message's HMAC was not valid.",
+                "type": "urn:ietf:params:ppm:error:unauthorizedRequest",
+                "title": "The request's authorization is not valid.",
+                "detail": "The request's authorization is not valid.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
+        assert_eq!(want_status, parts.status.as_u16());
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/aggregate")
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        let want_status = 400;
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": want_status,
+                "type": "urn:ietf:params:ppm:error:unauthorizedRequest",
+                "title": "The request's authorization is not valid.",
+                "detail": "The request's authorization is not valid.",
                 "instance": "..",
                 "taskid": format!("{}", task_id),
             })
@@ -2856,8 +2895,6 @@ mod tests {
         let (public_param, verify_params) = vdaf.setup().unwrap();
         task.vdaf_verify_parameters = vec![verify_params.iter().last().unwrap().get_encoded()];
         let hpke_key = current_hpke_key(&task.hpke_keys);
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
 
         datastore
             .run_tx(|tx| {
@@ -2942,18 +2979,18 @@ mod tests {
         let mut response = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
             .into_response();
         assert_eq!(response.status(), StatusCode::OK);
         let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp: AggregateResp =
-            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
-                .unwrap()
-                .decode([&hmac_key])
-                .unwrap();
+        let aggregate_resp = AggregateResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.seq.len(), 4);
@@ -3002,10 +3039,7 @@ mod tests {
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepInit, Role::Helper);
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-
         let hpke_key = current_hpke_key(&task.hpke_keys);
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
 
         datastore
             .run_tx(|tx| {
@@ -3036,18 +3070,18 @@ mod tests {
         let mut response = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
             .into_response();
         assert_eq!(response.status(), StatusCode::OK);
         let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp: AggregateResp =
-            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
-                .unwrap()
-                .decode([&hmac_key])
-                .unwrap();
+        let aggregate_resp = AggregateResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.seq.len(), 1);
@@ -3071,10 +3105,7 @@ mod tests {
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepInit, Role::Helper);
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-
         let hpke_key = current_hpke_key(&task.hpke_keys);
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
 
         datastore
             .run_tx(|tx| {
@@ -3105,18 +3136,18 @@ mod tests {
         let mut response = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
             .into_response();
         assert_eq!(response.status(), StatusCode::OK);
         let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp: AggregateResp =
-            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
-                .unwrap()
-                .decode([&hmac_key])
-                .unwrap();
+        let aggregate_resp = AggregateResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.seq.len(), 1);
@@ -3139,9 +3170,6 @@ mod tests {
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepInit, Role::Helper);
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
 
         datastore
             .run_tx(|tx| {
@@ -3179,7 +3207,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -3219,8 +3251,6 @@ mod tests {
         let (public_param, verify_params) = vdaf.setup().unwrap();
         task.vdaf_verify_parameters = vec![verify_params.iter().last().unwrap().get_encoded()];
         let hpke_key = current_hpke_key(&task.hpke_keys);
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
 
         // report_share_0 is a "happy path" report.
         let nonce_0 = Nonce::generate(&clock);
@@ -3309,18 +3339,18 @@ mod tests {
         let mut response = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
             .into_response();
         assert_eq!(response.status(), StatusCode::OK);
         let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp: AggregateResp =
-            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
-                .unwrap()
-                .decode([&hmac_key])
-                .unwrap();
+        let aggregate_resp = AggregateResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(
@@ -3408,8 +3438,6 @@ mod tests {
         let (_, verify_params) = vdaf.setup().unwrap();
         task.vdaf_verify_parameters = vec![verify_params.iter().last().unwrap().get_encoded()];
         let hpke_key = current_hpke_key(&task.hpke_keys);
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
 
         // report_share_0 is a "happy path" report.
         let nonce_0 = Nonce::generate(&first_batch_unit_interval_clock);
@@ -3545,7 +3573,11 @@ mod tests {
         let response = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -3739,7 +3771,11 @@ mod tests {
         let response = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -3828,9 +3864,6 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
-
         // Setup datastore.
         datastore
             .run_tx(|tx| {
@@ -3888,7 +3921,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -3928,9 +3965,6 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
-
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
 
         // Setup datastore.
         datastore
@@ -3991,7 +4025,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -4001,11 +4039,7 @@ mod tests {
         // Check that response is as desired.
         assert_eq!(parts.status, StatusCode::OK);
         let body_bytes = hyper::body::to_bytes(body).await.unwrap();
-        let aggregate_resp: AggregateResp =
-            AuthenticatedResponseDecoder::new(Vec::from(body_bytes.as_ref()))
-                .unwrap()
-                .decode([&hmac_key])
-                .unwrap();
+        let aggregate_resp = AggregateResp::get_decoded(&body_bytes).unwrap();
         assert_eq!(
             aggregate_resp,
             AggregateResp {
@@ -4076,9 +4110,6 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
-
         // Setup datastore.
         datastore
             .run_tx(|tx| {
@@ -4141,7 +4172,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -4185,9 +4220,6 @@ mod tests {
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
 
         // Setup datastore.
         datastore
@@ -4281,7 +4313,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -4321,9 +4357,6 @@ mod tests {
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-        let hmac_key = hmac_key.clone();
 
         // Setup datastore.
         datastore
@@ -4387,7 +4420,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .body(AuthenticatedEncoder::new(request).encode(&hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -4826,8 +4863,6 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -4857,7 +4892,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate_share")
-            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -4887,8 +4926,6 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
-
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -4918,8 +4955,12 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("POST")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
             .path("/aggregate_share")
-            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -4955,7 +4996,6 @@ mod tests {
         task.min_batch_duration = Duration::from_seconds(500);
         task.min_batch_size = 10;
         task.collector_hpke_config = collector_hpke_config.clone();
-        let hmac_key: &hmac::Key = task.agg_auth_keys.iter().last().unwrap().as_ref();
         let aggregation_param = ();
 
         let clock = MockClock::default();
@@ -4989,7 +5029,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate_share")
-            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -5077,7 +5121,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate_share")
-            .body(AuthenticatedEncoder::new(request).encode(hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -5131,7 +5179,11 @@ mod tests {
             let (parts, body) = warp::test::request()
                 .method("POST")
                 .path("/aggregate_share")
-                .body(AuthenticatedEncoder::new(misaligned_request).encode(hmac_key))
+                .header(
+                    "DAP-Auth-Token",
+                    task.primary_aggregator_auth_token().as_bytes(),
+                )
+                .body(misaligned_request.get_encoded())
                 .filter(&filter)
                 .await
                 .unwrap()
@@ -5213,7 +5265,11 @@ mod tests {
                 let (parts, body) = warp::test::request()
                     .method("POST")
                     .path("/aggregate_share")
-                    .body(AuthenticatedEncoder::new(request.clone()).encode(hmac_key))
+                    .header(
+                        "DAP-Auth-Token",
+                        task.primary_aggregator_auth_token().as_bytes(),
+                    )
+                    .body(request.get_encoded())
                     .filter(&filter)
                     .await
                     .unwrap()
@@ -5228,12 +5284,7 @@ mod tests {
                     iteration
                 );
                 let body_bytes = hyper::body::to_bytes(body).await.unwrap();
-
-                let aggregate_share_resp: AggregateShareResp =
-                    AuthenticatedResponseDecoder::new(body_bytes.as_ref())
-                        .unwrap()
-                        .decode([hmac_key])
-                        .unwrap();
+                let aggregate_share_resp = AggregateShareResp::get_decoded(&body_bytes).unwrap();
 
                 let aggregate_share = hpke::open(
                     &collector_hpke_config,
@@ -5279,7 +5330,11 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate_share")
-            .body(AuthenticatedEncoder::new(batch_lifetime_violation_request).encode(hmac_key))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(batch_lifetime_violation_request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -5347,9 +5402,5 @@ mod tests {
             )
             .unwrap(),
         }
-    }
-
-    fn generate_hmac_key() -> hmac::Key {
-        hmac::Key::generate(HMAC_SHA256, &SystemRandom::new()).unwrap()
     }
 }
