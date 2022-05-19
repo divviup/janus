@@ -16,5 +16,11 @@ OPTIONS:
         --datastore-keys <datastore-keys>...
             datastore encryption keys, encoded in base64 then comma-separated [env: DATASTORE_KEYS=]
 
+        --otlp-metrics-metadata <KEY=value>...
+            additional OTLP/gRPC metadata key/value pairs for the metrics exporter [env: OTLP_METRICS_METADATA=]
+
+        --otlp-tracing-metadata <KEY=value>...
+            additional OTLP/gRPC metadata key/value pairs for the tracing exporter [env: OTLP_TRACING_METADATA=]
+
 
 ```

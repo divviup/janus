@@ -1,9 +1,21 @@
-//! Configuration for various Janus actors.
+//! Configuration for various Janus binaries.
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
-use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::{fmt::Debug, net::SocketAddr};
 use url::Url;
+
+/// Trait describing configuration structures for various Janus binaries.
+pub trait BinaryConfig: Debug + DeserializeOwned {
+    /// Get the database configuration.
+    fn database_config(&mut self) -> &mut DbConfig;
+
+    /// Get the logging/trace configuration.
+    fn logging_config(&mut self) -> &mut TraceConfiguration;
+
+    /// Get the metrics configuration.
+    fn metrics_config(&mut self) -> &mut MetricsConfiguration;
+}
 
 /// Configuration for a Janus server using a database.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +61,20 @@ pub struct AggregatorConfig {
     pub metrics_config: MetricsConfiguration,
 }
 
+impl BinaryConfig for AggregatorConfig {
+    fn database_config(&mut self) -> &mut DbConfig {
+        &mut self.database
+    }
+
+    fn logging_config(&mut self) -> &mut TraceConfiguration {
+        &mut self.logging_config
+    }
+
+    fn metrics_config(&mut self) -> &mut MetricsConfiguration {
+        &mut self.metrics_config
+    }
+}
+
 /// Non-secret configuration options for the Janus Aggregation Job Creator job.
 ///
 /// # Examples
@@ -77,6 +103,9 @@ pub struct AggregationJobCreatorConfig {
     /// Logging configuration.
     #[serde(default)]
     pub logging_config: TraceConfiguration,
+    /// Application-level metrics configuration
+    #[serde(default)]
+    pub metrics_config: MetricsConfiguration,
     /// How frequently we look for new tasks to start creating aggregation jobs for, in seconds.
     pub tasks_update_frequency_secs: u64,
     /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
@@ -87,6 +116,20 @@ pub struct AggregationJobCreatorConfig {
     pub min_aggregation_job_size: usize,
     /// The maximum number of client reports to include in an aggregation job.
     pub max_aggregation_job_size: usize,
+}
+
+impl BinaryConfig for AggregationJobCreatorConfig {
+    fn database_config(&mut self) -> &mut DbConfig {
+        &mut self.database
+    }
+
+    fn logging_config(&mut self) -> &mut TraceConfiguration {
+        &mut self.logging_config
+    }
+
+    fn metrics_config(&mut self) -> &mut MetricsConfiguration {
+        &mut self.metrics_config
+    }
 }
 
 /// Non-secret configuration options for the Janus Aggregation Job Driver job.
@@ -118,6 +161,8 @@ pub struct AggregationJobDriverConfig {
     /// Logging configuration.
     #[serde(default)]
     pub logging_config: TraceConfiguration,
+    #[serde(default)]
+    pub metrics_config: MetricsConfiguration,
     /// The minimum delay between checking for aggregation jobs ready to be stepped, in seconds.
     /// Applies only when there are no aggregation jobs to be stepped.
     pub min_aggregation_job_discovery_delay_secs: u64,
@@ -136,6 +181,20 @@ pub struct AggregationJobDriverConfig {
     /// aggregation_worker_lease_duration_secs, determines the effective timeout of stepping
     /// a single aggregation job.
     pub aggregation_worker_lease_clock_skew_allowance_secs: u64,
+}
+
+impl BinaryConfig for AggregationJobDriverConfig {
+    fn database_config(&mut self) -> &mut DbConfig {
+        &mut self.database
+    }
+
+    fn logging_config(&mut self) -> &mut TraceConfiguration {
+        &mut self.logging_config
+    }
+
+    fn metrics_config(&mut self) -> &mut MetricsConfiguration {
+        &mut self.metrics_config
+    }
 }
 
 #[cfg(test)]
@@ -185,6 +244,7 @@ mod tests {
         let config = AggregationJobCreatorConfig {
             database: generate_db_config(),
             logging_config: TraceConfiguration::default(),
+            metrics_config: MetricsConfiguration::default(),
             tasks_update_frequency_secs: 3600,
             aggregation_job_creation_interval_secs: 60,
             min_aggregation_job_size: 100,
@@ -201,6 +261,7 @@ mod tests {
         let config = AggregationJobDriverConfig {
             database: generate_db_config(),
             logging_config: TraceConfiguration::default(),
+            metrics_config: MetricsConfiguration::default(),
             min_aggregation_job_discovery_delay_secs: 10,
             max_aggregation_job_discovery_delay_secs: 60,
             max_concurrent_aggregation_job_workers: 10,

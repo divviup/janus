@@ -1,9 +1,10 @@
-use anyhow::Context;
+use anyhow::Result;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use janus::message::{Nonce, Role, TaskId, Time};
+use janus::message::{Nonce, Time};
+use janus::message::{Role, TaskId};
 use janus::time::{Clock, RealClock};
-use janus_server::binary_utils::datastore;
+use janus_server::binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions};
 use janus_server::config::AggregationJobCreatorConfig;
 use janus_server::datastore::models::{
     AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
@@ -11,24 +12,22 @@ use janus_server::datastore::models::{
 use janus_server::datastore::{self, Datastore};
 use janus_server::message::AggregationJobId;
 use janus_server::task::Task;
-use janus_server::trace::install_trace_subscriber;
 use prio::codec::Encode;
 use prio::vdaf;
 use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum};
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
-use std::fmt::Formatter;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{fmt, fmt::Debug, fs};
 use structopt::StructOpt;
-use tokio::sync::oneshot::{self, Receiver, Sender};
-use tokio::time::{Instant, MissedTickBehavior};
-use tokio::{select, time};
+use tokio::select;
+use tokio::{
+    sync::oneshot::{self, Receiver, Sender},
+    time::{self, Instant, MissedTickBehavior},
+};
 use tracing::{debug, error, info};
 
-#[derive(StructOpt)]
+#[derive(Debug, StructOpt)]
 #[structopt(
     name = "janus-aggregation-job-creator",
     about = "Janus aggregation job creator",
@@ -36,78 +35,38 @@ use tracing::{debug, error, info};
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    /// Path to configuration YAML.
-    #[structopt(
-        long,
-        env = "CONFIG_FILE",
-        parse(from_os_str),
-        takes_value = true,
-        required(true),
-        help = "path to configuration file"
-    )]
-    config_file: PathBuf,
-
-    /// Password for the PostgreSQL database connection. If specified, must not be specified in the
-    /// connection string.
-    #[structopt(long, env = "PGPASSWORD", help = "PostgreSQL password")]
-    database_password: Option<String>,
-
-    /// Datastore encryption keys.
-    #[structopt(
-        long,
-        env = "DATASTORE_KEYS",
-        takes_value = true,
-        use_delimiter = true,
-        required(true),
-        help = "datastore encryption keys, encoded in base64 then comma-separated"
-    )]
-    datastore_keys: Vec<String>,
+    #[structopt(flatten)]
+    common: CommonBinaryOptions,
 }
 
-impl Debug for Options {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Options")
-            .field("config_file", &self.config_file)
-            .finish()
+impl BinaryOptions for Options {
+    fn common_options(&self) -> &CommonBinaryOptions {
+        &self.common
     }
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Read arguments, read & parse config.
-    let options = Options::from_args();
-    let config: AggregationJobCreatorConfig = {
-        let config_content = fs::read_to_string(&options.config_file)
-            .with_context(|| format!("couldn't read config file {:?}", options.config_file))?;
-        serde_yaml::from_str(&config_content)
-            .with_context(|| format!("couldn't parse config file {:?}", options.config_file))?
-    };
-    install_trace_subscriber(&config.logging_config)
-        .context("couldn't install tracing subscriber")?;
-
-    info!(?options, ?config, "Starting aggregation job creator");
-
-    // Connect to database.
-    let datastore = datastore(
+    janus_main::<Options, _, _, _, _>(
         RealClock::default(),
-        config.database,
-        options.database_password,
-        options.datastore_keys,
-    )
-    .context("couldn't connect to database")?;
+        |clock, config: AggregationJobCreatorConfig, datastore| async move {
+            // Start creating aggregation jobs.
+            Arc::new(AggregationJobCreator {
+                datastore,
+                clock,
+                tasks_update_frequency: Duration::from_secs(config.tasks_update_frequency_secs),
+                aggregation_job_creation_interval: Duration::from_secs(
+                    config.aggregation_job_creation_interval_secs,
+                ),
+                min_aggregation_job_size: config.min_aggregation_job_size,
+                max_aggregation_job_size: config.max_aggregation_job_size,
+            })
+            .run()
+            .await;
 
-    // Start creating aggregation jobs.
-    Arc::new(AggregationJobCreator {
-        datastore,
-        clock: RealClock::default(),
-        tasks_update_frequency: Duration::from_secs(config.tasks_update_frequency_secs),
-        aggregation_job_creation_interval: Duration::from_secs(
-            config.aggregation_job_creation_interval_secs,
-        ),
-        min_aggregation_job_size: config.min_aggregation_job_size,
-        max_aggregation_job_size: config.max_aggregation_job_size,
-    })
-    .run()
+            Ok(())
+        },
+    )
     .await
 }
 
