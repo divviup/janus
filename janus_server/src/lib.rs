@@ -5,6 +5,7 @@ pub mod binary_utils;
 pub mod client;
 pub mod config;
 pub mod datastore;
+pub mod job_creator;
 pub mod message;
 pub mod metrics;
 pub mod task;

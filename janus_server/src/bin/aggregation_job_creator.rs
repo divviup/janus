@@ -2,7 +2,6 @@ use anyhow::Result;
 use futures::future::try_join_all;
 use itertools::Itertools;
 use janus::message::{Nonce, Time};
-use janus::message::{Role, TaskId};
 use janus::time::{Clock, RealClock};
 use janus_server::binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions};
 use janus_server::config::AggregationJobCreatorConfig;
@@ -10,22 +9,15 @@ use janus_server::datastore::models::{
     AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
 };
 use janus_server::datastore::{self, Datastore};
+use janus_server::job_creator::PerTaskJobCreator;
 use janus_server::message::AggregationJobId;
-use janus_server::task::Task;
+use janus_server::task::{Task, VdafInstance};
 use prio::codec::Encode;
 use prio::vdaf;
 use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum};
-use rand::{thread_rng, Rng};
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use structopt::StructOpt;
-use tokio::select;
-use tokio::{
-    sync::oneshot::{self, Receiver, Sender},
-    time::{self, Instant, MissedTickBehavior},
-};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -51,16 +43,21 @@ async fn main() -> anyhow::Result<()> {
         RealClock::default(),
         |clock, config: AggregationJobCreatorConfig, datastore| async move {
             // Start creating aggregation jobs.
-            Arc::new(AggregationJobCreator {
-                datastore,
+            Arc::new(PerTaskJobCreator::new(
+                Arc::new(datastore),
                 clock,
-                tasks_update_frequency: Duration::from_secs(config.tasks_update_frequency_secs),
-                aggregation_job_creation_interval: Duration::from_secs(
-                    config.aggregation_job_creation_interval_secs,
-                ),
-                min_aggregation_job_size: config.min_aggregation_job_size,
-                max_aggregation_job_size: config.max_aggregation_job_size,
-            })
+                config.job_creator_config,
+                move |clock, datastore, task| async move {
+                    AggregationJobCreator {
+                        datastore,
+                        clock,
+                        min_aggregation_job_size: config.min_aggregation_job_size,
+                        max_aggregation_job_size: config.max_aggregation_job_size,
+                    }
+                    .create_aggregation_jobs_for_task(&task)
+                    .await
+                },
+            ))
             .run()
             .await;
 
@@ -72,14 +69,10 @@ async fn main() -> anyhow::Result<()> {
 
 struct AggregationJobCreator<C: Clock> {
     // Dependencies.
-    datastore: Datastore<C>,
+    datastore: Arc<Datastore<C>>,
     clock: C,
 
     // Configuration values.
-    /// How frequently we look for new tasks to start creating aggregation jobs for.
-    tasks_update_frequency: Duration,
-    /// How frequently we attempt to create new aggregation jobs for each task.
-    aggregation_job_creation_interval: Duration,
     /// The minimum number of client reports to include in an aggregation job. Applies to the
     /// "current" batch unit only; historical batch units will create aggregation jobs of any size,
     /// on the theory that almost all reports will have be received for these batch units already.
@@ -88,111 +81,21 @@ struct AggregationJobCreator<C: Clock> {
     max_aggregation_job_size: usize,
 }
 
-impl<C: Clock + 'static> AggregationJobCreator<C> {
-    #[tracing::instrument(skip(self))]
-    async fn run(self: Arc<Self>) -> ! {
-        // TODO(brandon): add support for handling only a subset of tasks in a single job (i.e. sharding).
-
-        // Set up an interval to occasionally update our view of tasks in the DB.
-        // (This will fire immediately, so we'll immediately load tasks from the DB when we enter
-        // the loop.)
-        let mut tasks_update_ticker = time::interval(self.tasks_update_frequency);
-        tasks_update_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
-        // This tracks the "shutdown handle" (i.e. oneshot sender) used to shut down the per-task
-        // worker by task ID.
-        let mut job_creation_task_shutdown_handles: HashMap<TaskId, Sender<()>> = HashMap::new();
-
-        loop {
-            tasks_update_ticker.tick().await;
-            info!("Updating tasks");
-            let tasks = self
-                .datastore
-                .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
-                .await;
-            let tasks = match tasks {
-                Ok(tasks) => tasks
-                    .into_iter()
-                    .filter_map(|task| match task.role {
-                        Role::Leader => Some((task.id, task)),
-                        _ => None,
-                    })
-                    .collect::<HashMap<_, _>>(),
-
-                Err(err) => {
-                    error!(?err, "Couldn't update tasks");
-                    continue;
-                }
-            };
-
-            // Stop job creation tasks for no-longer-existing tasks.
-            job_creation_task_shutdown_handles.retain(|task_id, _| {
-                if tasks.contains_key(task_id) {
-                    return true;
-                }
-                // We don't need to send on the channel: dropping the sender is enough to cause the
-                // receiver future to resolve with a RecvError, which will trigger shutdown.
-                info!(?task_id, "Stopping job creation worker");
-                false
-            });
-
-            // Start job creation tasks for newly-discovered tasks.
-            for (task_id, task) in tasks {
-                if job_creation_task_shutdown_handles.contains_key(&task_id) {
-                    continue;
-                }
-                info!(?task_id, "Starting job creation worker");
-                let (tx, rx) = oneshot::channel();
-                job_creation_task_shutdown_handles.insert(task_id, tx);
-                tokio::task::spawn({
-                    let this = self.clone();
-                    async move { this.run_for_task(rx, task).await }
-                });
-            }
-        }
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn run_for_task(&self, mut shutdown: Receiver<()>, task: Task) {
-        debug!(task_id = ?task.id, "Job creation worker started");
-        let first_tick_instant = Instant::now()
-            + Duration::from_secs(
-                thread_rng().gen_range(0..self.aggregation_job_creation_interval.as_secs()),
-            );
-        let mut aggregation_job_creation_ticker =
-            time::interval_at(first_tick_instant, self.aggregation_job_creation_interval);
-
-        loop {
-            select! {
-                _ = aggregation_job_creation_ticker.tick() => {
-                    info!(task_id = ?task.id, "Creating aggregation jobs for task");
-                    if let Err(err) = self.create_aggregation_jobs_for_task(&task).await {
-                        error!(task_id = ?task.id, ?err, "Couldn't create aggregation jobs for task")
-                    }
-                }
-
-                _ = &mut shutdown => {
-                    debug!(task_id = ?task.id, "Job creation worker stopped");
-                    return;
-                }
-            }
-        }
-    }
-
+impl<C: Clock> AggregationJobCreator<C> {
     #[tracing::instrument(skip(self), err)]
     async fn create_aggregation_jobs_for_task(&self, task: &Task) -> anyhow::Result<()> {
         match task.vdaf {
-            janus_server::task::VdafInstance::Prio3Aes128Count => {
+            VdafInstance::Prio3Aes128Count => {
                 self.create_aggregation_jobs_for_task_no_param::<Prio3Aes128Count>(task)
                     .await
             }
 
-            janus_server::task::VdafInstance::Prio3Aes128Sum { .. } => {
+            VdafInstance::Prio3Aes128Sum { .. } => {
                 self.create_aggregation_jobs_for_task_no_param::<Prio3Aes128Sum>(task)
                     .await
             }
 
-            janus_server::task::VdafInstance::Prio3Aes128Histogram { .. } => {
+            VdafInstance::Prio3Aes128Histogram { .. } => {
                 self.create_aggregation_jobs_for_task_no_param::<Prio3Aes128Histogram>(task)
                     .await
             }
@@ -316,7 +219,6 @@ mod tests {
         datastore::{Crypter, Datastore, Transaction},
         message::{test_util::new_dummy_report, AggregationJobId},
         task::{test_util::new_dummy_task, VdafInstance},
-        trace::test_util::install_test_trace_subscriber,
     };
     use janus_test_util::MockClock;
     use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf as _};
@@ -324,98 +226,16 @@ mod tests {
         collections::{HashMap, HashSet},
         iter,
         sync::Arc,
-        time::Duration,
     };
-    use tokio::{task, time};
 
     janus_test_util::define_ephemeral_datastore!();
-
-    #[tokio::test]
-    async fn aggregation_job_creator() {
-        // This is a minimal test that AggregationJobCreator::run() will successfully find tasks &
-        // trigger creation of aggregation jobs. More detailed tests of the aggregation job creation
-        // logic are contained in other tests which do not exercise the task-lookup code.
-
-        // Setup.
-        install_test_trace_subscriber();
-        let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-
-        // TODO(brandon): consider using tokio::time::pause() to make time deterministic, and allow
-        // this test to run without the need for a (racy, wallclock-consuming) real sleep.
-        // Unfortunately, at time of writing this TODO, calling time::pause() breaks interaction
-        // with the database -- the task-loader transaction deadlocks on attempting to start a
-        // transaction, even if the main test loops on calling yield_now().
-
-        let report_time = Time::from_seconds_since_epoch(0);
-
-        let leader_task_id = TaskId::random();
-        let leader_task =
-            new_dummy_task(leader_task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
-        let leader_report = new_dummy_report(leader_task_id, report_time);
-
-        let helper_task_id = TaskId::random();
-        let helper_task =
-            new_dummy_task(helper_task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
-        let helper_report = new_dummy_report(helper_task_id, report_time);
-
-        ds.run_tx(|tx| {
-            let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
-            let (leader_report, helper_report) = (leader_report.clone(), helper_report.clone());
-            Box::pin(async move {
-                tx.put_task(&leader_task).await?;
-                tx.put_task(&helper_task).await?;
-
-                tx.put_client_report(&leader_report).await?;
-                tx.put_client_report(&helper_report).await
-            })
-        })
-        .await
-        .unwrap();
-
-        // Create & run the aggregation job creator, give it long enough to create tasks, and then
-        // kill it.
-        const AGGREGATION_JOB_CREATION_INTERVAL: Duration = Duration::from_secs(1);
-        let job_creator = Arc::new(AggregationJobCreator {
-            datastore: ds,
-            clock,
-            tasks_update_frequency: Duration::from_secs(3600),
-            aggregation_job_creation_interval: AGGREGATION_JOB_CREATION_INTERVAL,
-            min_aggregation_job_size: 0,
-            max_aggregation_job_size: 100,
-        });
-        let task_handle = task::spawn({
-            let job_creator = job_creator.clone();
-            async move { job_creator.run().await }
-        });
-        time::sleep(5 * AGGREGATION_JOB_CREATION_INTERVAL).await;
-        task_handle.abort();
-
-        // Inspect database state to verify that the expected aggregation jobs were created.
-        let (leader_agg_jobs, helper_agg_jobs) = job_creator
-            .datastore
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    let leader_agg_jobs =
-                        read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, leader_task_id).await;
-                    let helper_agg_jobs =
-                        read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, helper_task_id).await;
-                    Ok((leader_agg_jobs, helper_agg_jobs))
-                })
-            })
-            .await
-            .unwrap();
-        assert!(helper_agg_jobs.is_empty());
-        assert_eq!(leader_agg_jobs.len(), 1);
-        let nonces = leader_agg_jobs.into_iter().next().unwrap().1;
-        assert_eq!(nonces, HashSet::from([leader_report.nonce()]));
-    }
 
     #[tokio::test]
     async fn create_aggregation_jobs_for_task() {
         // Setup.
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -493,8 +313,6 @@ mod tests {
         let job_creator = AggregationJobCreator {
             datastore: ds,
             clock,
-            tasks_update_frequency: Duration::from_secs(3600),
-            aggregation_job_creation_interval: Duration::from_secs(1),
             min_aggregation_job_size: MIN_AGGREGATION_JOB_SIZE,
             max_aggregation_job_size: MAX_AGGREGATION_JOB_SIZE,
         };
@@ -550,6 +368,7 @@ mod tests {
         // Setup.
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
@@ -570,8 +389,6 @@ mod tests {
         let job_creator = AggregationJobCreator {
             datastore: ds,
             clock,
-            tasks_update_frequency: Duration::from_secs(3600),
-            aggregation_job_creation_interval: Duration::from_secs(1),
             min_aggregation_job_size: 2,
             max_aggregation_job_size: 100,
         };

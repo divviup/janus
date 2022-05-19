@@ -176,14 +176,14 @@ where
         })?;
 
         if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) =
-            &mut config.logging_config().open_telemetry_config
+            &mut config.common_config().logging_config.open_telemetry_config
         {
             otlp_config
                 .metadata
                 .extend(common_options.otlp_tracing_metadata.iter().cloned());
         }
         if let Some(MetricsExporterConfiguration::Otlp(otlp_config)) =
-            &mut config.metrics_config().exporter
+            &mut config.common_config().metrics_config.exporter
         {
             otlp_config
                 .metadata
@@ -192,9 +192,9 @@ where
 
         config
     };
-    install_trace_subscriber(config.logging_config())
+    install_trace_subscriber(&config.common_config().logging_config)
         .context("couldn't install tracing subscriber")?;
-    let _metrics_exporter = install_metrics_exporter(config.metrics_config())
+    let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
         .context("failed to install metrics exporter")?;
 
     info!(?common_options, ?config, "Starting up");
@@ -202,13 +202,13 @@ where
     // Connect to database.
     let datastore = datastore(
         clock.clone(),
-        config.database_config(),
+        &config.common_config().database,
         &common_options.database_password,
         &common_options.datastore_keys,
     )
     .context("couldn't connect to database")?;
 
-    let logging_config = config.logging_config().clone();
+    let logging_config = config.common_config().logging_config.clone();
 
     f(clock, config, datastore).await?;
 
