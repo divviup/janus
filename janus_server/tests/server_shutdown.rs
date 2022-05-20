@@ -8,7 +8,7 @@ use janus::{
     time::{Clock, RealClock},
 };
 use janus_server::{
-    config::{AggregatorConfig, DbConfig},
+    config::{AggregatorConfig, CommonConfig, DbConfig},
     datastore::{Crypter, Datastore},
     task::{test_util::new_dummy_task, VdafInstance},
     trace::{install_trace_subscriber, TraceConfiguration},
@@ -61,11 +61,13 @@ async fn server_shutdown() {
 
     let config = AggregatorConfig {
         listen_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port)),
-        database: DbConfig {
-            url: db_handle.connection_string().parse().unwrap(),
+        common_config: CommonConfig {
+            database: DbConfig {
+                url: db_handle.connection_string().parse().unwrap(),
+            },
+            logging_config: Default::default(),
+            metrics_config: Default::default(),
         },
-        logging_config: Default::default(),
-        metrics_config: Default::default(),
     };
 
     let task_id = TaskId::random();

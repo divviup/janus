@@ -5,16 +5,23 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, net::SocketAddr};
 use url::Url;
 
+/// Configuration options common to all Janus binaries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommonConfig {
+    /// The database configuration.
+    pub database: DbConfig,
+    /// Logging configuration.
+    #[serde(default)]
+    pub logging_config: TraceConfiguration,
+    /// Application-level metrics configuration
+    #[serde(default)]
+    pub metrics_config: MetricsConfiguration,
+}
+
 /// Trait describing configuration structures for various Janus binaries.
 pub trait BinaryConfig: Debug + DeserializeOwned {
-    /// Get the database configuration.
-    fn database_config(&mut self) -> &mut DbConfig;
-
-    /// Get the logging/trace configuration.
-    fn logging_config(&mut self) -> &mut TraceConfiguration;
-
-    /// Get the metrics configuration.
-    fn metrics_config(&mut self) -> &mut MetricsConfiguration;
+    /// Get common configuration.
+    fn common_config(&mut self) -> &mut CommonConfig;
 }
 
 /// Configuration for a Janus server using a database.
@@ -51,27 +58,14 @@ pub struct AggregatorConfig {
     // TODO: Options for terminating TLS, unless that gets handled in a load
     // balancer?
     pub listen_address: SocketAddr,
-    /// The aggregator's database configuration.
-    pub database: DbConfig,
-    /// Logging configuration.
-    #[serde(default)]
-    pub logging_config: TraceConfiguration,
-    /// Application-level metrics configuration
-    #[serde(default)]
-    pub metrics_config: MetricsConfiguration,
+
+    #[serde(flatten)]
+    pub common_config: CommonConfig,
 }
 
 impl BinaryConfig for AggregatorConfig {
-    fn database_config(&mut self) -> &mut DbConfig {
-        &mut self.database
-    }
-
-    fn logging_config(&mut self) -> &mut TraceConfiguration {
-        &mut self.logging_config
-    }
-
-    fn metrics_config(&mut self) -> &mut MetricsConfiguration {
-        &mut self.metrics_config
+    fn common_config(&mut self) -> &mut CommonConfig {
+        &mut self.common_config
     }
 }
 
@@ -98,14 +92,9 @@ impl BinaryConfig for AggregatorConfig {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AggregationJobCreatorConfig {
-    /// Configuration for the database backend to connect to.
-    pub database: DbConfig,
-    /// Logging configuration.
-    #[serde(default)]
-    pub logging_config: TraceConfiguration,
-    /// Application-level metrics configuration
-    #[serde(default)]
-    pub metrics_config: MetricsConfiguration,
+    #[serde(flatten)]
+    pub common_config: CommonConfig,
+
     /// How frequently we look for new tasks to start creating aggregation jobs for, in seconds.
     pub tasks_update_frequency_secs: u64,
     /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
@@ -119,20 +108,51 @@ pub struct AggregationJobCreatorConfig {
 }
 
 impl BinaryConfig for AggregationJobCreatorConfig {
-    fn database_config(&mut self) -> &mut DbConfig {
-        &mut self.database
-    }
-
-    fn logging_config(&mut self) -> &mut TraceConfiguration {
-        &mut self.logging_config
-    }
-
-    fn metrics_config(&mut self) -> &mut MetricsConfiguration {
-        &mut self.metrics_config
+    fn common_config(&mut self) -> &mut CommonConfig {
+        &mut self.common_config
     }
 }
 
-/// Non-secret configuration options for the Janus Aggregation Job Driver job.
+/// Non-secret configuration options for Janus Job Driver jobs.
+///
+/// # Examples
+///
+/// ```
+/// use janus_server::config::JobDriverConfig;
+///
+/// let yaml_config = r#"
+/// ---
+/// min_job_discovery_delay_secs: 10
+/// max_job_discovery_delay_secs: 60
+/// max_concurrent_job_workers: 10
+/// worker_lease_duration_secs: 600
+/// worker_lease_clock_skew_allowance_secs: 60
+/// "#;
+///
+/// let _decoded: JobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobDriverConfig {
+    /// The minimum delay between checking for jobs ready to be stepped, in seconds. Applies only
+    /// when there are no jobs to be stepped.
+    pub min_job_discovery_delay_secs: u64,
+    /// The maximum delay between checking for jobs ready to be stepped, in seconds. Applies only
+    /// when there are no jobs to be stepped.
+    pub max_job_discovery_delay_secs: u64,
+    /// The maximum number of jobs being stepped at once. This parameter determines the amount of
+    /// per-process concurrency.
+    pub max_concurrent_job_workers: usize,
+    /// The length of time, in seconds, workers will acquire a lease for the jobs they are stepping.
+    /// Along with worker_lease_clock_skew_allowance, determines the effective timeout of stepping a
+    /// single job.
+    pub worker_lease_duration_secs: u64,
+    /// The length of time, in seconds, workers decrease their timeouts from the lease length in
+    /// order to guard against the possibility of clock skew. Along with worker_lease_duration_secs,
+    /// determines the effective timeout of stepping a single job.
+    pub worker_lease_clock_skew_allowance_secs: u64,
+}
+
+/// Non-secret configuration options for Janus Aggregation Job Driver jobs.
 ///
 /// # Examples
 ///
@@ -145,55 +165,62 @@ impl BinaryConfig for AggregationJobCreatorConfig {
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
 /// logging_config: # logging_config is optional
 ///   force_json_output: true
-/// min_aggregation_job_discovery_delay_secs: 10
-/// max_aggregation_job_discovery_delay_secs: 60
-/// max_concurrent_aggregation_job_workers: 10
-/// aggregation_worker_lease_duration_secs: 600
-/// aggregation_worker_lease_clock_skew_allowance_secs: 60
+/// min_job_discovery_delay_secs: 10
+/// max_job_discovery_delay_secs: 60
+/// max_concurrent_job_workers: 10
+/// worker_lease_duration_secs: 600
+/// worker_lease_clock_skew_allowance_secs: 60
 /// "#;
 ///
 /// let _decoded: AggregationJobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AggregationJobDriverConfig {
-    /// Configuration for the database backend to connect to.
-    pub database: DbConfig,
-    /// Logging configuration.
-    #[serde(default)]
-    pub logging_config: TraceConfiguration,
-    #[serde(default)]
-    pub metrics_config: MetricsConfiguration,
-    /// The minimum delay between checking for aggregation jobs ready to be stepped, in seconds.
-    /// Applies only when there are no aggregation jobs to be stepped.
-    pub min_aggregation_job_discovery_delay_secs: u64,
-    /// The maximum delay between checking for aggregation jobs ready to be stepped, in seconds.
-    /// Applies only when there are no aggregation jobs to be stepped.
-    pub max_aggregation_job_discovery_delay_secs: u64,
-    /// The maximum number of aggregation jobs being stepped at once. This parameter determines the
-    /// amount of per-process concurrency.
-    pub max_concurrent_aggregation_job_workers: usize,
-    /// The length of time, in seconds, workers will acquire a lease for the aggregation jobs they
-    /// are stepping. Along with aggregation_worker_lease_clock_skew_allowance, determines the
-    /// effective timeout of stepping a single aggregation job.
-    pub aggregation_worker_lease_duration_secs: u64,
-    /// The length of time, in seconds, workers decrease their timeouts from the lease length in
-    /// order to guard against the possibility of clock skew. Along with
-    /// aggregation_worker_lease_duration_secs, determines the effective timeout of stepping
-    /// a single aggregation job.
-    pub aggregation_worker_lease_clock_skew_allowance_secs: u64,
+    #[serde(flatten)]
+    pub common_config: CommonConfig,
+    #[serde(flatten)]
+    pub job_driver_config: JobDriverConfig,
 }
 
 impl BinaryConfig for AggregationJobDriverConfig {
-    fn database_config(&mut self) -> &mut DbConfig {
-        &mut self.database
+    fn common_config(&mut self) -> &mut CommonConfig {
+        &mut self.common_config
     }
+}
 
-    fn logging_config(&mut self) -> &mut TraceConfiguration {
-        &mut self.logging_config
-    }
+/// Non-secret configuration options for Janus Collect Job Driver jobs.
+///
+/// # Examples
+///
+/// ```
+/// use janus_server::config::CollectJobDriverConfig;
+///
+/// let yaml_config = r#"
+/// ---
+/// database:
+///   url: "postgres://postgres:postgres@localhost:5432/postgres"
+/// logging_config: # logging_config is optional
+///   force_json_output: true
+/// min_job_discovery_delay_secs: 10
+/// max_job_discovery_delay_secs: 60
+/// max_concurrent_job_workers: 10
+/// worker_lease_duration_secs: 600
+/// worker_lease_clock_skew_allowance_secs: 60
+/// "#;
+///
+/// let _decoded: CollectJobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectJobDriverConfig {
+    #[serde(flatten)]
+    pub common_config: CommonConfig,
+    #[serde(flatten)]
+    pub job_driver_config: JobDriverConfig,
+}
 
-    fn metrics_config(&mut self) -> &mut MetricsConfiguration {
-        &mut self.metrics_config
+impl BinaryConfig for CollectJobDriverConfig {
+    fn common_config(&mut self) -> &mut CommonConfig {
+        &mut self.common_config
     }
 }
 
@@ -211,6 +238,12 @@ mod tests {
         net::{IpAddr, Ipv4Addr},
     };
 
+    fn roundtrip_encoding<T: Serialize + DeserializeOwned + Debug + Eq>(value: T) {
+        let encoded = serde_yaml::to_string(&value).unwrap();
+        let decoded = serde_yaml::from_str(&encoded).unwrap();
+        assert_eq!(value, decoded);
+    }
+
     fn generate_db_config() -> DbConfig {
         DbConfig {
             url: Url::parse("postgres://postgres:postgres@localhost:5432/postgres").unwrap(),
@@ -219,61 +252,91 @@ mod tests {
 
     #[test]
     fn roundtrip_db_config() {
-        let db_config = generate_db_config();
-        let encoded = serde_yaml::to_string(&db_config).unwrap();
-        let decoded: DbConfig = serde_yaml::from_str(&encoded).unwrap();
-        assert_eq!(db_config, decoded);
+        roundtrip_encoding(generate_db_config())
+    }
+
+    #[test]
+    fn roundtrip_common_config() {
+        roundtrip_encoding(CommonConfig {
+            database: generate_db_config(),
+            logging_config: TraceConfiguration::default(),
+            metrics_config: MetricsConfiguration::default(),
+        })
     }
 
     #[test]
     fn roundtrip_aggregator_config() {
-        let aggregator_config = AggregatorConfig {
+        roundtrip_encoding(AggregatorConfig {
             listen_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
-            database: generate_db_config(),
-            logging_config: TraceConfiguration::default(),
-            metrics_config: MetricsConfiguration::default(),
-        };
-
-        let encoded = serde_yaml::to_string(&aggregator_config).unwrap();
-        let decoded: AggregatorConfig = serde_yaml::from_str(&encoded).unwrap();
-        assert_eq!(aggregator_config, decoded);
+            common_config: CommonConfig {
+                database: generate_db_config(),
+                logging_config: TraceConfiguration::default(),
+                metrics_config: MetricsConfiguration::default(),
+            },
+        })
     }
 
     #[test]
     fn roundtrip_aggregation_job_creator_config() {
-        let config = AggregationJobCreatorConfig {
-            database: generate_db_config(),
-            logging_config: TraceConfiguration::default(),
-            metrics_config: MetricsConfiguration::default(),
+        roundtrip_encoding(AggregationJobCreatorConfig {
+            common_config: CommonConfig {
+                database: generate_db_config(),
+                logging_config: TraceConfiguration::default(),
+                metrics_config: MetricsConfiguration::default(),
+            },
             tasks_update_frequency_secs: 3600,
             aggregation_job_creation_interval_secs: 60,
             min_aggregation_job_size: 100,
             max_aggregation_job_size: 500,
-        };
+        })
+    }
 
-        let encoded = serde_yaml::to_string(&config).unwrap();
-        let decoded_config: AggregationJobCreatorConfig = serde_yaml::from_str(&encoded).unwrap();
-        assert_eq!(config, decoded_config);
+    #[test]
+    fn roundtrip_job_driver_config() {
+        roundtrip_encoding(JobDriverConfig {
+            min_job_discovery_delay_secs: 10,
+            max_job_discovery_delay_secs: 60,
+            max_concurrent_job_workers: 10,
+            worker_lease_duration_secs: 600,
+            worker_lease_clock_skew_allowance_secs: 60,
+        })
     }
 
     #[test]
     fn roundtrip_aggregation_job_driver_config() {
-        let config = AggregationJobDriverConfig {
-            database: generate_db_config(),
-            logging_config: TraceConfiguration::default(),
-            metrics_config: MetricsConfiguration::default(),
-            min_aggregation_job_discovery_delay_secs: 10,
-            max_aggregation_job_discovery_delay_secs: 60,
-            max_concurrent_aggregation_job_workers: 10,
-            aggregation_worker_lease_duration_secs: 600,
-            aggregation_worker_lease_clock_skew_allowance_secs: 60,
-        };
-
-        let encoded = serde_yaml::to_string(&config).unwrap();
-        let decoded_config: AggregationJobDriverConfig = serde_yaml::from_str(&encoded).unwrap();
-        assert_eq!(config, decoded_config);
+        roundtrip_encoding(AggregationJobDriverConfig {
+            common_config: CommonConfig {
+                database: generate_db_config(),
+                logging_config: TraceConfiguration::default(),
+                metrics_config: MetricsConfiguration::default(),
+            },
+            job_driver_config: JobDriverConfig {
+                min_job_discovery_delay_secs: 10,
+                max_job_discovery_delay_secs: 60,
+                max_concurrent_job_workers: 10,
+                worker_lease_duration_secs: 600,
+                worker_lease_clock_skew_allowance_secs: 60,
+            },
+        })
     }
 
+    #[test]
+    fn roundtrip_collect_job_driver_config() {
+        roundtrip_encoding(CollectJobDriverConfig {
+            common_config: CommonConfig {
+                database: generate_db_config(),
+                logging_config: TraceConfiguration::default(),
+                metrics_config: MetricsConfiguration::default(),
+            },
+            job_driver_config: JobDriverConfig {
+                min_job_discovery_delay_secs: 10,
+                max_job_discovery_delay_secs: 60,
+                max_concurrent_job_workers: 10,
+                worker_lease_duration_secs: 600,
+                worker_lease_clock_skew_allowance_secs: 60,
+            },
+        })
+    }
     /// Check that configuration fragments in the README can be parsed correctly.
     #[test]
     fn readme_config_examples() {
@@ -290,6 +353,7 @@ logging_config:
 "#
             )
             .unwrap()
+            .common_config()
             .logging_config
             .tokio_console_config,
             TokioConsoleConfiguration {
@@ -313,6 +377,7 @@ logging_config:
 "#
             )
             .unwrap()
+            .common_config()
             .logging_config
             .open_telemetry_config,
             Some(OpenTelemetryTraceConfiguration::Jaeger),
@@ -333,6 +398,7 @@ logging_config:
 "#
             )
             .unwrap()
+            .common_config()
             .logging_config
             .open_telemetry_config,
             Some(OpenTelemetryTraceConfiguration::Otlp(
@@ -360,6 +426,7 @@ metrics_config:
 "#
             )
             .unwrap()
+            .common_config()
             .metrics_config
             .exporter,
             Some(MetricsExporterConfiguration::Prometheus {
@@ -384,6 +451,7 @@ metrics_config:
 "#
             )
             .unwrap()
+            .common_config()
             .metrics_config
             .exporter,
             Some(MetricsExporterConfiguration::Otlp(
