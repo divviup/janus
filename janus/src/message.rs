@@ -689,6 +689,9 @@ pub struct HpkeConfig {
 }
 
 impl HpkeConfig {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-hpke-config";
+
     /// Construct a HPKE configuration message from its components.
     pub fn new(
         id: HpkeConfigId,
@@ -770,6 +773,9 @@ pub struct Report {
 }
 
 impl Report {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "message/dap-report";
+
     /// Construct a report from its components.
     pub fn new(
         task_id: TaskId,

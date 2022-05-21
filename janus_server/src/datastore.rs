@@ -1995,7 +1995,7 @@ impl From<ring::error::Unspecified> for Error {
 pub mod models {
     use super::Error;
     use crate::{
-        message::{AggregationJobId, Interval, TransitionError},
+        message::{AggregationJobId, Interval, ReportShareError},
         task,
     };
     use derivative::Derivative;
@@ -2131,7 +2131,7 @@ pub mod models {
         Start,
         Waiting(A::PrepareStep, Option<A::PrepareMessage>),
         Finished(A::OutputShare),
-        Failed(TransitionError),
+        Failed(ReportShareError),
         Invalid,
     }
 
@@ -2422,7 +2422,7 @@ mod tests {
     use crate::{
         aggregator::test_util::fake,
         datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
-        message::{Interval, TransitionError},
+        message::{Interval, ReportShareError},
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
@@ -3189,7 +3189,7 @@ mod tests {
             ReportAggregationState::Waiting(prep_step.clone(), None),
             ReportAggregationState::Waiting(prep_step, Some(prep_msg)),
             ReportAggregationState::Finished(output_share),
-            ReportAggregationState::Failed(TransitionError::VdafPrepError),
+            ReportAggregationState::Failed(ReportShareError::VdafPrepError),
             ReportAggregationState::Invalid,
         ]
         .iter()
@@ -3374,7 +3374,7 @@ mod tests {
                         ReportAggregationState::Waiting(prep_step.clone(), None),
                         ReportAggregationState::Waiting(prep_step, Some(prep_msg)),
                         ReportAggregationState::Finished(output_share),
-                        ReportAggregationState::Failed(TransitionError::VdafPrepError),
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                         ReportAggregationState::Invalid,
                     ]
                     .iter()
