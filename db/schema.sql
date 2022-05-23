@@ -142,6 +142,7 @@ CREATE TABLE collect_jobs(
     batch_interval_start    TIMESTAMP NOT NULL, -- the start of the batch interval
     batch_interval_duration BIGINT NOT NULL,    -- the length of the batch interval in seconds
     aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
+    lease_expiry            TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collect job expires; -infinity implies no current lease
     helper_aggregate_share  BYTEA,              -- the helper's encrypted aggregate share; null until the helper has serviced the AggregateShareReq
     leader_aggregate_share  BYTEA,              -- the leader's unencrypted aggregate share; null until the leader has performed its aggregation for a CollectReq
     report_count            BIGINT,             -- the count of reports included in the leader's aggregate share; null until the leader has performed its aggregation for a CollectReq
@@ -150,6 +151,8 @@ CREATE TABLE collect_jobs(
     CONSTRAINT unique_collect_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval_start, batch_interval_duration, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
+-- TODO: what's the right index here?
+CREATE INDEX collect_jobs_lease_expiry ON collect_jobs(lease_expiry);
 
 -- The helper's view of aggregate share jobs.
 CREATE TABLE aggregate_share_jobs(
