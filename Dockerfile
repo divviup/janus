@@ -12,7 +12,7 @@ COPY test_util /src/test_util
 COPY db/schema.sql /src/db/schema.sql
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release --bin $BINARY && cp /src/target/release/$BINARY /$BINARY
 
-FROM alpine:3.15.4
+FROM alpine:3.16.0
 ARG BINARY=aggregator
 COPY --from=builder /src/db/schema.sql /db/schema.sql
 COPY --from=builder /$BINARY /$BINARY
