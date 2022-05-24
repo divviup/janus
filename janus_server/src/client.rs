@@ -1,6 +1,6 @@
 //! PPM protocol client
 
-use http::StatusCode;
+use http::{header::CONTENT_TYPE, StatusCode};
 use janus::{
     hpke::associated_data_for_report_share,
     hpke::{self, HpkeApplicationInfo, Label},
@@ -193,6 +193,7 @@ where
         let upload_response = self
             .http_client
             .post(self.parameters.upload_endpoint()?)
+            .header(CONTENT_TYPE, Report::MEDIA_TYPE)
             .body(report.get_encoded())
             .send()
             .await?;
@@ -251,7 +252,11 @@ mod tests {
     #[tokio::test]
     async fn upload_prio3_count() {
         install_test_trace_subscriber();
-        let mocked_upload = mock("POST", "/upload").with_status(200).expect(1).create();
+        let mocked_upload = mock("POST", "/upload")
+            .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+            .with_status(200)
+            .expect(1)
+            .create();
 
         let client = setup_client(Prio3Aes128Count::new(2).unwrap(), ());
 
@@ -276,7 +281,11 @@ mod tests {
     async fn upload_prio3_http_status_code() {
         install_test_trace_subscriber();
 
-        let mocked_upload = mock("POST", "/upload").with_status(501).expect(1).create();
+        let mocked_upload = mock("POST", "/upload")
+            .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+            .with_status(501)
+            .expect(1)
+            .create();
 
         let client = setup_client(Prio3Aes128Count::new(2).unwrap(), ());
         assert_matches!(

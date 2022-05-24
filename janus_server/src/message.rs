@@ -51,47 +51,49 @@ impl Decode for ReportShare {
     }
 }
 
-/// PPM protocol message representing a transition in the state machine of a VDAF.
+/// DAP protocol message representing the result of a preparation step in a VDAF evaluation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Transition {
+pub struct PrepareStep {
     pub nonce: Nonce,
-    pub trans_data: TransitionTypeSpecificData,
+    pub result: PrepareStepResult,
 }
 
-impl Encode for Transition {
+impl Encode for PrepareStep {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.nonce.encode(bytes);
-        self.trans_data.encode(bytes);
+        self.result.encode(bytes);
     }
 }
 
-impl Decode for Transition {
+impl Decode for PrepareStep {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let nonce = Nonce::decode(bytes)?;
-        let trans_data = TransitionTypeSpecificData::decode(bytes)?;
+        let result = PrepareStepResult::decode(bytes)?;
 
-        Ok(Self { nonce, trans_data })
+        Ok(Self { nonce, result })
     }
 }
 
-/// PPM protocol message representing transition-type-specific data, included in a Transition
-/// message.
+/// DAP protocol message representing result-type-specific data associated with a preparation step
+/// in a VDAF evaluation. Included in a PrepareStep message.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TransitionTypeSpecificData {
-    Continued { payload: Vec<u8> },
+pub enum PrepareStepResult {
+    Continued(Vec<u8>), // content is a serialized preparation message
     Finished,
-    Failed { error: TransitionError },
+    Failed(ReportShareError),
 }
 
-impl Encode for TransitionTypeSpecificData {
+impl Encode for PrepareStepResult {
     fn encode(&self, bytes: &mut Vec<u8>) {
+        // The encoding includes an implicit discriminator byte, called PrepareStepResult in the
+        // DAP spec.
         match self {
-            Self::Continued { payload } => {
+            Self::Continued(prep_msg) => {
                 0u8.encode(bytes);
-                encode_u16_items(bytes, &(), payload);
+                encode_u16_items(bytes, &(), prep_msg);
             }
             Self::Finished => 1u8.encode(bytes),
-            Self::Failed { error } => {
+            Self::Failed(error) => {
                 2u8.encode(bytes);
                 error.encode(bytes);
             }
@@ -99,48 +101,37 @@ impl Encode for TransitionTypeSpecificData {
     }
 }
 
-impl Decode for TransitionTypeSpecificData {
+impl Decode for PrepareStepResult {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
-        let trans_data = match val {
-            0 => Self::Continued {
-                payload: decode_u16_items(&(), bytes)?,
-            },
+        Ok(match val {
+            0 => Self::Continued(decode_u16_items(&(), bytes)?),
             1 => Self::Finished,
-            2 => Self::Failed {
-                error: TransitionError::decode(bytes)?,
-            },
-            _ => {
-                return Err(CodecError::Other(
-                    anyhow!("unexpected TransitionType value {}", val).into(),
-                ))
-            }
-        };
-
-        Ok(trans_data)
+            2 => Self::Failed(ReportShareError::decode(bytes)?),
+            _ => return Err(CodecError::UnexpectedValue),
+        })
     }
 }
 
-/// PPM protocol message representing an error while transitioning a VDAF's state machine.
+/// PPM protocol message representing an error while preparing a report share for aggregation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, ToSql, FromSql)]
 #[repr(u8)]
-pub enum TransitionError {
+pub enum ReportShareError {
     BatchCollected = 0,
     ReportReplayed = 1,
     ReportDropped = 2,
     HpkeUnknownConfigId = 3,
     HpkeDecryptError = 4,
     VdafPrepError = 5,
-    UnrecognizedNonce = 6,
 }
 
-impl Encode for TransitionError {
+impl Encode for ReportShareError {
     fn encode(&self, bytes: &mut Vec<u8>) {
         (*self as u8).encode(bytes);
     }
 }
 
-impl Decode for TransitionError {
+impl Decode for ReportShareError {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val).map_err(|_| {
@@ -205,94 +196,135 @@ impl AggregationJobId {
     }
 }
 
-/// PPM protocol message representing an aggregation request from the leader to a helper.
+/// DAP protocol message representing an aggregation initialization request from leader to helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateReq {
+pub struct AggregateInitializeReq {
     pub task_id: TaskId,
     pub job_id: AggregationJobId,
-    pub body: AggregateReqBody,
+    pub agg_param: Vec<u8>,
+    pub report_shares: Vec<ReportShare>,
 }
 
-impl Encode for AggregateReq {
+impl AggregateInitializeReq {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-initialize-req";
+}
+
+impl Encode for AggregateInitializeReq {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.job_id.encode(bytes);
-
-        match &self.body {
-            AggregateReqBody::AggregateInitReq { agg_param, seq } => {
-                0u8.encode(bytes);
-                encode_u16_items(bytes, &(), agg_param);
-                encode_u16_items(bytes, &(), seq);
-            }
-            AggregateReqBody::AggregateContinueReq { seq } => {
-                1u8.encode(bytes);
-                encode_u16_items(bytes, &(), seq);
-            }
-        }
+        encode_u16_items(bytes, &(), &self.agg_param);
+        encode_u16_items(bytes, &(), &self.report_shares);
     }
 }
 
-impl Decode for AggregateReq {
+impl Decode for AggregateInitializeReq {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let job_id = AggregationJobId::decode(bytes)?;
-
-        let msg_type = u8::decode(bytes)?;
-        let body = match msg_type {
-            0 => {
-                let agg_param = decode_u16_items(&(), bytes)?;
-                let seq = decode_u16_items(&(), bytes)?;
-                AggregateReqBody::AggregateInitReq { agg_param, seq }
-            }
-            1 => {
-                let seq = decode_u16_items(&(), bytes)?;
-                AggregateReqBody::AggregateContinueReq { seq }
-            }
-            _ => {
-                return Err(CodecError::Other(
-                    anyhow!("unexpected AggregateReqType message type {}", msg_type).into(),
-                ))
-            }
-        };
-
-        Ok(AggregateReq {
+        let agg_param = decode_u16_items(&(), bytes)?;
+        let report_shares = decode_u16_items(&(), bytes)?;
+        Ok(AggregateInitializeReq {
             task_id,
             job_id,
-            body,
+            agg_param,
+            report_shares,
         })
     }
 }
 
-/// PPM protocol (sub-)message indicating the "body" of an AggregateReq message, i.e. an
-/// AggregateInitReq or AggregateContinueReq.
+/// DAP protocol message representing an aggregation initialization response from helper to leader.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AggregateReqBody {
-    AggregateInitReq {
-        agg_param: Vec<u8>,
-        seq: Vec<ReportShare>,
-    },
-    AggregateContinueReq {
-        seq: Vec<Transition>,
-    },
+pub struct AggregateInitializeResp {
+    pub job_id: AggregationJobId,
+    pub prepare_steps: Vec<PrepareStep>,
 }
 
-/// PPM protocol message representing a helper's response to a request from the leader to initiate
-/// or continue aggregation of a sequence of client reports.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateResp {
-    pub seq: Vec<Transition>,
+impl AggregateInitializeResp {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-initialize-resp";
 }
 
-impl Encode for AggregateResp {
+impl Encode for AggregateInitializeResp {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u16_items(bytes, &(), &self.seq);
+        self.job_id.encode(bytes);
+        encode_u16_items(bytes, &(), &self.prepare_steps);
     }
 }
 
-impl Decode for AggregateResp {
+impl Decode for AggregateInitializeResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let seq = decode_u16_items(&(), bytes)?;
-        Ok(Self { seq })
+        let job_id = AggregationJobId::decode(bytes)?;
+        let prepare_steps = decode_u16_items(&(), bytes)?;
+        Ok(Self {
+            job_id,
+            prepare_steps,
+        })
+    }
+}
+
+/// DAP protocol message representing an aggregation continuation request from leader to helper.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AggregateContinueReq {
+    pub task_id: TaskId,
+    pub job_id: AggregationJobId,
+    pub prepare_steps: Vec<PrepareStep>,
+}
+
+impl AggregateContinueReq {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-continue-req";
+}
+
+impl Encode for AggregateContinueReq {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.task_id.encode(bytes);
+        self.job_id.encode(bytes);
+        encode_u16_items(bytes, &(), &self.prepare_steps);
+    }
+}
+
+impl Decode for AggregateContinueReq {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let task_id = TaskId::decode(bytes)?;
+        let job_id = AggregationJobId::decode(bytes)?;
+        let prepare_steps = decode_u16_items(&(), bytes)?;
+        Ok(Self {
+            task_id,
+            job_id,
+            prepare_steps,
+        })
+    }
+}
+
+/// DAP protocol message representing an aggregation continue response from helper to leader.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AggregateContinueResp {
+    pub job_id: AggregationJobId,
+    pub prepare_steps: Vec<PrepareStep>,
+}
+
+impl AggregateContinueResp {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-continue-resp";
+}
+
+impl Encode for AggregateContinueResp {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.job_id.encode(bytes);
+        encode_u16_items(bytes, &(), &self.prepare_steps);
+    }
+}
+
+impl Decode for AggregateContinueResp {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let job_id = AggregationJobId::decode(bytes)?;
+        let prepare_steps = decode_u16_items(&(), bytes)?;
+        Ok(Self {
+            job_id,
+            prepare_steps,
+        })
     }
 }
 
@@ -308,6 +340,9 @@ pub struct AggregateShareReq {
 }
 
 impl AggregateShareReq {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-share-req";
+
     pub(crate) fn associated_data_for_aggregate_share(&self) -> Vec<u8> {
         associated_data_for_aggregate_share(self.task_id, self.batch_interval)
     }
@@ -348,6 +383,11 @@ pub struct AggregateShareResp {
     pub(crate) encrypted_aggregate_share: HpkeCiphertext,
 }
 
+impl AggregateShareResp {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-share-resp";
+}
+
 impl Encode for AggregateShareResp {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.encrypted_aggregate_share.encode(bytes);
@@ -371,6 +411,11 @@ pub struct CollectReq {
     pub(crate) task_id: TaskId,
     pub(crate) batch_interval: Interval,
     pub(crate) agg_param: Vec<u8>,
+}
+
+impl CollectReq {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "message/dap-collect-req";
 }
 
 impl Encode for CollectReq {
@@ -400,6 +445,11 @@ impl Decode for CollectReq {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectResp {
     pub(crate) encrypted_agg_shares: Vec<HpkeCiphertext>,
+}
+
+impl CollectResp {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "message/dap-collect-resp";
 }
 
 impl Encode for CollectResp {
@@ -454,17 +504,15 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_transition() {
+    fn roundtrip_prepare_step() {
         roundtrip_encoding(&[
             (
-                Transition {
+                PrepareStep {
                     nonce: Nonce::new(
                         Time::from_seconds_since_epoch(54372),
                         [1, 2, 3, 4, 5, 6, 7, 8],
                     ),
-                    trans_data: TransitionTypeSpecificData::Continued {
-                        payload: Vec::from("012345"),
-                    },
+                    result: PrepareStepResult::Continued(Vec::from("012345")),
                 },
                 concat!(
                     concat!(
@@ -472,21 +520,21 @@ mod tests {
                         "000000000000D464", // time
                         "0102030405060708", // rand
                     ),
-                    "00", // trans_type
+                    "00", // prepare_step_result
                     concat!(
-                        // payload
+                        // prep_msg
                         "0006",         // length
                         "303132333435", // opaque data
                     ),
                 ),
             ),
             (
-                Transition {
+                PrepareStep {
                     nonce: Nonce::new(
                         Time::from_seconds_since_epoch(12345),
                         [8, 7, 6, 5, 4, 3, 2, 1],
                     ),
-                    trans_data: TransitionTypeSpecificData::Finished,
+                    result: PrepareStepResult::Finished,
                 },
                 concat!(
                     concat!(
@@ -494,15 +542,13 @@ mod tests {
                         "0000000000003039", // time
                         "0807060504030201", // rand
                     ),
-                    "01", // trans_type
+                    "01", // prepare_step_result
                 ),
             ),
             (
-                Transition {
+                PrepareStep {
                     nonce: Nonce::new(Time::from_seconds_since_epoch(345078), [255; 8]),
-                    trans_data: TransitionTypeSpecificData::Failed {
-                        error: TransitionError::UnrecognizedNonce,
-                    },
+                    result: PrepareStepResult::Failed(ReportShareError::VdafPrepError),
                 },
                 concat!(
                     concat!(
@@ -510,23 +556,22 @@ mod tests {
                         "00000000000543F6", // time
                         "FFFFFFFFFFFFFFFF", // rand
                     ),
-                    "02", // trans_type
-                    "06", // trans_error
+                    "02", // prepare_step_result
+                    "05", // report_share_error
                 ),
             ),
         ])
     }
 
     #[test]
-    fn roundtrip_transition_error() {
+    fn roundtrip_report_share_error() {
         roundtrip_encoding(&[
-            (TransitionError::BatchCollected, "00"),
-            (TransitionError::HpkeDecryptError, "04"),
-            (TransitionError::HpkeUnknownConfigId, "03"),
-            (TransitionError::ReportDropped, "02"),
-            (TransitionError::ReportReplayed, "01"),
-            (TransitionError::UnrecognizedNonce, "06"),
-            (TransitionError::VdafPrepError, "05"),
+            (ReportShareError::BatchCollected, "00"),
+            (ReportShareError::HpkeDecryptError, "04"),
+            (ReportShareError::HpkeUnknownConfigId, "03"),
+            (ReportShareError::ReportDropped, "02"),
+            (ReportShareError::ReportReplayed, "01"),
+            (ReportShareError::VdafPrepError, "05"),
         ])
     }
 
@@ -552,226 +597,216 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_aggregate_req() {
-        roundtrip_encoding(&[
-            (
-                AggregateReq {
-                    task_id: TaskId::new([u8::MAX; 32]),
-                    job_id: AggregationJobId([u8::MIN; 32]),
-                    body: AggregateReqBody::AggregateInitReq {
-                        agg_param: Vec::from("012345"),
-                        seq: vec![
-                            ReportShare {
-                                nonce: Nonce::new(
-                                    Time::from_seconds_since_epoch(54321),
-                                    [1, 2, 3, 4, 5, 6, 7, 8],
-                                ),
-                                extensions: vec![Extension::new(
-                                    ExtensionType::Tbd,
-                                    Vec::from("0123"),
-                                )],
-                                encrypted_input_share: HpkeCiphertext::new(
-                                    HpkeConfigId::from(42),
-                                    Vec::from("012345"),
-                                    Vec::from("543210"),
-                                ),
-                            },
-                            ReportShare {
-                                nonce: Nonce::new(
-                                    Time::from_seconds_since_epoch(73542),
-                                    [8, 7, 6, 5, 4, 3, 2, 1],
-                                ),
-                                extensions: vec![Extension::new(
-                                    ExtensionType::Tbd,
-                                    Vec::from("3210"),
-                                )],
-                                encrypted_input_share: HpkeCiphertext::new(
-                                    HpkeConfigId::from(13),
-                                    Vec::from("abce"),
-                                    Vec::from("abfd"),
-                                ),
-                            },
-                        ],
+    fn roundtrip_aggregate_initialize_req() {
+        roundtrip_encoding(&[(
+            AggregateInitializeReq {
+                task_id: TaskId::new([u8::MAX; 32]),
+                job_id: AggregationJobId([u8::MIN; 32]),
+                agg_param: Vec::from("012345"),
+                report_shares: vec![
+                    ReportShare {
+                        nonce: Nonce::new(
+                            Time::from_seconds_since_epoch(54321),
+                            [1, 2, 3, 4, 5, 6, 7, 8],
+                        ),
+                        extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
+                        encrypted_input_share: HpkeCiphertext::new(
+                            HpkeConfigId::from(42),
+                            Vec::from("012345"),
+                            Vec::from("543210"),
+                        ),
                     },
-                },
+                    ReportShare {
+                        nonce: Nonce::new(
+                            Time::from_seconds_since_epoch(73542),
+                            [8, 7, 6, 5, 4, 3, 2, 1],
+                        ),
+                        extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
+                        encrypted_input_share: HpkeCiphertext::new(
+                            HpkeConfigId::from(13),
+                            Vec::from("abce"),
+                            Vec::from("abfd"),
+                        ),
+                    },
+                ],
+            },
+            concat!(
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
+                "0000000000000000000000000000000000000000000000000000000000000000", // job_id
                 concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
-                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
-                    "00",                                                               // msg_type
+                    // agg_param
+                    "0006",         // length
+                    "303132333435", // opaque data
+                ),
+                concat!(
+                    // report_shares
+                    "0052", // length
                     concat!(
-                        // agg_init_req
                         concat!(
-                            // agg_param
-                            "0006",         // length
-                            "303132333435", // opaque data
+                            // nonce
+                            "000000000000D431", // time
+                            "0102030405060708", // rand
                         ),
                         concat!(
-                            // seq
-                            "0052", // length
+                            // extensions
+                            "0008", // length
                             concat!(
+                                "0000", // extension_type
                                 concat!(
-                                    // nonce
-                                    "000000000000D431", // time
-                                    "0102030405060708", // rand
-                                ),
-                                concat!(
-                                    // extensions
-                                    "0008", // length
-                                    concat!(
-                                        "0000", // extension_type
-                                        concat!(
-                                            // extension_data
-                                            "0004",     // length
-                                            "30313233", // opaque data
-                                        ),
-                                    ),
-                                ),
-                                concat!(
-                                    // encrypted_input_share
-                                    "2A", // config_id
-                                    concat!(
-                                        // encapsulated_context
-                                        "0006",         // length
-                                        "303132333435", // opaque data
-                                    ),
-                                    concat!(
-                                        // payload
-                                        "0006",         // length
-                                        "353433323130", // opaque data
-                                    ),
+                                    // extension_data
+                                    "0004",     // length
+                                    "30313233", // opaque data
                                 ),
                             ),
+                        ),
+                        concat!(
+                            // encrypted_input_share
+                            "2A", // config_id
                             concat!(
+                                // encapsulated_context
+                                "0006",         // length
+                                "303132333435", // opaque data
+                            ),
+                            concat!(
+                                // payload
+                                "0006",         // length
+                                "353433323130", // opaque data
+                            ),
+                        ),
+                    ),
+                    concat!(
+                        concat!(
+                            // nonce
+                            "0000000000011F46", // time
+                            "0807060504030201", // rand
+                        ),
+                        concat!(
+                            // extensions
+                            "0008", // length
+                            concat!(
+                                "0000", // extension_type
                                 concat!(
-                                    // nonce
-                                    "0000000000011F46", // time
-                                    "0807060504030201", // rand
+                                    // extension_data
+                                    "0004",     // length
+                                    "33323130", // opaque data
                                 ),
-                                concat!(
-                                    // extensions
-                                    "0008", // length
-                                    concat!(
-                                        "0000", // extension_type
-                                        concat!(
-                                            // extension_data
-                                            "0004",     // length
-                                            "33323130", // opaque data
-                                        ),
-                                    ),
-                                ),
-                                concat!(
-                                    "0D", // config_id
-                                    concat!(
-                                        // encapsulated_context
-                                        "0004",     // length
-                                        "61626365", // opaque data
-                                    ),
-                                    concat!(
-                                        // payload
-                                        "0004",     // length
-                                        "61626664", // opaque data
-                                    ),
-                                ),
+                            ),
+                        ),
+                        concat!(
+                            "0D", // config_id
+                            concat!(
+                                // encapsulated_context
+                                "0004",     // length
+                                "61626365", // opaque data
+                            ),
+                            concat!(
+                                // payload
+                                "0004",     // length
+                                "61626664", // opaque data
                             ),
                         ),
                     ),
                 ),
             ),
+        )])
+    }
+
+    #[test]
+    fn roundtrip_aggregate_initialize_resp() {
+        roundtrip_encoding(&[
             (
-                AggregateReq {
-                    task_id: TaskId::new([u8::MIN; 32]),
-                    job_id: AggregationJobId([u8::MAX; 32]),
-                    body: AggregateReqBody::AggregateContinueReq {
-                        seq: vec![
-                            Transition {
-                                nonce: Nonce::new(
-                                    Time::from_seconds_since_epoch(54372),
-                                    [1, 2, 3, 4, 5, 6, 7, 8],
-                                ),
-                                trans_data: TransitionTypeSpecificData::Continued {
-                                    payload: Vec::from("012345"),
-                                },
-                            },
-                            Transition {
-                                nonce: Nonce::new(
-                                    Time::from_seconds_since_epoch(12345),
-                                    [8, 7, 6, 5, 4, 3, 2, 1],
-                                ),
-                                trans_data: TransitionTypeSpecificData::Finished,
-                            },
-                        ],
-                    },
+                AggregateInitializeResp {
+                    job_id: AggregationJobId([u8::MIN; 32]),
+                    prepare_steps: vec![],
                 },
                 concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
-                    "01",                                                               // msg_type
+                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
                     concat!(
-                        // agg_continue_req
-                        concat!(
-                            // seq
-                            "002A", // length
-                            concat!(
-                                concat!(
-                                    // nonce
-                                    "000000000000D464", // time
-                                    "0102030405060708", // rand
-                                ),
-                                "00", // trans_type
-                                concat!(
-                                    // payload
-                                    "0006",         // length
-                                    "303132333435", // opaque data
-                                ),
-                            ),
-                            concat!(
-                                concat!(
-                                    // nonce
-                                    "0000000000003039", // time
-                                    "0807060504030201", // rand
-                                ),
-                                "01", // trans_type
-                            )
-                        ),
+                        // prepare_steps
+                        "0000", // length
                     ),
+                ),
+            ),
+            (
+                AggregateInitializeResp {
+                    job_id: AggregationJobId([u8::MAX; 32]),
+                    prepare_steps: vec![
+                        PrepareStep {
+                            nonce: Nonce::new(
+                                Time::from_seconds_since_epoch(54372),
+                                [1, 2, 3, 4, 5, 6, 7, 8],
+                            ),
+                            result: PrepareStepResult::Continued(Vec::from("012345")),
+                        },
+                        PrepareStep {
+                            nonce: Nonce::new(
+                                Time::from_seconds_since_epoch(12345),
+                                [8, 7, 6, 5, 4, 3, 2, 1],
+                            ),
+                            result: PrepareStepResult::Finished,
+                        },
+                    ],
+                },
+                concat!(
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
+                    concat!(
+                        //prepare_steps
+                        "002A", // length
+                        concat!(
+                            concat!(
+                                // nonce
+                                "000000000000D464", // time
+                                "0102030405060708", // rand
+                            ),
+                            "00", // prepare_step_result
+                            concat!(
+                                // payload
+                                "0006",         // length
+                                "303132333435", // opaque data
+                            ),
+                        ),
+                        concat!(
+                            concat!(
+                                // nonce
+                                "0000000000003039", // time
+                                "0807060504030201", // rand
+                            ),
+                            "01", // prepare_step_result
+                        ),
+                    )
                 ),
             ),
         ])
     }
 
     #[test]
-    fn roundtrip_aggregate_resp() {
-        roundtrip_encoding(&[
-            (
-                AggregateResp { seq: vec![] },
-                concat!(concat!(
-                    // seq
-                    "0000", // length
-                ),),
-            ),
-            (
-                AggregateResp {
-                    seq: vec![
-                        Transition {
-                            nonce: Nonce::new(
-                                Time::from_seconds_since_epoch(54372),
-                                [1, 2, 3, 4, 5, 6, 7, 8],
-                            ),
-                            trans_data: TransitionTypeSpecificData::Continued {
-                                payload: Vec::from("012345"),
-                            },
-                        },
-                        Transition {
-                            nonce: Nonce::new(
-                                Time::from_seconds_since_epoch(12345),
-                                [8, 7, 6, 5, 4, 3, 2, 1],
-                            ),
-                            trans_data: TransitionTypeSpecificData::Finished,
-                        },
-                    ],
-                },
-                concat!(concat!(
-                    //seq
+    fn roundtrip_aggregate_continue_req() {
+        roundtrip_encoding(&[(
+            AggregateContinueReq {
+                task_id: TaskId::new([u8::MIN; 32]),
+                job_id: AggregationJobId([u8::MAX; 32]),
+                prepare_steps: vec![
+                    PrepareStep {
+                        nonce: Nonce::new(
+                            Time::from_seconds_since_epoch(54372),
+                            [1, 2, 3, 4, 5, 6, 7, 8],
+                        ),
+                        result: PrepareStepResult::Continued(Vec::from("012345")),
+                    },
+                    PrepareStep {
+                        nonce: Nonce::new(
+                            Time::from_seconds_since_epoch(12345),
+                            [8, 7, 6, 5, 4, 3, 2, 1],
+                        ),
+                        result: PrepareStepResult::Finished,
+                    },
+                ],
+            },
+            concat!(
+                "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
+                concat!(
+                    // prepare_steps
                     "002A", // length
                     concat!(
                         concat!(
@@ -779,7 +814,7 @@ mod tests {
                             "000000000000D464", // time
                             "0102030405060708", // rand
                         ),
-                        "00", // trans_type
+                        "00", // prepare_step_result
                         concat!(
                             // payload
                             "0006",         // length
@@ -792,9 +827,77 @@ mod tests {
                             "0000000000003039", // time
                             "0807060504030201", // rand
                         ),
-                        "01", // trans_type
+                        "01", // prepare_step_result
+                    )
+                ),
+            ),
+        )])
+    }
+
+    #[test]
+    fn roundtrip_aggregate_continue_resp() {
+        roundtrip_encoding(&[
+            (
+                AggregateContinueResp {
+                    job_id: AggregationJobId([u8::MIN; 32]),
+                    prepare_steps: vec![],
+                },
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
+                    concat!(
+                        // prepare_steps
+                        "0000", // length
                     ),
-                )),
+                ),
+            ),
+            (
+                AggregateContinueResp {
+                    job_id: AggregationJobId([u8::MAX; 32]),
+                    prepare_steps: vec![
+                        PrepareStep {
+                            nonce: Nonce::new(
+                                Time::from_seconds_since_epoch(54372),
+                                [1, 2, 3, 4, 5, 6, 7, 8],
+                            ),
+                            result: PrepareStepResult::Continued(Vec::from("012345")),
+                        },
+                        PrepareStep {
+                            nonce: Nonce::new(
+                                Time::from_seconds_since_epoch(12345),
+                                [8, 7, 6, 5, 4, 3, 2, 1],
+                            ),
+                            result: PrepareStepResult::Finished,
+                        },
+                    ],
+                },
+                concat!(
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
+                    concat!(
+                        //prepare_steps
+                        "002A", // length
+                        concat!(
+                            concat!(
+                                // nonce
+                                "000000000000D464", // time
+                                "0102030405060708", // rand
+                            ),
+                            "00", // prepare_step_result
+                            concat!(
+                                // payload
+                                "0006",         // length
+                                "303132333435", // opaque data
+                            ),
+                        ),
+                        concat!(
+                            concat!(
+                                // nonce
+                                "0000000000003039", // time
+                                "0807060504030201", // rand
+                            ),
+                            "01", // prepare_step_result
+                        ),
+                    )
+                ),
             ),
         ])
     }

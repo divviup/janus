@@ -3,6 +3,7 @@ use futures::{
     future::{try_join_all, FutureExt},
     try_join,
 };
+use http::header::CONTENT_TYPE;
 use janus::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
     message::{Duration, Report, Role, TaskId, Time},
@@ -17,8 +18,9 @@ use janus_server::{
         Datastore,
     },
     message::{
-        AggregateReq, AggregateReqBody, AggregateResp, AggregationJobId, ReportShare, Transition,
-        TransitionError, TransitionTypeSpecificData,
+        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
+        AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
+        ReportShareError,
     },
     task::{Task, VdafInstance},
 };
@@ -444,7 +446,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                 None => {
                     error!(report_nonce = %report_aggregation.nonce, hpke_config_id = %leader_encrypted_input_share.config_id(), "Leader encrypted input share references unknown HPKE config ID");
                     report_aggregation.state =
-                        ReportAggregationState::Failed(TransitionError::HpkeUnknownConfigId);
+                        ReportAggregationState::Failed(ReportShareError::HpkeUnknownConfigId);
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
                 }
@@ -464,7 +466,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                 Err(err) => {
                     error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decrypt leader's encrypted input share");
                     report_aggregation.state =
-                        ReportAggregationState::Failed(TransitionError::HpkeDecryptError);
+                        ReportAggregationState::Failed(ReportShareError::HpkeDecryptError);
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
                 }
@@ -495,7 +497,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                 Err(err) => {
                     error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
                     report_aggregation.state =
-                        ReportAggregationState::Failed(TransitionError::VdafPrepError);
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError);
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
                 }
@@ -504,7 +506,7 @@ impl<C: Clock> AggregationJobDriver<C> {
             if let PrepareTransition::Fail(err) = leader_transition {
                 error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't step leader's initial preparation state");
                 report_aggregation.state =
-                    ReportAggregationState::Failed(TransitionError::VdafPrepError);
+                    ReportAggregationState::Failed(ReportShareError::VdafPrepError);
                 report_aggregations_to_write.push(report_aggregation);
                 continue;
             };
@@ -520,22 +522,35 @@ impl<C: Clock> AggregationJobDriver<C> {
             });
         }
 
-        // Construct request, and send it to the helper, and process the response.
-        let req = AggregateReq {
+        // Construct request, send it to the helper, and process the response.
+        // TODO(brandon): what HTTP errors should cause us to abort/stop retrying the aggregation job?
+        // TODO(brandon): should we care about the response's content type?
+        let req = AggregateInitializeReq {
             task_id: task.id,
             job_id: aggregation_job.aggregation_job_id,
-            body: AggregateReqBody::AggregateInitReq {
-                agg_param: aggregation_job.aggregation_param.get_encoded(),
-                seq: report_shares,
-            },
+            agg_param: aggregation_job.aggregation_param.get_encoded(),
+            report_shares,
         };
-        self.send_request_to_helper_and_complete_stepping(
+        let response = self
+            .http_client
+            .post(task.aggregator_url(Role::Helper)?.join("/aggregate")?)
+            .header(CONTENT_TYPE, AggregateInitializeReq::MEDIA_TYPE)
+            .header(
+                DAP_AUTH_HEADER,
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(req.get_encoded())
+            .send()
+            .await?;
+        let resp = AggregateInitializeResp::get_decoded(&response.bytes().await?)?;
+
+        self.process_response_from_helper(
             vdaf,
             task,
             aggregation_job,
             stepped_aggregations,
             report_aggregations_to_write,
-            req,
+            resp.prepare_steps,
         )
         .await
     }
@@ -559,7 +574,7 @@ impl<C: Clock> AggregationJobDriver<C> {
         // Visit the report aggregations, ignoring any that have already failed; compute our own
         // next step & transitions to send to the helper.
         let mut report_aggregations_to_write = Vec::new();
-        let mut transitions = Vec::new();
+        let mut prepare_steps = Vec::new();
         let mut stepped_aggregations = Vec::new();
         for mut report_aggregation in report_aggregations {
             if let ReportAggregationState::Waiting(prep_state, prep_msg) = &report_aggregation.state
@@ -574,16 +589,14 @@ impl<C: Clock> AggregationJobDriver<C> {
                 if let PrepareTransition::Fail(err) = leader_transition {
                     error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't step report aggregation");
                     report_aggregation.state =
-                        ReportAggregationState::Failed(TransitionError::VdafPrepError);
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError);
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
                 }
 
-                transitions.push(Transition {
+                prepare_steps.push(PrepareStep {
                     nonce: report_aggregation.nonce,
-                    trans_data: TransitionTypeSpecificData::Continued {
-                        payload: prep_msg.get_encoded(),
-                    },
+                    result: PrepareStepResult::Continued(prep_msg.get_encoded()),
                 });
                 stepped_aggregations.push(SteppedAggregation {
                     report_aggregation,
@@ -592,31 +605,46 @@ impl<C: Clock> AggregationJobDriver<C> {
             }
         }
 
-        // Construct request, and send it to the helper, and process the response.
-        let req = AggregateReq {
+        // Construct request, send it to the helper, and process the response.
+        // TODO(brandon): what HTTP errors should cause us to abort/stop retrying the aggregation job?
+        // TODO(brandon): should we care about the response's content type?
+        let req = AggregateContinueReq {
             task_id: task.id,
             job_id: aggregation_job.aggregation_job_id,
-            body: AggregateReqBody::AggregateContinueReq { seq: transitions },
+            prepare_steps,
         };
-        self.send_request_to_helper_and_complete_stepping(
+        let response = self
+            .http_client
+            .post(task.aggregator_url(Role::Helper)?.join("/aggregate")?)
+            .header(CONTENT_TYPE, AggregateContinueReq::MEDIA_TYPE)
+            .header(
+                DAP_AUTH_HEADER,
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(req.get_encoded())
+            .send()
+            .await?;
+        let resp = AggregateContinueResp::get_decoded(&response.bytes().await?)?;
+
+        self.process_response_from_helper(
             vdaf,
             task,
             aggregation_job,
             stepped_aggregations,
             report_aggregations_to_write,
-            req,
+            resp.prepare_steps,
         )
         .await
     }
 
-    async fn send_request_to_helper_and_complete_stepping<A: vdaf::Aggregator>(
+    async fn process_response_from_helper<A: vdaf::Aggregator>(
         &self,
         vdaf: &A,
         task: Task,
         aggregation_job: AggregationJob<A>,
         stepped_aggregations: Vec<SteppedAggregation<A>>,
         mut report_aggregations_to_write: Vec<ReportAggregation<A>>,
-        req: AggregateReq,
+        prep_steps: Vec<PrepareStep>,
     ) -> Result<()>
     where
         A: 'static,
@@ -627,40 +655,26 @@ impl<C: Clock> AggregationJobDriver<C> {
         A::PrepareMessage: Send + Sync,
         A::PrepareStep: Send + Sync + Encode,
     {
-        // Send request to helper & parse the response.
-        // TODO(brandon): what HTTP errors should cause us to abort/stop retrying the aggregation job?
-        let response = self
-            .http_client
-            .post(task.aggregator_url(Role::Helper)?.join("/aggregate")?)
-            .header(
-                DAP_AUTH_HEADER,
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .body(req.get_encoded())
-            .send()
-            .await?;
-        let resp = AggregateResp::get_decoded(&response.bytes().await?)?;
-
         // Handle response, computing the new report aggregations to be stored.
-        if stepped_aggregations.len() != resp.seq.len() {
+        if stepped_aggregations.len() != prep_steps.len() {
             return Err(anyhow!(
-                "missing, duplicate, out-of-order, or unexpected transitions in response"
+                "missing, duplicate, out-of-order, or unexpected prepare steps in response"
             ));
         }
-        for (stepped_aggregation, helper_transition) in
-            stepped_aggregations.into_iter().zip(resp.seq)
+        for (stepped_aggregation, helper_prep_step) in
+            stepped_aggregations.into_iter().zip(prep_steps)
         {
             let (mut report_aggregation, leader_transition) = (
                 stepped_aggregation.report_aggregation,
                 stepped_aggregation.leader_transition,
             );
-            if helper_transition.nonce != report_aggregation.nonce {
+            if helper_prep_step.nonce != report_aggregation.nonce {
                 return Err(anyhow!(
-                    "missing, duplicate, out-of-order, or unexpected transitions in response"
+                    "missing, duplicate, out-of-order, or unexpected prepare steps in response"
                 ));
             }
-            match helper_transition.trans_data {
-                TransitionTypeSpecificData::Continued { payload } => {
+            match helper_prep_step.result {
+                PrepareStepResult::Continued(payload) => {
                     // If the leader continued too, combine the leader's message with the helper's
                     // and prepare to store the leader's new state & the combined message for the
                     // next round. If the leader didn't continue, transition to INVALID.
@@ -684,7 +698,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                             ),
                             Err(err) => {
                                 error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute combined prepare message");
-                                ReportAggregationState::Failed(TransitionError::VdafPrepError)
+                                ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                             }
                         }
                     } else {
@@ -693,7 +707,7 @@ impl<C: Clock> AggregationJobDriver<C> {
                     }
                 }
 
-                TransitionTypeSpecificData::Finished => {
+                PrepareStepResult::Finished => {
                     // If the leader finished too, we are done; prepare to store the output share.
                     // If the leader didn't finish too, we transition to INVALID.
                     if let PrepareTransition::Finish(out_share) = leader_transition {
@@ -704,11 +718,11 @@ impl<C: Clock> AggregationJobDriver<C> {
                     }
                 }
 
-                TransitionTypeSpecificData::Failed { error } => {
+                PrepareStepResult::Failed(err) => {
                     // If the helper failed, we move to FAILED immediately.
                     // TODO(brandon): is it correct to just record the transition error that the helper reports?
-                    error!(report_nonce = %report_aggregation.nonce, helper_err = ?error, "Helper couldn't step report aggregation");
-                    report_aggregation.state = ReportAggregationState::Failed(error);
+                    error!(report_nonce = %report_aggregation.nonce, helper_err = ?err, "Helper couldn't step report aggregation");
+                    report_aggregation.state = ReportAggregationState::Failed(err);
                 }
             }
             report_aggregations_to_write.push(report_aggregation);
@@ -805,6 +819,7 @@ where
 mod tests {
     use crate::AggregationJobDriver;
     use assert_matches::assert_matches;
+    use http::header::CONTENT_TYPE;
     use janus::{
         hpke::{
             self, associated_data_for_report_share,
@@ -821,8 +836,8 @@ mod tests {
             Crypter, Datastore,
         },
         message::{
-            AggregateReq, AggregateReqBody, AggregateResp, AggregationJobId, ReportShare,
-            Transition, TransitionTypeSpecificData,
+            AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
+            AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
         },
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
@@ -908,31 +923,43 @@ mod tests {
         // Setup: prepare mocked HTTP responses.
         let helper_vdaf_msg = assert_matches!(&transcript.transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_msg) => prep_msg);
         let helper_responses = vec![
-            AggregateResp {
-                seq: vec![Transition {
-                    nonce,
-                    trans_data: TransitionTypeSpecificData::Continued {
-                        payload: helper_vdaf_msg.get_encoded(),
-                    },
-                }],
-            },
-            AggregateResp {
-                seq: vec![Transition {
-                    nonce,
-                    trans_data: TransitionTypeSpecificData::Finished,
-                }],
-            },
+            (
+                AggregateInitializeReq::MEDIA_TYPE,
+                AggregateInitializeResp::MEDIA_TYPE,
+                AggregateInitializeResp {
+                    job_id: aggregation_job_id,
+                    prepare_steps: vec![PrepareStep {
+                        nonce,
+                        result: PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
+                    }],
+                }
+                .get_encoded(),
+            ),
+            (
+                AggregateContinueReq::MEDIA_TYPE,
+                AggregateContinueResp::MEDIA_TYPE,
+                AggregateContinueResp {
+                    job_id: aggregation_job_id,
+                    prepare_steps: vec![PrepareStep {
+                        nonce,
+                        result: PrepareStepResult::Finished,
+                    }],
+                }
+                .get_encoded(),
+            ),
         ];
         let mocked_aggregates: Vec<_> = helper_responses
             .into_iter()
-            .map(|resp| {
+            .map(|(req_content_type, resp_content_type, resp_body)| {
                 mock("POST", "/aggregate")
                     .match_header(
                         "DAP-Auth-Token",
                         str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
                     )
+                    .match_header(CONTENT_TYPE.as_str(), req_content_type)
                     .with_status(200)
-                    .with_body(resp.get_encoded())
+                    .with_header(CONTENT_TYPE.as_str(), resp_content_type)
+                    .with_body(resp_body)
                     .create()
             })
             .collect();
@@ -1071,29 +1098,26 @@ mod tests {
         // deterministically encoded. It would be nicer to retrieve the request bytes from the mock,
         // then do our own parsing & verification -- but mockito does not yet expose this
         // functionality.
-        let leader_request = AggregateReq {
+        let leader_request = AggregateInitializeReq {
             task_id,
             job_id: aggregation_job_id,
-            body: AggregateReqBody::AggregateInitReq {
-                agg_param: ().get_encoded(),
-                seq: vec![ReportShare {
-                    nonce,
-                    extensions: Vec::new(),
-                    encrypted_input_share: report
-                        .encrypted_input_shares()
-                        .get(Role::Helper.index().unwrap())
-                        .unwrap()
-                        .clone(),
-                }],
-            },
+            agg_param: ().get_encoded(),
+            report_shares: vec![ReportShare {
+                nonce,
+                extensions: Vec::new(),
+                encrypted_input_share: report
+                    .encrypted_input_shares()
+                    .get(Role::Helper.index().unwrap())
+                    .unwrap()
+                    .clone(),
+            }],
         };
         let helper_vdaf_msg = assert_matches!(&transcript.transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_msg) => prep_msg);
-        let helper_response = AggregateResp {
-            seq: vec![Transition {
+        let helper_response = AggregateInitializeResp {
+            job_id: aggregation_job_id,
+            prepare_steps: vec![PrepareStep {
                 nonce,
-                trans_data: TransitionTypeSpecificData::Continued {
-                    payload: helper_vdaf_msg.get_encoded(),
-                },
+                result: PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
             }],
         };
         let mocked_aggregate = mock("POST", "/aggregate")
@@ -1101,8 +1125,10 @@ mod tests {
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
             )
+            .match_header(CONTENT_TYPE.as_str(), AggregateInitializeReq::MEDIA_TYPE)
             .match_body(leader_request.get_encoded())
             .with_status(200)
+            .with_header(CONTENT_TYPE.as_str(), AggregateInitializeResp::MEDIA_TYPE)
             .with_body(helper_response.get_encoded())
             .create();
 
@@ -1240,22 +1266,19 @@ mod tests {
         // deterministically encoded. It would be nicer to retrieve the request bytes from the mock,
         // then do our own parsing & verification -- but mockito does not yet expose this
         // functionality.
-        let leader_request = AggregateReq {
+        let leader_request = AggregateContinueReq {
             task_id,
             job_id: aggregation_job_id,
-            body: AggregateReqBody::AggregateContinueReq {
-                seq: vec![Transition {
-                    nonce,
-                    trans_data: TransitionTypeSpecificData::Continued {
-                        payload: combined_msg.get_encoded(),
-                    },
-                }],
-            },
-        };
-        let helper_response = AggregateResp {
-            seq: vec![Transition {
+            prepare_steps: vec![PrepareStep {
                 nonce,
-                trans_data: TransitionTypeSpecificData::Finished,
+                result: PrepareStepResult::Continued(combined_msg.get_encoded()),
+            }],
+        };
+        let helper_response = AggregateContinueResp {
+            job_id: aggregation_job_id,
+            prepare_steps: vec![PrepareStep {
+                nonce,
+                result: PrepareStepResult::Finished,
             }],
         };
         let mocked_aggregate = mock("POST", "/aggregate")
@@ -1263,8 +1286,10 @@ mod tests {
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
             )
+            .match_header(CONTENT_TYPE.as_str(), AggregateContinueReq::MEDIA_TYPE)
             .match_body(leader_request.get_encoded())
             .with_status(200)
+            .with_header(CONTENT_TYPE.as_str(), AggregateContinueResp::MEDIA_TYPE)
             .with_body(helper_response.get_encoded())
             .create();
 
