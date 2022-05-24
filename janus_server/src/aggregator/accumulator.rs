@@ -1,13 +1,10 @@
 //! In-memory accumulation of output shares.
 
 use super::Error;
-use crate::{
-    datastore::{self, models::BatchUnitAggregation, Transaction},
-    message::Interval,
-};
+use crate::datastore::{self, models::BatchUnitAggregation, Transaction};
 use derivative::Derivative;
 use janus::{
-    message::{Duration, Nonce, NonceChecksum, TaskId, Time},
+    message::{Duration, Interval, Nonce, NonceChecksum, TaskId, Time},
     time::Clock,
 };
 use prio::vdaf::{self, Aggregatable};

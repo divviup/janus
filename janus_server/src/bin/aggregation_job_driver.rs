@@ -452,9 +452,9 @@ impl<C: Clock> AggregationJobDriver<C> {
                 }
             };
             let hpke_application_info =
-                HpkeApplicationInfo::new(task.id, Label::InputShare, Role::Client, Role::Leader);
+                HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
             let associated_data =
-                associated_data_for_report_share(report.nonce(), report.extensions());
+                associated_data_for_report_share(task.id, report.nonce(), report.extensions());
             let leader_input_share_bytes = match hpke::open(
                 hpke_config,
                 hpke_private_key,
@@ -1371,12 +1371,12 @@ mod tests {
             .map(|role| {
                 hpke::seal(
                     hpke_configs.get(role.index().unwrap()).unwrap(),
-                    &HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, role),
+                    &HpkeApplicationInfo::new(Label::InputShare, Role::Client, role),
                     &input_shares
                         .get(role.index().unwrap())
                         .unwrap()
                         .get_encoded(),
-                    &associated_data_for_report_share(nonce, &[]),
+                    &associated_data_for_report_share(task_id, nonce, &[]),
                 )
             })
             .collect::<Result<_, _>>()

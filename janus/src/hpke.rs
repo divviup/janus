@@ -1,6 +1,6 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::{Extension, HpkeCiphertext, HpkeConfig, Nonce, Role, TaskId};
+use crate::message::{Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Role, TaskId};
 use hpke::HpkeError;
 use prio::codec::{encode_u16_items, Encode};
 use std::str::FromStr;
@@ -34,10 +34,23 @@ impl TryFrom<&HpkeConfig> for hpke_dispatch::Config {
 
 /// Construct the HPKE associated data for sealing or opening data enciphered for a report or report
 /// share, per §4.3.2 and 4.4.2.2 of draft-gpew-priv-ppm
-pub fn associated_data_for_report_share(nonce: Nonce, extensions: &[Extension]) -> Vec<u8> {
+pub fn associated_data_for_report_share(
+    task_id: TaskId,
+    nonce: Nonce,
+    extensions: &[Extension],
+) -> Vec<u8> {
     let mut associated_data = vec![];
+    task_id.encode(&mut associated_data);
     nonce.encode(&mut associated_data);
     encode_u16_items(&mut associated_data, &(), extensions);
+    associated_data
+}
+
+/// Construct the HPKE associated data for sealing or opening an aggregate share.
+pub fn associated_data_for_aggregate_share(task_id: TaskId, batch_interval: Interval) -> Vec<u8> {
+    let mut associated_data = Vec::new();
+    task_id.encode(&mut associated_data);
+    batch_interval.encode(&mut associated_data);
     associated_data
 }
 
@@ -52,8 +65,8 @@ impl Label {
     /// Get the message-specific portion of the application info string for this label.
     pub fn as_bytes(&self) -> &'static [u8] {
         match self {
-            Self::InputShare => b"ppm input share",
-            Self::AggregateShare => b"ppm aggregate share",
+            Self::InputShare => b"dap-01 input share",
+            Self::AggregateShare => b"dap-01 aggregate share",
         }
     }
 }
@@ -65,10 +78,9 @@ pub struct HpkeApplicationInfo(Vec<u8>);
 impl HpkeApplicationInfo {
     /// Construct HPKE application info from the provided PPM task ID, label and
     /// participant roles.
-    pub fn new(task_id: TaskId, label: Label, sender_role: Role, recipient_role: Role) -> Self {
+    pub fn new(label: Label, sender_role: Role, recipient_role: Role) -> Self {
         Self(
             [
-                task_id.as_bytes(),
                 label.as_bytes(),
                 &[sender_role as u8],
                 &[recipient_role as u8],
@@ -193,7 +205,7 @@ mod tests {
     use super::{test_util::generate_hpke_config_and_private_key, HpkeApplicationInfo, Label};
     use crate::{
         hpke::{open, seal, HpkePrivateKey},
-        message::{HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkePublicKey, Role, TaskId},
+        message::{HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkePublicKey, Role},
     };
     use hpke::{aead::*, kdf::*, kem::*, Serializable};
     use serde::Deserialize;
@@ -202,12 +214,8 @@ mod tests {
     #[test]
     fn exchange_message() {
         let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let application_info = HpkeApplicationInfo::new(
-            TaskId::random(),
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-        );
+        let application_info =
+            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
@@ -228,12 +236,8 @@ mod tests {
     #[test]
     fn wrong_private_key() {
         let (hpke_config, _) = generate_hpke_config_and_private_key();
-        let application_info = HpkeApplicationInfo::new(
-            TaskId::random(),
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-        );
+        let application_info =
+            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
@@ -254,16 +258,15 @@ mod tests {
     #[test]
     fn wrong_application_info() {
         let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let task_id = TaskId::random();
         let application_info =
-            HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, Role::Leader);
+            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
         let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
 
         let wrong_application_info =
-            HpkeApplicationInfo::new(task_id, Label::AggregateShare, Role::Client, Role::Leader);
+            HpkeApplicationInfo::new(Label::AggregateShare, Role::Client, Role::Leader);
         open(
             &hpke_config,
             &hpke_private_key,
@@ -277,12 +280,8 @@ mod tests {
     #[test]
     fn wrong_associated_data() {
         let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
-        let application_info = HpkeApplicationInfo::new(
-            TaskId::random(),
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-        );
+        let application_info =
+            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
@@ -313,12 +312,8 @@ mod tests {
             HpkePublicKey::new(public_key.to_bytes().to_vec()),
         );
         let hpke_private_key = HpkePrivateKey::new(private_key.to_bytes().to_vec());
-        let application_info = HpkeApplicationInfo::new(
-            TaskId::random(),
-            Label::InputShare,
-            Role::Client,
-            Role::Leader,
-        );
+        let application_info =
+            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
 
         let ciphertext = seal(&hpke_config, &application_info, MESSAGE, ASSOCIATED_DATA).unwrap();
         let plaintext = open(

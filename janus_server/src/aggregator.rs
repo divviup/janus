@@ -15,8 +15,7 @@ use crate::{
     message::{
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
-        CollectReq, CollectResp, Interval, PrepareStep, PrepareStepResult, ReportShare,
-        ReportShareError,
+        CollectReq, CollectResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
     task::{Task, VdafInstance},
 };
@@ -28,7 +27,7 @@ use http::{
 };
 use janus::{
     hpke::{self, HpkeApplicationInfo, Label},
-    message::{HpkeConfig, HpkeConfigId, Nonce, NonceChecksum, Report, Role, TaskId},
+    message::{HpkeConfig, HpkeConfigId, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
     time::Clock,
 };
 use opentelemetry::{
@@ -511,12 +510,7 @@ impl TaskAggregator {
         if let Err(err) = hpke::open(
             hpke_config,
             hpke_private_key,
-            &HpkeApplicationInfo::new(
-                report.task_id(),
-                Label::InputShare,
-                Role::Client,
-                self.task.role,
-            ),
+            &HpkeApplicationInfo::new(Label::InputShare, Role::Client, self.task.role),
             leader_report,
             &report.associated_data(),
         ) {
@@ -808,14 +802,9 @@ impl VdafOps {
                 hpke::open(
                     hpke_config,
                     hpke_private_key,
-                    &HpkeApplicationInfo::new(
-                        task_id,
-                        Label::InputShare,
-                        Role::Client,
-                        Role::Helper,
-                    ),
+                    &HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Helper),
                     &report_share.encrypted_input_share,
-                    &report_share.associated_data(),
+                    &report_share.associated_data(task_id),
                 )
                 .map_err(|err| {
                     warn!(
@@ -1327,16 +1316,12 @@ impl VdafOps {
                 // TODO: consider fetching freshly encrypted helper aggregate share if it has been
                 // long enough since the encrypted helper share was cached -- tricky thing is
                 // deciding what "long enough" is.
+                let associated_data = job.associated_data_for_aggregate_share();
                 let encrypted_leader_aggregate_share = hpke::seal(
                     &task.collector_hpke_config,
-                    &HpkeApplicationInfo::new(
-                        task.id,
-                        Label::AggregateShare,
-                        Role::Leader,
-                        Role::Collector,
-                    ),
+                    &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
                     &<Vec<u8>>::from(&job.leader_aggregate_share.unwrap()),
-                    &job.batch_interval.get_encoded(),
+                    &associated_data,
                 )?;
 
                 Ok(CollectResp {
@@ -1638,14 +1623,9 @@ impl VdafOps {
         // the time the aggregate share was first computed.
         let encrypted_aggregate_share = hpke::seal(
             &task.collector_hpke_config,
-            &HpkeApplicationInfo::new(
-                task.id,
-                Label::AggregateShare,
-                Role::Helper,
-                Role::Collector,
-            ),
+            &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
             &<Vec<u8>>::from(&aggregate_share_job.helper_aggregate_share),
-            &aggregate_share_req.batch_interval.get_encoded(),
+            &aggregate_share_req.associated_data_for_aggregate_share(),
         )?;
 
         Ok(AggregateShareResp {
@@ -2263,7 +2243,10 @@ mod tests {
     use http::Method;
     use janus::{
         hpke::associated_data_for_report_share,
-        hpke::{test_util::generate_hpke_config_and_private_key, HpkePrivateKey, Label},
+        hpke::{
+            associated_data_for_aggregate_share, test_util::generate_hpke_config_and_private_key,
+            HpkePrivateKey, Label,
+        },
         message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
     };
     use prio::{
@@ -2318,7 +2301,7 @@ mod tests {
         assert_eq!(hpke_config, want_hpke_key.0);
 
         let application_info =
-            HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, Role::Leader);
+            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
         let message = b"this is a message";
         let associated_data = b"some associated data";
 
@@ -2355,18 +2338,18 @@ mod tests {
         );
         let extensions = vec![];
         let message = b"this is a message";
-        let associated_data = associated_data_for_report_share(nonce, &extensions);
+        let associated_data = associated_data_for_report_share(task.id, nonce, &extensions);
 
         let leader_ciphertext = hpke::seal(
             &hpke_key.0,
-            &HpkeApplicationInfo::new(task.id, Label::InputShare, Role::Client, Role::Leader),
+            &HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader),
             message,
             &associated_data,
         )
         .unwrap();
         let helper_ciphertext = hpke::seal(
             &hpke_key.0,
-            &HpkeApplicationInfo::new(task.id, Label::InputShare, Role::Client, Role::Leader),
+            &HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader),
             message,
             &associated_data,
         )
@@ -2708,16 +2691,11 @@ mod tests {
 
     fn reencrypt_report(report: Report, hpke_config: &HpkeConfig) -> Report {
         let message = b"this is a message";
-        let associated_data = associated_data_for_report_share(report.nonce(), report.extensions());
+        let associated_data = report.associated_data();
 
         let leader_ciphertext = hpke::seal(
             hpke_config,
-            &HpkeApplicationInfo::new(
-                report.task_id(),
-                Label::InputShare,
-                Role::Client,
-                Role::Leader,
-            ),
+            &HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader),
             message,
             &associated_data,
         )
@@ -2725,12 +2703,7 @@ mod tests {
 
         let helper_ciphertext = hpke::seal(
             hpke_config,
-            &HpkeApplicationInfo::new(
-                report.task_id(),
-                Label::InputShare,
-                Role::Client,
-                Role::Helper,
-            ),
+            &HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Helper),
             message,
             &associated_data,
         )
@@ -3014,13 +2987,11 @@ mod tests {
         let nonce_2 = Nonce::generate(&clock);
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
-        let associated_data = associated_data_for_report_share(nonce_2, &[]);
         let report_share_2 = generate_helper_report_share_for_plaintext(
-            task_id,
             nonce_2,
             &hpke_key.0,
             &input_share_bytes,
-            &associated_data,
+            &associated_data_for_report_share(task_id, nonce_2, &[]),
         );
 
         // report_share_3 has an unknown HPKE config ID.
@@ -4735,13 +4706,12 @@ mod tests {
                     let encrypted_helper_aggregate_share = hpke::seal(
                         &collector_hpke_config,
                         &HpkeApplicationInfo::new(
-                            task.id,
                             Label::AggregateShare,
                             Role::Helper,
                             Role::Collector,
                         ),
                         &helper_aggregate_share_bytes,
-                        &batch_interval.get_encoded(),
+                        &associated_data_for_aggregate_share(task.id, batch_interval),
                     )
                     .unwrap();
 
@@ -4779,14 +4749,9 @@ mod tests {
         let decrypted_leader_aggregate_share = hpke::open(
             &task.collector_hpke_config,
             &collector_hpke_recipient,
-            &HpkeApplicationInfo::new(
-                task_id,
-                Label::AggregateShare,
-                Role::Leader,
-                Role::Collector,
-            ),
+            &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
             &collect_resp.encrypted_agg_shares[0],
-            &batch_interval.get_encoded(),
+            &associated_data_for_aggregate_share(task_id, batch_interval),
         )
         .unwrap();
         assert_eq!(
@@ -4797,14 +4762,9 @@ mod tests {
         let decrypted_helper_aggregate_share = hpke::open(
             &task.collector_hpke_config,
             &collector_hpke_recipient,
-            &HpkeApplicationInfo::new(
-                task_id,
-                Label::AggregateShare,
-                Role::Helper,
-                Role::Collector,
-            ),
+            &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
             &collect_resp.encrypted_agg_shares[1],
-            &batch_interval.get_encoded(),
+            &associated_data_for_aggregate_share(task_id, batch_interval),
         )
         .unwrap();
         assert_eq!(
@@ -5369,14 +5329,9 @@ mod tests {
                 let aggregate_share = hpke::open(
                     &collector_hpke_config,
                     &collector_hpke_recipient,
-                    &HpkeApplicationInfo::new(
-                        task_id,
-                        Label::AggregateShare,
-                        Role::Helper,
-                        Role::Collector,
-                    ),
+                    &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
                     &aggregate_share_resp.encrypted_aggregate_share,
-                    &request.batch_interval.get_encoded(),
+                    &request.associated_data_for_aggregate_share(),
                 )
                 .unwrap();
 
@@ -5455,9 +5410,8 @@ mod tests {
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let associated_data = associated_data_for_report_share(nonce, &[]);
+        let associated_data = associated_data_for_report_share(task_id, nonce, &[]);
         generate_helper_report_share_for_plaintext(
-            task_id,
             nonce,
             cfg,
             &input_share.get_encoded(),
@@ -5466,7 +5420,6 @@ mod tests {
     }
 
     fn generate_helper_report_share_for_plaintext(
-        task_id: TaskId,
         nonce: Nonce,
         cfg: &HpkeConfig,
         plaintext: &[u8],
@@ -5477,7 +5430,7 @@ mod tests {
             extensions: Vec::new(),
             encrypted_input_share: hpke::seal(
                 cfg,
-                &HpkeApplicationInfo::new(task_id, Label::InputShare, Role::Client, Role::Helper),
+                &HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Helper),
                 plaintext,
                 associated_data,
             )

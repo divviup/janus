@@ -5,7 +5,7 @@ use self::models::{
     ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
 };
 use crate::{
-    message::{AggregateShareReq, AggregationJobId, Interval, ReportShare},
+    message::{AggregateShareReq, AggregationJobId, ReportShare},
     task::{self, AggregatorAuthenticationToken, Task, VdafInstance},
 };
 use chrono::NaiveDateTime;
@@ -13,8 +13,8 @@ use futures::try_join;
 use janus::{
     hpke::HpkePrivateKey,
     message::{
-        Duration, Extension, HpkeCiphertext, HpkeConfig, Nonce, NonceChecksum, Report, Role,
-        TaskId, Time,
+        Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, NonceChecksum, Report,
+        Role, TaskId, Time,
     },
     time::Clock,
 };
@@ -1995,11 +1995,14 @@ impl From<ring::error::Unspecified> for Error {
 pub mod models {
     use super::Error;
     use crate::{
-        message::{AggregationJobId, Interval, ReportShareError},
+        message::{AggregationJobId, ReportShareError},
         task,
     };
     use derivative::Derivative;
-    use janus::message::{HpkeCiphertext, Nonce, NonceChecksum, Role, TaskId, Time};
+    use janus::{
+        hpke::associated_data_for_aggregate_share,
+        message::{HpkeCiphertext, Interval, Nonce, NonceChecksum, Role, TaskId, Time},
+    };
     use postgres_types::{FromSql, ToSql};
     use prio::{codec::Encode, vdaf};
     use uuid::Uuid;
@@ -2356,6 +2359,11 @@ pub mod models {
                 ))),
             }
         }
+
+        /// Returns the associated data for aggregate share encryptions related to this collect job.
+        pub(crate) fn associated_data_for_aggregate_share(&self) -> Vec<u8> {
+            associated_data_for_aggregate_share(self.task_id, self.batch_interval)
+        }
     }
 
     /// AggregateShareJob represents a row in the `aggregate_share_jobs` table, used by helpers to
@@ -2422,7 +2430,7 @@ mod tests {
     use crate::{
         aggregator::test_util::fake,
         datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
-        message::{Interval, ReportShareError},
+        message::ReportShareError,
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
@@ -2430,7 +2438,7 @@ mod tests {
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus::{
-        hpke::{self, HpkeApplicationInfo, Label},
+        hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
         message::{Duration, ExtensionType, HpkeConfigId, Role, Time},
     };
     use prio::{
@@ -3739,14 +3747,9 @@ mod tests {
 
                 let encrypted_helper_aggregate_share = hpke::seal(
                     &task.collector_hpke_config,
-                    &HpkeApplicationInfo::new(
-                        task.id,
-                        Label::AggregateShare,
-                        Role::Helper,
-                        Role::Collector,
-                    ),
+                    &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
                     &[0, 1, 2, 3, 4, 5],
-                    &first_batch_interval.get_encoded(),
+                    &associated_data_for_aggregate_share(task.id, first_batch_interval),
                 )
                 .unwrap();
 
