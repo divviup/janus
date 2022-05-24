@@ -172,6 +172,64 @@ impl Decode for Time {
     }
 }
 
+/// PPM protocol message representing a half-open interval of time with a resolution of seconds;
+/// the start of the interval is included while the end of the interval is excluded.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct Interval {
+    /// The start of the interval.
+    start: Time,
+    /// The length of the interval.
+    duration: Duration,
+}
+
+impl Interval {
+    /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end
+    /// of the interval cannot be represented as a [`Time`].
+    pub fn new(start: Time, duration: Duration) -> Result<Self, Error> {
+        start.add(duration)?;
+
+        Ok(Self { start, duration })
+    }
+
+    /// Returns a [`Time`] representing the included start of this interval.
+    pub fn start(&self) -> Time {
+        self.start
+    }
+
+    /// Get the duration of this interval.
+    pub fn duration(&self) -> Duration {
+        self.duration
+    }
+
+    /// Returns a [`Time`] representing the excluded end of this interval.
+    pub fn end(&self) -> Time {
+        // [`Self::new`] verified that this addition doesn't overflow.
+        self.start.add(self.duration).unwrap()
+    }
+}
+
+impl Encode for Interval {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.start.encode(bytes);
+        self.duration.encode(bytes);
+    }
+}
+
+impl Decode for Interval {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let start = Time::decode(bytes)?;
+        let duration = Duration::decode(bytes)?;
+
+        Self::new(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
+    }
+}
+
+impl Display for Interval {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "start: {} duration: {}", self.start, self.duration)
+    }
+}
+
 /// PPM protocol message representing a nonce uniquely identifying a client report.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Nonce {
@@ -807,7 +865,7 @@ impl Report {
 
     /// Get the authenticated additional data associated with this report.
     pub fn associated_data(&self) -> Vec<u8> {
-        associated_data_for_report_share(self.nonce, &self.extensions)
+        associated_data_for_report_share(self.task_id, self.nonce, &self.extensions)
     }
 }
 
@@ -840,9 +898,10 @@ impl Decode for Report {
 mod tests {
     use super::{
         Duration, Extension, ExtensionType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId,
-        HpkeKdfId, HpkeKemId, HpkePublicKey, Nonce, Report, Role, TaskId, Time,
+        HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Nonce, Report, Role, TaskId, Time,
     };
-    use prio::codec::{Decode, Encode};
+    use assert_matches::assert_matches;
+    use prio::codec::{CodecError, Decode, Encode};
     use std::io::Cursor;
 
     fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
@@ -874,6 +933,90 @@ mod tests {
             (Time::from_seconds_since_epoch(u64::MIN), "0000000000000000"),
             (Time::from_seconds_since_epoch(12345), "0000000000003039"),
             (Time::from_seconds_since_epoch(u64::MAX), "FFFFFFFFFFFFFFFF"),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_interval() {
+        Interval::new(
+            Time::from_seconds_since_epoch(1),
+            Duration::from_seconds(u64::MAX),
+        )
+        .unwrap_err();
+
+        let encoded = Interval {
+            start: Time::from_seconds_since_epoch(1),
+            duration: Duration::from_seconds(u64::MAX),
+        }
+        .get_encoded();
+        assert_eq!(
+            encoded,
+            hex::decode(concat!(
+                "0000000000000001", // start
+                "FFFFFFFFFFFFFFFF", // duration))
+            ))
+            .unwrap()
+        );
+
+        assert_matches!(Interval::get_decoded(&encoded), Err(CodecError::Other(_)));
+
+        roundtrip_encoding(&[
+            (
+                Interval {
+                    start: Time::from_seconds_since_epoch(u64::MIN),
+                    duration: Duration::from_seconds(u64::MAX),
+                },
+                concat!(
+                    "0000000000000000", // start
+                    "FFFFFFFFFFFFFFFF", // duration
+                ),
+            ),
+            (
+                Interval {
+                    start: Time::from_seconds_since_epoch(54321),
+                    duration: Duration::from_seconds(12345),
+                },
+                concat!(
+                    "000000000000D431", // start
+                    "0000000000003039", // duration
+                ),
+            ),
+            (
+                Interval {
+                    start: Time::from_seconds_since_epoch(u64::MAX),
+                    duration: Duration::from_seconds(u64::MIN),
+                },
+                concat!(
+                    "FFFFFFFFFFFFFFFF", // start
+                    "0000000000000000", // duration
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_nonce() {
+        roundtrip_encoding(&[
+            (
+                Nonce::new(
+                    Time::from_seconds_since_epoch(12345),
+                    [1, 2, 3, 4, 5, 6, 7, 8],
+                ),
+                concat!(
+                    "0000000000003039", // time
+                    "0102030405060708", // rand
+                ),
+            ),
+            (
+                Nonce::new(
+                    Time::from_seconds_since_epoch(54321),
+                    [8, 7, 6, 5, 4, 3, 2, 1],
+                ),
+                concat!(
+                    "000000000000D431", // time
+                    "0807060504030201", // rand
+                ),
+            ),
         ])
     }
 
