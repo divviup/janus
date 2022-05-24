@@ -3,8 +3,8 @@
 use anyhow::anyhow;
 use base64::display::Base64Display;
 use janus::{
-    hpke::associated_data_for_report_share,
-    message::{Duration, Error, Extension, HpkeCiphertext, Nonce, NonceChecksum, TaskId, Time},
+    hpke::{associated_data_for_aggregate_share, associated_data_for_report_share},
+    message::{Extension, HpkeCiphertext, Interval, Nonce, NonceChecksum, TaskId},
 };
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
@@ -15,64 +15,6 @@ use std::{
     io::{Cursor, Read},
 };
 
-/// PPM protocol message representing a half-open interval of time with a resolution of seconds;
-/// the start of the interval is included while the end of the interval is excluded.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct Interval {
-    /// The start of the interval.
-    start: Time,
-    /// The length of the interval.
-    duration: Duration,
-}
-
-impl Interval {
-    /// Create a new [`Interval`] from the provided start and duration. Returns an error if the end
-    /// of the interval cannot be represented as a [`Time`].
-    pub fn new(start: Time, duration: Duration) -> Result<Self, Error> {
-        start.add(duration)?;
-
-        Ok(Self { start, duration })
-    }
-
-    /// Returns a [`Time`] representing the included start of this interval.
-    pub fn start(&self) -> Time {
-        self.start
-    }
-
-    /// Get the duration of this interval.
-    pub fn duration(&self) -> Duration {
-        self.duration
-    }
-
-    /// Returns a [`Time`] representing the excluded end of this interval.
-    pub fn end(&self) -> Time {
-        // [`Self::new`] verified that this addition doesn't overflow.
-        self.start.add(self.duration).unwrap()
-    }
-}
-
-impl Encode for Interval {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.start.encode(bytes);
-        self.duration.encode(bytes);
-    }
-}
-
-impl Decode for Interval {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let start = Time::decode(bytes)?;
-        let duration = Duration::decode(bytes)?;
-
-        Self::new(start, duration).map_err(|e| CodecError::Other(Box::new(e)))
-    }
-}
-
-impl Display for Interval {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "start: {} duration: {}", self.start, self.duration)
-    }
-}
-
 /// PPM protocol message representing one aggregator's share of a single client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportShare {
@@ -82,8 +24,8 @@ pub struct ReportShare {
 }
 
 impl ReportShare {
-    pub(crate) fn associated_data(&self) -> Vec<u8> {
-        associated_data_for_report_share(self.nonce, &self.extensions)
+    pub(crate) fn associated_data(&self, task_id: TaskId) -> Vec<u8> {
+        associated_data_for_report_share(task_id, self.nonce, &self.extensions)
     }
 }
 
@@ -365,6 +307,12 @@ pub struct AggregateShareReq {
     pub(crate) checksum: NonceChecksum,
 }
 
+impl AggregateShareReq {
+    pub(crate) fn associated_data_for_aggregate_share(&self) -> Vec<u8> {
+        associated_data_for_aggregate_share(self.task_id, self.batch_interval)
+    }
+}
+
 impl Encode for AggregateShareReq {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
@@ -489,7 +437,6 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert_matches::assert_matches;
     use janus::message::{Duration, ExtensionType, HpkeConfigId, Time};
 
     fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
@@ -504,64 +451,6 @@ mod tests {
             let decoded_val = T::decode(&mut Cursor::new(&encoded_val)).unwrap();
             assert_eq!(val, &decoded_val);
         }
-    }
-
-    #[test]
-    fn roundtrip_interval() {
-        Interval::new(
-            Time::from_seconds_since_epoch(1),
-            Duration::from_seconds(u64::MAX),
-        )
-        .unwrap_err();
-
-        let encoded = Interval {
-            start: Time::from_seconds_since_epoch(1),
-            duration: Duration::from_seconds(u64::MAX),
-        }
-        .get_encoded();
-        assert_eq!(
-            encoded,
-            hex::decode(concat!(
-                "0000000000000001", // start
-                "FFFFFFFFFFFFFFFF", // duration))
-            ))
-            .unwrap()
-        );
-
-        assert_matches!(Interval::get_decoded(&encoded), Err(CodecError::Other(_)));
-
-        roundtrip_encoding(&[
-            (
-                Interval {
-                    start: Time::from_seconds_since_epoch(u64::MIN),
-                    duration: Duration::from_seconds(u64::MAX),
-                },
-                concat!(
-                    "0000000000000000", // start
-                    "FFFFFFFFFFFFFFFF", // duration
-                ),
-            ),
-            (
-                Interval {
-                    start: Time::from_seconds_since_epoch(54321),
-                    duration: Duration::from_seconds(12345),
-                },
-                concat!(
-                    "000000000000D431", // start
-                    "0000000000003039", // duration
-                ),
-            ),
-            (
-                Interval {
-                    start: Time::from_seconds_since_epoch(u64::MAX),
-                    duration: Duration::from_seconds(u64::MIN),
-                },
-                concat!(
-                    "FFFFFFFFFFFFFFFF", // start
-                    "0000000000000000", // duration
-                ),
-            ),
-        ])
     }
 
     #[test]

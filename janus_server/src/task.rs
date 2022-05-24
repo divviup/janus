@@ -1,10 +1,9 @@
 //! Shared parameters for a PPM task.
 
-use crate::message::Interval;
 use derivative::Derivative;
 use janus::{
     hpke::HpkePrivateKey,
-    message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
+    message::{Duration, HpkeConfig, HpkeConfigId, Interval, Role, TaskId},
 };
 use ring::constant_time;
 use serde::{Deserialize, Serialize};

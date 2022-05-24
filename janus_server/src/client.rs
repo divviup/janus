@@ -164,7 +164,8 @@ where
 
         let nonce = Nonce::generate(&self.clock);
         let extensions = vec![]; // No extensions supported yet
-        let associated_data = associated_data_for_report_share(nonce, &extensions);
+        let associated_data =
+            associated_data_for_report_share(self.parameters.task_id, nonce, &extensions);
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
             (&self.leader_hpke_config, Role::Leader),
@@ -175,12 +176,7 @@ where
         .map(|((hpke_config, receiver_role), input_share)| {
             Ok(hpke::seal(
                 hpke_config,
-                &HpkeApplicationInfo::new(
-                    self.parameters.task_id,
-                    Label::InputShare,
-                    Role::Client,
-                    receiver_role,
-                ),
+                &HpkeApplicationInfo::new(Label::InputShare, Role::Client, receiver_role),
                 &input_share.get_encoded(),
                 &associated_data,
             )?)
