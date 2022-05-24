@@ -325,7 +325,6 @@ impl Decode for AggregateInitializeResp {
 /// DAP protocol message representing an aggregation continuation request from leader to helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateContinueReq {
-    // XXX: do not merge with task_id until https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/260 is resolved
     pub task_id: TaskId,
     pub job_id: AggregationJobId,
     pub prepare_steps: Vec<PrepareStep>,
