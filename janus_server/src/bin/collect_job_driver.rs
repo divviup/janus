@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
                         })
                         .await
                 },
-                |_datastore, _acquired_job: Arc<Uuid>, _| async move {
+                |_datastore, _acquired_job: Uuid, _| async move {
                     // TODO(timg): step collect job
                     Ok(()) as Result<_, datastore::Error>
                 },

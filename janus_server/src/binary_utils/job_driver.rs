@@ -55,7 +55,7 @@ where
         Fn(Arc<Datastore<C>>, Duration, usize) -> JobAcquirerFuture + Send + Sync + 'static,
     JobAcquirerFuture: Future<Output = Result<Vec<(AcquiredJob, Time)>, datastore::Error>> + Send,
     JobStepperContext: Clone + Debug + Send + Sync + 'static,
-    JobStepper: Fn(Arc<Datastore<C>>, Arc<AcquiredJob>, JobStepperContext) -> JobStepperFuture
+    JobStepper: Fn(Arc<Datastore<C>>, AcquiredJob, JobStepperContext) -> JobStepperFuture
         + Send
         + Sync
         + 'static,
@@ -162,8 +162,7 @@ where
                     // available, and this task is the only task that acquires permits.
                     let permit = Arc::clone(&sem).try_acquire_owned().unwrap();
                     let this = Arc::clone(&self);
-                    let acquired_job = Arc::new(acquired_job);
-                    let acquired_job_clone = acquired_job.clone();
+                    let span = info_span!("Job stepper", ?acquired_job);
 
                     async move {
                         info!(?lease_expiry, "Stepping job");
@@ -171,7 +170,7 @@ where
                             this.effective_lease_duration(lease_expiry),
                             (this.job_stepper)(
                                 this.datastore.clone(),
-                                acquired_job.clone(),
+                                acquired_job,
                                 this.job_stepper_context.clone(),
                             ),
                         )
@@ -189,7 +188,7 @@ where
                         }
                         drop(permit);
                     }
-                    .instrument(info_span!("Job stepper", acquired_job = ?acquired_job_clone))
+                    .instrument(span)
                 });
             }
         }
