@@ -1021,7 +1021,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* prep_state */ &encoded_state_values.prep_state,
                     /* prep_msg */ &encoded_state_values.prep_msg,
                     /* out_share */ &encoded_state_values.output_share,
-                    /* error_code */ &encoded_state_values.trans_err,
+                    /* error_code */ &encoded_state_values.report_share_err,
                 ],
             )
             .await?;
@@ -1063,7 +1063,7 @@ impl<C: Clock> Transaction<'_, C> {
                         /* prep_state */ &encoded_state_values.prep_state,
                         /* prep_msg */ &encoded_state_values.prep_msg,
                         /* out_share */ &encoded_state_values.output_share,
-                        /* error_code */ &encoded_state_values.trans_err,
+                        /* error_code */ &encoded_state_values.report_share_err,
                         /* aggregation_job_id */
                         &report_aggregation.aggregation_job_id.as_bytes(),
                         /* task_id */ &report_aggregation.task_id.as_bytes(),
@@ -2178,7 +2178,7 @@ pub mod models {
             for<'a> &'a A::OutputShare: Into<Vec<u8>>,
             for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         {
-            let (prep_state, prep_msg, output_share, trans_err) = match self {
+            let (prep_state, prep_msg, output_share, report_share_err) = match self {
                 ReportAggregationState::Start => (None, None, None, None),
                 ReportAggregationState::Waiting(prep_step, prep_msg) => (
                     Some(prep_step.get_encoded()),
@@ -2189,8 +2189,8 @@ pub mod models {
                 ReportAggregationState::Finished(output_share) => {
                     (None, None, Some(output_share.into()), None)
                 }
-                ReportAggregationState::Failed(trans_err) => {
-                    (None, None, None, Some(*trans_err as i64))
+                ReportAggregationState::Failed(report_share_err) => {
+                    (None, None, None, Some(*report_share_err as i64))
                 }
                 ReportAggregationState::Invalid => (None, None, None, None),
             };
@@ -2198,7 +2198,7 @@ pub mod models {
                 prep_state,
                 prep_msg,
                 output_share,
-                trans_err,
+                report_share_err,
             }
         }
     }
@@ -2207,7 +2207,7 @@ pub mod models {
         pub(super) prep_state: Option<Vec<u8>>,
         pub(super) prep_msg: Option<Vec<u8>>,
         pub(super) output_share: Option<Vec<u8>>,
-        pub(super) trans_err: Option<i64>,
+        pub(super) report_share_err: Option<i64>,
     }
 
     // The private ReportAggregationStateCode exists alongside the public ReportAggregationState
@@ -2245,8 +2245,8 @@ pub mod models {
                 (Self::Finished(lhs_out_share), Self::Finished(rhs_out_share)) => {
                     lhs_out_share == rhs_out_share
                 }
-                (Self::Failed(lhs_trans_err), Self::Failed(rhs_trans_err)) => {
-                    lhs_trans_err == rhs_trans_err
+                (Self::Failed(lhs_report_share_err), Self::Failed(rhs_report_share_err)) => {
+                    lhs_report_share_err == rhs_report_share_err
                 }
                 _ => core::mem::discriminant(self) == core::mem::discriminant(other),
             }
