@@ -1252,18 +1252,25 @@ impl<C: Clock> Transaction<'_, C> {
         let lease_expiry_time = now.add(lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
 
-        let stmt = self
-            .tx
-            .prepare_cached(
-               "WITH updated as (
-                    UPDATE collect_jobs SET lease_expiry = $1
-                    FROM collect_jobs as collect_jobs_alias
-                    -- Join on tasks table
-                    INNER JOIN tasks ON tasks.id = collect_jobs_alias.task_id
+        let stmt = self.tx.prepare_cached(
+            "WITH updated as (
+            UPDATE collect_jobs SET lease_expiry = $1
+            -- Join on tasks table
+            FROM tasks
+            WHERE
+                -- Constraint for tasks table in FROM position
+                tasks.id = collect_jobs.task_id
+                -- Do not acquire collect jobs that have been completed
+                AND collect_jobs.helper_aggregate_share IS NULL
+                -- Do not acquire collect jobs with an unexpired lease
+                AND collect_jobs.lease_expiry <= $2
+                AND collect_jobs.id IN (
+                    SELECT collect_jobs.id
+                    FROM collect_jobs
                     -- Join on aggregation jobs with matching task ID and aggregation parameter
                     INNER JOIN aggregation_jobs
-                        ON collect_jobs_alias.aggregation_param = aggregation_jobs.aggregation_param
-                        AND collect_jobs_alias.task_id = aggregation_jobs.task_id
+                        ON collect_jobs.aggregation_param = aggregation_jobs.aggregation_param
+                        AND collect_jobs.task_id = aggregation_jobs.task_id
                     -- Join on report aggregations with matching aggregation job ID
                     INNER JOIN report_aggregations
                         ON report_aggregations.aggregation_job_id = aggregation_jobs.id
@@ -1271,27 +1278,24 @@ impl<C: Clock> Transaction<'_, C> {
                     -- are included in an aggregation job
                     INNER JOIN client_reports
                         ON client_reports.nonce_time <@ tsrange(
-                            collect_jobs_alias.batch_interval_start,
-                            collect_jobs_alias.batch_interval_start + collect_jobs_alias.batch_interval_duration * interval '1 second')
+                            collect_jobs.batch_interval_start,
+                            collect_jobs.batch_interval_start + collect_jobs.batch_interval_duration * interval '1 second')
                         AND client_reports.id = report_aggregations.client_report_id
-                    WHERE
-                        -- Do not acquire collect jobs that have been completed
-                        collect_jobs_alias.helper_aggregate_share IS NULL
-                        -- Do not acquire collect jobs with an unexpired lease
-                        AND collect_jobs_alias.lease_expiry <= $2
-                        -- Filter out collect jobs where any associated aggregation jobs are not
-                        -- finished
-                        -- XXX How to achieve this?
-                        -- AND collect_jobs_alias.id NOT IN (SELECT collect_jobs_alias.id FROM updated WHERE aggregation_jobs.state = 'IN_PROGRESS')
-                    RETURNING
-                        tasks.task_id,
-                        tasks.vdaf,
-                        collect_jobs_alias.collect_job_id,
-                        collect_jobs_alias.id
+                    GROUP BY collect_jobs.id
+                    -- Filter out collect jobs where any associated aggregation jobs are not
+                    -- finished
+                    HAVING bool_and(aggregation_jobs.state != 'IN_PROGRESS')
+                    LIMIT $3
                 )
-                SELECT task_id, vdaf, collect_job_id FROM updated
-                -- TODO: revisit collect job queueing behavior implied by this ORDER BY (issue #174)
-                ORDER BY id DESC LIMIT $3",
+            RETURNING
+                tasks.task_id,
+                tasks.vdaf,
+                collect_jobs.collect_job_id,
+                collect_jobs.id
+            )
+            SELECT task_id, vdaf, collect_job_id FROM updated
+            -- TODO: revisit collect job queueing behavior implied by this ORDER BY (issue #174)
+            ORDER BY id DESC"
             )
             .await?;
         self.tx
@@ -2588,7 +2592,7 @@ mod tests {
     };
     use std::{
         collections::{BTreeSet, HashMap, HashSet},
-        iter::{self, repeat_with},
+        iter,
     };
 
     #[tokio::test]
