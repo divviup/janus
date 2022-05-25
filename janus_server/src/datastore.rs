@@ -2445,13 +2445,12 @@ pub mod test_util {
 mod tests {
     use super::*;
     use crate::{
-        aggregator::test_util::fake,
         datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
         message::ReportShareError,
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
-    use ::janus_test_util::{generate_aead_key, MockClock};
+    use ::janus_test_util::{dummy_vdaf, generate_aead_key, MockClock};
     use assert_matches::assert_matches;
     use futures::future::try_join_all;
     use janus::{
@@ -3332,7 +3331,7 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_report_aggregation::<fake::Vdaf>(
+                    tx.get_report_aggregation::<dummy_vdaf::Vdaf>(
                         &(),
                         TaskId::random(),
                         AggregationJobId::random(),
@@ -3351,7 +3350,7 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.update_report_aggregation::<fake::Vdaf>(&ReportAggregation {
+                    tx.update_report_aggregation::<dummy_vdaf::Vdaf>(&ReportAggregation {
                         aggregation_job_id: AggregationJobId::random(),
                         task_id: TaskId::random(),
                         nonce: Nonce::new(
