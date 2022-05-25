@@ -110,7 +110,7 @@ CREATE TABLE report_aggregations(
     prep_state          BYTEA,                              -- the current preparation state (opaque VDAF message, only if in state WAITING)
     prep_msg            BYTEA,                              -- the next preparation message to be sent to the helper (opaque VDAF message, only if in state WAITING if this aggregator is the leader)
     out_share           BYTEA,                              -- the output share (opaque VDAF message, only if in state FINISHED)
-    error_code          BIGINT,                             -- error code corresponding to a PPM TransitionError value; null if in a state other than FAILED
+    error_code          BIGINT,                             -- error code corresponding to a PPM ReportShareError value; null if in a state other than FAILED
 
     CONSTRAINT unique_ord UNIQUE(aggregation_job_id, ord),
     CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id),
