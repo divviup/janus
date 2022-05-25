@@ -6,15 +6,18 @@ use futures::{
 use http::header::CONTENT_TYPE;
 use janus::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    message::{Duration, Report, Role, TaskId, Time},
+    message::{Duration, Report, Role, TaskId},
     time::{Clock, RealClock},
 };
 use janus_server::{
-    binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{janus_main, job_driver::JobDriver, BinaryOptions, CommonBinaryOptions},
     config::AggregationJobDriverConfig,
     datastore::{
         self,
-        models::{AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState},
+        models::{
+            AcquiredAggregationJob, AggregationJob, AggregationJobState, ReportAggregation,
+            ReportAggregationState,
+        },
         Datastore,
     },
     message::{
@@ -34,8 +37,7 @@ use prio::{
 };
 use std::{fmt::Debug, sync::Arc};
 use structopt::StructOpt;
-use tokio::{sync::Semaphore, task, time};
-use tracing::{debug, error, info, info_span, Instrument};
+use tracing::error;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -69,31 +71,48 @@ async fn main() -> anyhow::Result<()> {
     janus_main::<Options, _, _, _, _>(
         RealClock::default(),
         |clock, config: AggregationJobDriverConfig, datastore| async move {
-            let http_client = reqwest::Client::builder()
-                .user_agent(CLIENT_USER_AGENT)
-                .build()
-                .context("couldn't create HTTP client")?;
-
+            let aggregation_job_driver = Arc::new(AggregationJobDriver {
+                http_client: reqwest::Client::builder()
+                    .user_agent(CLIENT_USER_AGENT)
+                    .build()
+                    .context("couldn't create HTTP client")?,
+            });
             // Start running.
-            Arc::new(AggregationJobDriver {
-                datastore,
+            Arc::new(JobDriver::new(
+                Arc::new(datastore),
                 clock,
-                http_client,
-                min_aggregation_job_discovery_delay: Duration::from_seconds(
-                    config.min_aggregation_job_discovery_delay_secs,
+                Duration::from_seconds(config.job_driver_config.min_job_discovery_delay_secs),
+                Duration::from_seconds(config.job_driver_config.max_job_discovery_delay_secs),
+                config.job_driver_config.max_concurrent_job_workers,
+                Duration::from_seconds(config.job_driver_config.worker_lease_duration_secs),
+                Duration::from_seconds(
+                    config
+                        .job_driver_config
+                        .worker_lease_clock_skew_allowance_secs,
                 ),
-                max_aggregation_job_discovery_delay: Duration::from_seconds(
-                    config.max_aggregation_job_discovery_delay_secs,
-                ),
-                max_concurrent_aggregation_job_workers: config
-                    .max_concurrent_aggregation_job_workers,
-                aggregation_worker_lease_duration: Duration::from_seconds(
-                    config.aggregation_worker_lease_duration_secs,
-                ),
-                aggregation_worker_lease_clock_skew_allowance: Duration::from_seconds(
-                    config.aggregation_worker_lease_clock_skew_allowance_secs,
-                ),
-            })
+                |datastore, lease_duration, max_acquire_count| async move {
+                    datastore
+                        .run_tx(|tx| {
+                            Box::pin(async move {
+                                // TODO(brandon): only acquire jobs whose batch units have not
+                                // already been collected (probably by modifying
+                                // acquire_incomplete_aggregation_jobs)
+                                tx.acquire_incomplete_aggregation_jobs(
+                                    lease_duration,
+                                    max_acquire_count,
+                                )
+                                .await
+                            })
+                        })
+                        .await
+                },
+                |datastore, acquired_aggregation_job, aggregation_job_driver| async move {
+                    aggregation_job_driver
+                        .step_aggregation_job(datastore, &acquired_aggregation_job)
+                        .await
+                },
+                aggregation_job_driver,
+            ))
             .run()
             .await;
 
@@ -103,161 +122,68 @@ async fn main() -> anyhow::Result<()> {
     .await
 }
 
-struct AggregationJobDriver<C: Clock> {
-    // Dependencies.
-    datastore: Datastore<C>,
-    clock: C,
+#[derive(Debug)]
+struct AggregationJobDriver {
     http_client: reqwest::Client,
-
-    // Configuration.
-    min_aggregation_job_discovery_delay: Duration,
-    max_aggregation_job_discovery_delay: Duration,
-    max_concurrent_aggregation_job_workers: usize,
-    aggregation_worker_lease_duration: Duration,
-    aggregation_worker_lease_clock_skew_allowance: Duration,
 }
 
-impl<C: Clock> AggregationJobDriver<C> {
-    #[tracing::instrument(skip(self))]
-    async fn run(self: Arc<Self>) -> ! {
-        let sem = Arc::new(Semaphore::new(self.max_concurrent_aggregation_job_workers));
-        let mut job_discovery_delay = Duration::ZERO;
-
-        loop {
-            // Wait out our job discovery delay, if any.
-            time::sleep(time::Duration::from_secs(job_discovery_delay.as_seconds())).await;
-
-            // Wait until we are able to start at least one worker. (permit will be immediately released)
-            //
-            // Unwrap safety: Semaphore::acquire is documented as only returning an error if the
-            // semaphore is closed, and we never close this semaphore.
-            let _ = sem.acquire().await.unwrap();
-
-            // Acquire some aggregation jobs which are ready to be stepped.
-            //
-            // We determine the maximum number of jobs to acquire based on the number of semaphore
-            // permits available, since we'd like to start processing any acquired jobs immediately
-            // to avoid potentially timing out while waiting on _other_ jobs to finish being
-            // stepped. This is racy given that workers may complete (and relinquish their permits)
-            // concurrently with us acquiring jobs; but that's OK, since this can only make us
-            // underestimate the number of jobs we can acquire, and underestimation is acceptable
-            // (we'll pick up any additional jobs on the next iteration of this loop). We can't
-            // overestimate since this task is the only place that permits are acquired.
-
-            // TODO(brandon): only acquire jobs whose batch units have not already been collected (probably by modifying acquire_incomplete_aggregation_jobs)
-            let max_acquire_count = sem.available_permits();
-            info!(max_acquire_count, "Acquiring aggregation jobs");
-            let acquired_jobs = self
-                .datastore
-                .run_tx(|tx| {
-                    let lease_duration = self.aggregation_worker_lease_duration;
-                    Box::pin(async move {
-                        tx.acquire_incomplete_aggregation_jobs(lease_duration, max_acquire_count)
-                            .await
-                    })
-                })
-                .await;
-            let acquired_jobs = match acquired_jobs {
-                Ok(acquired_jobs) => acquired_jobs,
-                Err(err) => {
-                    error!(?err, "Couldn't acquire aggregation jobs");
-                    // Go ahead and step job discovery delay in this error case to ensure we don't
-                    // tightly loop running transactions that will fail without any delay.
-                    job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
-                    continue;
-                }
-            };
-            if acquired_jobs.is_empty() {
-                debug!("No aggregation jobs available");
-                job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
-                continue;
-            }
-            info!(
-                acquired_job_count = acquired_jobs.len(),
-                "Acquired aggregation jobs"
-            );
-
-            // Start up tasks for each acquired aggregation job.
-            job_discovery_delay = Duration::ZERO;
-            for (task_id, vdaf, aggregation_job_id, lease_expiry) in acquired_jobs {
-                task::spawn({
-                    // We acquire a semaphore in the job-discovery task rather than inside the new
-                    // job-stepper task to ensure that acquiring a permit does not race with
-                    // checking how many permits we have available in the next iteration of this
-                    // loop, to maintain the invariant that this task is the only place we acquire
-                    // permits.
-                    //
-                    // Unwrap safety: we have seen that at least `acquired_jobs.len()` permits are
-                    // available, and this task is the only task that acquires permits.
-                    let permit = Arc::clone(&sem).try_acquire_owned().unwrap();
-                    let this = Arc::clone(&self);
-                    async move {
-                        info!(?lease_expiry, "Stepping aggregation job");
-                        match time::timeout(
-                            this.effective_lease_duration(lease_expiry),
-                            this.step_aggregation_job(vdaf, task_id, aggregation_job_id),
-                        )
-                        .await
-                        {
-                            Ok(Ok(_)) => {
-                                debug!("Aggregation job stepped")
-                            }
-
-                            Ok(Err(err)) => {
-                                error!(?err, "Couldn't step aggregation job")
-                            }
-
-                            Err(err) => error!(?err, "Stepping aggregation job timed out"),
-                        }
-                        drop(permit);
-                    }
-                    .instrument(info_span!(
-                        "Aggregation job stepper",
-                        ?task_id,
-                        ?aggregation_job_id,
-                    ))
-                });
-            }
-        }
-    }
-
-    async fn step_aggregation_job(
+impl AggregationJobDriver {
+    async fn step_aggregation_job<C: Clock>(
         &self,
-        vdaf: VdafInstance,
-        task_id: TaskId,
-        aggregation_job_id: AggregationJobId,
+        datastore: Arc<Datastore<C>>,
+        acquired_aggregation_job: &AcquiredAggregationJob,
     ) -> Result<()> {
-        match vdaf {
+        match acquired_aggregation_job.vdaf {
             VdafInstance::Prio3Aes128Count => {
                 let vdaf = Prio3Aes128Count::new(2)?;
-                self.step_aggregation_job_generic(vdaf, task_id, aggregation_job_id)
-                    .await
+                self.step_aggregation_job_generic(
+                    datastore,
+                    vdaf,
+                    acquired_aggregation_job.task_id,
+                    acquired_aggregation_job.aggregation_job_id,
+                )
+                .await
             }
 
             VdafInstance::Prio3Aes128Sum { bits } => {
                 let vdaf = Prio3Aes128Sum::new(2, bits)?;
-                self.step_aggregation_job_generic(vdaf, task_id, aggregation_job_id)
-                    .await
+                self.step_aggregation_job_generic(
+                    datastore,
+                    vdaf,
+                    acquired_aggregation_job.task_id,
+                    acquired_aggregation_job.aggregation_job_id,
+                )
+                .await
             }
 
-            VdafInstance::Prio3Aes128Histogram { buckets } => {
-                let vdaf = Prio3Aes128Histogram::new(2, &buckets)?;
-                self.step_aggregation_job_generic(vdaf, task_id, aggregation_job_id)
-                    .await
+            VdafInstance::Prio3Aes128Histogram { ref buckets } => {
+                let vdaf = Prio3Aes128Histogram::new(2, buckets)?;
+                self.step_aggregation_job_generic(
+                    datastore,
+                    vdaf,
+                    acquired_aggregation_job.task_id,
+                    acquired_aggregation_job.aggregation_job_id,
+                )
+                .await
             }
 
-            _ => panic!("VDAF {:?} is not yet supported", vdaf),
+            _ => panic!(
+                "VDAF {:?} is not yet supported",
+                acquired_aggregation_job.vdaf
+            ),
         }
     }
 
-    async fn step_aggregation_job_generic<A: vdaf::Aggregator>(
+    async fn step_aggregation_job_generic<C, A>(
         &self,
+        datastore: Arc<Datastore<C>>,
         vdaf: A,
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
     ) -> Result<()>
     where
-        A: 'static + Send + Sync,
+        C: Clock,
+        A: vdaf::Aggregator + 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::OutputShare: PartialEq + Eq + Send + Sync + for<'a> TryFrom<&'a [u8]>,
@@ -268,8 +194,7 @@ impl<C: Clock> AggregationJobDriver<C> {
     {
         // Read all information about the aggregation job.
         let vdaf = Arc::new(vdaf);
-        let (task, aggregation_job, report_aggregations, client_reports, verify_param) = self
-            .datastore
+        let (task, aggregation_job, report_aggregations, client_reports, verify_param) = datastore
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 Box::pin(async move {
@@ -359,18 +284,20 @@ impl<C: Clock> AggregationJobDriver<C> {
         match (saw_start, saw_waiting, saw_finished) {
             // Only saw report aggregations in state "start" (or failed or invalid).
             (true, false, false) => self.step_aggregation_job_aggregate_init(
-                vdaf.as_ref(), task, aggregation_job, report_aggregations, client_reports, verify_param).await,
+                &datastore, vdaf.as_ref(), task, aggregation_job, report_aggregations, client_reports, verify_param).await,
 
             // Only saw report aggregations in state "waiting" (or failed or invalid).
             (false, true, false) => self.step_aggregation_job_aggregate_continue(
-                vdaf.as_ref(), task, aggregation_job, report_aggregations).await,
+                &datastore, vdaf.as_ref(), task, aggregation_job, report_aggregations).await,
 
             _ => return Err(anyhow!("unexpected combination of report aggregation states (saw_start = {}, saw_waiting = {}, saw_finished = {})", saw_start, saw_waiting, saw_finished)),
         }
     }
 
-    async fn step_aggregation_job_aggregate_init<A: vdaf::Aggregator>(
+    #[allow(clippy::too_many_arguments)]
+    async fn step_aggregation_job_aggregate_init<C, A>(
         &self,
+        datastore: &Datastore<C>,
         vdaf: &A,
         task: Task,
         aggregation_job: AggregationJob<A>,
@@ -379,7 +306,8 @@ impl<C: Clock> AggregationJobDriver<C> {
         verify_param: A::VerifyParam,
     ) -> Result<()>
     where
-        A: 'static,
+        C: Clock,
+        A: vdaf::Aggregator + 'static,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::OutputShare: PartialEq + Eq + Send + Sync,
@@ -531,6 +459,7 @@ impl<C: Clock> AggregationJobDriver<C> {
             agg_param: aggregation_job.aggregation_param.get_encoded(),
             report_shares,
         };
+
         let response = self
             .http_client
             .post(task.aggregator_url(Role::Helper)?.join("/aggregate")?)
@@ -545,6 +474,7 @@ impl<C: Clock> AggregationJobDriver<C> {
         let resp = AggregateInitializeResp::get_decoded(&response.bytes().await?)?;
 
         self.process_response_from_helper(
+            datastore,
             vdaf,
             task,
             aggregation_job,
@@ -555,15 +485,17 @@ impl<C: Clock> AggregationJobDriver<C> {
         .await
     }
 
-    async fn step_aggregation_job_aggregate_continue<A: vdaf::Aggregator>(
+    async fn step_aggregation_job_aggregate_continue<C, A>(
         &self,
+        datastore: &Datastore<C>,
         vdaf: &A,
         task: Task,
         aggregation_job: AggregationJob<A>,
         report_aggregations: Vec<ReportAggregation<A>>,
     ) -> Result<()>
     where
-        A: 'static,
+        C: Clock,
+        A: vdaf::Aggregator + 'static,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::OutputShare: Send + Sync,
@@ -613,6 +545,7 @@ impl<C: Clock> AggregationJobDriver<C> {
             job_id: aggregation_job.aggregation_job_id,
             prepare_steps,
         };
+
         let response = self
             .http_client
             .post(task.aggregator_url(Role::Helper)?.join("/aggregate")?)
@@ -627,6 +560,7 @@ impl<C: Clock> AggregationJobDriver<C> {
         let resp = AggregateContinueResp::get_decoded(&response.bytes().await?)?;
 
         self.process_response_from_helper(
+            datastore,
             vdaf,
             task,
             aggregation_job,
@@ -637,8 +571,10 @@ impl<C: Clock> AggregationJobDriver<C> {
         .await
     }
 
-    async fn process_response_from_helper<A: vdaf::Aggregator>(
+    #[allow(clippy::too_many_arguments)]
+    async fn process_response_from_helper<C, A>(
         &self,
+        datastore: &Datastore<C>,
         vdaf: &A,
         task: Task,
         aggregation_job: AggregationJob<A>,
@@ -647,7 +583,8 @@ impl<C: Clock> AggregationJobDriver<C> {
         prep_steps: Vec<PrepareStep>,
     ) -> Result<()>
     where
-        A: 'static,
+        C: Clock,
+        A: vdaf::Aggregator + 'static,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::OutputShare: Send + Sync,
@@ -743,7 +680,7 @@ impl<C: Clock> AggregationJobDriver<C> {
         };
         let report_aggregations_to_write = Arc::new(report_aggregations_to_write);
         let aggregation_job_to_write = Arc::new(aggregation_job_to_write);
-        self.datastore
+        datastore
             .run_tx(|tx| {
                 let (report_aggregations_to_write, aggregation_job_to_write) = (
                     Arc::clone(&report_aggregations_to_write),
@@ -771,38 +708,6 @@ impl<C: Clock> AggregationJobDriver<C> {
             .await?;
         Ok(())
     }
-
-    fn step_job_discovery_delay(&self, delay: Duration) -> Duration {
-        // A zero delay is stepped to the configured minimum delay.
-        if delay == Duration::ZERO {
-            return self.min_aggregation_job_discovery_delay;
-        }
-
-        // Nonzero delays are doubled, up to the maximum configured delay.
-        // (It's OK to use a saturating multiply here because the following min call causes us to
-        // get the right answer even in the case we saturate.)
-        let new_delay = Duration::from_seconds(delay.as_seconds().saturating_mul(2));
-        let new_delay = Duration::min(new_delay, self.max_aggregation_job_discovery_delay);
-        debug!(%new_delay, "Updating job discovery delay");
-        new_delay
-    }
-
-    fn effective_lease_duration(&self, lease_expiry: Time) -> time::Duration {
-        // Lease expiries are expressed as Time values (i.e. an absolute timestamp). Tokio Instant
-        // values, unfortunately, can't be created directly from a timestamp. All we can do is
-        // create an Instant::now(), then add durations to it. This function computes how long
-        // remains until the expiry time, minus the clock skew allowance. All math saturates, since
-        // we want to timeout immediately if any of these subtractions would underflow.
-        time::Duration::from_secs(
-            lease_expiry
-                .as_seconds_since_epoch()
-                .saturating_sub(self.clock.now().as_seconds_since_epoch())
-                .saturating_sub(
-                    self.aggregation_worker_lease_clock_skew_allowance
-                        .as_seconds(),
-                ),
-        )
-    }
 }
 
 /// SteppedAggregation represents a report aggregation along with the associated preparation-state
@@ -829,9 +734,11 @@ mod tests {
         time::Clock,
     };
     use janus_server::{
+        binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
+                AcquiredAggregationJob, AggregationJob, AggregationJobState, ReportAggregation,
+                ReportAggregationState,
             },
             Crypter, Datastore,
         },
@@ -866,6 +773,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let (public_param, verify_params) = vdaf.setup().unwrap();
         let leader_verify_param = verify_params.get(Role::Leader.index().unwrap()).unwrap();
@@ -963,18 +871,42 @@ mod tests {
                     .create()
             })
             .collect();
-
-        // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
         let aggregation_job_driver = Arc::new(AggregationJobDriver {
-            datastore: ds,
-            clock: clock.clone(),
-            http_client: reqwest::Client::builder().build().unwrap(),
-            min_aggregation_job_discovery_delay: Duration::from_seconds(1),
-            max_aggregation_job_discovery_delay: Duration::from_seconds(1),
-            max_concurrent_aggregation_job_workers: 10,
-            aggregation_worker_lease_duration: Duration::from_seconds(600),
-            aggregation_worker_lease_clock_skew_allowance: Duration::from_seconds(60),
+            http_client: reqwest::Client::builder()
+                .user_agent(super::CLIENT_USER_AGENT)
+                .build()
+                .unwrap(),
         });
+        // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
+        let aggregation_job_driver = Arc::new(JobDriver::new(
+            ds.clone(),
+            clock,
+            Duration::from_seconds(1),
+            Duration::from_seconds(1),
+            10,
+            Duration::from_seconds(600),
+            Duration::from_seconds(60),
+            |datastore, lease_duration, max_acquire_count| async move {
+                datastore
+                    .run_tx(|tx| {
+                        Box::pin(async move {
+                            tx.acquire_incomplete_aggregation_jobs(
+                                lease_duration,
+                                max_acquire_count,
+                            )
+                            .await
+                        })
+                    })
+                    .await
+            },
+            |datastore, acquired_aggregation_job, aggregation_job_driver| async move {
+                aggregation_job_driver
+                    .step_aggregation_job(datastore, &acquired_aggregation_job)
+                    .await
+            },
+            aggregation_job_driver,
+        ));
+
         let task_handle = task::spawn({
             let aggregation_job_driver = aggregation_job_driver.clone();
             async move { aggregation_job_driver.run().await }
@@ -1008,8 +940,7 @@ mod tests {
             state: ReportAggregationState::Finished(leader_output_share),
         };
 
-        let (got_aggregation_job, got_report_aggregation) = aggregation_job_driver
-            .datastore
+        let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let leader_verify_param = leader_verify_param.clone();
                 Box::pin(async move {
@@ -1042,6 +973,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let (public_param, verify_params) = vdaf.setup().unwrap();
         let leader_verify_param = verify_params.get(Role::Leader.index().unwrap()).unwrap();
@@ -1134,17 +1066,17 @@ mod tests {
 
         // Run: create an aggregation job driver & step the aggregation we've created.
         let aggregation_job_driver = AggregationJobDriver {
-            datastore: ds,
-            clock: clock.clone(),
             http_client: reqwest::Client::builder().build().unwrap(),
-            min_aggregation_job_discovery_delay: Duration::from_seconds(10),
-            max_aggregation_job_discovery_delay: Duration::from_seconds(60),
-            max_concurrent_aggregation_job_workers: 10,
-            aggregation_worker_lease_duration: Duration::from_seconds(600),
-            aggregation_worker_lease_clock_skew_allowance: Duration::from_seconds(60),
         };
         aggregation_job_driver
-            .step_aggregation_job(VdafInstance::Prio3Aes128Count, task_id, aggregation_job_id)
+            .step_aggregation_job(
+                ds.clone(),
+                &AcquiredAggregationJob {
+                    vdaf: VdafInstance::Prio3Aes128Count,
+                    task_id,
+                    aggregation_job_id,
+                },
+            )
             .await
             .unwrap();
 
@@ -1167,8 +1099,7 @@ mod tests {
             state: ReportAggregationState::Waiting(leader_prep_state, Some(combined_prep_msg)),
         };
 
-        let (got_aggregation_job, got_report_aggregation) = aggregation_job_driver
-            .datastore
+        let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let leader_verify_param = leader_verify_param.clone();
                 Box::pin(async move {
@@ -1202,6 +1133,7 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
         let vdaf = Prio3Aes128Count::new(2).unwrap();
         let (public_param, verify_params) = vdaf.setup().unwrap();
         let leader_verify_param = verify_params.get(Role::Leader.index().unwrap()).unwrap();
@@ -1295,17 +1227,17 @@ mod tests {
 
         // Run: create an aggregation job driver & step the aggregation we've created.
         let aggregation_job_driver = AggregationJobDriver {
-            datastore: ds,
-            clock: clock.clone(),
             http_client: reqwest::Client::builder().build().unwrap(),
-            min_aggregation_job_discovery_delay: Duration::from_seconds(10),
-            max_aggregation_job_discovery_delay: Duration::from_seconds(60),
-            max_concurrent_aggregation_job_workers: 10,
-            aggregation_worker_lease_duration: Duration::from_seconds(600),
-            aggregation_worker_lease_clock_skew_allowance: Duration::from_seconds(60),
         };
         aggregation_job_driver
-            .step_aggregation_job(VdafInstance::Prio3Aes128Count, task_id, aggregation_job_id)
+            .step_aggregation_job(
+                ds.clone(),
+                &AcquiredAggregationJob {
+                    vdaf: VdafInstance::Prio3Aes128Count,
+                    task_id,
+                    aggregation_job_id,
+                },
+            )
             .await
             .unwrap();
 
@@ -1327,8 +1259,7 @@ mod tests {
             state: ReportAggregationState::Finished(leader_output_share),
         };
 
-        let (got_aggregation_job, got_report_aggregation) = aggregation_job_driver
-            .datastore
+        let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let leader_verify_param = leader_verify_param.clone();
                 Box::pin(async move {

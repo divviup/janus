@@ -1,8 +1,9 @@
 //! Janus datastore (durable storage) implementation.
 
 use self::models::{
-    AggregateShareJob, AggregationJob, AggregatorRole, BatchUnitAggregation, CollectJob,
-    ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
+    AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregatorRole,
+    BatchUnitAggregation, CollectJob, ReportAggregation, ReportAggregationState,
+    ReportAggregationStateCode,
 };
 use crate::{
     message::{AggregateShareReq, AggregationJobId, ReportShare},
@@ -752,7 +753,7 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         lease_duration: Duration,
         maximum_acquire_count: usize,
-    ) -> Result<Vec<(TaskId, VdafInstance, AggregationJobId, Time)>, Error> {
+    ) -> Result<Vec<(AcquiredAggregationJob, Time)>, Error> {
         let now = self.clock.now();
         let lease_expiry_time = now.add(lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
@@ -791,7 +792,14 @@ impl<C: Clock> Transaction<'_, C> {
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
                 let aggregation_job_id =
                     AggregationJobId::get_decoded(row.get("aggregation_job_id"))?;
-                Ok((task_id, vdaf, aggregation_job_id, lease_expiry_time))
+                Ok((
+                    AcquiredAggregationJob {
+                        vdaf,
+                        task_id,
+                        aggregation_job_id,
+                    },
+                    lease_expiry_time,
+                ))
             })
             .collect()
     }
@@ -1996,7 +2004,7 @@ pub mod models {
     use super::Error;
     use crate::{
         message::{AggregationJobId, ReportShareError},
-        task,
+        task::{self, VdafInstance},
     };
     use derivative::Derivative;
     use janus::{
@@ -2084,6 +2092,15 @@ pub mod models {
         InProgress,
         #[postgres(name = "FINISHED")]
         Finished,
+    }
+
+    /// AcquiredAggregationJob represents an incomplete aggregation job whose lease has been
+    /// acquired.
+    #[derive(Clone, Debug, PartialOrd, Ord, Eq, PartialEq)]
+    pub struct AcquiredAggregationJob {
+        pub vdaf: VdafInstance,
+        pub task_id: TaskId,
+        pub aggregation_job_id: AggregationJobId,
     }
 
     /// ReportAggregation represents a the state of a single client report's ongoing aggregation.
@@ -2976,9 +2993,11 @@ mod tests {
             .iter()
             .map(|&agg_job_id| {
                 (
-                    task_id,
-                    VdafInstance::Prio3Aes128Count,
-                    agg_job_id,
+                    AcquiredAggregationJob {
+                        task_id,
+                        vdaf: VdafInstance::Prio3Aes128Count,
+                        aggregation_job_id: agg_job_id,
+                    },
                     want_expiry_time,
                 )
             })
@@ -3010,9 +3029,12 @@ mod tests {
         ds.run_tx(|tx| {
             let jobs_to_release = jobs_to_release.clone();
             Box::pin(async move {
-                for (task_id, _, aggregation_job_id, _) in jobs_to_release {
-                    tx.release_aggregation_job(task_id, aggregation_job_id)
-                        .await?;
+                for (acquired_job, _) in jobs_to_release {
+                    tx.release_aggregation_job(
+                        acquired_job.task_id,
+                        acquired_job.aggregation_job_id,
+                    )
+                    .await?;
                 }
                 Ok(())
             })
@@ -3042,9 +3064,11 @@ mod tests {
             .iter()
             .map(|&agg_job_id| {
                 (
-                    task_id,
-                    VdafInstance::Prio3Aes128Count,
-                    agg_job_id,
+                    AcquiredAggregationJob {
+                        task_id,
+                        vdaf: VdafInstance::Prio3Aes128Count,
+                        aggregation_job_id: agg_job_id,
+                    },
                     want_expiry_time,
                 )
             })
