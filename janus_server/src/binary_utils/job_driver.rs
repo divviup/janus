@@ -5,8 +5,8 @@ use janus::{
     message::{Duration, Time},
     time::Clock,
 };
-use std::{fmt::Debug, future::Future, sync::Arc};
-use tokio::{sync::Semaphore, task, time};
+use std::{fmt::Debug, future::Future, sync::Arc, time::Duration as StdDuration};
+use tokio::{sync::Semaphore, task};
 use tracing::{debug, error, info, info_span, Instrument};
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
@@ -97,7 +97,9 @@ where
 
         loop {
             // Wait out our job discovery delay, if any.
-            time::sleep(time::Duration::from_secs(job_discovery_delay.as_seconds())).await;
+            self.clock
+                .sleep(StdDuration::from_secs(job_discovery_delay.as_seconds()))
+                .await;
 
             // Wait until we are able to start at least one worker. (permit will be immediately released)
             //
@@ -166,15 +168,17 @@ where
 
                     async move {
                         info!(?lease_expiry, "Stepping job");
-                        match time::timeout(
-                            this.effective_lease_duration(lease_expiry),
-                            (this.job_stepper)(
-                                this.datastore.clone(),
-                                acquired_job,
-                                this.job_stepper_context.clone(),
-                            ),
-                        )
-                        .await
+                        match this
+                            .clock
+                            .timeout(
+                                this.effective_lease_duration(lease_expiry),
+                                (this.job_stepper)(
+                                    this.datastore.clone(),
+                                    acquired_job,
+                                    this.job_stepper_context.clone(),
+                                ),
+                            )
+                            .await
                         {
                             Ok(Ok(_)) => {
                                 debug!("Job stepped")
@@ -209,13 +213,13 @@ where
         new_delay
     }
 
-    fn effective_lease_duration(&self, lease_expiry: Time) -> time::Duration {
+    fn effective_lease_duration(&self, lease_expiry: Time) -> StdDuration {
         // Lease expiries are expressed as Time values (i.e. an absolute timestamp). Tokio Instant
         // values, unfortunately, can't be created directly from a timestamp. All we can do is
         // create an Instant::now(), then add durations to it. This function computes how long
         // remains until the expiry time, minus the clock skew allowance. All math saturates, since
         // we want to timeout immediately if any of these subtractions would underflow.
-        time::Duration::from_secs(
+        StdDuration::from_secs(
             lease_expiry
                 .as_seconds_since_epoch()
                 .saturating_sub(self.clock.now().as_seconds_since_epoch())
@@ -236,7 +240,7 @@ mod tests {
     use janus::{message::TaskId, time::Clock};
     use janus_test_util::MockClock;
     use lazy_static::lazy_static;
-    use tokio::{sync::Mutex, task, time};
+    use tokio::{sync::Mutex, task};
 
     janus_test_util::define_ephemeral_datastore!();
 
@@ -289,12 +293,12 @@ mod tests {
                     IncompleteJob {
                      task_id:   TaskId::random(),
                         job_id: AggregationJobId::random(),
-                        lease_expiry: Time::from_seconds_since_epoch(100),
+                        lease_expiry: Time::from_seconds_since_epoch(1000000100),
                     },
                     IncompleteJob {
                      task_id:   TaskId::random(),
                         job_id: AggregationJobId::random(),
-                        lease_expiry: Time::from_seconds_since_epoch(200),
+                        lease_expiry: Time::from_seconds_since_epoch(1000000200),
                     },
                 ],
                 // Second job finder call will be immediately after the first: no more jobs
@@ -306,23 +310,23 @@ mod tests {
                     IncompleteJob {
                      task_id:   TaskId::random(),
                         job_id: AggregationJobId::random(),
-                        lease_expiry: Time::from_seconds_since_epoch(300),
+                        lease_expiry: Time::from_seconds_since_epoch(1000000300),
                     },
                     IncompleteJob {
                      task_id:   TaskId::random(),
                         job_id: AggregationJobId::random(),
-                        lease_expiry: Time::from_seconds_since_epoch(400),
+                        lease_expiry: Time::from_seconds_since_epoch(1000000400),
                     },
                 ],
             ];
         };
 
-        // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
+        // Construct and run the job driver.
         let job_driver = Arc::new(JobDriver::new(
             ds,
-            clock,
+            clock.clone(),
             Duration::from_seconds(1),
-            Duration::from_seconds(1),
+            Duration::from_seconds(6),
             10,
             Duration::from_seconds(600),
             Duration::from_seconds(60),
@@ -330,7 +334,10 @@ mod tests {
                 let mut test_state = TEST_STATE.lock().await;
 
                 assert_eq!(lease_duration, Duration::from_seconds(600));
-                assert_eq!(max_acquire_count, 10);
+                if test_state.job_acquire_counter == 0 {
+                    assert_eq!(max_acquire_count, 10);
+                }
+                assert!(max_acquire_count <= 10);
 
                 let incomplete_jobs = INCOMPLETE_JOBS
                     .get(test_state.job_acquire_counter)
@@ -339,32 +346,38 @@ mod tests {
                     .cloned()
                     .unwrap_or_default();
 
+                test_state.job_acquire_counter += 1;
+
                 let acquired_jobs = incomplete_jobs
                     .iter()
-                    .map(|job| {
-                        (
-                            (job.task_id, VdafInstance::Fake, job.job_id),
-                            job.lease_expiry,
-                        )
+                    .map({
+                        |job| {
+                            (
+                                (
+                                    test_state.job_acquire_counter,
+                                    job.task_id,
+                                    VdafInstance::Fake,
+                                    job.job_id,
+                                ),
+                                job.lease_expiry,
+                            )
+                        }
                     })
                     .collect();
-
-                test_state.job_acquire_counter += 1;
 
                 // Create some fake incomplete jobs
                 Ok(acquired_jobs)
             },
             move |_datastore, acquired_job, context| async move {
                 let mut test_state = TEST_STATE.lock().await;
-                let job_acquire_counter = test_state.job_acquire_counter;
 
-                assert_eq!(acquired_job.1, VdafInstance::Fake);
+                assert_eq!(acquired_job.2, VdafInstance::Fake);
                 assert_eq!(context, "context");
 
                 test_state.stepped_jobs.push(SteppedJob {
-                    observed_jobs_acquire_counter: job_acquire_counter,
-                    task_id: acquired_job.0,
-                    job_id: acquired_job.2,
+                    observed_jobs_acquire_counter: acquired_job.0,
+                    task_id: acquired_job.1,
+                    job_id: acquired_job.3,
                 });
 
                 Ok(()) as Result<(), datastore::Error>
@@ -373,20 +386,24 @@ mod tests {
         ));
         let task_handle = task::spawn(async move { job_driver.run().await });
 
-        // TODO(brandon): consider using tokio::time::pause() to make time deterministic, and allow
-        // this test to run without the need for a (racy, wallclock-consuming) real sleep.
-        // Unfortunately, at time of writing this TODO, calling time::pause() breaks interaction
-        // with the database -- the job-acquiry transaction deadlocks on attempting to start a
-        // transaction, even if the main test loops on calling yield_now().
-        time::sleep(time::Duration::from_secs(5)).await;
-        task_handle.abort();
+        // The driver should find the first batch of jobs, run them in separate tasks, find no
+        // more available jobs, and then sleep for `min_job_discovery_delay`.
+        clock.wait_for_sleeping_tasks(1).await;
+        // Give the other tasks time to complete.
+        tokio::time::sleep(StdDuration::from_secs(1)).await;
+        assert_eq!(TEST_STATE.lock().await.job_acquire_counter, 2);
+
+        // Advance the clock to wake up the driver. It should discover the last batch of jobs, kick
+        // off tasks to run them, then find no more jobs, and sleep again.
+        clock.advance(Duration::from_seconds(1)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        // Give the other tasks time to complete.
+        tokio::time::sleep(StdDuration::from_secs(1)).await;
+        assert_eq!(TEST_STATE.lock().await.job_acquire_counter, 4);
 
         // Verify that we got the expected calls to closures.
         let final_test_state = TEST_STATE.lock().await;
 
-        // We expect the job acquirer to run at least three times in the 5s we sleep,, but we can't
-        // prove it won't run once more.
-        assert!(final_test_state.job_acquire_counter >= 3);
         assert_eq!(
             final_test_state.stepped_jobs,
             vec![
@@ -415,5 +432,39 @@ mod tests {
                 },
             ]
         );
+
+        drop(final_test_state);
+
+        // Test the backoff behavior of the job driver when no tasks are available. It should
+        // currently be sleeping for `min_job_discovery_delay`.
+        clock.advance(Duration::from_seconds(1)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(TEST_STATE.lock().await.job_acquire_counter, 5);
+
+        // The next sleep should be for twice as long.
+        clock.advance(Duration::from_seconds(1)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(TEST_STATE.lock().await.job_acquire_counter, 5);
+        clock.advance(Duration::from_seconds(1)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(TEST_STATE.lock().await.job_acquire_counter, 6);
+
+        // This sleep should be for four times as long.
+        clock.advance(Duration::from_seconds(3)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(TEST_STATE.lock().await.job_acquire_counter, 6);
+        clock.advance(Duration::from_seconds(1)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(TEST_STATE.lock().await.job_acquire_counter, 7);
+
+        // Check that the maximum delay clamping works.
+        clock.advance(Duration::from_seconds(5)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(TEST_STATE.lock().await.job_acquire_counter, 7);
+        clock.advance(Duration::from_seconds(1)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(TEST_STATE.lock().await.job_acquire_counter, 8);
+
+        task_handle.abort();
     }
 }

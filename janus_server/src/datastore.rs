@@ -3058,7 +3058,7 @@ mod tests {
 
         // Run: advance time by the lease duration (which implicitly releases the jobs), and attempt
         // to acquire aggregation jobs again.
-        clock.advance(LEASE_DURATION);
+        clock.advance(LEASE_DURATION).await;
         let want_expiry_time = clock.now().add(LEASE_DURATION).unwrap();
         let want_aggregation_jobs: Vec<_> = aggregation_job_ids
             .iter()

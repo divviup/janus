@@ -1,15 +1,30 @@
 use assert_matches::assert_matches;
+use async_trait::async_trait;
 use janus::{
     message::{Duration, Nonce, Time},
-    time::Clock,
+    time::{Clock, ClockInterval, Elapsed},
 };
+use pin_project::pin_project;
 use prio::{
     codec::Encode,
     vdaf::{self, VdafError},
 };
 use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use std::sync::{Arc, Mutex};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex as StdMutex},
+    task::{Context, Poll},
+    time::{Duration as StdDuration, Instant},
+};
+use tokio::{
+    sync::{
+        broadcast::{self, Sender},
+        Mutex,
+    },
+    time::MissedTickBehavior,
+};
 
 /// The Janus database schema.
 pub static SCHEMA: &str = include_str!("../../db/schema.sql");
@@ -108,41 +123,239 @@ pub fn generate_aead_key() -> LessSafeKey {
     LessSafeKey::new(unbound_key)
 }
 
+#[derive(Debug)]
+struct MockClockInner {
+    /// The times that the clock will return from [`MockClock::now`] and
+    /// [`MockClock::now_monotonic`], and a broadcast channel to wake up tasks that are
+    /// currently sleeping.
+    current_times: Mutex<(Time, Instant, Sender<()>)>,
+    /// A second copy of the times that the clock will return, behind a non-async mutex. This is
+    /// necessary to enable interior mutability while still having `now()` and `now_monotonic()` be
+    /// non-async functions, and simultaneously allowing them to be called from within the Tokio
+    /// runtime.
+    ///
+    /// Updates to the times will be coordinated by first locking the async mutex, then locking the
+    /// non-async mutex, and updating both sets of times together. Reads from `now()` and
+    /// `now_monotonic()` only lock this non-async mutex. We know these reads will be consistent
+    /// with other tasks'/threads' view of the world, since updates only happen when both mutexes
+    /// are locked simultaneously. (Note that these methods cannot use tokio::sync::Mutex::lock
+    /// without changing Clock's API because they are not async, and they cannot use
+    /// tokio::sync::Mutex::blocking_lock because it calls block_on, which can't be used from a
+    /// Tokio runtime thread)
+    current_times_std_mutex: StdMutex<(Time, Instant)>,
+    /// Records for each task that is currently waiting for the clock's time to be advanced past a
+    /// given instant, and a broadcast channel to notify any tasks waiting in
+    /// `wait_for_sleeping_taskss()`.
+    waiting_tasks: Mutex<(Vec<Instant>, Sender<()>)>,
+}
+
 /// A mock clock for use in testing. Clones are identical: all clones of a given MockClock will
 /// be controlled by a controller retrieved from any of the clones.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct MockClock {
-    /// The time that this clock will return from [`Self::now`].
-    current_time: Arc<Mutex<Time>>,
+    /// Inner state of the mock clock, wrapped in a smart pointer.
+    inner: Arc<MockClockInner>,
 }
 
 impl MockClock {
     pub fn new(when: Time) -> MockClock {
+        // Note that we use Instant::now() as an arbitrary starting place for the monotonic clock.
+        // Both times will advance in conjunction when `advance()` is called. The real current
+        // time otherwise has no influence on the `MockClock`.
+        let monotonic_time = Instant::now();
+
+        let time_update_sender = broadcast::channel(10).0;
+        let time_tokio_mutex = Mutex::new((when, monotonic_time, time_update_sender));
+        let time_std_mutex = StdMutex::new((when, monotonic_time));
+        let waiter_update_sender = broadcast::channel(10).0;
+        let waiting_tasks_mutex = Mutex::new((vec![], waiter_update_sender));
         MockClock {
-            current_time: Arc::new(Mutex::new(when)),
+            inner: Arc::new(MockClockInner {
+                current_times: time_tokio_mutex,
+                current_times_std_mutex: time_std_mutex,
+                waiting_tasks: waiting_tasks_mutex,
+            }),
         }
     }
 
-    pub fn advance(&self, dur: Duration) {
-        let mut current_time = self.current_time.lock().unwrap();
-        *current_time = current_time.add(dur).unwrap();
+    /// Advance the time by a given amount, and wake up "sleeping" threads as is appropriate.
+    pub async fn advance(&self, dur: Duration) {
+        // Acquire both Tokio mutex locks. (This is the only method that locks more than one of our
+        // three mutexes simultaneously, so there's no risk of deadlock)
+        let mut current_times_guard = self.inner.current_times.lock().await;
+        let mut waiting_tasks_guard = self.inner.waiting_tasks.lock().await;
+
+        // Increment both current times.
+        current_times_guard.0 = current_times_guard.0.add(dur).unwrap();
+        current_times_guard.1 += StdDuration::from_secs(dur.as_seconds());
+
+        // Update the times in the std::sync::Mutex, so that we can read it from now().
+        *self.inner.current_times_std_mutex.lock().unwrap() =
+            (current_times_guard.0, current_times_guard.1);
+
+        // Remove tasks waiting on timers that will now be expired from our accounting.
+        // wait_for_sleeping_tasks() will immediately return 0 if all timers have expired, no
+        // matter in what order different tasks execute.
+        waiting_tasks_guard
+            .0
+            .retain(|sleep_deadline| current_times_guard.1 < *sleep_deadline);
+
+        // Send a notification to all tasks waiting in a sleep to check the current time again.
+        let _ = current_times_guard.2.send(());
+    }
+
+    /// Helper function to sleep until the clock is advanced past a given instant.
+    async fn sleep_until(&self, instant: Instant) {
+        let mut receiver = {
+            let current_times_guard = self.inner.current_times.lock().await;
+            // Do an early-out check if the timer has already expired. This will avoid spuriously
+            // increasing the number of waiting tasks for a very brief window.
+            if current_times_guard.1 >= instant {
+                return;
+            }
+            current_times_guard.2.subscribe()
+        };
+
+        // Record that this task is sleeping, and notify any tasks in `wait_for_sleeping_tasks()`.
+        {
+            let mut waiting_tasks_guard = self.inner.waiting_tasks.lock().await;
+            waiting_tasks_guard.0.push(instant);
+            let _ = waiting_tasks_guard.1.send(());
+        }
+
+        loop {
+            // Wait for the clock to be advanced.
+            receiver.recv().await.unwrap();
+            let current_times_guard = self.inner.current_times.lock().await;
+            if current_times_guard.1 >= instant {
+                break;
+            }
+        }
+    }
+
+    /// Wait for a given number of tasks to be sleeping.
+    pub async fn wait_for_sleeping_tasks(&self, num_tasks: usize) {
+        let mut receiver = {
+            let waiting_tasks_guard = self.inner.waiting_tasks.lock().await;
+            // Early-out check
+            if waiting_tasks_guard.0.len() >= num_tasks {
+                return;
+            }
+            waiting_tasks_guard.1.subscribe()
+        };
+
+        loop {
+            // Wait to be notified that another task is sleeping.
+            receiver.recv().await.unwrap();
+            let waiting_tasks_guard = self.inner.waiting_tasks.lock().await;
+            if waiting_tasks_guard.0.len() >= num_tasks {
+                break;
+            }
+        }
     }
 }
 
+#[async_trait]
 impl Clock for MockClock {
+    type Interval = MockInterval;
+
     fn now(&self) -> Time {
-        let current_time = self.current_time.lock().unwrap();
-        *current_time
+        let current_times = self.inner.current_times_std_mutex.lock().unwrap();
+        current_times.0
+    }
+
+    fn now_monotonic(&self) -> Instant {
+        let current_times = self.inner.current_times_std_mutex.lock().unwrap();
+        current_times.1
+    }
+
+    async fn timeout<O, F>(&self, duration: StdDuration, future: F) -> Result<O, Elapsed>
+    where
+        F: Future<Output = O> + Send,
+    {
+        let deadline = self.now_monotonic() + duration;
+        MockTimeoutCancellable::new(future, || self.now_monotonic() >= deadline).await
+    }
+
+    fn interval_at(&self, start: Instant, period: StdDuration) -> Self::Interval {
+        MockInterval {
+            next_tick: start,
+            period,
+            clock: self.clone(),
+        }
+    }
+
+    async fn sleep(&self, duration: StdDuration) {
+        let deadline = self.now_monotonic() + duration;
+        self.sleep_until(deadline).await;
     }
 }
 
 impl Default for MockClock {
     fn default() -> Self {
-        Self {
-            // Sunday, September 9, 2001 1:46:40 AM UTC
-            current_time: Arc::new(Mutex::new(Time::from_seconds_since_epoch(1000000000))),
+        // Sunday, September 9, 2001 1:46:40 AM UTC
+        Self::new(Time::from_seconds_since_epoch(1000000000))
+    }
+}
+
+/// An interval used in conjunction with the [`MockClock`].
+#[derive(Debug)]
+pub struct MockInterval {
+    next_tick: Instant,
+    period: StdDuration,
+    clock: MockClock,
+}
+
+#[async_trait]
+impl ClockInterval for MockInterval {
+    async fn tick(&mut self) {
+        self.clock.sleep_until(self.next_tick).await;
+        self.next_tick += self.period;
+    }
+
+    fn set_missed_tick_behavior(&mut self, _behavior: MissedTickBehavior) {
+        // Ignore this setting, because time doesn't advance smoothly with a MockClock.
+    }
+}
+
+/// This future combinator is used by `MockClock::timeout` to check the timeout at every yield
+/// point, and cancel if the timeout has elapsed.
+#[pin_project]
+struct MockTimeoutCancellable<FU, FN, O>
+where
+    FU: Future<Output = O>,
+{
+    #[pin]
+    inner: FU,
+    should_cancel: FN,
+}
+
+impl<FU, FN, O> MockTimeoutCancellable<FU, FN, O>
+where
+    FU: Future<Output = O>,
+{
+    fn new(future: FU, should_cancel_predicate: FN) -> MockTimeoutCancellable<FU, FN, O> {
+        MockTimeoutCancellable {
+            inner: future,
+            should_cancel: should_cancel_predicate,
         }
+    }
+}
+
+impl<FU, FN, O> Future for MockTimeoutCancellable<FU, FN, O>
+where
+    FU: Future<Output = O>,
+    FN: Fn() -> bool,
+{
+    type Output = Result<O, Elapsed>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        if (this.should_cancel)() {
+            return Poll::Ready(Err(Elapsed));
+        }
+        this.inner.poll(cx).map(Result::Ok)
     }
 }
 
@@ -225,5 +438,72 @@ where
             let prep_step = assert_matches!(pts.last().unwrap(), PrepareTransition::<V>::Continue(prep_step, _) => prep_step).clone();
             pts.push(vdaf.prepare_step(prep_step, Some(combined_prep_msg.clone())));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MockClock;
+    use assert_matches::assert_matches;
+    use futures::future::poll_immediate;
+    use janus::{
+        message::Duration,
+        time::{Clock, ClockInterval},
+    };
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        thread::sleep,
+        time::Duration as StdDuration,
+    };
+
+    #[tokio::test]
+    async fn mock_clock_sleep() {
+        let clock = MockClock::default();
+        let mut handle = tokio::spawn({
+            let clock = clock.clone();
+            async move {
+                clock.sleep(StdDuration::from_secs(3)).await;
+            }
+        });
+        clock.wait_for_sleeping_tasks(1).await;
+        clock.advance(Duration::from_seconds(1)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        sleep(StdDuration::from_millis(100));
+        assert_matches!(poll_immediate(&mut handle).await, None);
+        clock.advance(Duration::from_seconds(1)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        sleep(StdDuration::from_millis(100));
+        assert_matches!(poll_immediate(&mut handle).await, None);
+        clock.advance(Duration::from_seconds(1)).await;
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mock_clock_interval() {
+        let clock = MockClock::default();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let handle = tokio::spawn({
+            let counter = Arc::clone(&counter);
+            let mut interval = clock.interval(StdDuration::from_secs(5));
+            async move {
+                loop {
+                    interval.tick().await;
+                    counter.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        clock.advance(Duration::from_seconds(2)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        clock.advance(Duration::from_seconds(3)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+        handle.abort();
+        let _ = handle.await;
     }
 }

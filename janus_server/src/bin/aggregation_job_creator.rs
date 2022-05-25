@@ -3,7 +3,7 @@ use futures::future::try_join_all;
 use itertools::Itertools;
 use janus::message::{Nonce, Time};
 use janus::message::{Role, TaskId};
-use janus::time::{Clock, RealClock};
+use janus::time::{Clock, ClockInterval, RealClock};
 use janus_server::binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions};
 use janus_server::config::AggregationJobCreatorConfig;
 use janus_server::datastore::models::{
@@ -23,7 +23,7 @@ use structopt::StructOpt;
 use tokio::select;
 use tokio::{
     sync::oneshot::{self, Receiver, Sender},
-    time::{self, Instant, MissedTickBehavior},
+    time::MissedTickBehavior,
 };
 use tracing::{debug, error, info};
 
@@ -96,7 +96,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         // Set up an interval to occasionally update our view of tasks in the DB.
         // (This will fire immediately, so we'll immediately load tasks from the DB when we enter
         // the loop.)
-        let mut tasks_update_ticker = time::interval(self.tasks_update_frequency);
+        let mut tasks_update_ticker = self.clock.interval(self.tasks_update_frequency);
         tasks_update_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         // This tracks the "shutdown handle" (i.e. oneshot sender) used to shut down the per-task
@@ -155,12 +155,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     #[tracing::instrument(skip(self))]
     async fn run_for_task(&self, mut shutdown: Receiver<()>, task: Task) {
         debug!(task_id = ?task.id, "Job creation worker started");
-        let first_tick_instant = Instant::now()
+        let first_tick_instant = self.clock.now_monotonic()
             + Duration::from_secs(
                 thread_rng().gen_range(0..self.aggregation_job_creation_interval.as_secs()),
             );
-        let mut aggregation_job_creation_ticker =
-            time::interval_at(first_tick_instant, self.aggregation_job_creation_interval);
+        let mut aggregation_job_creation_ticker = self
+            .clock
+            .interval_at(first_tick_instant, self.aggregation_job_creation_interval);
 
         loop {
             select! {
@@ -326,7 +327,7 @@ mod tests {
         sync::Arc,
         time::Duration,
     };
-    use tokio::{task, time};
+    use tokio::task;
 
     janus_test_util::define_ephemeral_datastore!();
 
@@ -341,12 +342,6 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        // TODO(brandon): consider using tokio::time::pause() to make time deterministic, and allow
-        // this test to run without the need for a (racy, wallclock-consuming) real sleep.
-        // Unfortunately, at time of writing this TODO, calling time::pause() breaks interaction
-        // with the database -- the task-loader transaction deadlocks on attempting to start a
-        // transaction, even if the main test loops on calling yield_now().
-
         let report_time = Time::from_seconds_since_epoch(0);
 
         let leader_task_id = TaskId::random();
@@ -359,26 +354,11 @@ mod tests {
             new_dummy_task(helper_task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
         let helper_report = new_dummy_report(helper_task_id, report_time);
 
-        ds.run_tx(|tx| {
-            let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
-            let (leader_report, helper_report) = (leader_report.clone(), helper_report.clone());
-            Box::pin(async move {
-                tx.put_task(&leader_task).await?;
-                tx.put_task(&helper_task).await?;
-
-                tx.put_client_report(&leader_report).await?;
-                tx.put_client_report(&helper_report).await
-            })
-        })
-        .await
-        .unwrap();
-
-        // Create & run the aggregation job creator, give it long enough to create tasks, and then
-        // kill it.
+        // Create & run the aggregation job creator, and run it until it sleeps.
         const AGGREGATION_JOB_CREATION_INTERVAL: Duration = Duration::from_secs(1);
         let job_creator = Arc::new(AggregationJobCreator {
             datastore: ds,
-            clock,
+            clock: clock.clone(),
             tasks_update_frequency: Duration::from_secs(3600),
             aggregation_job_creation_interval: AGGREGATION_JOB_CREATION_INTERVAL,
             min_aggregation_job_size: 0,
@@ -388,8 +368,56 @@ mod tests {
             let job_creator = job_creator.clone();
             async move { job_creator.run().await }
         });
-        time::sleep(5 * AGGREGATION_JOB_CREATION_INTERVAL).await;
-        task_handle.abort();
+
+        // We expect the main Tokio task should be sleeping in AggregationJobCreator::run(),
+        // waiting for the tasks update Interval to fire.
+        clock.wait_for_sleeping_tasks(1).await;
+
+        // Set up tasks.
+        job_creator
+            .datastore
+            .run_tx(|tx| {
+                let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
+                Box::pin(async move {
+                    tx.put_task(&leader_task).await?;
+                    tx.put_task(&helper_task).await
+                })
+            })
+            .await
+            .unwrap();
+
+        // Run the clock until the task update interval fires.
+        clock
+            .advance(janus::message::Duration::from_seconds(
+                job_creator.tasks_update_frequency.as_secs(),
+            ))
+            .await;
+        // In addition to the main Tokio task, there should also be one Tokio task corresponding
+        // to the sole DAP task with Role::Leader, waiting on an Interval in
+        // AggregationJobCreator::run_for_task().
+        clock.wait_for_sleeping_tasks(2).await;
+
+        // Set up client reports.
+        job_creator
+            .datastore
+            .run_tx(|tx| {
+                let (leader_report, helper_report) = (leader_report.clone(), helper_report.clone());
+                Box::pin(async move {
+                    tx.put_client_report(&leader_report).await?;
+                    tx.put_client_report(&helper_report).await
+                })
+            })
+            .await
+            .unwrap();
+
+        // Run the clock until the aggregation job creation interval fires.
+        clock
+            .advance(janus::message::Duration::from_seconds(
+                AGGREGATION_JOB_CREATION_INTERVAL.as_secs(),
+            ))
+            .await;
+        // Wait for the tasks to finish their work and sleep again.
+        clock.wait_for_sleeping_tasks(2).await;
 
         // Inspect database state to verify that the expected aggregation jobs were created.
         let (leader_agg_jobs, helper_agg_jobs) = job_creator
@@ -409,6 +437,32 @@ mod tests {
         assert_eq!(leader_agg_jobs.len(), 1);
         let nonces = leader_agg_jobs.into_iter().next().unwrap().1;
         assert_eq!(nonces, HashSet::from([leader_report.nonce()]));
+
+        // Run the clock again, and confirm that no further aggregation jobs are created.
+        clock
+            .advance(janus::message::Duration::from_seconds(
+                AGGREGATION_JOB_CREATION_INTERVAL.as_secs(),
+            ))
+            .await;
+        clock.wait_for_sleeping_tasks(2).await;
+
+        let (leader_agg_jobs, helper_agg_jobs) = job_creator
+            .datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let leader_agg_jobs =
+                        read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, leader_task_id).await;
+                    let helper_agg_jobs =
+                        read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, helper_task_id).await;
+                    Ok((leader_agg_jobs, helper_agg_jobs))
+                })
+            })
+            .await
+            .unwrap();
+        assert!(helper_agg_jobs.is_empty());
+        assert_eq!(leader_agg_jobs.len(), 1);
+
+        task_handle.abort();
     }
 
     #[tokio::test]

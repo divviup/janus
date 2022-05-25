@@ -757,7 +757,7 @@ mod tests {
     };
     use reqwest::Url;
     use std::{str, sync::Arc};
-    use tokio::{task, time};
+    use tokio::task;
 
     janus_test_util::define_ephemeral_datastore!();
 
@@ -802,32 +802,6 @@ mod tests {
         );
         let aggregation_job_id = AggregationJobId::random();
 
-        ds.run_tx(|tx| {
-            let (task, report) = (task.clone(), report.clone());
-            Box::pin(async move {
-                tx.put_task(&task).await?;
-                tx.put_client_report(&report).await?;
-
-                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
-                    aggregation_job_id,
-                    task_id,
-                    aggregation_param: (),
-                    state: AggregationJobState::InProgress,
-                })
-                .await?;
-                tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
-                    aggregation_job_id,
-                    task_id,
-                    nonce: report.nonce(),
-                    ord: 0,
-                    state: ReportAggregationState::Start,
-                })
-                .await
-            })
-        })
-        .await
-        .unwrap();
-
         // Setup: prepare mocked HTTP responses.
         let helper_vdaf_msg = assert_matches!(&transcript.transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_msg) => prep_msg);
         let helper_responses = vec![
@@ -856,31 +830,32 @@ mod tests {
                 .get_encoded(),
             ),
         ];
-        let mocked_aggregates: Vec<_> = helper_responses
-            .into_iter()
-            .map(|(req_content_type, resp_content_type, resp_body)| {
-                mock("POST", "/aggregate")
-                    .match_header(
-                        "DAP-Auth-Token",
-                        str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-                    )
-                    .match_header(CONTENT_TYPE.as_str(), req_content_type)
-                    .with_status(200)
-                    .with_header(CONTENT_TYPE.as_str(), resp_content_type)
-                    .with_body(resp_body)
-                    .create()
-            })
-            .collect();
+        let mut mocked_aggregates_lazy =
+            helper_responses
+                .into_iter()
+                .map(|(req_content_type, resp_content_type, resp_body)| {
+                    mock("POST", "/aggregate")
+                        .match_header(
+                            "DAP-Auth-Token",
+                            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+                        )
+                        .match_header(CONTENT_TYPE.as_str(), req_content_type)
+                        .with_status(200)
+                        .with_header(CONTENT_TYPE.as_str(), resp_content_type)
+                        .with_body(resp_body)
+                        .create()
+                });
+        let mut mocked_aggregates = vec![];
+
         let aggregation_job_driver = Arc::new(AggregationJobDriver {
             http_client: reqwest::Client::builder()
                 .user_agent(super::CLIENT_USER_AGENT)
                 .build()
                 .unwrap(),
         });
-        // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
         let aggregation_job_driver = Arc::new(JobDriver::new(
             ds.clone(),
-            clock,
+            clock.clone(),
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
@@ -907,24 +882,74 @@ mod tests {
             aggregation_job_driver,
         ));
 
+        // Run the aggregation job driver.
         let task_handle = task::spawn({
             let aggregation_job_driver = aggregation_job_driver.clone();
             async move { aggregation_job_driver.run().await }
         });
 
-        // TODO(brandon): consider using tokio::time::pause() to make time deterministic, and allow
-        // this test to run without the need for a (racy, wallclock-consuming) real sleep.
-        // Unfortunately, at time of writing this TODO, calling time::pause() breaks interaction
-        // with the database -- the job-acquiry transaction deadlocks on attempting to start a
-        // transaction, even if the main test loops on calling yield_now().
-        time::sleep(time::Duration::from_secs(5)).await;
+        // After checking for jobs once, the main task should sleep for
+        // `min_aggregation_job_discovery_delay`.
+        clock.wait_for_sleeping_tasks(1).await;
+
+        // Populate the database.
+        ds.run_tx(|tx| {
+            let (task, report) = (task.clone(), report.clone());
+            Box::pin(async move {
+                tx.put_task(&task).await?;
+                tx.put_client_report(&report).await?;
+
+                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                    aggregation_job_id,
+                    task_id,
+                    aggregation_param: (),
+                    state: AggregationJobState::InProgress,
+                })
+                .await?;
+                tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                    aggregation_job_id,
+                    task_id,
+                    nonce: report.nonce(),
+                    ord: 0,
+                    state: ReportAggregationState::Start,
+                })
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Install the first mock aggregation response.
+        mocked_aggregates.push(mocked_aggregates_lazy.next().unwrap());
+
+        // Step the clock forward by the minimum discovery delay.
+        clock.advance(Duration::from_seconds(1)).await;
+
+        // Wait for the aggregation job driver to finish kicking off tasks and sleep again.
+        clock.wait_for_sleeping_tasks(1).await;
+
+        // Give the newly spawned task some time to step the aggregation job.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // Verify the first aggregate request was sent.
+        mocked_aggregates[0].assert();
+
+        // Install the next mock aggregation response.
+        mocked_aggregates.push(mocked_aggregates_lazy.next().unwrap());
+
+        // Advance the clock, wait for the main task to kick off another stepper task, and wait
+        // some time for that to complete as well. This time, we will be finishing the Prio3
+        // aggregation.
+        clock.advance(Duration::from_seconds(1)).await;
+        clock.wait_for_sleeping_tasks(1).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
         task_handle.abort();
 
-        // Verify.
-        for mocked_aggregate in mocked_aggregates {
-            mocked_aggregate.assert();
-        }
+        // Verify the second aggregate request was sent.
+        mocked_aggregates[1].assert();
 
+        // Verify the state of the database.
         let want_aggregation_job = AggregationJob::<Prio3Aes128Count> {
             aggregation_job_id,
             task_id,
