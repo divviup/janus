@@ -1,23 +1,27 @@
 //! Common functionality for PPM aggregators
 
 mod accumulator;
+pub mod aggregate_share;
 
 use crate::{
-    aggregator::accumulator::Accumulator,
+    aggregator::{
+        accumulator::Accumulator,
+        aggregate_share::{compute_aggregate_share, validate_batch_lifetime_for_unit_aggregations},
+    },
     datastore::{
         self,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, BatchUnitAggregation,
-            ReportAggregation, ReportAggregationState,
+            AggregateShareJob, AggregationJob, AggregationJobState, ReportAggregation,
+            ReportAggregationState,
         },
-        Datastore, Transaction,
+        Datastore,
     },
     message::{
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
         CollectReq, CollectResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
-    task::{Task, VdafInstance},
+    task::{Task, VdafInstance, DAP_AUTH_HEADER},
 };
 use bytes::Bytes;
 use futures::try_join;
@@ -39,7 +43,7 @@ use prio::{
     vdaf::{
         self,
         prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
-        Aggregatable, PrepareTransition, Vdaf,
+        PrepareTransition, Vdaf,
     },
 };
 use std::{
@@ -141,6 +145,9 @@ peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
     /// Error handling task parameters
     #[error("Invalid task parameters: {0}")]
     TaskParameters(#[from] crate::task::Error),
+    /// Error making an HTTP request
+    #[error("HTTP client error: {0}")]
+    HttpClient(#[from] reqwest::Error),
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
@@ -1216,7 +1223,7 @@ impl VdafOps {
                             &aggregation_param,
                         )
                         .await?;
-                    Self::validate_batch_lifetime_for_unit_aggregations(
+                    validate_batch_lifetime_for_unit_aggregations(
                         tx,
                         &task,
                         &batch_unit_aggregations,
@@ -1386,173 +1393,6 @@ impl VdafOps {
         }
     }
 
-    /// Check whether any member of `batch_unit_aggregations` has been included in enough collect
-    /// jobs (for `task.role` == [`Role::Leader`]) or aggregate share jobs (for `task.role` ==
-    /// [`Role::Helper`]) to violate the task's maximum batch lifetime.
-    async fn validate_batch_lifetime_for_unit_aggregations<A, C>(
-        tx: &Transaction<'_, C>,
-        task: &Task,
-        batch_unit_aggregations: &[BatchUnitAggregation<A>],
-    ) -> Result<(), datastore::Error>
-    where
-        A: vdaf::Aggregator,
-        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
-        C: Clock,
-    {
-        // Check how many rows in the relevant table have a batch interval that includes each batch
-        // unit. Each such row consumes one unit of batch lifetime (§4.6).
-        //
-        // We have to check each batch unit interval separately rather than checking how many times
-        // aggregate_share_req.batch_interval overlaps with any row. Suppose we had:
-        //
-        //   * task.max_batch_lifetime = 2,
-        //   * an AggregateShareReq.batch interval that spans two batch units,
-        //   * and that each of those batch units has been collected once before.
-        //
-        // A further AggregateShareReq including either or both of the units is permissible, but
-        // if we queried how many rows overlap with that interval, we would get 2 and refuse the
-        // request. We must check the unit intervals individually to notice that each has enough
-        // remaining lifetime to permit the share request.
-        //
-        // TODO: We believe this to be a correct implementation of currently specified batch
-        // parameter validation, but we also know it to be inadequate. This should work for interop
-        // experiments, but we should do better before we allow any real user data to be processed
-        // (see issue #149).
-        let intervals: Vec<_> = batch_unit_aggregations
-            .iter()
-            .map(|v| {
-                Interval::new(v.unit_interval_start, task.min_batch_duration)
-                    .map_err(|e| datastore::Error::User(e.into()))
-            })
-            .collect::<Result<_, datastore::Error>>()?;
-
-        let overlaps = tx
-            .get_aggregate_share_job_counts_for_intervals(task.id, task.role, &intervals)
-            .await?;
-
-        for (unit_interval, consumed_batch_lifetime) in overlaps {
-            if consumed_batch_lifetime == task.max_batch_lifetime {
-                debug!(
-                    ?task.id, ?unit_interval,
-                    "refusing aggregate share request because lifetime for batch unit has been consumed"
-                );
-                return Err(datastore::Error::User(
-                    Error::BatchLifetimeExceeded(task.id).into(),
-                ));
-            }
-            if consumed_batch_lifetime > task.max_batch_lifetime {
-                error!(
-                    ?task.id, ?unit_interval,
-                    "batch unit lifetime has been consumed more times than task allows"
-                );
-                panic!("batch unit lifetime has already been consumed more times than task allows");
-            }
-        }
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(tx), err)]
-    async fn service_aggregate_share_request<A, C>(
-        tx: &Transaction<'_, C>,
-        task: &Task,
-        aggregate_share_req: &AggregateShareReq,
-    ) -> Result<AggregateShareJob<A>, datastore::Error>
-    where
-        A: vdaf::Aggregator,
-        A::AggregationParam: Send + Sync,
-        A::AggregateShare: Send + Sync,
-        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
-        C: Clock,
-    {
-        let aggregation_param =
-            A::AggregationParam::get_decoded(&aggregate_share_req.aggregation_param)?;
-        let batch_unit_aggregations = tx
-            .get_batch_unit_aggregations_for_task_in_interval::<A>(
-                task.id,
-                aggregate_share_req.batch_interval,
-                &aggregation_param,
-            )
-            .await?;
-
-        Self::validate_batch_lifetime_for_unit_aggregations(tx, task, &batch_unit_aggregations)
-            .await?;
-
-        // At the moment we handle the AggregateShareReq, there could be some incomplete aggregation
-        // jobs whose results not been accumulated into the batch unit aggregations we just queried
-        // from the datastore, meaning we will aggregate over an incomplete view of data, which:
-        //
-        //  * reduces fidelity of the resulting aggregates,
-        //  * could cause us to fail to meet the minimum batch size for the task,
-        //  * or for particularly pathological timing, could cause us to aggregate a different set
-        //    of reports than the leader did (though the checksum will detect this).
-        //
-        // There's not much the helper can do about this, because an aggregate job might be
-        // unfinished because it's waiting on an aggregate sub-protocol message that is never coming
-        // because the leader has abandoned that job.
-        //
-        // Thus the helper has no choice but to assume that any unfinished aggregation jobs were
-        // intentionally abandoned by the leader and service the aggregate share request with
-        // whatever batch unit aggregations are available now.
-        //
-        // See issue #104 for more discussion.
-
-        let mut total_report_count = 0;
-        let mut total_checksum = NonceChecksum::default();
-        let mut total_aggregate_share: Option<A::AggregateShare> = None;
-
-        for batch_unit_aggregation in &batch_unit_aggregations {
-            // §4.4.4.3: XOR this batch interval's checksum into the overall checksum
-            total_checksum.combine(batch_unit_aggregation.checksum);
-
-            // §4.4.4.3: Sum all the report counts
-            total_report_count += batch_unit_aggregation.report_count;
-
-            match &mut total_aggregate_share {
-                Some(share) => share
-                    .merge(&batch_unit_aggregation.aggregate_share)
-                    .map_err(|e| datastore::Error::User(e.into()))?,
-                None => {
-                    total_aggregate_share = Some(batch_unit_aggregation.aggregate_share.clone())
-                }
-            }
-        }
-
-        let total_aggregate_share = match total_aggregate_share {
-            Some(share) => share,
-            None => {
-                return Err(datastore::Error::User(
-                    Error::InsufficientBatchSize(0, task.id).into(),
-                ))
-            }
-        };
-
-        // §4.6: refuse to service aggregate share requests if there are too few reports
-        // included.
-        if total_report_count < task.min_batch_size {
-            return Err(datastore::Error::User(
-                Error::InsufficientBatchSize(total_report_count, task.id).into(),
-            ));
-        }
-
-        // Now that we are satisfied that the request is serviceable, we consume batch lifetime by
-        // recording the aggregate share request parameters and the result.
-        let aggregate_share_job = AggregateShareJob {
-            task_id: task.id,
-            batch_interval: aggregate_share_req.batch_interval,
-            aggregation_param,
-            helper_aggregate_share: total_aggregate_share,
-            report_count: total_report_count,
-            checksum: total_checksum,
-        };
-
-        tx.put_aggregate_share_job(&aggregate_share_job).await?;
-
-        Ok(aggregate_share_job)
-    }
-
     async fn handle_aggregate_share_generic<A, C>(
         datastore: &Datastore<C>,
         task: &Task,
@@ -1589,12 +1429,43 @@ impl VdafOps {
                                 ?aggregate_share_req,
                                 "Cache miss, computing aggregate share job result"
                             );
-                            Self::service_aggregate_share_request::<A, C>(
+                            let aggregation_param = A::AggregationParam::get_decoded(
+                                &aggregate_share_req.aggregation_param,
+                            )?;
+                            let batch_unit_aggregations = tx
+                                .get_batch_unit_aggregations_for_task_in_interval::<A>(
+                                    task.id,
+                                    aggregate_share_req.batch_interval,
+                                    &aggregation_param,
+                                )
+                                .await?;
+
+                            validate_batch_lifetime_for_unit_aggregations(
                                 tx,
                                 &task,
-                                &aggregate_share_req,
+                                &batch_unit_aggregations,
                             )
-                            .await?
+                            .await?;
+
+                            let (helper_aggregate_share, report_count, checksum) =
+                                compute_aggregate_share::<A>(&task, &batch_unit_aggregations)
+                                    .await
+                                    .map_err(|e| datastore::Error::User(e.into()))?;
+
+                            // Now that we are satisfied that the request is serviceable, we consume batch lifetime by
+                            // recording the aggregate share request parameters and the result.
+                            let aggregate_share_job = AggregateShareJob::<A> {
+                                task_id: task.id,
+                                batch_interval: aggregate_share_req.batch_interval,
+                                aggregation_param,
+                                helper_aggregate_share,
+                                report_count,
+                                checksum,
+                            };
+
+                            tx.put_aggregate_share_job(&aggregate_share_job).await?;
+
+                            aggregate_share_job
                         }
                     };
 
@@ -1828,6 +1699,7 @@ fn error_handler<R: Reply>(
             Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(Error::HttpClient(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::TaskParameters(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     }
@@ -1865,8 +1737,6 @@ fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
-    const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
-
     let aggregator = Arc::new(Aggregator::new(datastore, clock));
 
     let meter = opentelemetry::global::meter("janus_server");
@@ -4498,40 +4368,12 @@ mod tests {
             .into_response();
         assert_eq!(collect_job_response.status(), StatusCode::ACCEPTED);
 
-        // Update the collect job with the leader share. Collect job should still not be complete.
-        datastore
-            .run_tx(|tx| {
-                let leader_aggregate_share = leader_aggregate_share.clone();
-                Box::pin(async move {
-                    tx.update_collect_job_leader_aggregate_share::<Prio3Aes128Count>(
-                        collect_job_id,
-                        &leader_aggregate_share,
-                        10,
-                        NonceChecksum::get_decoded(&[1; 32]).unwrap(),
-                    )
-                    .await
-                    .unwrap();
-
-                    Ok(())
-                })
-            })
-            .await
-            .unwrap();
-
-        let collect_job_response = warp::test::request()
-            .method("GET")
-            .path(&format!("/collect_jobs/{}", collect_job_id))
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(collect_job_response.status(), StatusCode::ACCEPTED);
-
-        // Update the collect job with the helper's share. Collect job should now be complete.
+        // Update the collect job with the aggregate shares. Collect job should now be complete.
         datastore
             .run_tx(|tx| {
                 let collector_hpke_config = task.collector_hpke_config.clone();
                 let helper_aggregate_share_bytes: Vec<u8> = (&helper_aggregate_share).into();
+                let leader_aggregate_share = leader_aggregate_share.clone();
                 Box::pin(async move {
                     let encrypted_helper_aggregate_share = hpke::seal(
                         &collector_hpke_config,
@@ -4545,8 +4387,11 @@ mod tests {
                     )
                     .unwrap();
 
-                    tx.update_collect_job_helper_aggregate_share::<Prio3Aes128Count, _>(
+                    tx.update_collect_job::<Prio3Aes128Count>(
                         collect_job_id,
+                        &leader_aggregate_share,
+                        10,
+                        NonceChecksum::get_decoded(&[1; 32]).unwrap(),
                         &encrypted_helper_aggregate_share,
                     )
                     .await

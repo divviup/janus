@@ -25,7 +25,7 @@ use janus_server::{
         AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
         ReportShareError,
     },
-    task::{Task, VdafInstance},
+    task::{Task, VdafInstance, DAP_AUTH_HEADER},
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -63,8 +63,6 @@ const CLIENT_USER_AGENT: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     "/aggregation_job_driver",
 );
-
-const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
