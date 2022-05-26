@@ -19,6 +19,7 @@ use janus::{
     },
     time::Clock,
 };
+use opentelemetry::{metrics::Counter, KeyValue};
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -42,16 +43,23 @@ pub struct Datastore<C: Clock> {
     pool: deadpool_postgres::Pool,
     crypter: Crypter,
     clock: C,
+    transaction_status_counter: Counter<u64>,
 }
 
 impl<C: Clock> Datastore<C> {
     /// new creates a new Datastore using the given Client for backing storage. It is assumed that
     /// the Client is connected to a database with a compatible version of the Janus database schema.
     pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter, clock: C) -> Datastore<C> {
+        let meter = opentelemetry::global::meter("janus_server");
+        let transaction_status_counter = meter
+            .u64_counter("aggregator_database_transactions_total")
+            .with_description("Count of database transactions run, with their status.")
+            .init();
         Self {
             pool,
             crypter,
             clock,
+            transaction_status_counter,
         }
     }
 
@@ -70,9 +78,23 @@ impl<C: Clock> Datastore<C> {
     {
         loop {
             let rslt = self.run_tx_once(&f).await;
-            if let Some(err) = rslt.as_ref().err() {
-                if err.is_serialization_failure() {
+            match rslt.as_ref() {
+                Ok(_) => {
+                    self.transaction_status_counter
+                        .add(1, &[KeyValue::new("status", "success")]);
+                }
+                Err(err) if err.is_serialization_failure() => {
+                    self.transaction_status_counter
+                        .add(1, &[KeyValue::new("status", "error_conflict")]);
                     continue;
+                }
+                Err(Error::Db(_)) | Err(Error::Pool(_)) => {
+                    self.transaction_status_counter
+                        .add(1, &[KeyValue::new("status", "error_db")]);
+                }
+                Err(_) => {
+                    self.transaction_status_counter
+                        .add(1, &[KeyValue::new("status", "error_other")]);
                 }
             }
             return rslt;
