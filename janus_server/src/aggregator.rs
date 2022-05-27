@@ -62,7 +62,7 @@ use warp::{
 };
 
 #[cfg(test)]
-use self::test_util::fake;
+use ::janus_test_util::dummy_vdaf;
 #[cfg(test)]
 use prio::vdaf::VdafError;
 
@@ -423,25 +423,27 @@ impl TaskAggregator {
             }
 
             #[cfg(test)]
-            VdafInstance::Fake => VdafOps::Fake(fake::Vdaf::new()),
+            VdafInstance::Fake => VdafOps::Fake(dummy_vdaf::Vdaf::new()),
 
             #[cfg(test)]
-            VdafInstance::FakeFailsPrepInit => VdafOps::Fake(fake::Vdaf::new().with_prep_init_fn(
-                || -> Result<(), VdafError> {
+            VdafInstance::FakeFailsPrepInit => VdafOps::Fake(
+                dummy_vdaf::Vdaf::new().with_prep_init_fn(|_| -> Result<(), VdafError> {
                     Err(VdafError::Uncategorized(
                         "FakeFailsPrepInit failed at prep_init".to_string(),
                     ))
-                },
-            )),
+                }),
+            ),
 
             #[cfg(test)]
-            VdafInstance::FakeFailsPrepStep => VdafOps::Fake(fake::Vdaf::new().with_prep_step_fn(
-                || -> PrepareTransition<(), (), fake::OutputShare> {
-                    PrepareTransition::Fail(VdafError::Uncategorized(
-                        "FakeFailsPrepStep failed at prep_step".to_string(),
-                    ))
-                },
-            )),
+            VdafInstance::FakeFailsPrepStep => {
+                VdafOps::Fake(dummy_vdaf::Vdaf::new().with_prep_step_fn(
+                    || -> PrepareTransition<(), (), dummy_vdaf::OutputShare> {
+                        PrepareTransition::Fail(VdafError::Uncategorized(
+                            "FakeFailsPrepStep failed at prep_step".to_string(),
+                        ))
+                    },
+                ))
+            }
 
             _ => panic!("VDAF {:?} is not yet supported", task.vdaf),
         };
@@ -625,7 +627,7 @@ enum VdafOps {
     ),
 
     #[cfg(test)]
-    Fake(fake::Vdaf),
+    Fake(dummy_vdaf::Vdaf),
 }
 
 impl VdafOps {
@@ -671,7 +673,7 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(vdaf) => {
-                Self::handle_aggregate_init_generic::<fake::Vdaf, _>(
+                Self::handle_aggregate_init_generic::<dummy_vdaf::Vdaf, _>(
                     datastore,
                     vdaf,
                     task,
@@ -723,7 +725,7 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(vdaf) => {
-                Self::handle_aggregate_continue_generic::<fake::Vdaf, _>(
+                Self::handle_aggregate_continue_generic::<dummy_vdaf::Vdaf, _>(
                     datastore,
                     vdaf,
                     task,
@@ -1167,7 +1169,8 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_collect_generic::<fake::Vdaf, _>(datastore, task, collect_req).await
+                Self::handle_collect_generic::<dummy_vdaf::Vdaf, _>(datastore, task, collect_req)
+                    .await
             }
         }
     }
@@ -1262,8 +1265,12 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_collect_job_generic::<fake::Vdaf, _>(datastore, task, collect_job_id)
-                    .await
+                Self::handle_collect_job_generic::<dummy_vdaf::Vdaf, _>(
+                    datastore,
+                    task,
+                    collect_job_id,
+                )
+                .await
             }
         }
     }
@@ -1369,7 +1376,7 @@ impl VdafOps {
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
-                Self::handle_aggregate_share_generic::<fake::Vdaf, C>(
+                Self::handle_aggregate_share_generic::<dummy_vdaf::Vdaf, C>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -2048,186 +2055,9 @@ pub fn aggregator_server<C: Clock>(
 }
 
 #[cfg(test)]
-pub(crate) mod test_util {
-    pub mod fake {
-        use prio::vdaf::{self, Aggregatable, PrepareTransition, VdafError};
-        use std::convert::Infallible;
-        use std::fmt::Debug;
-        use std::sync::Arc;
-
-        #[derive(Clone)]
-        pub struct Vdaf {
-            prep_init_fn: Arc<dyn Fn() -> Result<(), VdafError> + 'static + Send + Sync>,
-            prep_step_fn:
-                Arc<dyn Fn() -> PrepareTransition<(), (), OutputShare> + 'static + Send + Sync>,
-        }
-
-        impl Debug for Vdaf {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.debug_struct("Vdaf")
-                    .field("prep_init_result", &"[omitted]")
-                    .field("prep_step_result", &"[omitted]")
-                    .finish()
-            }
-        }
-
-        impl Vdaf {
-            pub fn new() -> Self {
-                Vdaf {
-                    prep_init_fn: Arc::new(|| -> Result<(), VdafError> { Ok(()) }),
-                    prep_step_fn: Arc::new(|| -> PrepareTransition<(), (), OutputShare> {
-                        PrepareTransition::Finish(OutputShare())
-                    }),
-                }
-            }
-
-            pub fn with_prep_init_fn<F: Fn() -> Result<(), VdafError>>(mut self, f: F) -> Self
-            where
-                F: 'static + Send + Sync,
-            {
-                self.prep_init_fn = Arc::new(f);
-                self
-            }
-
-            pub fn with_prep_step_fn<F: Fn() -> PrepareTransition<(), (), OutputShare>>(
-                mut self,
-                f: F,
-            ) -> Self
-            where
-                F: 'static + Send + Sync,
-            {
-                self.prep_step_fn = Arc::new(f);
-                self
-            }
-        }
-
-        impl vdaf::Vdaf for Vdaf {
-            type Measurement = ();
-            type AggregateResult = ();
-            type AggregationParam = ();
-            type PublicParam = ();
-            type VerifyParam = ();
-            type InputShare = ();
-            type OutputShare = OutputShare;
-            type AggregateShare = AggregateShare;
-
-            fn setup(&self) -> Result<(Self::PublicParam, Vec<Self::VerifyParam>), VdafError> {
-                Ok(((), vec![(), ()]))
-            }
-
-            fn num_aggregators(&self) -> usize {
-                2
-            }
-        }
-
-        impl vdaf::Aggregator for Vdaf {
-            type PrepareStep = ();
-            type PrepareMessage = ();
-
-            fn prepare_init(
-                &self,
-                _: &Self::VerifyParam,
-                _: &Self::AggregationParam,
-                _: &[u8],
-                _: &Self::InputShare,
-            ) -> Result<Self::PrepareStep, VdafError> {
-                (self.prep_init_fn)()
-            }
-
-            fn prepare_preprocess<M: IntoIterator<Item = Self::PrepareMessage>>(
-                &self,
-                _: M,
-            ) -> Result<Self::PrepareMessage, VdafError> {
-                Ok(())
-            }
-
-            fn prepare_step(
-                &self,
-                _: Self::PrepareStep,
-                _: Option<Self::PrepareMessage>,
-            ) -> PrepareTransition<Self::PrepareStep, Self::PrepareMessage, Self::OutputShare>
-            {
-                (self.prep_step_fn)()
-            }
-
-            fn aggregate<M: IntoIterator<Item = Self::OutputShare>>(
-                &self,
-                _: &Self::AggregationParam,
-                _: M,
-            ) -> Result<Self::AggregateShare, VdafError> {
-                Ok(AggregateShare())
-            }
-        }
-
-        impl vdaf::Client for Vdaf {
-            fn shard(
-                &self,
-                _: &Self::PublicParam,
-                _: &Self::Measurement,
-            ) -> Result<Vec<Self::InputShare>, VdafError> {
-                Ok(vec![(), ()])
-            }
-        }
-
-        #[derive(Clone, Debug, PartialEq, Eq)]
-        pub struct OutputShare();
-
-        impl TryFrom<&[u8]> for OutputShare {
-            type Error = Infallible;
-
-            fn try_from(_: &[u8]) -> Result<Self, Self::Error> {
-                Ok(Self())
-            }
-        }
-
-        impl From<&OutputShare> for Vec<u8> {
-            fn from(_: &OutputShare) -> Self {
-                Self::new()
-            }
-        }
-
-        #[derive(Clone, Debug, PartialEq, Eq)]
-        pub struct AggregateShare();
-
-        impl Aggregatable for AggregateShare {
-            type OutputShare = OutputShare;
-
-            fn merge(&mut self, _: &Self) -> Result<(), VdafError> {
-                Ok(())
-            }
-
-            fn accumulate(&mut self, _: &Self::OutputShare) -> Result<(), VdafError> {
-                Ok(())
-            }
-        }
-
-        impl From<OutputShare> for AggregateShare {
-            fn from(_: OutputShare) -> Self {
-                Self()
-            }
-        }
-
-        impl TryFrom<&[u8]> for AggregateShare {
-            type Error = Infallible;
-
-            fn try_from(_: &[u8]) -> Result<Self, Self::Error> {
-                Ok(Self())
-            }
-        }
-
-        impl From<&AggregateShare> for Vec<u8> {
-            fn from(_: &AggregateShare) -> Self {
-                Self::new()
-            }
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        aggregator::test_util::fake,
         datastore::{
             models::BatchUnitAggregation,
             test_util::{ephemeral_datastore, DbHandle},
@@ -2238,7 +2068,7 @@ mod tests {
         },
         trace::test_util::install_test_trace_subscriber,
     };
-    use ::janus_test_util::{run_vdaf, MockClock, PrepareTransition};
+    use ::janus_test_util::{dummy_vdaf, run_vdaf, MockClock, PrepareTransition};
     use assert_matches::assert_matches;
     use http::Method;
     use janus::{
@@ -3094,7 +2924,7 @@ mod tests {
             .await
             .unwrap();
 
-        let report_share = generate_helper_report_share::<fake::Vdaf>(
+        let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
             Nonce::generate(&clock),
             &hpke_key.0,
@@ -3161,7 +2991,7 @@ mod tests {
             .await
             .unwrap();
 
-        let report_share = generate_helper_report_share::<fake::Vdaf>(
+        let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
             Nonce::generate(&clock),
             &hpke_key.0,
@@ -3926,14 +3756,14 @@ mod tests {
                         },
                     )
                     .await?;
-                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                    tx.put_aggregation_job(&AggregationJob::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         aggregation_param: (),
                         state: AggregationJobState::InProgress,
                     })
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                    tx.put_report_aggregation(&ReportAggregation::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         nonce,
@@ -4027,14 +3857,14 @@ mod tests {
                         },
                     )
                     .await?;
-                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                    tx.put_aggregation_job(&AggregationJob::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         aggregation_param: (),
                         state: AggregationJobState::InProgress,
                     })
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                    tx.put_report_aggregation(&ReportAggregation::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         nonce,
@@ -4098,10 +3928,10 @@ mod tests {
             .run_tx(|tx| {
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<fake::Vdaf>(task_id, aggregation_job_id)
+                        .get_aggregation_job::<dummy_vdaf::Vdaf>(task_id, aggregation_job_id)
                         .await?;
                     let report_aggregation = tx
-                        .get_report_aggregation::<fake::Vdaf>(
+                        .get_report_aggregation::<dummy_vdaf::Vdaf>(
                             &(),
                             task_id,
                             aggregation_job_id,
@@ -4171,14 +4001,14 @@ mod tests {
                         },
                     )
                     .await?;
-                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                    tx.put_aggregation_job(&AggregationJob::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         aggregation_param: (),
                         state: AggregationJobState::InProgress,
                     })
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                    tx.put_report_aggregation(&ReportAggregation::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         nonce,
@@ -4294,7 +4124,7 @@ mod tests {
                     )
                     .await?;
 
-                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                    tx.put_aggregation_job(&AggregationJob::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         aggregation_param: (),
@@ -4302,7 +4132,7 @@ mod tests {
                     })
                     .await?;
 
-                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                    tx.put_report_aggregation(&ReportAggregation::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         nonce: nonce_0,
@@ -4310,7 +4140,7 @@ mod tests {
                         state: ReportAggregationState::Waiting((), None),
                     })
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                    tx.put_report_aggregation(&ReportAggregation::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         nonce: nonce_1,
@@ -4411,14 +4241,14 @@ mod tests {
                         },
                     )
                     .await?;
-                    tx.put_aggregation_job(&AggregationJob::<fake::Vdaf> {
+                    tx.put_aggregation_job(&AggregationJob::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         aggregation_param: (),
                         state: AggregationJobState::InProgress,
                     })
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<fake::Vdaf> {
+                    tx.put_report_aggregation(&ReportAggregation::<dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
                         nonce,
@@ -4808,11 +4638,11 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<fake::Vdaf> {
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<dummy_vdaf::Vdaf> {
                         task_id: task.id,
                         unit_interval_start: Time::from_seconds_since_epoch(0),
                         aggregation_param: (),
-                        aggregate_share: fake::AggregateShare(),
+                        aggregate_share: dummy_vdaf::AggregateShare(),
                         report_count: 10,
                         checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
                     })
