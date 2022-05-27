@@ -110,7 +110,7 @@ CREATE TABLE report_aggregations(
     prep_state          BYTEA,                              -- the current preparation state (opaque VDAF message, only if in state WAITING)
     prep_msg            BYTEA,                              -- the next preparation message to be sent to the helper (opaque VDAF message, only if in state WAITING if this aggregator is the leader)
     out_share           BYTEA,                              -- the output share (opaque VDAF message, only if in state FINISHED)
-    error_code          BIGINT,                             -- error code corresponding to a PPM TransitionError value; null if in a state other than FAILED
+    error_code          BIGINT,                             -- error code corresponding to a PPM ReportShareError value; null if in a state other than FAILED
 
     CONSTRAINT unique_ord UNIQUE(aggregation_job_id, ord),
     CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id),
@@ -142,6 +142,7 @@ CREATE TABLE collect_jobs(
     batch_interval_start    TIMESTAMP NOT NULL, -- the start of the batch interval
     batch_interval_duration BIGINT NOT NULL,    -- the length of the batch interval in seconds
     aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
+    lease_expiry            TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collect job expires; -infinity implies no current lease
     helper_aggregate_share  BYTEA,              -- the helper's encrypted aggregate share; null until the helper has serviced the AggregateShareReq
     leader_aggregate_share  BYTEA,              -- the leader's unencrypted aggregate share; null until the leader has performed its aggregation for a CollectReq
     report_count            BIGINT,             -- the count of reports included in the leader's aggregate share; null until the leader has performed its aggregation for a CollectReq
@@ -150,6 +151,8 @@ CREATE TABLE collect_jobs(
     CONSTRAINT unique_collect_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval_start, batch_interval_duration, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
+-- TODO: what's the right index here?
+CREATE INDEX collect_jobs_lease_expiry ON collect_jobs(lease_expiry);
 
 -- The helper's view of aggregate share jobs.
 CREATE TABLE aggregate_share_jobs(

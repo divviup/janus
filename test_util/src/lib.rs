@@ -24,6 +24,8 @@ use tokio::{
     time::MissedTickBehavior,
 };
 
+pub mod dummy_vdaf;
+
 /// The Janus database schema.
 pub static SCHEMA: &str = include_str!("../../db/schema.sql");
 

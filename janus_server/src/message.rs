@@ -135,7 +135,7 @@ impl Decode for ReportShareError {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Self::try_from(val).map_err(|_| {
-            CodecError::Other(anyhow!("unexpected TransitionError value {}", val).into())
+            CodecError::Other(anyhow!("unexpected ReportShareError value {}", val).into())
         })
     }
 }
