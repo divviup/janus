@@ -4153,7 +4153,7 @@ mod tests {
             .unwrap();
 
         // Advance time by the lease duration
-        clock.advance(Duration::from_seconds(100));
+        clock.advance(Duration::from_seconds(100)).await;
 
         ds.run_tx(|tx| {
             let reacquired_jobs = reacquired_jobs.clone();
