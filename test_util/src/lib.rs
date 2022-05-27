@@ -4,7 +4,6 @@ use janus::{
     message::{Duration, Nonce, Time},
     time::{Clock, ClockInterval, Elapsed},
 };
-use pin_project::pin_project;
 use prio::{
     codec::Encode,
     vdaf::{self, VdafError},
@@ -13,12 +12,11 @@ use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     future::Future,
-    pin::Pin,
     sync::{Arc, Mutex as StdMutex},
-    task::{Context, Poll},
     time::{Duration as StdDuration, Instant},
 };
 use tokio::{
+    select,
     sync::{
         broadcast::{self, Sender},
         Mutex,
@@ -206,7 +204,10 @@ impl MockClock {
     }
 
     /// Helper function to sleep until the clock is advanced past a given instant.
-    async fn sleep_until(&self, instant: Instant) {
+    ///
+    /// If `report_to_test_driver` is true, this task will be included in the accounting for
+    /// `wait_for_sleeping_tasks()`.
+    async fn sleep_until(&self, instant: Instant, report_to_test_driver: bool) {
         let mut receiver = {
             let current_times_guard = self.inner.current_times.lock().await;
             // Do an early-out check if the timer has already expired. This will avoid spuriously
@@ -217,8 +218,8 @@ impl MockClock {
             current_times_guard.2.subscribe()
         };
 
-        // Record that this task is sleeping, and notify any tasks in `wait_for_sleeping_tasks()`.
-        {
+        if report_to_test_driver {
+            // Record that this task is sleeping, and notify any tasks in `wait_for_sleeping_tasks()`.
             let mut waiting_tasks_guard = self.inner.waiting_tasks.lock().await;
             waiting_tasks_guard.0.push(instant);
             let _ = waiting_tasks_guard.1.send(());
@@ -275,7 +276,14 @@ impl Clock for MockClock {
         F: Future<Output = O> + Send,
     {
         let deadline = self.now_monotonic() + duration;
-        MockTimeoutCancellable::new(future, || self.now_monotonic() >= deadline).await
+        select! {
+            _ = self.sleep_until(deadline, false) => {
+                Err(Elapsed)
+            }
+            output = future => {
+                Ok(output)
+            }
+        }
     }
 
     fn interval_at(&self, start: Instant, period: StdDuration) -> Self::Interval {
@@ -288,7 +296,7 @@ impl Clock for MockClock {
 
     async fn sleep(&self, duration: StdDuration) {
         let deadline = self.now_monotonic() + duration;
-        self.sleep_until(deadline).await;
+        self.sleep_until(deadline, true).await;
     }
 }
 
@@ -310,52 +318,12 @@ pub struct MockInterval {
 #[async_trait]
 impl ClockInterval for MockInterval {
     async fn tick(&mut self) {
-        self.clock.sleep_until(self.next_tick).await;
+        self.clock.sleep_until(self.next_tick, true).await;
         self.next_tick += self.period;
     }
 
     fn set_missed_tick_behavior(&mut self, _behavior: MissedTickBehavior) {
         // Ignore this setting, because time doesn't advance smoothly with a MockClock.
-    }
-}
-
-/// This future combinator is used by `MockClock::timeout` to check the timeout at every yield
-/// point, and cancel if the timeout has elapsed.
-#[pin_project]
-struct MockTimeoutCancellable<FU, FN, O>
-where
-    FU: Future<Output = O>,
-{
-    #[pin]
-    inner: FU,
-    should_cancel: FN,
-}
-
-impl<FU, FN, O> MockTimeoutCancellable<FU, FN, O>
-where
-    FU: Future<Output = O>,
-{
-    fn new(future: FU, should_cancel_predicate: FN) -> MockTimeoutCancellable<FU, FN, O> {
-        MockTimeoutCancellable {
-            inner: future,
-            should_cancel: should_cancel_predicate,
-        }
-    }
-}
-
-impl<FU, FN, O> Future for MockTimeoutCancellable<FU, FN, O>
-where
-    FU: Future<Output = O>,
-    FN: Fn() -> bool,
-{
-    type Output = Result<O, Elapsed>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        if (this.should_cancel)() {
-            return Poll::Ready(Err(Elapsed));
-        }
-        this.inner.poll(cx).map(Result::Ok)
     }
 }
 

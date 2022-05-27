@@ -1362,7 +1362,6 @@ dependencies = [
  "chrono",
  "futures",
  "janus",
- "pin-project",
  "prio",
  "rand",
  "ring",
