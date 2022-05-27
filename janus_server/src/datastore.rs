@@ -1,7 +1,7 @@
 //! Janus datastore (durable storage) implementation.
 
 use self::models::{
-    AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregatorRole,
+    AcquiredAggregationJob, AcquiredCollectJob, AggregateShareJob, AggregationJob, AggregatorRole,
     BatchUnitAggregation, CollectJob, ReportAggregation, ReportAggregationState,
     ReportAggregationStateCode,
 };
@@ -767,10 +767,10 @@ impl<C: Clock> Transaction<'_, C> {
         })
     }
 
-    // acquire_incomplete_aggregation_jobs retrieves & acquires the IDs of unclaimed incomplete
-    // aggregation jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired with
-    // a "lease" that will time out; the desired duration of the lease is a parameter, and the lease
-    // expiration time is returned.
+    /// acquire_incomplete_aggregation_jobs retrieves & acquires the IDs of unclaimed incomplete
+    /// aggregation jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired
+    /// with a "lease" that will time out; the desired duration of the lease is a parameter, and the
+    /// lease expiration time is returned.
     pub async fn acquire_incomplete_aggregation_jobs(
         &self,
         lease_duration: Duration,
@@ -884,7 +884,7 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    // update_aggregation_job updates a stored aggregation job.
+    /// update_aggregation_job updates a stored aggregation job.
     #[tracing::instrument(skip(self), err)]
     pub async fn update_aggregation_job<A: vdaf::Aggregator>(
         &self,
@@ -1259,6 +1259,119 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
 
         Ok(collect_job_id)
+    }
+
+    /// acquire_incomplete_collect_jobs retrieves & acquires the IDs of unclaimed incomplete collect
+    /// jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired with a "lease"
+    /// that will time out; the desired duration of the lease is a parameter, and the lease
+    /// expiration time is returned.
+    pub async fn acquire_incomplete_collect_jobs(
+        &self,
+        lease_duration: Duration,
+        maximum_acquire_count: usize,
+    ) -> Result<Vec<(AcquiredCollectJob, Time)>, Error> {
+        let now = self.clock.now();
+        let lease_expiry_time = now.add(lease_duration)?;
+        let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                r#"
+WITH updated as (
+    UPDATE collect_jobs SET lease_expiry = $1 FROM tasks WHERE collect_jobs.id IN (
+        SELECT collect_jobs.id FROM collect_jobs
+        -- Join on aggregation jobs with matching task ID and aggregation parameter
+        INNER JOIN aggregation_jobs
+            ON collect_jobs.aggregation_param = aggregation_jobs.aggregation_param
+            AND collect_jobs.task_id = aggregation_jobs.task_id
+        -- Join on report aggregations with matching aggregation job ID
+        INNER JOIN report_aggregations
+            ON report_aggregations.aggregation_job_id = aggregation_jobs.id
+        -- Join on reports whose nonce falls within the collect job batch interval and which are
+        -- included in an aggregation job
+        INNER JOIN client_reports
+            ON client_reports.id = report_aggregations.client_report_id
+            AND client_reports.nonce_time <@ tsrange(
+                collect_jobs.batch_interval_start,
+                collect_jobs.batch_interval_start
+                    + collect_jobs.batch_interval_duration * interval '1 second')
+        WHERE
+            -- Constraint for tasks table in FROM position
+            tasks.id = collect_jobs.task_id
+            -- Do not acquire collect jobs that have been completed
+            AND collect_jobs.helper_aggregate_share IS NULL
+            -- Do not acquire collect jobs with an unexpired lease
+            AND collect_jobs.lease_expiry <= $2
+        GROUP BY collect_jobs.id
+        -- Do not acquire collect jobs where any associated aggregation jobs are not finished
+        HAVING bool_and(aggregation_jobs.state != 'IN_PROGRESS')
+        -- Honor maximum_acquire_count *after* winnowing down to runnable collect jobs
+        LIMIT $3
+    )
+    RETURNING tasks.task_id, tasks.vdaf, collect_jobs.collect_job_id, collect_jobs.id
+)
+SELECT task_id, vdaf, collect_job_id FROM updated
+-- TODO (issue #174): revisit collect job queueing behavior implied by this ORDER BY
+ORDER BY id DESC
+"#,
+            )
+            .await?;
+        self.tx
+            .query(
+                &stmt,
+                &[
+                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time(),
+                    /* now */ &now.as_naive_date_time(),
+                    /* limit */ &maximum_acquire_count,
+                ],
+            )
+            .await?
+            .into_iter()
+            .map(|row| {
+                let task_id = TaskId::get_decoded(row.get("task_id"))?;
+                let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+                let collect_job_id = row.get("collect_job_id");
+                Ok((
+                    AcquiredCollectJob {
+                        task_id,
+                        vdaf,
+                        collect_job_id,
+                    },
+                    lease_expiry_time,
+                ))
+            })
+            .collect()
+    }
+
+    /// release_collect_job releases an acquired (via e.g. acquire_incomplete_collect_jobs) collect
+    /// job. It returns an error if the collect job has no current lease.
+    pub async fn release_collect_job(
+        &self,
+        task_id: TaskId,
+        collect_job_id: Uuid,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "UPDATE collect_jobs SET lease_expiry = TIMESTAMP '-infinity'
+                FROM tasks
+                WHERE tasks.id = collect_jobs.task_id
+                  AND tasks.task_id = $1
+                  AND collect_jobs.collect_job_id = $2",
+            )
+            .await?;
+        check_update(
+            self.tx
+                .execute(
+                    &stmt,
+                    &[
+                        /* task_id */ &task_id.as_bytes(),
+                        /* collect_job_id */ &collect_job_id,
+                    ],
+                )
+                .await?,
+        )
     }
 
     /// Updates an existing collect job with the provided leader aggregate share.
@@ -2125,6 +2238,14 @@ pub mod models {
         pub aggregation_job_id: AggregationJobId,
     }
 
+    /// AcquiredCollectJob represents an incomplete collect job whose lease has been acquired.
+    #[derive(Clone, Debug, PartialOrd, Ord, Eq, PartialEq)]
+    pub struct AcquiredCollectJob {
+        pub vdaf: VdafInstance,
+        pub task_id: TaskId,
+        pub collect_job_id: Uuid,
+    }
+
     /// ReportAggregation represents a the state of a single client report's ongoing aggregation.
     #[derive(Clone, Debug)]
     pub struct ReportAggregation<A: vdaf::Aggregator>
@@ -2468,7 +2589,7 @@ mod tests {
     use super::*;
     use crate::{
         datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
-        message::ReportShareError,
+        message::{test_util::new_dummy_report, ReportShareError},
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
@@ -2477,7 +2598,7 @@ mod tests {
     use futures::future::try_join_all;
     use janus::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
-        message::{Duration, ExtensionType, HpkeConfigId, Role, Time},
+        message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
     };
     use prio::{
         field::{Field128, Field64},
@@ -3826,6 +3947,618 @@ mod tests {
                     first_collect_job.checksum,
                     Some(NonceChecksum::get_decoded(&[1; 32]).unwrap())
                 );
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    type FakeVdaf = dummy_vdaf::VdafWithAggregationParameter<u8>;
+
+    #[derive(Clone)]
+    struct CollectJobTestCase {
+        should_be_acquired: bool,
+        task_id: TaskId,
+        batch_interval: Interval,
+        agg_param: u8,
+        collect_job_id: Option<Uuid>,
+        set_helper_aggregate_share: bool,
+    }
+
+    #[derive(Clone)]
+    struct CollectJobAcquireTestCase {
+        task_ids: Vec<TaskId>,
+        reports: Vec<Report>,
+        aggregation_jobs: Vec<AggregationJob<FakeVdaf>>,
+        report_aggregations: Vec<ReportAggregation<FakeVdaf>>,
+        collect_job_test_cases: Vec<CollectJobTestCase>,
+    }
+
+    async fn setup_collect_job_acquire_test_case(
+        ds: &Datastore<MockClock>,
+        test_case: CollectJobAcquireTestCase,
+    ) -> CollectJobAcquireTestCase {
+        ds.run_tx(|tx| {
+            let mut test_case = test_case.clone();
+            Box::pin(async move {
+                for task_id in &test_case.task_ids {
+                    tx.put_task(&new_dummy_task(*task_id, VdafInstance::Fake, Role::Leader))
+                        .await?;
+                }
+
+                for report in &test_case.reports {
+                    tx.put_client_report(report).await?;
+                }
+
+                for aggregation_job in &test_case.aggregation_jobs {
+                    tx.put_aggregation_job(aggregation_job).await?;
+                }
+
+                for report_aggregation in &test_case.report_aggregations {
+                    tx.put_report_aggregation(report_aggregation).await?;
+                }
+
+                for test_case in test_case.collect_job_test_cases.iter_mut() {
+                    let collect_job_id = tx
+                        .put_collect_job(
+                            test_case.task_id,
+                            test_case.batch_interval,
+                            &test_case.agg_param.get_encoded(),
+                        )
+                        .await?;
+
+                    if test_case.set_helper_aggregate_share {
+                        tx.update_collect_job_helper_aggregate_share::<FakeVdaf, _>(
+                            collect_job_id,
+                            &HpkeCiphertext::new(HpkeConfigId::from(0), vec![], vec![]),
+                        )
+                        .await?;
+                    }
+
+                    test_case.collect_job_id = Some(collect_job_id);
+                }
+
+                Ok(test_case)
+            })
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn run_collect_job_acquire_test_case(
+        ds: &Datastore<MockClock>,
+        test_case: CollectJobAcquireTestCase,
+    ) -> Vec<(AcquiredCollectJob, Time)> {
+        let test_case = setup_collect_job_acquire_test_case(ds, test_case).await;
+
+        let clock = &ds.clock;
+        ds.run_tx(|tx| {
+            let test_case = test_case.clone();
+            let clock = clock.clone();
+            Box::pin(async move {
+                let mut acquired_collect_jobs = tx
+                    .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 10)
+                    .await?;
+                acquired_collect_jobs.sort();
+
+                let mut expected_collect_jobs: Vec<_> = test_case
+                    .collect_job_test_cases
+                    .iter()
+                    .filter(|c| c.should_be_acquired)
+                    .map(|c| {
+                        (
+                            AcquiredCollectJob {
+                                vdaf: VdafInstance::Fake,
+                                collect_job_id: c.collect_job_id.unwrap(),
+                                task_id: c.task_id,
+                            },
+                            clock.now().add(Duration::from_seconds(100)).unwrap(),
+                        )
+                    })
+                    .collect();
+                expected_collect_jobs.sort();
+
+                assert_eq!(acquired_collect_jobs, expected_collect_jobs);
+
+                Ok(acquired_collect_jobs)
+            })
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn collect_job_acquire_release_happy_path() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let task_id = TaskId::random();
+        let reports = vec![new_dummy_report(task_id, Time::from_seconds_since_epoch(0))];
+        let aggregation_job_id = AggregationJobId::random();
+        let aggregation_jobs = vec![AggregationJob::<FakeVdaf> {
+            aggregation_job_id,
+            aggregation_param: 0u8,
+            task_id,
+            state: AggregationJobState::Finished,
+        }];
+        let report_aggregations = vec![ReportAggregation::<FakeVdaf> {
+            aggregation_job_id,
+            task_id,
+            nonce: reports[0].nonce(),
+            ord: 0,
+            // Doesn't matter what state the report aggregation is in
+            state: ReportAggregationState::Start,
+        }];
+
+        let collect_job_test_cases = vec![CollectJobTestCase {
+            should_be_acquired: true,
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(100),
+            )
+            .unwrap(),
+            agg_param: 0u8,
+            collect_job_id: None,
+            set_helper_aggregate_share: false,
+        }];
+
+        let acquired_collect_jobs = run_collect_job_acquire_test_case(
+            &ds,
+            CollectJobAcquireTestCase {
+                task_ids: vec![task_id],
+                reports,
+                aggregation_jobs,
+                report_aggregations,
+                collect_job_test_cases,
+            },
+        )
+        .await;
+
+        let reacquired_jobs = ds
+            .run_tx(|tx| {
+                let acquired_collect_jobs = acquired_collect_jobs.clone();
+                Box::pin(async move {
+                    // Try to re-acquire collect jobs. Nothing should happen because the lease is still
+                    // valid.
+                    assert!(tx
+                        .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 10)
+                        .await
+                        .unwrap()
+                        .is_empty());
+
+                    // Release the lease, then re-acquire it.
+                    tx.release_collect_job(
+                        acquired_collect_jobs[0].0.task_id,
+                        acquired_collect_jobs[0].0.collect_job_id,
+                    )
+                    .await
+                    .unwrap();
+
+                    let reacquired_jobs = tx
+                        .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 10)
+                        .await
+                        .unwrap();
+
+                    assert_eq!(reacquired_jobs.len(), 1);
+                    assert_eq!(reacquired_jobs, acquired_collect_jobs);
+
+                    Ok(reacquired_jobs)
+                })
+            })
+            .await
+            .unwrap();
+
+        // Advance time by the lease duration
+        clock.advance(Duration::from_seconds(100));
+
+        ds.run_tx(|tx| {
+            let reacquired_jobs = reacquired_jobs.clone();
+            Box::pin(async move {
+                // Re-acquire the jobs whose lease should have lapsed.
+                let acquired_jobs = tx
+                    .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 10)
+                    .await
+                    .unwrap();
+
+                for (acquired_job, reacquired_job) in acquired_jobs.iter().zip(reacquired_jobs) {
+                    assert_eq!(acquired_job.0, reacquired_job.0);
+                    assert_eq!(
+                        acquired_job.1,
+                        reacquired_job.1.add(Duration::from_seconds(100)).unwrap(),
+                    );
+                }
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn collect_job_acquire_no_aggregation_job_with_task_id() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let task_id = TaskId::random();
+        let other_task_id = TaskId::random();
+
+        let aggregation_jobs = vec![AggregationJob::<FakeVdaf> {
+            aggregation_job_id: AggregationJobId::random(),
+            aggregation_param: 0u8,
+            // Aggregation job task ID does not match collect job task ID
+            task_id: other_task_id,
+            state: AggregationJobState::Finished,
+        }];
+
+        let collect_job_test_cases = vec![CollectJobTestCase {
+            should_be_acquired: false,
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(100),
+            )
+            .unwrap(),
+            agg_param: 0u8,
+            collect_job_id: None,
+            set_helper_aggregate_share: false,
+        }];
+
+        run_collect_job_acquire_test_case(
+            &ds,
+            CollectJobAcquireTestCase {
+                task_ids: vec![task_id, other_task_id],
+                reports: vec![],
+                aggregation_jobs,
+                report_aggregations: vec![],
+                collect_job_test_cases,
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn collect_job_acquire_no_aggregation_job_with_agg_param() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let task_id = TaskId::random();
+        let reports = vec![new_dummy_report(task_id, Time::from_seconds_since_epoch(0))];
+
+        let aggregation_jobs = vec![AggregationJob::<FakeVdaf> {
+            aggregation_job_id: AggregationJobId::random(),
+            // Aggregation job agg param does not match collect job agg param
+            aggregation_param: 1u8,
+            task_id,
+            state: AggregationJobState::Finished,
+        }];
+
+        let collect_job_test_cases = vec![CollectJobTestCase {
+            should_be_acquired: false,
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(100),
+            )
+            .unwrap(),
+            agg_param: 0u8,
+            collect_job_id: None,
+            set_helper_aggregate_share: false,
+        }];
+
+        run_collect_job_acquire_test_case(
+            &ds,
+            CollectJobAcquireTestCase {
+                task_ids: vec![task_id],
+                reports,
+                aggregation_jobs,
+                report_aggregations: vec![],
+                collect_job_test_cases,
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn collect_job_acquire_report_shares_outside_interval() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let task_id = TaskId::random();
+        let reports = vec![new_dummy_report(
+            task_id,
+            // Report associated with the aggregation job is outside the collect job's batch
+            // interval
+            Time::from_seconds_since_epoch(200),
+        )];
+        let aggregation_job_id = AggregationJobId::random();
+        let aggregation_jobs = vec![AggregationJob::<FakeVdaf> {
+            aggregation_job_id,
+            aggregation_param: 0u8,
+            task_id,
+            state: AggregationJobState::Finished,
+        }];
+        let report_aggregations = vec![ReportAggregation::<FakeVdaf> {
+            aggregation_job_id,
+            task_id,
+            nonce: reports[0].nonce(),
+            ord: 0,
+            // Shouldn't matter what state the report aggregation is in
+            state: ReportAggregationState::Start,
+        }];
+
+        let collect_job_test_cases = vec![CollectJobTestCase {
+            should_be_acquired: false,
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(100),
+            )
+            .unwrap(),
+            agg_param: 0u8,
+            collect_job_id: None,
+            set_helper_aggregate_share: false,
+        }];
+
+        run_collect_job_acquire_test_case(
+            &ds,
+            CollectJobAcquireTestCase {
+                task_ids: vec![task_id],
+                reports,
+                aggregation_jobs,
+                report_aggregations,
+                collect_job_test_cases,
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn collect_job_acquire_release_job_finished() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let task_id = TaskId::random();
+        let reports = vec![new_dummy_report(task_id, Time::from_seconds_since_epoch(0))];
+        let aggregation_job_id = AggregationJobId::random();
+        let aggregation_jobs = vec![AggregationJob::<FakeVdaf> {
+            aggregation_job_id,
+            aggregation_param: 0u8,
+            task_id,
+            state: AggregationJobState::Finished,
+        }];
+
+        let report_aggregations = vec![ReportAggregation::<FakeVdaf> {
+            aggregation_job_id,
+            task_id,
+            nonce: reports[0].nonce(),
+            ord: 0,
+            state: ReportAggregationState::Start,
+        }];
+
+        let collect_job_test_cases = vec![CollectJobTestCase {
+            should_be_acquired: false,
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(100),
+            )
+            .unwrap(),
+            agg_param: 0u8,
+            collect_job_id: None,
+            // Collect job has already run to completion
+            set_helper_aggregate_share: true,
+        }];
+
+        run_collect_job_acquire_test_case(
+            &ds,
+            CollectJobAcquireTestCase {
+                task_ids: vec![task_id],
+                reports,
+                aggregation_jobs,
+                report_aggregations,
+                collect_job_test_cases,
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn collect_job_acquire_release_aggregation_job_in_progress() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let task_id = TaskId::random();
+        let reports = vec![
+            new_dummy_report(task_id, Time::from_seconds_since_epoch(0)),
+            new_dummy_report(task_id, Time::from_seconds_since_epoch(50)),
+        ];
+
+        let aggregation_job_ids = [AggregationJobId::random(), AggregationJobId::random()];
+        let aggregation_jobs = vec![
+            AggregationJob::<FakeVdaf> {
+                aggregation_job_id: aggregation_job_ids[0],
+                aggregation_param: 0u8,
+                task_id,
+                state: AggregationJobState::Finished,
+            },
+            AggregationJob::<FakeVdaf> {
+                aggregation_job_id: aggregation_job_ids[1],
+                aggregation_param: 0u8,
+                task_id,
+                // Aggregation job included in collect request is in progress
+                state: AggregationJobState::InProgress,
+            },
+        ];
+
+        let report_aggregations = vec![
+            ReportAggregation::<FakeVdaf> {
+                aggregation_job_id: aggregation_job_ids[0],
+                task_id,
+                nonce: reports[0].nonce(),
+                ord: 0,
+                state: ReportAggregationState::Start,
+            },
+            ReportAggregation::<FakeVdaf> {
+                aggregation_job_id: aggregation_job_ids[1],
+                task_id,
+                nonce: reports[1].nonce(),
+                ord: 0,
+                state: ReportAggregationState::Start,
+            },
+        ];
+
+        let collect_job_test_cases = vec![CollectJobTestCase {
+            should_be_acquired: false,
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(100),
+            )
+            .unwrap(),
+            agg_param: 0u8,
+            collect_job_id: None,
+            set_helper_aggregate_share: false,
+        }];
+
+        run_collect_job_acquire_test_case(
+            &ds,
+            CollectJobAcquireTestCase {
+                task_ids: vec![task_id],
+                reports,
+                aggregation_jobs,
+                report_aggregations,
+                collect_job_test_cases,
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn collect_job_acquire_job_max() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let task_id = TaskId::random();
+        let reports = vec![new_dummy_report(task_id, Time::from_seconds_since_epoch(0))];
+        let aggregation_job_ids = [AggregationJobId::random(), AggregationJobId::random()];
+        let aggregation_jobs = vec![
+            AggregationJob::<FakeVdaf> {
+                aggregation_job_id: aggregation_job_ids[0],
+                aggregation_param: 0u8,
+                task_id,
+                state: AggregationJobState::Finished,
+            },
+            AggregationJob::<FakeVdaf> {
+                aggregation_job_id: aggregation_job_ids[1],
+                aggregation_param: 1u8,
+                task_id,
+                state: AggregationJobState::Finished,
+            },
+        ];
+        let report_aggregations = vec![
+            ReportAggregation::<FakeVdaf> {
+                aggregation_job_id: aggregation_job_ids[0],
+                task_id,
+                nonce: reports[0].nonce(),
+                ord: 0,
+                state: ReportAggregationState::Start,
+            },
+            ReportAggregation::<FakeVdaf> {
+                aggregation_job_id: aggregation_job_ids[1],
+                task_id,
+                nonce: reports[0].nonce(),
+                ord: 0,
+                state: ReportAggregationState::Start,
+            },
+        ];
+
+        let collect_job_test_cases = vec![
+            CollectJobTestCase {
+                should_be_acquired: true,
+                task_id,
+                batch_interval: Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_seconds(100),
+                )
+                .unwrap(),
+                agg_param: 0u8,
+                collect_job_id: None,
+                set_helper_aggregate_share: false,
+            },
+            CollectJobTestCase {
+                should_be_acquired: true,
+                task_id,
+                batch_interval: Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_seconds(100),
+                )
+                .unwrap(),
+                agg_param: 1u8,
+                collect_job_id: None,
+                set_helper_aggregate_share: false,
+            },
+        ];
+
+        let test_case = setup_collect_job_acquire_test_case(
+            &ds,
+            CollectJobAcquireTestCase {
+                task_ids: vec![task_id],
+                reports,
+                aggregation_jobs,
+                report_aggregations,
+                collect_job_test_cases,
+            },
+        )
+        .await;
+
+        ds.run_tx(|tx| {
+            let test_case = test_case.clone();
+            let clock = clock.clone();
+            Box::pin(async move {
+                // Acquire a single collect job, twice. Each call should yield one job. We don't
+                // care what order they are acquired in.
+                let mut acquired_collect_jobs = tx
+                    .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 1)
+                    .await?;
+                assert_eq!(acquired_collect_jobs.len(), 1);
+
+                acquired_collect_jobs.extend(
+                    tx.acquire_incomplete_collect_jobs(Duration::from_seconds(100), 1)
+                        .await?,
+                );
+
+                assert_eq!(acquired_collect_jobs.len(), 2);
+                acquired_collect_jobs.sort();
+
+                let mut expected_collect_jobs: Vec<_> = test_case
+                    .collect_job_test_cases
+                    .iter()
+                    .filter(|c| c.should_be_acquired)
+                    .map(|c| {
+                        (
+                            AcquiredCollectJob {
+                                vdaf: VdafInstance::Fake,
+                                collect_job_id: c.collect_job_id.unwrap(),
+                                task_id: c.task_id,
+                            },
+                            clock.now().add(Duration::from_seconds(100)).unwrap(),
+                        )
+                    })
+                    .collect();
+                expected_collect_jobs.sort();
+
+                assert_eq!(acquired_collect_jobs, expected_collect_jobs);
 
                 Ok(())
             })
