@@ -536,6 +536,27 @@ impl<C: Clock> Transaction<'_, C> {
         )?)
     }
 
+    /// lookup_task_id_for_aggregation_job_id looks up the task ID of the task related to a given
+    /// aggregation job ID. It returns None if the aggregation job does not exist.
+    pub async fn lookup_task_id_for_aggregation_job_id(
+        &self,
+        job_id: AggregationJobId,
+    ) -> Result<Option<TaskId>, Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT task_id FROM tasks
+                WHERE id = (SELECT task_id FROM aggregation_jobs WHERE aggregation_job_id = $1)",
+            )
+            .await?;
+        Ok(self
+            .tx
+            .query_opt(&stmt, &[&job_id.as_bytes()])
+            .await?
+            .map(|row| TaskId::get_decoded(row.get("task_id")))
+            .transpose()?)
+    }
+
     /// get_client_report retrieves a client report by ID.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_client_report(
@@ -2689,6 +2710,52 @@ mod tests {
             .map(|task| (task.id, task))
             .collect();
         assert_eq!(want_tasks, got_tasks);
+    }
+
+    #[tokio::test]
+    async fn lookup_task_id_for_aggregation_job_id() {
+        // Setup.
+        install_test_trace_subscriber();
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+
+        let task_id = TaskId::random();
+        let job_id = AggregationJobId::random();
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                tx.put_task(&new_dummy_task(
+                    task_id,
+                    VdafInstance::Prio3Aes128Count,
+                    Role::Leader,
+                ))
+                .await?;
+                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                    aggregation_job_id: job_id,
+                    task_id,
+                    aggregation_param: (),
+                    state: AggregationJobState::Finished,
+                })
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Test/verify.
+        let (first_task_id, second_task_id) = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let first_task_id = tx.lookup_task_id_for_aggregation_job_id(job_id).await?;
+                    let second_task_id = tx
+                        .lookup_task_id_for_aggregation_job_id(AggregationJobId::random())
+                        .await?;
+                    Ok((first_task_id, second_task_id))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(first_task_id, Some(task_id));
+        assert_eq!(second_task_id, None);
     }
 
     #[tokio::test]

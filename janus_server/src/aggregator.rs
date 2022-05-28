@@ -89,7 +89,7 @@ pub enum Error {
     UnrecognizedTask(TaskId),
     /// An attempt was made to act on an unknown aggregation job.
     #[error("unrecognized aggregation job: {0:?}")]
-    UnrecognizedAggregationJob(AggregationJobId, TaskId),
+    UnrecognizedAggregationJob(AggregationJobId, Option<TaskId>),
     /// An attempt was made to act on an unknown collect job.
     #[error("unrecognized collect job: {0}")]
     UnrecognizedCollectJob(Uuid),
@@ -241,9 +241,18 @@ impl<C: Clock> Aggregator<C> {
         req_bytes: &[u8],
         auth_token: Option<String>,
     ) -> Result<Vec<u8>, Error> {
-        // Parse task ID early to avoid parsing the entire message before performing authentication.
-        // This assumes that the task ID is at the start of the message content.
-        let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
+        // Parse aggregation job ID early to avoid parsing the entire message before performing
+        // authentication. We need to know the task to perform authentication (since the auth token
+        // is a per-task configuration), and we need to know the aggregation job ID to look up the
+        // task.
+        let job_id = AggregationJobId::decode(&mut Cursor::new(req_bytes))?;
+        let task_id = self
+            .datastore
+            .run_tx(|tx| {
+                Box::pin(async move { tx.lookup_task_id_for_aggregation_job_id(job_id).await })
+            })
+            .await?
+            .ok_or(Error::UnrecognizedAggregationJob(job_id, None))?;
         let task_aggregator = self.task_aggregator_for(task_id).await?;
         if !auth_token
             .map(|t| {
@@ -257,7 +266,7 @@ impl<C: Clock> Aggregator<C> {
         }
 
         let req = AggregateContinueReq::get_decoded(req_bytes)?;
-        assert_eq!(req.task_id, task_id);
+        assert_eq!(req.job_id, job_id);
 
         if task_aggregator.task.role != Role::Helper {
             return Err(Error::UnrecognizedTask(task_id));
@@ -1005,7 +1014,7 @@ impl VdafOps {
                             req.job_id,
                         ),
                     )?;
-                    let mut aggregation_job = aggregation_job.ok_or_else(|| datastore::Error::User(Error::UnrecognizedAggregationJob(req.job_id, task_id).into()))?;
+                    let mut aggregation_job = aggregation_job.ok_or_else(|| datastore::Error::User(Error::UnrecognizedAggregationJob(req.job_id, Some(task_id)).into()))?;
 
                     // Handle each transition in the request.
                     let mut report_aggregations = report_aggregations.into_iter();
@@ -1794,10 +1803,9 @@ fn error_handler<R: Reply>(
             Err(Error::UnrecognizedTask(task_id)) => {
                 build_problem_details_response(PpmProblemType::UnrecognizedTask, Some(task_id))
             }
-            Err(Error::UnrecognizedAggregationJob(_, task_id)) => build_problem_details_response(
-                PpmProblemType::UnrecognizedAggregationJob,
-                Some(task_id),
-            ),
+            Err(Error::UnrecognizedAggregationJob(_, task_id)) => {
+                build_problem_details_response(PpmProblemType::UnrecognizedAggregationJob, task_id)
+            }
             Err(Error::UnrecognizedCollectJob(_)) => StatusCode::NOT_FOUND.into_response(),
             Err(Error::OutdatedHpkeConfig(_, task_id)) => {
                 build_problem_details_response(PpmProblemType::OutdatedConfig, Some(task_id))
@@ -3197,7 +3205,6 @@ mod tests {
             .unwrap();
 
         let request = AggregateContinueReq {
-            task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce: nonce_0,
@@ -3418,7 +3425,6 @@ mod tests {
             .unwrap();
 
         let request = AggregateContinueReq {
-            task_id,
             job_id: aggregation_job_id_0,
             prepare_steps: vec![
                 PrepareStep {
@@ -3614,7 +3620,6 @@ mod tests {
             .unwrap();
 
         let request = AggregateContinueReq {
-            task_id,
             job_id: aggregation_job_id_1,
             prepare_steps: vec![
                 PrepareStep {
@@ -3778,7 +3783,6 @@ mod tests {
 
         // Make request.
         let request = AggregateContinueReq {
-            task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce,
@@ -3879,7 +3883,6 @@ mod tests {
 
         // Make request.
         let request = AggregateContinueReq {
-            task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce,
@@ -4023,7 +4026,6 @@ mod tests {
 
         // Make request.
         let request = AggregateContinueReq {
-            task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce: Nonce::new(
@@ -4155,7 +4157,6 @@ mod tests {
 
         // Make request.
         let request = AggregateContinueReq {
-            task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![
                 // nonces are in opposite order to what was stored in the datastore.
@@ -4263,7 +4264,6 @@ mod tests {
 
         // Make request.
         let request = AggregateContinueReq {
-            task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce: Nonce::new(

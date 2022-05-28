@@ -541,7 +541,6 @@ impl AggregationJobDriver {
         // TODO(brandon): what HTTP errors should cause us to abort/stop retrying the aggregation job?
         // TODO(brandon): should we care about the response's content type?
         let req = AggregateContinueReq {
-            task_id: task.id,
             job_id: aggregation_job.aggregation_job_id,
             prepare_steps,
         };
@@ -1199,7 +1198,6 @@ mod tests {
         // then do our own parsing & verification -- but mockito does not yet expose this
         // functionality.
         let leader_request = AggregateContinueReq {
-            task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce,

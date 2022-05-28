@@ -267,7 +267,6 @@ impl Decode for AggregateInitializeResp {
 /// DAP protocol message representing an aggregation continuation request from leader to helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateContinueReq {
-    pub task_id: TaskId,
     pub job_id: AggregationJobId,
     pub prepare_steps: Vec<PrepareStep>,
 }
@@ -279,7 +278,6 @@ impl AggregateContinueReq {
 
 impl Encode for AggregateContinueReq {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
         self.job_id.encode(bytes);
         encode_u16_items(bytes, &(), &self.prepare_steps);
     }
@@ -287,11 +285,9 @@ impl Encode for AggregateContinueReq {
 
 impl Decode for AggregateContinueReq {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
         let job_id = AggregationJobId::decode(bytes)?;
         let prepare_steps = decode_u16_items(&(), bytes)?;
         Ok(Self {
-            task_id,
             job_id,
             prepare_steps,
         })
@@ -783,7 +779,6 @@ mod tests {
     fn roundtrip_aggregate_continue_req() {
         roundtrip_encoding(&[(
             AggregateContinueReq {
-                task_id: TaskId::new([u8::MIN; 32]),
                 job_id: AggregationJobId([u8::MAX; 32]),
                 prepare_steps: vec![
                     PrepareStep {
@@ -803,7 +798,6 @@ mod tests {
                 ],
             },
             concat!(
-                "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
                 concat!(
                     // prepare_steps
