@@ -1,7 +1,7 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
 use crate::message::{Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Role, TaskId};
-use hpke::HpkeError;
+use hpke_dispatch::HpkeError;
 use prio::codec::{encode_u16_items, Encode};
 use std::str::FromStr;
 
@@ -180,22 +180,25 @@ pub mod test_util {
         hpke::HpkePrivateKey,
         message::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey},
     };
-    use hpke::{kem::X25519HkdfSha256, Kem, Serializable};
+    use hpke_dispatch::{Kem, Keypair};
     use rand::{thread_rng, Rng};
 
     /// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
     /// HpkePrivateKey (private portion).
     pub fn generate_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
-        let (private_key, public_key) = X25519HkdfSha256::gen_keypair(&mut thread_rng());
+        let Keypair {
+            private_key,
+            public_key,
+        } = Kem::X25519HkdfSha256.gen_keypair();
         (
             HpkeConfig::new(
                 HpkeConfigId::from(thread_rng().gen::<u8>()),
                 HpkeKemId::X25519HkdfSha256,
                 HpkeKdfId::HkdfSha256,
                 HpkeAeadId::Aes128Gcm,
-                HpkePublicKey::new(public_key.to_bytes().to_vec()),
+                HpkePublicKey::new(public_key),
             ),
-            HpkePrivateKey::new(private_key.to_bytes().as_slice().to_vec()),
+            HpkePrivateKey::new(private_key),
         )
     }
 }
@@ -205,9 +208,12 @@ mod tests {
     use super::{test_util::generate_hpke_config_and_private_key, HpkeApplicationInfo, Label};
     use crate::{
         hpke::{open, seal, HpkePrivateKey},
-        message::{HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkePublicKey, Role},
+        message::{
+            HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
+            HpkePublicKey, Role,
+        },
     };
-    use hpke::{aead::*, kdf::*, kem::*, Serializable};
+    use hpke_dispatch::{Kem, Keypair};
     use serde::Deserialize;
     use std::collections::HashSet;
 
@@ -299,19 +305,24 @@ mod tests {
         .unwrap_err();
     }
 
-    fn round_trip_check<KEM: hpke::Kem, KDF: hpke::kdf::Kdf, AEAD: hpke::aead::Aead>() {
+    fn round_trip_check(kem_id: HpkeKemId, kdf_id: HpkeKdfId, aead_id: HpkeAeadId) {
         const ASSOCIATED_DATA: &[u8] = b"round trip test associated data";
         const MESSAGE: &[u8] = b"round trip test message";
 
-        let (private_key, public_key) = KEM::gen_keypair(&mut rand::thread_rng());
+        let kem = Kem::try_from(kem_id as u16).unwrap();
+
+        let Keypair {
+            private_key,
+            public_key,
+        } = kem.gen_keypair();
         let hpke_config = HpkeConfig::new(
             HpkeConfigId::from(0),
-            KEM::KEM_ID.try_into().unwrap(),
-            KDF::KDF_ID.try_into().unwrap(),
-            AEAD::AEAD_ID.try_into().unwrap(),
-            HpkePublicKey::new(public_key.to_bytes().to_vec()),
+            kem_id,
+            kdf_id,
+            aead_id,
+            HpkePublicKey::new(public_key),
         );
-        let hpke_private_key = HpkePrivateKey::new(private_key.to_bytes().to_vec());
+        let hpke_private_key = HpkePrivateKey::new(private_key);
         let application_info =
             HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
 
@@ -330,24 +341,17 @@ mod tests {
 
     #[test]
     fn round_trip_all_algorithms() {
-        round_trip_check::<DhP256HkdfSha256, HkdfSha256, AesGcm128>();
-        round_trip_check::<DhP256HkdfSha256, HkdfSha256, AesGcm256>();
-        round_trip_check::<DhP256HkdfSha256, HkdfSha256, ChaCha20Poly1305>();
-        round_trip_check::<DhP256HkdfSha256, HkdfSha384, AesGcm128>();
-        round_trip_check::<DhP256HkdfSha256, HkdfSha384, AesGcm256>();
-        round_trip_check::<DhP256HkdfSha256, HkdfSha384, ChaCha20Poly1305>();
-        round_trip_check::<DhP256HkdfSha256, HkdfSha512, AesGcm128>();
-        round_trip_check::<DhP256HkdfSha256, HkdfSha512, AesGcm256>();
-        round_trip_check::<DhP256HkdfSha256, HkdfSha512, ChaCha20Poly1305>();
-        round_trip_check::<X25519HkdfSha256, HkdfSha256, AesGcm128>();
-        round_trip_check::<X25519HkdfSha256, HkdfSha256, AesGcm256>();
-        round_trip_check::<X25519HkdfSha256, HkdfSha256, ChaCha20Poly1305>();
-        round_trip_check::<X25519HkdfSha256, HkdfSha384, AesGcm128>();
-        round_trip_check::<X25519HkdfSha256, HkdfSha384, AesGcm256>();
-        round_trip_check::<X25519HkdfSha256, HkdfSha384, ChaCha20Poly1305>();
-        round_trip_check::<X25519HkdfSha256, HkdfSha512, AesGcm128>();
-        round_trip_check::<X25519HkdfSha256, HkdfSha512, AesGcm256>();
-        round_trip_check::<X25519HkdfSha256, HkdfSha512, ChaCha20Poly1305>();
+        for kem_id in [HpkeKemId::P256HkdfSha256, HpkeKemId::X25519HkdfSha256] {
+            for kdf_id in [
+                HpkeKdfId::HkdfSha256,
+                HpkeKdfId::HkdfSha384,
+                HpkeKdfId::HkdfSha512,
+            ] {
+                for aead_id in [HpkeAeadId::Aes128Gcm, HpkeAeadId::Aes256Gcm] {
+                    round_trip_check(kem_id, kdf_id, aead_id)
+                }
+            }
+        }
     }
 
     #[derive(Deserialize)]

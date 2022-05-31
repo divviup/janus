@@ -3,11 +3,7 @@
 use crate::{hpke::associated_data_for_report_share, time::Clock};
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
-use hpke::{
-    aead::{self, Aead},
-    kdf::{self, Kdf},
-    kem, Kem,
-};
+use hpke_dispatch::{Aead, Kdf, Kem};
 use num_enum::TryFromPrimitive;
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use rand::{thread_rng, Rng};
@@ -507,9 +503,9 @@ impl TaskId {
 #[repr(u16)]
 pub enum HpkeKemId {
     /// NIST P-256 keys and HKDF-SHA256.
-    P256HkdfSha256 = kem::DhP256HkdfSha256::KEM_ID,
+    P256HkdfSha256 = Kem::DhP256HkdfSha256 as u16,
     /// X25519 keys and HKDF-SHA256.
-    X25519HkdfSha256 = kem::X25519HkdfSha256::KEM_ID,
+    X25519HkdfSha256 = Kem::X25519HkdfSha256 as u16,
 }
 
 impl Encode for HpkeKemId {
@@ -531,11 +527,11 @@ impl Decode for HpkeKemId {
 #[repr(u16)]
 pub enum HpkeKdfId {
     /// HMAC Key Derivation Function SHA256.
-    HkdfSha256 = kdf::HkdfSha256::KDF_ID,
+    HkdfSha256 = Kdf::Sha256 as u16,
     /// HMAC Key Derivation Function SHA384.
-    HkdfSha384 = kdf::HkdfSha384::KDF_ID,
+    HkdfSha384 = Kdf::Sha384 as u16,
     /// HMAC Key Derivation Function SHA512.
-    HkdfSha512 = kdf::HkdfSha512::KDF_ID,
+    HkdfSha512 = Kdf::Sha512 as u16,
 }
 
 impl Encode for HpkeKdfId {
@@ -557,11 +553,11 @@ impl Decode for HpkeKdfId {
 #[repr(u16)]
 pub enum HpkeAeadId {
     /// AES-128-GCM.
-    Aes128Gcm = aead::AesGcm128::AEAD_ID,
+    Aes128Gcm = Aead::AesGcm128 as u16,
     /// AES-256-GCM.
-    Aes256Gcm = aead::AesGcm256::AEAD_ID,
+    Aes256Gcm = Aead::AesGcm256 as u16,
     /// ChaCha20Poly1305.
-    ChaCha20Poly1305 = aead::ChaCha20Poly1305::AEAD_ID,
+    ChaCha20Poly1305 = Aead::ChaCha20Poly1305 as u16,
 }
 
 impl Encode for HpkeAeadId {
