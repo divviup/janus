@@ -21,4 +21,4 @@ thiserror = "1.0"
 
 [dev-dependencies]
 assert_matches = "1"
-serde_json = "1.0.80"
+serde_json = "1.0.81"
