@@ -63,7 +63,7 @@ assert_matches = "1"
 hex = { version = "0.4.3", features = ["serde"] }
 hyper = "0.14.19"
 lazy_static = "1"
-libc = "0.2.125"
+libc = "0.2.126"
 mockito = "0.31.0"
 serde_test = "1.0.137"
 tempfile = "3.3.0"
