@@ -1173,7 +1173,7 @@ impl<C: Clock> Transaction<'_, C> {
                     collect_job_id,
                     task_id,
                     batch_interval,
-                    _aggregation_param: aggregation_param,
+                    aggregation_param,
                     helper_aggregate_share,
                     leader_aggregate_share,
                     report_count,
@@ -1374,14 +1374,15 @@ ORDER BY id DESC
         )
     }
 
-    /// Updates an existing collect job with the provided leader aggregate share.
+    /// Updates an existing collect job with the provided aggregate shares.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn update_collect_job_leader_aggregate_share<A: vdaf::Aggregator>(
+    pub(crate) async fn update_collect_job<A: vdaf::Aggregator>(
         &self,
         collect_job_id: Uuid,
         leader_aggregate_share: &A::AggregateShare,
         report_count: u64,
         checksum: NonceChecksum,
+        helper_aggregate_share: &HpkeCiphertext,
     ) -> Result<(), Error>
     where
         A: vdaf::Aggregator,
@@ -1391,6 +1392,7 @@ ORDER BY id DESC
         let leader_aggregate_share: Option<Vec<u8>> = Some(leader_aggregate_share.into());
         let report_count = Some(i64::try_from(report_count)?);
         let checksum = Some(checksum.get_encoded());
+        let helper_aggregate_share = Some(helper_aggregate_share.get_encoded());
 
         let stmt = self
             .tx
@@ -1398,8 +1400,9 @@ ORDER BY id DESC
                 "UPDATE collect_jobs SET
                     leader_aggregate_share = $1,
                     report_count = $2,
-                    checksum = $3
-                WHERE collect_job_id = $4",
+                    checksum = $3,
+                    helper_aggregate_share = $4
+                WHERE collect_job_id = $5",
             )
             .await?;
         check_update(
@@ -1410,39 +1413,10 @@ ORDER BY id DESC
                         &leader_aggregate_share,
                         &report_count,
                         &checksum,
+                        &helper_aggregate_share,
                         &collect_job_id,
                     ],
                 )
-                .await?,
-        )?;
-
-        Ok(())
-    }
-
-    /// Updates an existing collect job with the provided helper aggregate share.
-    #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn update_collect_job_helper_aggregate_share<A: vdaf::Aggregator, E>(
-        &self,
-        collect_job_id: Uuid,
-        helper_aggregate_share: &HpkeCiphertext,
-    ) -> Result<(), Error>
-    where
-        A: vdaf::Aggregator,
-        E: std::fmt::Display,
-        for<'a> A::AggregateShare: TryFrom<&'a [u8], Error = E>,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
-        let helper_aggregate_share = Some(helper_aggregate_share.get_encoded());
-
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "UPDATE collect_jobs SET helper_aggregate_share = $1 WHERE collect_job_id = $2",
-            )
-            .await?;
-        check_update(
-            self.tx
-                .execute(&stmt, &[&helper_aggregate_share, &collect_job_id])
                 .await?,
         )?;
 
@@ -2477,7 +2451,7 @@ pub mod models {
         pub(crate) batch_interval: Interval,
         /// The VDAF aggregation parameter used to prepare and aggregate input shares.
         #[derivative(Debug = "ignore")]
-        pub(crate) _aggregation_param: A::AggregationParam,
+        pub(crate) aggregation_param: A::AggregationParam,
         /// The helper's encrypted aggregate share over the input shares in the interval. `None`
         /// until the helper has serviced an `AggregateShareReq` for this collect job.
         #[derivative(Debug = "ignore")]
@@ -3883,33 +3857,6 @@ mod tests {
                 assert!(second_collect_job.checksum.is_none());
 
                 let leader_aggregate_share = AggregateShare::from(vec![Field64::from(1)]);
-                tx.update_collect_job_leader_aggregate_share::<Prio3Aes128Count>(
-                    first_collect_job_id,
-                    &leader_aggregate_share,
-                    10,
-                    NonceChecksum::get_decoded(&[1; 32]).unwrap(),
-                )
-                .await
-                .unwrap();
-
-                let first_collect_job = tx
-                    .get_collect_job::<Prio3Aes128Count>(first_collect_job_id)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                assert_eq!(first_collect_job.collect_job_id, first_collect_job_id);
-                assert_eq!(first_collect_job.task_id, task_id);
-                assert_eq!(first_collect_job.batch_interval, first_batch_interval);
-                assert!(first_collect_job.helper_aggregate_share.is_none());
-                assert_eq!(
-                    first_collect_job.leader_aggregate_share,
-                    Some(leader_aggregate_share.clone())
-                );
-                assert_eq!(first_collect_job.report_count, Some(10));
-                assert_eq!(
-                    first_collect_job.checksum,
-                    Some(NonceChecksum::get_decoded(&[1; 32]).unwrap())
-                );
 
                 let encrypted_helper_aggregate_share = hpke::seal(
                     &task.collector_hpke_config,
@@ -3919,8 +3866,11 @@ mod tests {
                 )
                 .unwrap();
 
-                tx.update_collect_job_helper_aggregate_share::<Prio3Aes128Count, _>(
+                tx.update_collect_job::<Prio3Aes128Count>(
                     first_collect_job_id,
+                    &leader_aggregate_share,
+                    10,
+                    NonceChecksum::get_decoded(&[1; 32]).unwrap(),
                     &encrypted_helper_aggregate_share,
                 )
                 .await
@@ -3964,7 +3914,7 @@ mod tests {
         batch_interval: Interval,
         agg_param: u8,
         collect_job_id: Option<Uuid>,
-        set_helper_aggregate_share: bool,
+        set_aggregate_shares: bool,
     }
 
     #[derive(Clone)]
@@ -4009,9 +3959,12 @@ mod tests {
                         )
                         .await?;
 
-                    if test_case.set_helper_aggregate_share {
-                        tx.update_collect_job_helper_aggregate_share::<FakeVdaf, _>(
+                    if test_case.set_aggregate_shares {
+                        tx.update_collect_job::<FakeVdaf>(
                             collect_job_id,
+                            &dummy_vdaf::AggregateShare(),
+                            1,
+                            NonceChecksum::default(),
                             &HpkeCiphertext::new(HpkeConfigId::from(0), vec![], vec![]),
                         )
                         .await?;
@@ -4103,7 +4056,7 @@ mod tests {
             .unwrap(),
             agg_param: 0u8,
             collect_job_id: None,
-            set_helper_aggregate_share: false,
+            set_aggregate_shares: false,
         }];
 
         let acquired_collect_jobs = run_collect_job_acquire_test_case(
@@ -4206,7 +4159,7 @@ mod tests {
             .unwrap(),
             agg_param: 0u8,
             collect_job_id: None,
-            set_helper_aggregate_share: false,
+            set_aggregate_shares: false,
         }];
 
         run_collect_job_acquire_test_case(
@@ -4249,7 +4202,7 @@ mod tests {
             .unwrap(),
             agg_param: 0u8,
             collect_job_id: None,
-            set_helper_aggregate_share: false,
+            set_aggregate_shares: false,
         }];
 
         run_collect_job_acquire_test_case(
@@ -4304,7 +4257,7 @@ mod tests {
             .unwrap(),
             agg_param: 0u8,
             collect_job_id: None,
-            set_helper_aggregate_share: false,
+            set_aggregate_shares: false,
         }];
 
         run_collect_job_acquire_test_case(
@@ -4355,7 +4308,7 @@ mod tests {
             agg_param: 0u8,
             collect_job_id: None,
             // Collect job has already run to completion
-            set_helper_aggregate_share: true,
+            set_aggregate_shares: true,
         }];
 
         run_collect_job_acquire_test_case(
@@ -4427,7 +4380,7 @@ mod tests {
             .unwrap(),
             agg_param: 0u8,
             collect_job_id: None,
-            set_helper_aggregate_share: false,
+            set_aggregate_shares: false,
         }];
 
         run_collect_job_acquire_test_case(
@@ -4494,7 +4447,7 @@ mod tests {
                 .unwrap(),
                 agg_param: 0u8,
                 collect_job_id: None,
-                set_helper_aggregate_share: false,
+                set_aggregate_shares: false,
             },
             CollectJobTestCase {
                 should_be_acquired: true,
@@ -4506,7 +4459,7 @@ mod tests {
                 .unwrap(),
                 agg_param: 1u8,
                 collect_job_id: None,
-                set_helper_aggregate_share: false,
+                set_aggregate_shares: false,
             },
         ];
 

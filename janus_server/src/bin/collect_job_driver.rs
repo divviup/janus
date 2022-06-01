@@ -1,16 +1,12 @@
-use anyhow::Result;
-use janus::{
-    message::{Duration, Time},
-    time::RealClock,
-};
+use anyhow::Context;
+use janus::{message::Duration, time::RealClock};
 use janus_server::{
+    aggregator::aggregate_share::CollectJobDriver,
     binary_utils::{janus_main, job_driver::JobDriver, BinaryOptions, CommonBinaryOptions},
     config::CollectJobDriverConfig,
-    datastore,
 };
 use std::{fmt::Debug, sync::Arc};
 use structopt::StructOpt;
-use uuid::Uuid;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -30,11 +26,24 @@ impl BinaryOptions for Options {
     }
 }
 
+const CLIENT_USER_AGENT: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    "/",
+    env!("CARGO_PKG_VERSION"),
+    "/collect_job_driver",
+);
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     janus_main::<Options, _, _, _, _>(
         RealClock::default(),
         |clock, config: CollectJobDriverConfig, datastore| async move {
+            let collect_job_driver = Arc::new(CollectJobDriver::new(
+                reqwest::Client::builder()
+                    .user_agent(CLIENT_USER_AGENT)
+                    .build()
+                    .context("couldn't create HTTP client")?,
+            ));
             // Start running.
             Arc::new(JobDriver::new(
                 Arc::new(datastore),
@@ -48,21 +57,25 @@ async fn main() -> anyhow::Result<()> {
                         .job_driver_config
                         .worker_lease_clock_skew_allowance_secs,
                 ),
-                |datastore, _lease_duration, _max_acquire_count| async move {
+                |datastore, lease_duration, maximum_acquire_count| async move {
                     datastore
-                        .run_tx(|_tx| {
+                        .run_tx(|tx| {
                             Box::pin(async move {
-                                // TODO(timg) discover incomplete collect jobs in datastore
-                                Ok(vec![]) as Result<Vec<(Uuid, Time)>, datastore::Error>
+                                tx.acquire_incomplete_collect_jobs(
+                                    lease_duration,
+                                    maximum_acquire_count,
+                                )
+                                .await
                             })
                         })
                         .await
                 },
-                |_datastore, _acquired_job: Uuid, _| async move {
-                    // TODO(timg): step collect job
-                    Ok(()) as Result<_, datastore::Error>
+                |datastore, acquired_collect_job, collect_job_driver| async move {
+                    collect_job_driver
+                        .step_collect_job(datastore, &acquired_collect_job)
+                        .await
                 },
-                (), // TOOD: provide shared resources as job stepper context
+                collect_job_driver,
             ))
             .run()
             .await;
