@@ -67,7 +67,7 @@ libc = "0.2.126"
 mockito = "0.31.0"
 serde_test = "1.0.137"
 tempfile = "3.3.0"
-testcontainers = "0.13.0"
+testcontainers = "0.14.0"
 janus_test_util = { path = "../test_util" }
 tokio = { version = "*", features = ["test-util"] }
 trycmd = "0.13.4"
