@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 assert_matches = "1"
-prio = { git = "https://github.com/divviup/libprio-rs", rev = "229cd9c45924c7dae3ba754a6eb46b2a05ca8451" }  # TODO(brandon): use a numbered version, once a release is cut >0.7.0
+prio = "0.7.1"
 rand = "0.8"
 ring = "0.16.20"
 janus = { path = "../janus" }
