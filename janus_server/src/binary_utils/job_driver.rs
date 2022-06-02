@@ -1,6 +1,6 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
-use crate::datastore::{self, models::Lease, Datastore};
+use crate::datastore::{self, models::Lease};
 use janus::{
     message::{Duration, Time},
     time::Clock,
@@ -11,8 +11,6 @@ use tracing::{debug, error, info, info_span, Instrument};
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
 pub struct JobDriver<C: Clock, JobAcquirer, JobStepper> {
-    /// Datastore where incomplete jobs are discovered and which is provided to the job driver.
-    datastore: Arc<Datastore<C>>,
     /// Clock used to determine when to schedule jobs.
     clock: C,
 
@@ -23,8 +21,6 @@ pub struct JobDriver<C: Clock, JobAcquirer, JobStepper> {
     max_job_discovery_delay: Duration,
     /// How many jobs to step at the same time in this process.
     max_concurrent_job_workers: usize,
-    /// How long a lease on a job lasts.
-    worker_lease_duration: Duration,
     /// Allowable clock skew between datastore and job driver, used when determining if a lease has
     /// expired.
     worker_lease_clock_skew_allowance: Duration,
@@ -48,33 +44,27 @@ impl<
 where
     C: Clock,
     JobStepperError: Debug + Send + Sync + 'static,
-    JobAcquirer:
-        Fn(Arc<Datastore<C>>, Duration, usize) -> JobAcquirerFuture + Send + Sync + 'static,
+    JobAcquirer: Fn(usize) -> JobAcquirerFuture + Send + Sync + 'static,
     JobAcquirerFuture: Future<Output = Result<Vec<Lease<AcquiredJob>>, datastore::Error>> + Send,
-    JobStepper:
-        Fn(Arc<Datastore<C>>, Lease<AcquiredJob>) -> JobStepperFuture + Send + Sync + 'static,
+    JobStepper: Fn(Lease<AcquiredJob>) -> JobStepperFuture + Send + Sync + 'static,
     JobStepperFuture: Future<Output = Result<(), JobStepperError>> + Send,
     AcquiredJob: Clone + Debug + Send + Sync + 'static,
 {
     /// Create a new [`JobCreator`].
     pub fn new(
-        datastore: Arc<Datastore<C>>,
         clock: C,
         min_job_discovery_delay: Duration,
         max_job_discovery_delay: Duration,
         max_concurrent_job_workers: usize,
-        worker_lease_duration: Duration,
         worker_lease_clock_skew_allowance: Duration,
         incomplete_job_acquirer: JobAcquirer,
         job_stepper: JobStepper,
     ) -> Self {
         Self {
-            datastore,
             clock,
             min_job_discovery_delay,
             max_job_discovery_delay,
             max_concurrent_job_workers,
-            worker_lease_duration,
             worker_lease_clock_skew_allowance,
             incomplete_job_acquirer,
             job_stepper,
@@ -108,15 +98,9 @@ where
             // (we'll pick up any additional jobs on the next iteration of this loop). We can't
             // overestimate since this task is the only place that permits are acquired.
 
-            // TODO(brandon): only acquire jobs whose batch units have not already been collected (probably by modifying acquire_incomplete_aggregation_jobs)
             let max_acquire_count = sem.available_permits();
             info!(max_acquire_count, "Acquiring jobs");
-            let leases = (self.incomplete_job_acquirer)(
-                Arc::clone(&self.datastore),
-                self.worker_lease_duration,
-                max_acquire_count,
-            )
-            .await;
+            let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
             let leases = match leases {
                 Ok(leases) => leases,
                 Err(err) => {
@@ -160,7 +144,7 @@ where
                         info!(lease_expiry = ?lease.lease_expiry_time(), "Stepping job");
                         match time::timeout(
                             this.effective_lease_duration(lease.lease_expiry_time()),
-                            (this.job_stepper)(Arc::clone(&this.datastore), lease),
+                            (this.job_stepper)(lease),
                         )
                         .await
                         {
@@ -232,8 +216,6 @@ mod tests {
         // Setup.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
 
         /// A fake incomplete job returned by the job acquirer closure.
         #[derive(Clone, Debug)]
@@ -298,23 +280,20 @@ mod tests {
 
         // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
         let job_driver = Arc::new(JobDriver::new(
-            ds,
             clock,
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
-            Duration::from_seconds(600),
             Duration::from_seconds(60),
             {
                 let (test_state, incomplete_jobs) =
                     (Arc::clone(&test_state), Arc::clone(&incomplete_jobs));
-                move |_datastore, lease_duration, max_acquire_count| {
+                move |max_acquire_count| {
                     let (test_state, incomplete_jobs) =
                         (Arc::clone(&test_state), Arc::clone(&incomplete_jobs));
                     async move {
                         let mut test_state = test_state.lock().await;
 
-                        assert_eq!(lease_duration, Duration::from_seconds(600));
                         assert_eq!(max_acquire_count, 10);
 
                         let incomplete_jobs = incomplete_jobs
@@ -343,7 +322,7 @@ mod tests {
             },
             {
                 let test_state = Arc::clone(&test_state);
-                move |_datastore, lease| {
+                move |lease| {
                     let test_state = Arc::clone(&test_state);
                     async move {
                         let mut test_state = test_state.lock().await;
