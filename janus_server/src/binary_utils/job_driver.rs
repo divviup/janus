@@ -10,7 +10,7 @@ use tokio::{sync::Semaphore, task, time};
 use tracing::{debug, error, info, info_span, Instrument};
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
-pub struct JobDriver<C: Clock, JobAcquirer, JobStepper, JobStepperContext> {
+pub struct JobDriver<C: Clock, JobAcquirer, JobStepper> {
     /// Datastore where incomplete jobs are discovered and which is provided to the job driver.
     datastore: Arc<Datastore<C>>,
     /// Clock used to determine when to schedule jobs.
@@ -28,8 +28,6 @@ pub struct JobDriver<C: Clock, JobAcquirer, JobStepper, JobStepperContext> {
     /// Allowable clock skew between datastore and job driver, used when determining if a lease has
     /// expired.
     worker_lease_clock_skew_allowance: Duration,
-    /// Context passed to job stepper
-    job_stepper_context: JobStepperContext,
 
     // Callbacks.
     /// Finds incomplete jobs in the datastore and acquires a lease on them.
@@ -43,22 +41,17 @@ impl<
         JobStepperError,
         JobAcquirer,
         JobAcquirerFuture,
-        JobStepperContext,
         JobStepper,
         JobStepperFuture,
         AcquiredJob,
-    > JobDriver<C, JobAcquirer, JobStepper, JobStepperContext>
+    > JobDriver<C, JobAcquirer, JobStepper>
 where
     C: Clock,
     JobStepperError: Debug + Send + Sync + 'static,
     JobAcquirer:
         Fn(Arc<Datastore<C>>, Duration, usize) -> JobAcquirerFuture + Send + Sync + 'static,
     JobAcquirerFuture: Future<Output = Result<Vec<(AcquiredJob, Time)>, datastore::Error>> + Send,
-    JobStepperContext: Clone + Debug + Send + Sync + 'static,
-    JobStepper: Fn(Arc<Datastore<C>>, AcquiredJob, JobStepperContext) -> JobStepperFuture
-        + Send
-        + Sync
-        + 'static,
+    JobStepper: Fn(Arc<Datastore<C>>, AcquiredJob) -> JobStepperFuture + Send + Sync + 'static,
     JobStepperFuture: Future<Output = Result<(), JobStepperError>> + Send,
     AcquiredJob: Clone + Debug + Send + Sync + 'static,
 {
@@ -73,7 +66,6 @@ where
         worker_lease_clock_skew_allowance: Duration,
         incomplete_job_acquirer: JobAcquirer,
         job_stepper: JobStepper,
-        job_stepper_context: JobStepperContext,
     ) -> Self {
         Self {
             datastore,
@@ -85,7 +77,6 @@ where
             worker_lease_clock_skew_allowance,
             incomplete_job_acquirer,
             job_stepper,
-            job_stepper_context,
         }
     }
 
@@ -120,7 +111,7 @@ where
             let max_acquire_count = sem.available_permits();
             info!(max_acquire_count, "Acquiring jobs");
             let acquired_jobs = (self.incomplete_job_acquirer)(
-                self.datastore.clone(),
+                Arc::clone(&self.datastore),
                 self.worker_lease_duration,
                 max_acquire_count,
             )
@@ -168,11 +159,7 @@ where
                         info!(?lease_expiry, "Stepping job");
                         match time::timeout(
                             this.effective_lease_duration(lease_expiry),
-                            (this.job_stepper)(
-                                this.datastore.clone(),
-                                acquired_job,
-                                this.job_stepper_context.clone(),
-                            ),
+                            (this.job_stepper)(Arc::clone(&this.datastore), acquired_job),
                         )
                         .await
                         {
@@ -354,12 +341,11 @@ mod tests {
                 // Create some fake incomplete jobs
                 Ok(acquired_jobs)
             },
-            move |_datastore, acquired_job, context| async move {
+            move |_datastore, acquired_job| async move {
                 let mut test_state = TEST_STATE.lock().await;
                 let job_acquire_counter = test_state.job_acquire_counter;
 
                 assert_eq!(acquired_job.1, VdafInstance::Fake);
-                assert_eq!(context, "context");
 
                 test_state.stepped_jobs.push(SteppedJob {
                     observed_jobs_acquire_counter: job_acquire_counter,
@@ -369,7 +355,6 @@ mod tests {
 
                 Ok(()) as Result<(), datastore::Error>
             },
-            "context",
         ));
         let task_handle = task::spawn(async move { job_driver.run().await });
 

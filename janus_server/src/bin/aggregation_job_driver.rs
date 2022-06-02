@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
                     .build()
                     .context("couldn't create HTTP client")?,
             });
+
             // Start running.
             Arc::new(JobDriver::new(
                 Arc::new(datastore),
@@ -104,12 +105,14 @@ async fn main() -> anyhow::Result<()> {
                         })
                         .await
                 },
-                |datastore, acquired_aggregation_job, aggregation_job_driver| async move {
-                    aggregation_job_driver
-                        .step_aggregation_job(datastore, &acquired_aggregation_job)
-                        .await
+                move |datastore, acquired_aggregation_job| {
+                    let aggregation_job_driver = Arc::clone(&aggregation_job_driver);
+                    async move {
+                        aggregation_job_driver
+                            .step_aggregation_job(datastore, &acquired_aggregation_job)
+                            .await
+                    }
                 },
-                aggregation_job_driver,
             ))
             .run()
             .await;
@@ -897,12 +900,14 @@ mod tests {
                     })
                     .await
             },
-            |datastore, acquired_aggregation_job, aggregation_job_driver| async move {
-                aggregation_job_driver
-                    .step_aggregation_job(datastore, &acquired_aggregation_job)
-                    .await
+            move |datastore, acquired_aggregation_job| {
+                let aggregation_job_driver = Arc::clone(&aggregation_job_driver);
+                async move {
+                    aggregation_job_driver
+                        .step_aggregation_job(datastore, &acquired_aggregation_job)
+                        .await
+                }
             },
-            aggregation_job_driver,
         ));
 
         let task_handle = task::spawn({
