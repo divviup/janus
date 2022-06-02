@@ -1732,6 +1732,13 @@ where
     }
 }
 
+/// The number of seconds we send in the Access-Control-Max-Age header. This determines for how
+/// long clients will cache the results of CORS preflight requests. Of popular browsers, Mozilla
+/// Firefox has the highest Max-Age cap, at 24 hours, so we use that. Our CORS preflight handlers
+/// are tightly scoped to relevant endpoints, and our CORS settings are unlikely to change.
+/// See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age
+const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
+
 /// Constructs a Warp filter with endpoints common to all aggregators.
 fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore<C>>,
@@ -1751,23 +1758,31 @@ fn aggregator_filter<C: Clock>(
         .init();
 
     let hpke_config_endpoint = warp::path("hpke_config")
-        .and(warp::get())
-        .and(with_cloned_value(aggregator.clone()))
-        .and(warp::query::<HashMap<String, String>>())
-        .then(
-            |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
-                let task_id_b64 = query_params
-                    .get("task_id")
-                    .ok_or(Error::UnrecognizedMessage("task_id", None))?;
-                let hpke_config_bytes = aggregator.handle_hpke_config(task_id_b64.as_ref()).await?;
-                http::Response::builder()
-                    .header(CACHE_CONTROL, "max-age=86400")
-                    .header(CONTENT_TYPE, HpkeConfig::MEDIA_TYPE)
-                    .body(hpke_config_bytes)
-                    .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
-            },
+        .and(
+            warp::get()
+                .and(with_cloned_value(aggregator.clone()))
+                .and(warp::query::<HashMap<String, String>>())
+                .then(
+                    |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
+                        let task_id_b64 = query_params
+                            .get("task_id")
+                            .ok_or(Error::UnrecognizedMessage("task_id", None))?;
+                        let hpke_config_bytes = aggregator.handle_hpke_config(task_id_b64.as_ref()).await?;
+                        http::Response::builder()
+                            .header(CACHE_CONTROL, "max-age=86400")
+                            .header(CONTENT_TYPE, HpkeConfig::MEDIA_TYPE)
+                            .body(hpke_config_bytes)
+                            .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+                    },
+                )
+                .map(error_handler(&response_counter, "hpke_config"))
+                .with(
+                    warp::cors()
+                        .allow_any_origin()
+                        .allow_method("GET")
+                        .max_age(CORS_PREFLIGHT_CACHE_AGE),
+                ),
         )
-        .map(error_handler(&response_counter, "hpke_config"))
         .with(warp::wrap_fn(timing_wrapper(
             &time_value_recorder,
             "hpke_config",
@@ -1775,18 +1790,27 @@ fn aggregator_filter<C: Clock>(
         .with(trace::named("hpke_config"));
 
     let upload_endpoint = warp::path("upload")
-        .and(warp::post())
-        .and(warp::header::exact(
-            CONTENT_TYPE.as_str(),
-            Report::MEDIA_TYPE,
-        ))
-        .and(with_cloned_value(aggregator.clone()))
-        .and(warp::body::bytes())
-        .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
-            aggregator.handle_upload(&body).await?;
-            Ok(StatusCode::OK)
-        })
-        .map(error_handler(&response_counter, "upload"))
+        .and(
+            warp::post()
+                .and(warp::header::exact(
+                    CONTENT_TYPE.as_str(),
+                    Report::MEDIA_TYPE,
+                ))
+                .and(with_cloned_value(aggregator.clone()))
+                .and(warp::body::bytes())
+                .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
+                    aggregator.handle_upload(&body).await?;
+                    Ok(StatusCode::OK)
+                })
+                .map(error_handler(&response_counter, "upload"))
+                .with(
+                    warp::cors()
+                        .allow_any_origin()
+                        .allow_method("POST")
+                        .allow_header("content-type")
+                        .max_age(CORS_PREFLIGHT_CACHE_AGE),
+                ),
+        )
         .with(warp::wrap_fn(timing_wrapper(
             &time_value_recorder,
             "upload",
@@ -1957,7 +1981,7 @@ mod tests {
     use rand::{thread_rng, Rng};
     use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
-    use warp::{reply::Reply, Rejection};
+    use warp::{reject::MethodNotAllowed, reply::Reply, Rejection};
 
     #[tokio::test]
     async fn hpke_config() {
@@ -1978,10 +2002,12 @@ mod tests {
 
         let want_hpke_key = current_hpke_key(&task.hpke_keys).clone();
 
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+
         let response = warp::test::request()
             .path(&format!("/hpke_config?task_id={}", task_id))
             .method("GET")
-            .filter(&aggregator_filter(Arc::new(datastore), clock).unwrap())
+            .filter(&filter)
             .await
             .unwrap()
             .into_response();
@@ -2016,6 +2042,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(&plaintext, message);
+
+        // Check for appropriate CORS headers in response to a preflight request.
+        let response = warp::test::request()
+            .method("OPTIONS")
+            .path(&format!("/hpke_config?task_id={}", task_id))
+            .header("origin", "https://example.com/")
+            .header("access-control-request-method", "GET")
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert!(response.status().is_success());
+        let headers = response.headers();
+        assert_eq!(
+            headers.get("access-control-allow-origin").unwrap(),
+            "https://example.com/"
+        );
+        assert_eq!(headers.get("access-control-allow-methods").unwrap(), "GET");
+        assert_eq!(headers.get("access-control-max-age").unwrap(), "86400");
+
+        // Check for appropriate CORS headers with a simple GET request.
+        let response = warp::test::request()
+            .method("GET")
+            .path(&format!("/hpke_config?task_id={}", task_id))
+            .header("origin", "https://example.com/")
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert!(response.status().is_success());
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .unwrap(),
+            "https://example.com/"
+        );
     }
 
     async fn setup_report(
@@ -2238,6 +2301,58 @@ mod tests {
         // TODO: update this test once an error type has been defined, and validate the problem
         // details.
         assert_eq!(response.status().as_u16(), 400);
+
+        // Check for appropriate CORS headers in response to a preflight request.
+        let response = warp::test::request()
+            .method("OPTIONS")
+            .path("/upload")
+            .header("origin", "https://example.com/")
+            .header("access-control-request-method", "POST")
+            .header("access-control-request-headers", "content-type")
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert!(response.status().is_success());
+        let headers = response.headers();
+        assert_eq!(
+            headers.get("access-control-allow-origin").unwrap(),
+            "https://example.com/"
+        );
+        assert_eq!(headers.get("access-control-allow-methods").unwrap(), "POST");
+        assert_eq!(
+            headers.get("access-control-allow-headers").unwrap(),
+            "content-type"
+        );
+        assert_eq!(headers.get("access-control-max-age").unwrap(), "86400");
+
+        // Check for appropriate CORS headers in response to the main request.
+        let response = warp::test::request()
+            .method("POST")
+            .path("/upload")
+            .header("origin", "https://example.com/")
+            .header(CONTENT_TYPE, Report::MEDIA_TYPE)
+            .body(
+                Report::new(
+                    report.task_id(),
+                    Nonce::generate(&clock),
+                    vec![],
+                    report.encrypted_input_shares().to_vec(),
+                )
+                .get_encoded(),
+            )
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert!(response.status().is_success());
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .unwrap(),
+            "https://example.com/"
+        );
     }
 
     // Helper should not expose /upload endpoint
@@ -2547,6 +2662,21 @@ mod tests {
                 .unwrap(),
             part.status.as_u16() as u64
         );
+
+        // Check that CORS headers don't bleed over to other routes.
+        assert!(part.headers.get("access-control-allow-origin").is_none());
+        assert!(part.headers.get("access-control-allow-methods").is_none());
+        assert!(part.headers.get("access-control-max-age").is_none());
+
+        let result = warp::test::request()
+            .method("OPTIONS")
+            .path("/aggregate")
+            .header("origin", "https://example.com/")
+            .header("access-control-request-method", "POST")
+            .filter(&filter)
+            .await
+            .map(Reply::into_response);
+        assert_matches!(result, Err(rejection) => rejection.find::<MethodNotAllowed>().unwrap());
     }
 
     #[tokio::test]
