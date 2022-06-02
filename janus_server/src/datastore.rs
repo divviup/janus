@@ -2,7 +2,7 @@
 
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectJob, AggregateShareJob, AggregationJob, AggregatorRole,
-    BatchUnitAggregation, CollectJob, ReportAggregation, ReportAggregationState,
+    BatchUnitAggregation, CollectJob, Lease, LeaseToken, ReportAggregation, ReportAggregationState,
     ReportAggregationStateCode,
 };
 use crate::{
@@ -770,12 +770,12 @@ impl<C: Clock> Transaction<'_, C> {
     /// acquire_incomplete_aggregation_jobs retrieves & acquires the IDs of unclaimed incomplete
     /// aggregation jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired
     /// with a "lease" that will time out; the desired duration of the lease is a parameter, and the
-    /// lease expiration time is returned.
+    /// returned lease provides the absolute timestamp at which the lease is no longer live.
     pub async fn acquire_incomplete_aggregation_jobs(
         &self,
         lease_duration: Duration,
         maximum_acquire_count: usize,
-    ) -> Result<Vec<(AcquiredAggregationJob, Time)>, Error> {
+    ) -> Result<Vec<Lease<AcquiredAggregationJob>>, Error> {
         let now = self.clock.now();
         let lease_expiry_time = now.add(lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
@@ -783,10 +783,13 @@ impl<C: Clock> Transaction<'_, C> {
         // TODO(brandon): verify that this query is efficient. I am not sure if we would currently
         // scan over every (in-progress, not-leased) aggregation job for tasks where we are in the
         // HELPER role.
+        // We generate the token on the DB to allow each acquired job to receive its own distinct
+        // token. This is not strictly necessary as we only care about token collisions on a
+        // per-row basis.
         let stmt = self
             .tx
             .prepare_cached(
-                "UPDATE aggregation_jobs SET lease_expiry = $1
+                "UPDATE aggregation_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
                     FROM tasks
                     WHERE tasks.id = aggregation_jobs.task_id
                     AND aggregation_jobs.id IN (SELECT aggregation_jobs.id FROM aggregation_jobs
@@ -795,7 +798,7 @@ impl<C: Clock> Transaction<'_, C> {
                         AND aggregation_jobs.state = 'IN_PROGRESS'
                         AND aggregation_jobs.lease_expiry <= $2
                         ORDER BY aggregation_jobs.id DESC LIMIT $3)
-                    RETURNING tasks.task_id, tasks.vdaf, aggregation_jobs.aggregation_job_id",
+                    RETURNING tasks.task_id, tasks.vdaf, aggregation_jobs.aggregation_job_id, aggregation_jobs.lease_token, aggregation_jobs.lease_attempts",
             )
             .await?;
         self.tx
@@ -814,14 +817,22 @@ impl<C: Clock> Transaction<'_, C> {
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
                 let aggregation_job_id =
                     AggregationJobId::get_decoded(row.get("aggregation_job_id"))?;
-                Ok((
-                    AcquiredAggregationJob {
+                let lease_token_bytes: Vec<u8> = row.get("lease_token");
+                let lease_token =
+                    LeaseToken::new(lease_token_bytes.try_into().map_err(|err| {
+                        Error::DbState(format!("lease_token invalid: {:?}", err))
+                    })?);
+                let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
+                Ok(Lease {
+                    leased: AcquiredAggregationJob {
                         vdaf,
                         task_id,
                         aggregation_job_id,
                     },
                     lease_expiry_time,
-                ))
+                    lease_token,
+                    lease_attempts,
+                })
             })
             .collect()
     }
@@ -830,18 +841,18 @@ impl<C: Clock> Transaction<'_, C> {
     /// aggregation job. It returns an error if the aggregation job has no current lease.
     pub async fn release_aggregation_job(
         &self,
-        task_id: TaskId,
-        aggregation_job_id: AggregationJobId,
+        lease: &Lease<AcquiredAggregationJob>,
     ) -> Result<(), Error> {
-        // TODO(brandon): sanity-check that the aggregation job is leased?
         let stmt = self
             .tx
             .prepare_cached(
-                "UPDATE aggregation_jobs SET lease_expiry = TIMESTAMP '-infinity'
+                "UPDATE aggregation_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = NULL, lease_attempts = 0
                 FROM tasks
                 WHERE tasks.id = aggregation_jobs.task_id
                   AND tasks.task_id = $1
-                  AND aggregation_jobs.aggregation_job_id = $2",
+                  AND aggregation_jobs.aggregation_job_id = $2
+                  AND aggregation_jobs.lease_expiry = $3
+                  AND aggregation_jobs.lease_token = $4",
             )
             .await?;
         check_update(
@@ -849,8 +860,11 @@ impl<C: Clock> Transaction<'_, C> {
                 .execute(
                     &stmt,
                     &[
-                        /* task_id */ &task_id.as_bytes(),
-                        /* aggregation_job_id */ &aggregation_job_id.as_bytes(),
+                        /* task_id */ &lease.leased().task_id.as_bytes(),
+                        /* aggregation_job_id */
+                        &lease.leased().aggregation_job_id.as_bytes(),
+                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time(),
+                        /* lease_token */ &lease.lease_token.as_bytes(),
                     ],
                 )
                 .await?,
@@ -1269,7 +1283,7 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         lease_duration: Duration,
         maximum_acquire_count: usize,
-    ) -> Result<Vec<(AcquiredCollectJob, Time)>, Error> {
+    ) -> Result<Vec<Lease<AcquiredCollectJob>>, Error> {
         let now = self.clock.now();
         let lease_expiry_time = now.add(lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
@@ -1279,7 +1293,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 r#"
 WITH updated as (
-    UPDATE collect_jobs SET lease_expiry = $1 FROM tasks WHERE collect_jobs.id IN (
+    UPDATE collect_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
+    FROM tasks
+    WHERE collect_jobs.id IN (
         SELECT collect_jobs.id FROM collect_jobs
         -- Join on aggregation jobs with matching task ID and aggregation parameter
         INNER JOIN aggregation_jobs
@@ -1309,9 +1325,9 @@ WITH updated as (
         -- Honor maximum_acquire_count *after* winnowing down to runnable collect jobs
         LIMIT $3
     )
-    RETURNING tasks.task_id, tasks.vdaf, collect_jobs.collect_job_id, collect_jobs.id
+    RETURNING tasks.task_id, tasks.vdaf, collect_jobs.collect_job_id, collect_jobs.id, collect_jobs.lease_token, collect_jobs.lease_attempts
 )
-SELECT task_id, vdaf, collect_job_id FROM updated
+SELECT task_id, vdaf, collect_job_id, lease_token, lease_attempts FROM updated
 -- TODO (issue #174): revisit collect job queueing behavior implied by this ORDER BY
 ORDER BY id DESC
 "#,
@@ -1332,14 +1348,22 @@ ORDER BY id DESC
                 let task_id = TaskId::get_decoded(row.get("task_id"))?;
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
                 let collect_job_id = row.get("collect_job_id");
-                Ok((
-                    AcquiredCollectJob {
+                let lease_token_bytes: Vec<u8> = row.get("lease_token");
+                let lease_token =
+                    LeaseToken::new(lease_token_bytes.try_into().map_err(|err| {
+                        Error::DbState(format!("lease_token invalid: {:?}", err))
+                    })?);
+                let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
+                Ok(Lease {
+                    leased: AcquiredCollectJob {
                         task_id,
                         vdaf,
                         collect_job_id,
                     },
                     lease_expiry_time,
-                ))
+                    lease_token,
+                    lease_attempts,
+                })
             })
             .collect()
     }
@@ -1348,17 +1372,18 @@ ORDER BY id DESC
     /// job. It returns an error if the collect job has no current lease.
     pub async fn release_collect_job(
         &self,
-        task_id: TaskId,
-        collect_job_id: Uuid,
+        lease: &Lease<AcquiredCollectJob>,
     ) -> Result<(), Error> {
         let stmt = self
             .tx
             .prepare_cached(
-                "UPDATE collect_jobs SET lease_expiry = TIMESTAMP '-infinity'
+                "UPDATE collect_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = NULL, lease_attempts = 0
                 FROM tasks
                 WHERE tasks.id = collect_jobs.task_id
                   AND tasks.task_id = $1
-                  AND collect_jobs.collect_job_id = $2",
+                  AND collect_jobs.collect_job_id = $2
+                  AND collect_jobs.lease_expiry = $3
+                  AND collect_jobs.lease_token = $4",
             )
             .await?;
         check_update(
@@ -1366,8 +1391,10 @@ ORDER BY id DESC
                 .execute(
                     &stmt,
                     &[
-                        /* task_id */ &task_id.as_bytes(),
-                        /* collect_job_id */ &collect_job_id,
+                        /* task_id */ &lease.leased().task_id.as_bytes(),
+                        /* collect_job_id */ &lease.leased().collect_job_id,
+                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time(),
+                        /* lease_token */ &lease.lease_token.as_bytes(),
                     ],
                 )
                 .await?,
@@ -2203,6 +2230,64 @@ pub mod models {
         Finished,
     }
 
+    /// LeaseToken represents an opaque value used to determine the identity of a lease.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    pub(super) struct LeaseToken([u8; Self::LENGTH]);
+
+    impl LeaseToken {
+        const LENGTH: usize = 16;
+
+        pub(super) fn new(bytes: [u8; Self::LENGTH]) -> Self {
+            Self(bytes)
+        }
+
+        pub(super) fn as_bytes(&self) -> &[u8] {
+            &self.0
+        }
+    }
+
+    /// Lease represents a time-constrained lease for exclusive access to some entity in Janus. It
+    /// has an expiry after which it is no longer valid; another process can take a lease on the
+    /// same entity after the expiration time.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Lease<T> {
+        pub(super) leased: T,
+        pub(super) lease_expiry_time: Time,
+        pub(super) lease_token: LeaseToken,
+        pub(super) lease_attempts: usize,
+    }
+
+    impl<T> Lease<T> {
+        /// Create a new artificial lease with a random lease token, acquired for the first time;
+        /// intended for use in unit tests.
+        #[cfg(test)]
+        pub fn new(leased: T, lease_expiry_time: Time) -> Self {
+            use rand::{thread_rng, Rng};
+
+            Self {
+                leased,
+                lease_expiry_time,
+                lease_token: LeaseToken(thread_rng().gen()),
+                lease_attempts: 1,
+            }
+        }
+
+        /// Returns a reference to the leased entity.
+        pub fn leased(&self) -> &T {
+            &self.leased
+        }
+
+        /// Returns the lease expiry time.
+        pub fn lease_expiry_time(&self) -> Time {
+            self.lease_expiry_time
+        }
+
+        /// Returns the number of lease acquiries since the last successful release.
+        pub fn lease_attempts(&self) -> usize {
+            self.lease_attempts
+        }
+    }
+
     /// AcquiredAggregationJob represents an incomplete aggregation job whose lease has been
     /// acquired.
     #[derive(Clone, Debug, PartialOrd, Ord, Eq, PartialEq)]
@@ -2585,7 +2670,7 @@ mod tests {
     };
     use std::{
         collections::{BTreeSet, HashMap, HashSet},
-        iter,
+        iter, mem,
     };
 
     #[tokio::test]
@@ -3118,11 +3203,18 @@ mod tests {
                 )
             })
             .collect();
-        let mut got_aggregation_jobs = Vec::new();
+        let mut got_leases = Vec::new();
         for result in results {
             assert!(result.len() <= MAXIMUM_ACQUIRE_COUNT);
-            got_aggregation_jobs.extend(result.into_iter())
+            got_leases.extend(result.into_iter());
         }
+        let mut got_aggregation_jobs: Vec<_> = got_leases
+            .iter()
+            .map(|lease| {
+                assert_eq!(lease.lease_attempts(), 1);
+                (lease.leased().clone(), lease.lease_expiry_time())
+            })
+            .collect();
         got_aggregation_jobs.sort();
 
         assert_eq!(want_aggregation_jobs, got_aggregation_jobs);
@@ -3138,19 +3230,17 @@ mod tests {
             assert!(RELEASE_COUNT < MAXIMUM_ACQUIRE_COUNT);
         }
 
-        let jobs_to_release: Vec<_> = got_aggregation_jobs
-            .into_iter()
-            .take(RELEASE_COUNT)
+        let leases_to_release: Vec<_> = got_leases.into_iter().take(RELEASE_COUNT).collect();
+        let mut jobs_to_release: Vec<_> = leases_to_release
+            .iter()
+            .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
             .collect();
+        jobs_to_release.sort();
         ds.run_tx(|tx| {
-            let jobs_to_release = jobs_to_release.clone();
+            let leases_to_release = leases_to_release.clone();
             Box::pin(async move {
-                for (acquired_job, _) in jobs_to_release {
-                    tx.release_aggregation_job(
-                        acquired_job.task_id,
-                        acquired_job.aggregation_job_id,
-                    )
-                    .await?;
+                for lease in leases_to_release {
+                    tx.release_aggregation_job(&lease).await?;
                 }
                 Ok(())
             })
@@ -3158,7 +3248,7 @@ mod tests {
         .await
         .unwrap();
 
-        let mut got_aggregation_jobs = ds
+        let mut got_aggregation_jobs: Vec<_> = ds
             .run_tx(|tx| {
                 Box::pin(async move {
                     tx.acquire_incomplete_aggregation_jobs(LEASE_DURATION, MAXIMUM_ACQUIRE_COUNT)
@@ -3166,7 +3256,13 @@ mod tests {
                 })
             })
             .await
-            .unwrap();
+            .unwrap()
+            .into_iter()
+            .map(|lease| {
+                assert_eq!(lease.lease_attempts(), 1);
+                (lease.leased().clone(), lease.lease_expiry_time())
+            })
+            .collect();
         got_aggregation_jobs.sort();
 
         // Verify: we should have re-acquired the jobs we released.
@@ -3178,18 +3274,18 @@ mod tests {
         let want_expiry_time = clock.now().add(LEASE_DURATION).unwrap();
         let want_aggregation_jobs: Vec<_> = aggregation_job_ids
             .iter()
-            .map(|&agg_job_id| {
+            .map(|&job_id| {
                 (
                     AcquiredAggregationJob {
                         task_id,
                         vdaf: VdafInstance::Prio3Aes128Count,
-                        aggregation_job_id: agg_job_id,
+                        aggregation_job_id: job_id,
                     },
                     want_expiry_time,
                 )
             })
             .collect();
-        let mut got_aggregation_jobs = ds
+        let mut got_aggregation_jobs: Vec<_> = ds
             .run_tx(|tx| {
                 Box::pin(async move {
                     // This time, we just acquire all jobs in a single go for simplicity -- we've
@@ -3199,11 +3295,53 @@ mod tests {
                 })
             })
             .await
-            .unwrap();
+            .unwrap()
+            .into_iter()
+            .map(|lease| {
+                let job = (lease.leased().clone(), lease.lease_expiry_time());
+                let expected_attempts = if jobs_to_release.contains(&job) { 1 } else { 2 };
+                assert_eq!(lease.lease_attempts(), expected_attempts);
+                job
+            })
+            .collect();
         got_aggregation_jobs.sort();
 
         // Verify: we got all the jobs.
         assert_eq!(want_aggregation_jobs, got_aggregation_jobs);
+
+        // Run: advance time again to release jobs, acquire a single job, modify its lease token
+        // to simulate a previously-held lease, and attempt to release it. Verify that releasing
+        // fails.
+        clock.advance(LEASE_DURATION);
+        let mut lease = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    Ok(tx
+                        .acquire_incomplete_aggregation_jobs(LEASE_DURATION, 1)
+                        .await?
+                        .remove(0))
+                })
+            })
+            .await
+            .unwrap();
+        let original_lease_token =
+            mem::replace(&mut lease.lease_token, LeaseToken::new(thread_rng().gen()));
+        ds.run_tx(|tx| {
+            let lease = lease.clone();
+            Box::pin(async move { tx.release_aggregation_job(&lease).await })
+        })
+        .await
+        .unwrap_err();
+
+        // Replace the original lease token and verify that we can release successfully with it in
+        // place.
+        lease.lease_token = original_lease_token;
+        ds.run_tx(|tx| {
+            let lease = lease.clone();
+            Box::pin(async move { tx.release_aggregation_job(&lease).await })
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -3983,7 +4121,7 @@ mod tests {
     async fn run_collect_job_acquire_test_case(
         ds: &Datastore<MockClock>,
         test_case: CollectJobAcquireTestCase,
-    ) -> Vec<(AcquiredCollectJob, Time)> {
+    ) -> Vec<Lease<AcquiredCollectJob>> {
         let test_case = setup_collect_job_acquire_test_case(ds, test_case).await;
 
         let clock = &ds.clock;
@@ -3991,10 +4129,15 @@ mod tests {
             let test_case = test_case.clone();
             let clock = clock.clone();
             Box::pin(async move {
-                let mut acquired_collect_jobs = tx
+                let collect_job_leases = tx
                     .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 10)
                     .await?;
-                acquired_collect_jobs.sort();
+
+                let mut leased_collect_jobs: Vec<_> = collect_job_leases
+                    .iter()
+                    .map(|lease| (lease.leased().clone(), lease.lease_expiry_time))
+                    .collect();
+                leased_collect_jobs.sort();
 
                 let mut expected_collect_jobs: Vec<_> = test_case
                     .collect_job_test_cases
@@ -4013,9 +4156,9 @@ mod tests {
                     .collect();
                 expected_collect_jobs.sort();
 
-                assert_eq!(acquired_collect_jobs, expected_collect_jobs);
+                assert_eq!(leased_collect_jobs, expected_collect_jobs);
 
-                Ok(acquired_collect_jobs)
+                Ok(collect_job_leases)
             })
         })
         .await
@@ -4059,7 +4202,7 @@ mod tests {
             set_aggregate_shares: false,
         }];
 
-        let acquired_collect_jobs = run_collect_job_acquire_test_case(
+        let collect_job_leases = run_collect_job_acquire_test_case(
             &ds,
             CollectJobAcquireTestCase {
                 task_ids: vec![task_id],
@@ -4073,7 +4216,7 @@ mod tests {
 
         let reacquired_jobs = ds
             .run_tx(|tx| {
-                let acquired_collect_jobs = acquired_collect_jobs.clone();
+                let collect_job_leases = collect_job_leases.clone();
                 Box::pin(async move {
                     // Try to re-acquire collect jobs. Nothing should happen because the lease is still
                     // valid.
@@ -4084,22 +4227,28 @@ mod tests {
                         .is_empty());
 
                     // Release the lease, then re-acquire it.
-                    tx.release_collect_job(
-                        acquired_collect_jobs[0].0.task_id,
-                        acquired_collect_jobs[0].0.collect_job_id,
-                    )
-                    .await
-                    .unwrap();
-
-                    let reacquired_jobs = tx
-                        .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 10)
+                    tx.release_collect_job(&collect_job_leases[0])
                         .await
                         .unwrap();
 
-                    assert_eq!(reacquired_jobs.len(), 1);
-                    assert_eq!(reacquired_jobs, acquired_collect_jobs);
+                    let reacquired_leases = tx
+                        .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 10)
+                        .await
+                        .unwrap();
+                    let reacquired_jobs: Vec<_> = reacquired_leases
+                        .iter()
+                        .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
+                        .collect();
 
-                    Ok(reacquired_jobs)
+                    let collect_jobs: Vec<_> = collect_job_leases
+                        .iter()
+                        .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
+                        .collect();
+
+                    assert_eq!(reacquired_jobs.len(), 1);
+                    assert_eq!(reacquired_jobs, collect_jobs);
+
+                    Ok(reacquired_leases)
                 })
             })
             .await
@@ -4118,10 +4267,13 @@ mod tests {
                     .unwrap();
 
                 for (acquired_job, reacquired_job) in acquired_jobs.iter().zip(reacquired_jobs) {
-                    assert_eq!(acquired_job.0, reacquired_job.0);
+                    assert_eq!(acquired_job.leased(), reacquired_job.leased());
                     assert_eq!(
-                        acquired_job.1,
-                        reacquired_job.1.add(Duration::from_seconds(100)).unwrap(),
+                        acquired_job.lease_expiry_time(),
+                        reacquired_job
+                            .lease_expiry_time()
+                            .add(Duration::from_seconds(100))
+                            .unwrap(),
                     );
                 }
 
@@ -4492,6 +4644,11 @@ mod tests {
                 );
 
                 assert_eq!(acquired_collect_jobs.len(), 2);
+
+                let mut acquired_collect_jobs: Vec<_> = acquired_collect_jobs
+                    .iter()
+                    .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
+                    .collect();
                 acquired_collect_jobs.sort();
 
                 let mut expected_collect_jobs: Vec<_> = test_case

@@ -3,7 +3,10 @@
 use super::Error;
 use crate::{
     datastore::{
-        self, models::AcquiredCollectJob, models::BatchUnitAggregation, Datastore, Transaction,
+        self,
+        models::AcquiredCollectJob,
+        models::{BatchUnitAggregation, Lease},
+        Datastore, Transaction,
     },
     message::{AggregateShareReq, AggregateShareResp},
     task::Task,
@@ -11,7 +14,7 @@ use crate::{
 };
 use http::header::CONTENT_TYPE;
 use janus::{
-    message::{Interval, NonceChecksum, Role, TaskId},
+    message::{Interval, NonceChecksum, Role},
     time::Clock,
 };
 use prio::{
@@ -24,7 +27,6 @@ use prio::{
 };
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, error, log::warn};
-use uuid::Uuid;
 
 /// Drives a collect job.
 #[derive(Debug)]
@@ -53,14 +55,13 @@ impl CollectJobDriver {
     pub async fn step_collect_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
-        acquired_collect_job: &AcquiredCollectJob,
+        lease: Lease<AcquiredCollectJob>,
     ) -> Result<(), Error> {
-        match acquired_collect_job.vdaf {
+        match lease.leased().vdaf {
             VdafInstance::Prio3Aes128Count => {
                 self.step_collect_job_generic::<C, Prio3Aes128Count>(
                     datastore,
-                    acquired_collect_job.task_id,
-                    acquired_collect_job.collect_job_id,
+                    lease
                 )
                 .await
             }
@@ -68,8 +69,7 @@ impl CollectJobDriver {
             VdafInstance::Prio3Aes128Sum { .. } => {
                 self.step_collect_job_generic::<C, Prio3Aes128Sum>(
                     datastore,
-                    acquired_collect_job.task_id,
-                    acquired_collect_job.collect_job_id,
+                    lease
                 )
                 .await
             }
@@ -77,8 +77,7 @@ impl CollectJobDriver {
             VdafInstance::Prio3Aes128Histogram { .. } => {
                 self.step_collect_job_generic::<C, Prio3Aes128Histogram>(
                     datastore,
-                    acquired_collect_job.task_id,
-                    acquired_collect_job.collect_job_id,
+                    lease,
                 )
                 .await
             }
@@ -87,13 +86,12 @@ impl CollectJobDriver {
             VdafInstance::Fake => {
                 self.step_collect_job_generic::<C, janus_test_util::dummy_vdaf::VdafWithAggregationParameter<u8>>(
                     datastore,
-                    acquired_collect_job.task_id,
-                    acquired_collect_job.collect_job_id,
+                    lease,
                 )
                 .await
             }
 
-            _ => panic!("VDAF {:?} is not yet supported", acquired_collect_job.vdaf),
+            _ => panic!("VDAF {:?} is not yet supported", lease.leased().vdaf),
         }
     }
 
@@ -101,12 +99,11 @@ impl CollectJobDriver {
     async fn step_collect_job_generic<C, A>(
         &self,
         datastore: Arc<Datastore<C>>,
-        task_id: TaskId,
-        collect_job_id: Uuid,
+        lease: Lease<AcquiredCollectJob>,
     ) -> Result<(), Error>
     where
         C: Clock,
-        A: vdaf::Aggregator,
+        A: vdaf::Aggregator + 'static,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: 'static + Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -115,6 +112,8 @@ impl CollectJobDriver {
         A::OutputShare: PartialEq + Eq + Send + Sync + for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
+        let task_id = lease.leased().task_id;
+        let collect_job_id = lease.leased().collect_job_id;
         let (task, collect_job) = datastore
             .run_tx(|tx| {
                 Box::pin(async move {
@@ -197,23 +196,27 @@ impl CollectJobDriver {
 
         // Store the helper aggregate share in the datastore so that a later request to a collect
         // job URI can serve it up.
-        let resp = AggregateShareResp::get_decoded(&response.bytes().await?)?;
-
+        let helper_aggregate_share = Arc::new(
+            AggregateShareResp::get_decoded(&response.bytes().await?)?.encrypted_aggregate_share,
+        );
+        let collect_job = Arc::new(collect_job);
+        let lease = Arc::new(lease);
         datastore
             .run_tx(|tx| {
-                let helper_aggregate_share = resp.encrypted_aggregate_share.clone();
-                let collect_job = collect_job.clone();
+                let helper_aggregate_share = Arc::clone(&helper_aggregate_share);
+                let collect_job = Arc::clone(&collect_job);
+                let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     tx.update_collect_job::<A>(
                         collect_job_id,
-                        &collect_job.leader_aggregate_share.unwrap(),
+                        collect_job.leader_aggregate_share.as_ref().unwrap(),
                         collect_job.report_count.unwrap(),
                         collect_job.checksum.unwrap(),
                         &helper_aggregate_share,
                     )
                     .await?;
 
-                    tx.release_collect_job(task.id, collect_job_id).await
+                    tx.release_collect_job(&lease).await
                 })
             })
             .await?;
@@ -359,14 +362,22 @@ where
 mod tests {
     use super::*;
     use crate::{
-        datastore::{Crypter, Datastore},
+        datastore::{
+            models::{
+                AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
+            },
+            Crypter, Datastore,
+        },
+        message::AggregationJobId,
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
-    use janus::message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Role, TaskId, Time};
+    use janus::message::{
+        Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId,
+    };
     use janus_test_util::{
-        dummy_vdaf::{AggregateShare, VdafWithAggregationParameter},
+        dummy_vdaf::{AggregateShare, OutputShare, VdafWithAggregationParameter},
         MockClock,
     };
     use mockito::mock;
@@ -392,31 +403,55 @@ mod tests {
         task.min_batch_duration = Duration::from_seconds(500);
         task.min_batch_size = 10;
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(0),
-            Duration::from_seconds(2000),
-        )
-        .unwrap();
+        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = 0u8;
 
-        let collect_job_id = ds
+        let (collect_job_id, lease) = ds
             .run_tx(|tx| {
+                let clock = clock.clone();
                 let task = task.clone();
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    tx.put_collect_job(task_id, batch_interval, &aggregation_param.get_encoded())
-                        .await
+                    let collect_job_id = tx
+                        .put_collect_job(task_id, batch_interval, &aggregation_param.get_encoded())
+                        .await?;
+
+                    let aggregation_job_id = AggregationJobId::random();
+                    tx.put_aggregation_job(&AggregationJob::<VdafWithAggregationParameter<u8>> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param,
+                        state: AggregationJobState::Finished,
+                    })
+                    .await?;
+
+                    let nonce = Nonce::generate(&clock);
+                    tx.put_client_report(&Report::new(task_id, nonce, Vec::new(), Vec::new()))
+                        .await?;
+
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        VdafWithAggregationParameter<u8>,
+                    > {
+                        aggregation_job_id,
+                        task_id,
+                        nonce,
+                        ord: 0,
+                        state: ReportAggregationState::Finished(OutputShare()),
+                    })
+                    .await?;
+
+                    let lease = tx
+                        .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 1)
+                        .await?
+                        .remove(0);
+                    assert_eq!(task_id, lease.leased().task_id);
+                    assert_eq!(collect_job_id, lease.leased().collect_job_id);
+                    Ok((collect_job_id, lease))
                 })
             })
             .await
             .unwrap();
-
-        let acquired_collect_job = AcquiredCollectJob {
-            vdaf: VdafInstance::Fake,
-            task_id,
-            collect_job_id,
-        };
 
         let collect_job_driver = CollectJobDriver {
             http_client: reqwest::Client::builder().build().unwrap(),
@@ -424,7 +459,7 @@ mod tests {
 
         // No batch unit aggregations inserted yet
         let error = collect_job_driver
-            .step_collect_job(ds.clone(), &acquired_collect_job)
+            .step_collect_job(ds.clone(), lease.clone())
             .await
             .unwrap_err();
         assert_matches!(error, Error::InsufficientBatchSize(0, error_task_id) => {
@@ -433,10 +468,11 @@ mod tests {
 
         // Put some batch unit aggregations in the DB
         ds.run_tx(|tx| {
+            let clock = clock.clone();
             Box::pin(async move {
                 tx.put_batch_unit_aggregation(&BatchUnitAggregation::<FakeVdaf> {
                     task_id,
-                    unit_interval_start: Time::from_seconds_since_epoch(500),
+                    unit_interval_start: clock.now(),
                     aggregation_param,
                     aggregate_share: AggregateShare(),
                     report_count: 5,
@@ -446,7 +482,7 @@ mod tests {
 
                 tx.put_batch_unit_aggregation(&BatchUnitAggregation::<FakeVdaf> {
                     task_id,
-                    unit_interval_start: Time::from_seconds_since_epoch(1500),
+                    unit_interval_start: clock.now().add(Duration::from_seconds(1000)).unwrap(),
                     aggregation_param,
                     aggregate_share: AggregateShare(),
                     report_count: 5,
@@ -480,7 +516,7 @@ mod tests {
             .create();
 
         collect_job_driver
-            .step_collect_job(ds.clone(), &acquired_collect_job)
+            .step_collect_job(ds.clone(), lease.clone())
             .await
             .unwrap_err();
 
@@ -523,7 +559,7 @@ mod tests {
             .create();
 
         collect_job_driver
-            .step_collect_job(ds.clone(), &acquired_collect_job)
+            .step_collect_job(ds.clone(), lease.clone())
             .await
             .unwrap();
 
@@ -557,7 +593,7 @@ mod tests {
 
         // Drive collect job again. It should succeed without contacting the helper.
         collect_job_driver
-            .step_collect_job(ds.clone(), &acquired_collect_job)
+            .step_collect_job(ds.clone(), lease)
             .await
             .unwrap();
     }

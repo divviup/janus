@@ -1,6 +1,6 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
-use crate::datastore::{self, Datastore};
+use crate::datastore::{self, models::Lease, Datastore};
 use janus::{
     message::{Duration, Time},
     time::Clock,
@@ -50,8 +50,9 @@ where
     JobStepperError: Debug + Send + Sync + 'static,
     JobAcquirer:
         Fn(Arc<Datastore<C>>, Duration, usize) -> JobAcquirerFuture + Send + Sync + 'static,
-    JobAcquirerFuture: Future<Output = Result<Vec<(AcquiredJob, Time)>, datastore::Error>> + Send,
-    JobStepper: Fn(Arc<Datastore<C>>, AcquiredJob) -> JobStepperFuture + Send + Sync + 'static,
+    JobAcquirerFuture: Future<Output = Result<Vec<Lease<AcquiredJob>>, datastore::Error>> + Send,
+    JobStepper:
+        Fn(Arc<Datastore<C>>, Lease<AcquiredJob>) -> JobStepperFuture + Send + Sync + 'static,
     JobStepperFuture: Future<Output = Result<(), JobStepperError>> + Send,
     AcquiredJob: Clone + Debug + Send + Sync + 'static,
 {
@@ -110,14 +111,14 @@ where
             // TODO(brandon): only acquire jobs whose batch units have not already been collected (probably by modifying acquire_incomplete_aggregation_jobs)
             let max_acquire_count = sem.available_permits();
             info!(max_acquire_count, "Acquiring jobs");
-            let acquired_jobs = (self.incomplete_job_acquirer)(
+            let leases = (self.incomplete_job_acquirer)(
                 Arc::clone(&self.datastore),
                 self.worker_lease_duration,
                 max_acquire_count,
             )
             .await;
-            let acquired_jobs = match acquired_jobs {
-                Ok(acquired_jobs) => acquired_jobs,
+            let leases = match leases {
+                Ok(leases) => leases,
                 Err(err) => {
                     error!(?err, "Couldn't acquire jobs");
                     // Go ahead and step job discovery delay in this error case to ensure we don't
@@ -126,22 +127,22 @@ where
                     continue;
                 }
             };
-            if acquired_jobs.is_empty() {
+            if leases.is_empty() {
                 debug!("No jobs available");
                 job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
                 continue;
             }
             assert!(
-                acquired_jobs.len() <= max_acquire_count,
+                leases.len() <= max_acquire_count,
                 "Acquired {} jobs exceeding maximum of {}",
-                acquired_jobs.len(),
+                leases.len(),
                 max_acquire_count
             );
-            info!(acquired_job_count = acquired_jobs.len(), "Acquired jobs");
+            info!(acquired_job_count = leases.len(), "Acquired jobs");
 
             // Start up tasks for each acquired job.
             job_discovery_delay = Duration::ZERO;
-            for (acquired_job, lease_expiry) in acquired_jobs {
+            for lease in leases {
                 task::spawn({
                     // We acquire a semaphore in the job-discovery task rather than inside the new
                     // job-stepper task to ensure that acquiring a permit does not race with
@@ -149,28 +150,22 @@ where
                     // loop, to maintain the invariant that this task is the only place we acquire
                     // permits.
                     //
-                    // Unwrap safety: we have seen that at least `acquired_jobs.len()` permits are
+                    // Unwrap safety: we have seen that at least `leases.len()` permits are
                     // available, and this task is the only task that acquires permits.
                     let permit = Arc::clone(&sem).try_acquire_owned().unwrap();
                     let this = Arc::clone(&self);
-                    let span = info_span!("Job stepper", ?acquired_job);
+                    let span = info_span!("Job stepper", acquired_job = ?lease.leased());
 
                     async move {
-                        info!(?lease_expiry, "Stepping job");
+                        info!(lease_expiry = ?lease.lease_expiry_time(), "Stepping job");
                         match time::timeout(
-                            this.effective_lease_duration(lease_expiry),
-                            (this.job_stepper)(Arc::clone(&this.datastore), acquired_job),
+                            this.effective_lease_duration(lease.lease_expiry_time()),
+                            (this.job_stepper)(Arc::clone(&this.datastore), lease),
                         )
                         .await
                         {
-                            Ok(Ok(_)) => {
-                                debug!("Job stepped")
-                            }
-
-                            Ok(Err(err)) => {
-                                error!(?err, "Couldn't step job")
-                            }
-
+                            Ok(Ok(_)) => debug!("Job stepped"),
+                            Ok(Err(err)) => error!(?err, "Couldn't step job"),
                             Err(err) => error!(?err, "Stepping job timed out"),
                         }
                         drop(permit);
@@ -222,7 +217,6 @@ mod tests {
     };
     use janus::{message::TaskId, time::Clock};
     use janus_test_util::MockClock;
-    use lazy_static::lazy_static;
     use tokio::{sync::Mutex, task, time};
 
     janus_test_util::define_ephemeral_datastore!();
@@ -264,45 +258,43 @@ mod tests {
             stepped_jobs: Vec<SteppedJob>,
         }
 
-        lazy_static! {
-            static ref TEST_STATE: Mutex<TestState> = Mutex::const_new(TestState {
-                job_acquire_counter: 0,
-                stepped_jobs: vec![],
-            });
-            // View of incomplete jobs acquired from datastore fed to job finder closure
-            static ref INCOMPLETE_JOBS: Vec<Vec<IncompleteJob>> = vec![
-                // First job finder call: acquire some jobs.
-                vec![
-                    IncompleteJob {
-                     task_id:   TaskId::random(),
-                        job_id: AggregationJobId::random(),
-                        lease_expiry: Time::from_seconds_since_epoch(100),
-                    },
-                    IncompleteJob {
-                     task_id:   TaskId::random(),
-                        job_id: AggregationJobId::random(),
-                        lease_expiry: Time::from_seconds_since_epoch(200),
-                    },
-                ],
-                // Second job finder call will be immediately after the first: no more jobs
-                // available yet. Should cause a minimum delay before job finder runs again.
-                vec![],
-                // Third job finder call: return some new jobs to simulate lease being released and
-                // re-acquired (it doesn't matter if the task and job IDs change).
-                vec![
-                    IncompleteJob {
-                     task_id:   TaskId::random(),
-                        job_id: AggregationJobId::random(),
-                        lease_expiry: Time::from_seconds_since_epoch(300),
-                    },
-                    IncompleteJob {
-                     task_id:   TaskId::random(),
-                        job_id: AggregationJobId::random(),
-                        lease_expiry: Time::from_seconds_since_epoch(400),
-                    },
-                ],
-            ];
-        };
+        let test_state = Arc::new(Mutex::new(TestState {
+            job_acquire_counter: 0,
+            stepped_jobs: vec![],
+        }));
+        // View of incomplete jobs acquired from datastore fed to job finder closure
+        let incomplete_jobs = Arc::new(vec![
+            // First job finder call: acquire some jobs.
+            vec![
+                IncompleteJob {
+                    task_id: TaskId::random(),
+                    job_id: AggregationJobId::random(),
+                    lease_expiry: Time::from_seconds_since_epoch(100),
+                },
+                IncompleteJob {
+                    task_id: TaskId::random(),
+                    job_id: AggregationJobId::random(),
+                    lease_expiry: Time::from_seconds_since_epoch(200),
+                },
+            ],
+            // Second job finder call will be immediately after the first: no more jobs
+            // available yet. Should cause a minimum delay before job finder runs again.
+            vec![],
+            // Third job finder call: return some new jobs to simulate lease being released and
+            // re-acquired (it doesn't matter if the task and job IDs change).
+            vec![
+                IncompleteJob {
+                    task_id: TaskId::random(),
+                    job_id: AggregationJobId::random(),
+                    lease_expiry: Time::from_seconds_since_epoch(300),
+                },
+                IncompleteJob {
+                    task_id: TaskId::random(),
+                    job_id: AggregationJobId::random(),
+                    lease_expiry: Time::from_seconds_since_epoch(400),
+                },
+            ],
+        ]);
 
         // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
         let job_driver = Arc::new(JobDriver::new(
@@ -313,47 +305,61 @@ mod tests {
             10,
             Duration::from_seconds(600),
             Duration::from_seconds(60),
-            move |_datastore, lease_duration, max_acquire_count| async move {
-                let mut test_state = TEST_STATE.lock().await;
+            {
+                let (test_state, incomplete_jobs) =
+                    (Arc::clone(&test_state), Arc::clone(&incomplete_jobs));
+                move |_datastore, lease_duration, max_acquire_count| {
+                    let (test_state, incomplete_jobs) =
+                        (Arc::clone(&test_state), Arc::clone(&incomplete_jobs));
+                    async move {
+                        let mut test_state = test_state.lock().await;
 
-                assert_eq!(lease_duration, Duration::from_seconds(600));
-                assert_eq!(max_acquire_count, 10);
+                        assert_eq!(lease_duration, Duration::from_seconds(600));
+                        assert_eq!(max_acquire_count, 10);
 
-                let incomplete_jobs = INCOMPLETE_JOBS
-                    .get(test_state.job_acquire_counter)
-                    // Clone here so that incomplete_jobs will be Vec<_> and not &Vec<_>, which
-                    // would be impossible to return from Option::unwrap_or_default.
-                    .cloned()
-                    .unwrap_or_default();
+                        let incomplete_jobs = incomplete_jobs
+                            .get(test_state.job_acquire_counter)
+                            // Clone here so that incomplete_jobs will be Vec<_> and not &Vec<_>, which
+                            // would be impossible to return from Option::unwrap_or_default.
+                            .cloned()
+                            .unwrap_or_default();
 
-                let acquired_jobs = incomplete_jobs
-                    .iter()
-                    .map(|job| {
-                        (
-                            (job.task_id, VdafInstance::Fake, job.job_id),
-                            job.lease_expiry,
-                        )
-                    })
-                    .collect();
+                        let leases = incomplete_jobs
+                            .iter()
+                            .map(|job| {
+                                Lease::new(
+                                    (job.task_id, VdafInstance::Fake, job.job_id),
+                                    job.lease_expiry,
+                                )
+                            })
+                            .collect();
 
-                test_state.job_acquire_counter += 1;
+                        test_state.job_acquire_counter += 1;
 
-                // Create some fake incomplete jobs
-                Ok(acquired_jobs)
+                        // Create some fake incomplete jobs
+                        Ok(leases)
+                    }
+                }
             },
-            move |_datastore, acquired_job| async move {
-                let mut test_state = TEST_STATE.lock().await;
-                let job_acquire_counter = test_state.job_acquire_counter;
+            {
+                let test_state = Arc::clone(&test_state);
+                move |_datastore, lease| {
+                    let test_state = Arc::clone(&test_state);
+                    async move {
+                        let mut test_state = test_state.lock().await;
+                        let job_acquire_counter = test_state.job_acquire_counter;
 
-                assert_eq!(acquired_job.1, VdafInstance::Fake);
+                        assert_eq!(lease.leased().1, VdafInstance::Fake);
 
-                test_state.stepped_jobs.push(SteppedJob {
-                    observed_jobs_acquire_counter: job_acquire_counter,
-                    task_id: acquired_job.0,
-                    job_id: acquired_job.2,
-                });
+                        test_state.stepped_jobs.push(SteppedJob {
+                            observed_jobs_acquire_counter: job_acquire_counter,
+                            task_id: lease.leased().0,
+                            job_id: lease.leased().2,
+                        });
 
-                Ok(()) as Result<(), datastore::Error>
+                        Ok(()) as Result<(), datastore::Error>
+                    }
+                }
             },
         ));
         let task_handle = task::spawn(async move { job_driver.run().await });
@@ -367,9 +373,9 @@ mod tests {
         task_handle.abort();
 
         // Verify that we got the expected calls to closures.
-        let final_test_state = TEST_STATE.lock().await;
+        let final_test_state = test_state.lock().await;
 
-        // We expect the job acquirer to run at least three times in the 5s we sleep,, but we can't
+        // We expect the job acquirer to run at least three times in the 5s we sleep, but we can't
         // prove it won't run once more.
         assert!(final_test_state.job_acquire_counter >= 3);
         assert_eq!(
@@ -378,25 +384,25 @@ mod tests {
                 // First acquirer run should have caused INCOMPLETE_JOBS[0] to be stepped.
                 SteppedJob {
                     observed_jobs_acquire_counter: 1,
-                    task_id: INCOMPLETE_JOBS[0][0].task_id,
-                    job_id: INCOMPLETE_JOBS[0][0].job_id,
+                    task_id: incomplete_jobs[0][0].task_id,
+                    job_id: incomplete_jobs[0][0].job_id,
                 },
                 SteppedJob {
                     observed_jobs_acquire_counter: 1,
-                    task_id: INCOMPLETE_JOBS[0][1].task_id,
-                    job_id: INCOMPLETE_JOBS[0][1].job_id,
+                    task_id: incomplete_jobs[0][1].task_id,
+                    job_id: incomplete_jobs[0][1].job_id,
                 },
                 // Second acquirer run should step no jobs
                 // Third acquirer run should have caused INCOMPLETE_JOBS[2] to be stepped.
                 SteppedJob {
                     observed_jobs_acquire_counter: 3,
-                    task_id: INCOMPLETE_JOBS[2][0].task_id,
-                    job_id: INCOMPLETE_JOBS[2][0].job_id,
+                    task_id: incomplete_jobs[2][0].task_id,
+                    job_id: incomplete_jobs[2][0].job_id,
                 },
                 SteppedJob {
                     observed_jobs_acquire_counter: 3,
-                    task_id: INCOMPLETE_JOBS[2][1].task_id,
-                    job_id: INCOMPLETE_JOBS[2][1].job_id,
+                    task_id: incomplete_jobs[2][1].task_id,
+                    job_id: incomplete_jobs[2][1].job_id,
                 },
             ]
         );

@@ -6,7 +6,7 @@ use futures::{
 use http::header::CONTENT_TYPE;
 use janus::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    message::{Duration, Report, Role, TaskId},
+    message::{Duration, Report, Role},
     time::{Clock, RealClock},
 };
 use janus_server::{
@@ -15,15 +15,14 @@ use janus_server::{
     datastore::{
         self,
         models::{
-            AcquiredAggregationJob, AggregationJob, AggregationJobState, ReportAggregation,
+            AcquiredAggregationJob, AggregationJob, AggregationJobState, Lease, ReportAggregation,
             ReportAggregationState,
         },
         Datastore,
     },
     message::{
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
-        ReportShareError,
+        AggregateInitializeResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
     task::{Task, VdafInstance, DAP_AUTH_HEADER},
 };
@@ -105,11 +104,11 @@ async fn main() -> anyhow::Result<()> {
                         })
                         .await
                 },
-                move |datastore, acquired_aggregation_job| {
+                move |datastore, aggregation_job_lease| {
                     let aggregation_job_driver = Arc::clone(&aggregation_job_driver);
                     async move {
                         aggregation_job_driver
-                            .step_aggregation_job(datastore, &acquired_aggregation_job)
+                            .step_aggregation_job(datastore, aggregation_job_lease)
                             .await
                     }
                 },
@@ -132,46 +131,28 @@ impl AggregationJobDriver {
     async fn step_aggregation_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
-        acquired_aggregation_job: &AcquiredAggregationJob,
+        lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()> {
-        match acquired_aggregation_job.vdaf {
+        match lease.leased().vdaf {
             VdafInstance::Prio3Aes128Count => {
                 let vdaf = Prio3Aes128Count::new(2)?;
-                self.step_aggregation_job_generic(
-                    datastore,
-                    vdaf,
-                    acquired_aggregation_job.task_id,
-                    acquired_aggregation_job.aggregation_job_id,
-                )
-                .await
+                self.step_aggregation_job_generic(datastore, vdaf, lease)
+                    .await
             }
 
             VdafInstance::Prio3Aes128Sum { bits } => {
                 let vdaf = Prio3Aes128Sum::new(2, bits)?;
-                self.step_aggregation_job_generic(
-                    datastore,
-                    vdaf,
-                    acquired_aggregation_job.task_id,
-                    acquired_aggregation_job.aggregation_job_id,
-                )
-                .await
+                self.step_aggregation_job_generic(datastore, vdaf, lease)
+                    .await
             }
 
             VdafInstance::Prio3Aes128Histogram { ref buckets } => {
                 let vdaf = Prio3Aes128Histogram::new(2, buckets)?;
-                self.step_aggregation_job_generic(
-                    datastore,
-                    vdaf,
-                    acquired_aggregation_job.task_id,
-                    acquired_aggregation_job.aggregation_job_id,
-                )
-                .await
+                self.step_aggregation_job_generic(datastore, vdaf, lease)
+                    .await
             }
 
-            _ => panic!(
-                "VDAF {:?} is not yet supported",
-                acquired_aggregation_job.vdaf
-            ),
+            _ => panic!("VDAF {:?} is not yet supported", lease.leased().vdaf),
         }
     }
 
@@ -179,8 +160,7 @@ impl AggregationJobDriver {
         &self,
         datastore: Arc<Datastore<C>>,
         vdaf: A,
-        task_id: TaskId,
-        aggregation_job_id: AggregationJobId,
+        lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()>
     where
         C: Clock,
@@ -195,6 +175,8 @@ impl AggregationJobDriver {
     {
         // Read all information about the aggregation job.
         let vdaf = Arc::new(vdaf);
+        let task_id = lease.leased().task_id;
+        let aggregation_job_id = lease.leased().aggregation_job_id;
         let (task, aggregation_job, report_aggregations, client_reports, verify_param) = datastore
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
@@ -285,11 +267,11 @@ impl AggregationJobDriver {
         match (saw_start, saw_waiting, saw_finished) {
             // Only saw report aggregations in state "start" (or failed or invalid).
             (true, false, false) => self.step_aggregation_job_aggregate_init(
-                &datastore, vdaf.as_ref(), task, aggregation_job, report_aggregations, client_reports, verify_param).await,
+                &datastore, vdaf.as_ref(), lease, task, aggregation_job, report_aggregations, client_reports, verify_param).await,
 
             // Only saw report aggregations in state "waiting" (or failed or invalid).
             (false, true, false) => self.step_aggregation_job_aggregate_continue(
-                &datastore, vdaf.as_ref(), task, aggregation_job, report_aggregations).await,
+                &datastore, vdaf.as_ref(), lease, task, aggregation_job, report_aggregations).await,
 
             _ => return Err(anyhow!("unexpected combination of report aggregation states (saw_start = {}, saw_waiting = {}, saw_finished = {})", saw_start, saw_waiting, saw_finished)),
         }
@@ -300,6 +282,7 @@ impl AggregationJobDriver {
         &self,
         datastore: &Datastore<C>,
         vdaf: &A,
+        lease: Lease<AcquiredAggregationJob>,
         task: Task,
         aggregation_job: AggregationJob<A>,
         report_aggregations: Vec<ReportAggregation<A>>,
@@ -477,7 +460,7 @@ impl AggregationJobDriver {
         self.process_response_from_helper(
             datastore,
             vdaf,
-            task,
+            lease,
             aggregation_job,
             stepped_aggregations,
             report_aggregations_to_write,
@@ -490,6 +473,7 @@ impl AggregationJobDriver {
         &self,
         datastore: &Datastore<C>,
         vdaf: &A,
+        lease: Lease<AcquiredAggregationJob>,
         task: Task,
         aggregation_job: AggregationJob<A>,
         report_aggregations: Vec<ReportAggregation<A>>,
@@ -563,7 +547,7 @@ impl AggregationJobDriver {
         self.process_response_from_helper(
             datastore,
             vdaf,
-            task,
+            lease,
             aggregation_job,
             stepped_aggregations,
             report_aggregations_to_write,
@@ -577,7 +561,7 @@ impl AggregationJobDriver {
         &self,
         datastore: &Datastore<C>,
         vdaf: &A,
-        task: Task,
+        lease: Lease<AcquiredAggregationJob>,
         aggregation_job: AggregationJob<A>,
         stepped_aggregations: Vec<SteppedAggregation<A>>,
         mut report_aggregations_to_write: Vec<ReportAggregation<A>>,
@@ -668,7 +652,6 @@ impl AggregationJobDriver {
 
         // Determine if we've finished the aggregation job (i.e. if all report aggregations are in
         // a terminal state), then write everything back to storage.
-        let aggregation_job_id = aggregation_job.aggregation_job_id;
         let aggregation_job_is_finished = report_aggregations_to_write
             .iter()
             .all(|ra| !matches!(ra.state, ReportAggregationState::Waiting(_, _)));
@@ -681,11 +664,13 @@ impl AggregationJobDriver {
         };
         let report_aggregations_to_write = Arc::new(report_aggregations_to_write);
         let aggregation_job_to_write = Arc::new(aggregation_job_to_write);
+        let lease = Arc::new(lease);
         datastore
             .run_tx(|tx| {
-                let (report_aggregations_to_write, aggregation_job_to_write) = (
+                let (report_aggregations_to_write, aggregation_job_to_write, lease) = (
                     Arc::clone(&report_aggregations_to_write),
                     Arc::clone(&aggregation_job_to_write),
+                    Arc::clone(&lease),
                 );
                 Box::pin(async move {
                     let report_aggregations_future =
@@ -699,7 +684,7 @@ impl AggregationJobDriver {
                     );
 
                     try_join!(
-                        tx.release_aggregation_job(task.id, aggregation_job_id),
+                        tx.release_aggregation_job(&lease),
                         report_aggregations_future,
                         aggregation_job_future
                     )?;
@@ -738,8 +723,7 @@ mod tests {
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
-                AcquiredAggregationJob, AggregationJob, AggregationJobState, ReportAggregation,
-                ReportAggregationState,
+                AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
             },
             Crypter, Datastore,
         },
@@ -900,11 +884,11 @@ mod tests {
                     })
                     .await
             },
-            move |datastore, acquired_aggregation_job| {
+            move |datastore, aggregation_job_lease| {
                 let aggregation_job_driver = Arc::clone(&aggregation_job_driver);
                 async move {
                     aggregation_job_driver
-                        .step_aggregation_job(datastore, &acquired_aggregation_job)
+                        .step_aggregation_job(datastore, aggregation_job_lease)
                         .await
                 }
             },
@@ -1002,31 +986,39 @@ mod tests {
         );
         let aggregation_job_id = AggregationJobId::random();
 
-        ds.run_tx(|tx| {
-            let (task, report) = (task.clone(), report.clone());
-            Box::pin(async move {
-                tx.put_task(&task).await?;
-                tx.put_client_report(&report).await?;
+        let lease = ds
+            .run_tx(|tx| {
+                let (task, report) = (task.clone(), report.clone());
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+                    tx.put_client_report(&report).await?;
 
-                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
-                    aggregation_job_id,
-                    task_id,
-                    aggregation_param: (),
-                    state: AggregationJobState::InProgress,
+                    tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce: report.nonce(),
+                        ord: 0,
+                        state: ReportAggregationState::Start,
+                    })
+                    .await?;
+
+                    Ok(tx
+                        .acquire_incomplete_aggregation_jobs(Duration::from_seconds(60), 1)
+                        .await?
+                        .remove(0))
                 })
-                .await?;
-                tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
-                    aggregation_job_id,
-                    task_id,
-                    nonce: report.nonce(),
-                    ord: 0,
-                    state: ReportAggregationState::Start,
-                })
-                .await
             })
-        })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
+        assert_eq!(lease.leased().task_id, task_id);
+        assert_eq!(lease.leased().aggregation_job_id, aggregation_job_id);
 
         // Setup: prepare mocked HTTP response.
         // TODO(brandon): this is fragile in that it expects the leader request to be
@@ -1072,14 +1064,7 @@ mod tests {
             http_client: reqwest::Client::builder().build().unwrap(),
         };
         aggregation_job_driver
-            .step_aggregation_job(
-                ds.clone(),
-                &AcquiredAggregationJob {
-                    vdaf: VdafInstance::Prio3Aes128Count,
-                    task_id,
-                    aggregation_job_id,
-                },
-            )
+            .step_aggregation_job(ds.clone(), lease)
             .await
             .unwrap();
 
@@ -1165,36 +1150,47 @@ mod tests {
         let leader_prep_state = assert_matches!(&transcript.transitions[Role::Leader.index().unwrap()][0], PrepareTransition::Continue(prep_state, _) => prep_state);
         let combined_msg = &transcript.combined_messages[0];
 
-        ds.run_tx(|tx| {
-            let (task, report, leader_prep_state, combined_msg) = (
-                task.clone(),
-                report.clone(),
-                leader_prep_state.clone(),
-                combined_msg.clone(),
-            );
-            Box::pin(async move {
-                tx.put_task(&task).await?;
-                tx.put_client_report(&report).await?;
+        let lease = ds
+            .run_tx(|tx| {
+                let (task, report, leader_prep_state, combined_msg) = (
+                    task.clone(),
+                    report.clone(),
+                    leader_prep_state.clone(),
+                    combined_msg.clone(),
+                );
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+                    tx.put_client_report(&report).await?;
 
-                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
-                    aggregation_job_id,
-                    task_id,
-                    aggregation_param: (),
-                    state: AggregationJobState::InProgress,
+                    tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param: (),
+                        state: AggregationJobState::InProgress,
+                    })
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce: report.nonce(),
+                        ord: 0,
+                        state: ReportAggregationState::Waiting(
+                            leader_prep_state,
+                            Some(combined_msg),
+                        ),
+                    })
+                    .await?;
+
+                    Ok(tx
+                        .acquire_incomplete_aggregation_jobs(Duration::from_seconds(60), 1)
+                        .await?
+                        .remove(0))
                 })
-                .await?;
-                tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
-                    aggregation_job_id,
-                    task_id,
-                    nonce: report.nonce(),
-                    ord: 0,
-                    state: ReportAggregationState::Waiting(leader_prep_state, Some(combined_msg)),
-                })
-                .await
             })
-        })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
+        assert_eq!(lease.leased().task_id, task_id);
+        assert_eq!(lease.leased().aggregation_job_id, aggregation_job_id);
 
         // Setup: prepare mocked HTTP response.
         // TODO(brandon): this is fragile in that it expects the leader request to be
@@ -1233,14 +1229,7 @@ mod tests {
             http_client: reqwest::Client::builder().build().unwrap(),
         };
         aggregation_job_driver
-            .step_aggregation_job(
-                ds.clone(),
-                &AcquiredAggregationJob {
-                    vdaf: VdafInstance::Prio3Aes128Count,
-                    task_id,
-                    aggregation_job_id,
-                },
-            )
+            .step_aggregation_job(ds.clone(), lease)
             .await
             .unwrap();
 
