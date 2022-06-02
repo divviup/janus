@@ -70,12 +70,14 @@ async fn main() -> anyhow::Result<()> {
                         })
                         .await
                 },
-                |datastore, collect_job_lease, collect_job_driver| async move {
-                    collect_job_driver
-                        .step_collect_job(datastore, collect_job_lease)
-                        .await
+                move |datastore, collect_job_lease| {
+                    let collect_job_driver = Arc::clone(&collect_job_driver);
+                    async move {
+                        collect_job_driver
+                            .step_collect_job(datastore, collect_job_lease)
+                            .await
+                    }
                 },
-                collect_job_driver,
             ))
             .run()
             .await;
