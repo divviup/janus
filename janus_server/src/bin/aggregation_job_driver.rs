@@ -69,48 +69,59 @@ async fn main() -> anyhow::Result<()> {
     janus_main::<Options, _, _, _, _>(
         RealClock::default(),
         |clock, config: AggregationJobDriverConfig, datastore| async move {
+            let datastore = Arc::new(datastore);
             let aggregation_job_driver = Arc::new(AggregationJobDriver {
                 http_client: reqwest::Client::builder()
                     .user_agent(CLIENT_USER_AGENT)
                     .build()
                     .context("couldn't create HTTP client")?,
             });
+            let lease_duration =
+                Duration::from_seconds(config.job_driver_config.worker_lease_duration_secs);
 
             // Start running.
             Arc::new(JobDriver::new(
-                Arc::new(datastore),
                 clock,
                 Duration::from_seconds(config.job_driver_config.min_job_discovery_delay_secs),
                 Duration::from_seconds(config.job_driver_config.max_job_discovery_delay_secs),
                 config.job_driver_config.max_concurrent_job_workers,
-                Duration::from_seconds(config.job_driver_config.worker_lease_duration_secs),
                 Duration::from_seconds(
                     config
                         .job_driver_config
                         .worker_lease_clock_skew_allowance_secs,
                 ),
-                |datastore, lease_duration, max_acquire_count| async move {
-                    datastore
-                        .run_tx(|tx| {
-                            Box::pin(async move {
-                                // TODO(brandon): only acquire jobs whose batch units have not
-                                // already been collected (probably by modifying
-                                // acquire_incomplete_aggregation_jobs)
-                                tx.acquire_incomplete_aggregation_jobs(
-                                    lease_duration,
-                                    max_acquire_count,
-                                )
+                {
+                    let datastore = Arc::clone(&datastore);
+                    move |max_acquire_count| {
+                        let datastore = Arc::clone(&datastore);
+                        async move {
+                            datastore
+                                .run_tx(|tx| {
+                                    Box::pin(async move {
+                                        // TODO(brandon): only acquire jobs whose batch units have not
+                                        // already been collected (probably by modifying
+                                        // acquire_incomplete_aggregation_jobs)
+                                        tx.acquire_incomplete_aggregation_jobs(
+                                            lease_duration,
+                                            max_acquire_count,
+                                        )
+                                        .await
+                                    })
+                                })
                                 .await
-                            })
-                        })
-                        .await
+                        }
+                    }
                 },
-                move |datastore, acquired_aggregation_job| {
-                    let aggregation_job_driver = Arc::clone(&aggregation_job_driver);
-                    async move {
-                        aggregation_job_driver
-                            .step_aggregation_job(datastore, &acquired_aggregation_job)
-                            .await
+                {
+                    let datastore = Arc::clone(&datastore);
+                    move |acquired_aggregation_job| {
+                        let (datastore, aggregation_job_driver) =
+                            (Arc::clone(&datastore), Arc::clone(&aggregation_job_driver));
+                        async move {
+                            aggregation_job_driver
+                                .step_aggregation_job(datastore, &acquired_aggregation_job)
+                                .await
+                        }
                     }
                 },
             ))
@@ -880,32 +891,40 @@ mod tests {
         });
         // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
         let aggregation_job_driver = Arc::new(JobDriver::new(
-            ds.clone(),
             clock,
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
-            Duration::from_seconds(600),
             Duration::from_seconds(60),
-            |datastore, lease_duration, max_acquire_count| async move {
-                datastore
-                    .run_tx(|tx| {
-                        Box::pin(async move {
-                            tx.acquire_incomplete_aggregation_jobs(
-                                lease_duration,
-                                max_acquire_count,
-                            )
+            {
+                let datastore = Arc::clone(&ds);
+                move |max_acquire_count| {
+                    let datastore = Arc::clone(&datastore);
+                    async move {
+                        datastore
+                            .run_tx(|tx| {
+                                Box::pin(async move {
+                                    tx.acquire_incomplete_aggregation_jobs(
+                                        Duration::from_seconds(600),
+                                        max_acquire_count,
+                                    )
+                                    .await
+                                })
+                            })
                             .await
-                        })
-                    })
-                    .await
+                    }
+                }
             },
-            move |datastore, acquired_aggregation_job| {
-                let aggregation_job_driver = Arc::clone(&aggregation_job_driver);
-                async move {
-                    aggregation_job_driver
-                        .step_aggregation_job(datastore, &acquired_aggregation_job)
-                        .await
+            {
+                let datastore = Arc::clone(&ds);
+                move |acquired_aggregation_job| {
+                    let (datastore, aggregation_job_driver) =
+                        (Arc::clone(&datastore), Arc::clone(&aggregation_job_driver));
+                    async move {
+                        aggregation_job_driver
+                            .step_aggregation_job(datastore, &acquired_aggregation_job)
+                            .await
+                    }
                 }
             },
         ));
