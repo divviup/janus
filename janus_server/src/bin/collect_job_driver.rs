@@ -70,9 +70,9 @@ async fn main() -> anyhow::Result<()> {
                         })
                         .await
                 },
-                |datastore, acquired_collect_job, collect_job_driver| async move {
+                |datastore, collect_job_lease, collect_job_driver| async move {
                     collect_job_driver
-                        .step_collect_job(datastore, &acquired_collect_job)
+                        .step_collect_job(datastore, collect_job_lease)
                         .await
                 },
                 collect_job_driver,
