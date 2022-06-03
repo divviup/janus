@@ -60,6 +60,7 @@ use tracing::{debug, error, warn};
 use url::Url;
 use uuid::Uuid;
 use warp::{
+    cors::Cors,
     filters::BoxedFilter,
     reply::{self, Response},
     trace, Filter, Rejection, Reply,
@@ -1732,6 +1733,55 @@ where
     }
 }
 
+/// Convenience function to perform common composition of Warp filters for a single endpoint. A
+/// combined filter is returned, with a CORS handler, instrumented to measure both request
+/// processing time and successes or failures for metrics, and with per-route named tracing spans.
+///
+/// `route_filter` should be a filter that determines whether the incoming request matches a
+/// given route or not. It should inspect the ambient request, and either extract the empty tuple
+/// or reject.
+///
+/// `response_filter` should be a filter that performs all response handling for this route, after
+/// the above `route_filter` has already determined the request is applicable to this route. It
+/// should only reject in response to malformed requests, not requests that may yet be served by a
+/// different route. This will ensure that a single request doesn't pass through multiple wrapping
+/// filters, skewing the low end of unrelated requests' timing histograms. The filter's return type
+/// should be `Result<impl Reply, Error>`, and errors will be transformed into responses with
+/// problem details documents as appropriate.
+///
+/// `cors` is a configuration object describing CORS policies for this route.
+///
+/// `response_counter` is a `Counter` that will be used to record successes and failures.
+///
+/// `timing_value_recorder` is a `ValueRecorder` that will be used to record request handling
+/// timings. It is expected the value recorder will be backed by a histogram.
+///
+/// `name` is a unique name for this route. This will be used as a metrics label, and will be added
+/// to the tracing span's values as its message.
+fn compose_common_wrappers<F1, F2, T>(
+    route_filter: F1,
+    response_filter: F2,
+    cors: Cors,
+    response_counter: &Counter<u64>,
+    timing_value_recorder: &ValueRecorder<f64>,
+    name: &'static str,
+) -> BoxedFilter<(impl Reply,)>
+where
+    F1: Filter<Extract = (), Error = Rejection> + Send + Sync + 'static,
+    F2: Filter<Extract = (Result<T, Error>,), Error = Rejection> + Clone + Send + Sync + 'static,
+    T: Reply + 'static,
+{
+    route_filter
+        .and(
+            response_filter
+                .map(error_handler(response_counter, name))
+                .with(cors)
+                .with(warp::wrap_fn(timing_wrapper(timing_value_recorder, name)))
+                .with(trace::named(name)),
+        )
+        .boxed()
+}
+
 /// The number of seconds we send in the Access-Control-Max-Age header. This determines for how
 /// long clients will cache the results of CORS preflight requests. Of popular browsers, Mozilla
 /// Firefox has the highest Max-Age cap, at 24 hours, so we use that. Our CORS preflight handlers
@@ -1757,68 +1807,64 @@ fn aggregator_filter<C: Clock>(
         .with_unit(Unit::new("seconds"))
         .init();
 
-    let hpke_config_endpoint = warp::path("hpke_config")
-        .and(
-            warp::get()
-                .and(with_cloned_value(aggregator.clone()))
-                .and(warp::query::<HashMap<String, String>>())
-                .then(
-                    |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
-                        let task_id_b64 = query_params
-                            .get("task_id")
-                            .ok_or(Error::UnrecognizedMessage("task_id", None))?;
-                        let hpke_config_bytes = aggregator.handle_hpke_config(task_id_b64.as_ref()).await?;
-                        http::Response::builder()
-                            .header(CACHE_CONTROL, "max-age=86400")
-                            .header(CONTENT_TYPE, HpkeConfig::MEDIA_TYPE)
-                            .body(hpke_config_bytes)
-                            .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
-                    },
-                )
-                .map(error_handler(&response_counter, "hpke_config"))
-                .with(
-                    warp::cors()
-                        .allow_any_origin()
-                        .allow_method("GET")
-                        .max_age(CORS_PREFLIGHT_CACHE_AGE),
-                ),
-        )
-        .with(warp::wrap_fn(timing_wrapper(
-            &time_value_recorder,
-            "hpke_config",
-        )))
-        .with(trace::named("hpke_config"));
+    let hpke_config_routing = warp::path("hpke_config");
+    let hpke_config_responding = warp::get()
+        .and(with_cloned_value(aggregator.clone()))
+        .and(warp::query::<HashMap<String, String>>())
+        .then(
+            |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
+                let task_id_b64 = query_params
+                    .get("task_id")
+                    .ok_or(Error::UnrecognizedMessage("task_id", None))?;
+                let hpke_config_bytes = aggregator.handle_hpke_config(task_id_b64.as_ref()).await?;
+                http::Response::builder()
+                    .header(CACHE_CONTROL, "max-age=86400")
+                    .header(CONTENT_TYPE, HpkeConfig::MEDIA_TYPE)
+                    .body(hpke_config_bytes)
+                    .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+            },
+        );
+    let hpke_config_endpoint = compose_common_wrappers(
+        hpke_config_routing,
+        hpke_config_responding,
+        warp::cors()
+            .allow_any_origin()
+            .allow_method("GET")
+            .max_age(CORS_PREFLIGHT_CACHE_AGE)
+            .build(),
+        &response_counter,
+        &time_value_recorder,
+        "hpke_config",
+    );
 
-    let upload_endpoint = warp::path("upload")
-        .and(
-            warp::post()
-                .and(warp::header::exact(
-                    CONTENT_TYPE.as_str(),
-                    Report::MEDIA_TYPE,
-                ))
-                .and(with_cloned_value(aggregator.clone()))
-                .and(warp::body::bytes())
-                .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
-                    aggregator.handle_upload(&body).await?;
-                    Ok(StatusCode::OK)
-                })
-                .map(error_handler(&response_counter, "upload"))
-                .with(
-                    warp::cors()
-                        .allow_any_origin()
-                        .allow_method("POST")
-                        .allow_header("content-type")
-                        .max_age(CORS_PREFLIGHT_CACHE_AGE),
-                ),
-        )
-        .with(warp::wrap_fn(timing_wrapper(
-            &time_value_recorder,
-            "upload",
-        )))
-        .with(trace::named("upload"));
+    let upload_routing = warp::path("upload");
+    let upload_responding = warp::post()
+        .and(warp::header::exact(
+            CONTENT_TYPE.as_str(),
+            Report::MEDIA_TYPE,
+        ))
+        .and(with_cloned_value(aggregator.clone()))
+        .and(warp::body::bytes())
+        .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
+            aggregator.handle_upload(&body).await?;
+            Ok(StatusCode::OK)
+        });
+    let upload_endpoint = compose_common_wrappers(
+        upload_routing,
+        upload_responding,
+        warp::cors()
+            .allow_any_origin()
+            .allow_method("POST")
+            .allow_header("content-type")
+            .max_age(CORS_PREFLIGHT_CACHE_AGE)
+            .build(),
+        &response_counter,
+        &time_value_recorder,
+        "upload",
+    );
 
-    let aggregate_endpoint = warp::path("aggregate")
-        .and(warp::post())
+    let aggregate_routing = warp::path("aggregate");
+    let aggregate_responding = warp::post()
         .and(with_cloned_value(aggregator.clone()))
         .and(warp::body::bytes())
         .and(warp::header(CONTENT_TYPE.as_str()))
@@ -1845,16 +1891,18 @@ fn aggregator_filter<C: Clock>(
                 }
                 .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
             },
-        )
-        .map(error_handler(&response_counter, "aggregate"))
-        .with(warp::wrap_fn(timing_wrapper(
-            &time_value_recorder,
-            "aggregate",
-        )))
-        .with(trace::named("aggregate"));
+        );
+    let aggregate_endpoint = compose_common_wrappers(
+        aggregate_routing,
+        aggregate_responding,
+        warp::cors().build(),
+        &response_counter,
+        &time_value_recorder,
+        "aggregate",
+    );
 
-    let collect_endpoint = warp::path("collect")
-        .and(warp::post())
+    let collect_routing = warp::path("collect");
+    let collect_responding = warp::post()
         .and(warp::header::exact(
             CONTENT_TYPE.as_str(),
             CollectReq::MEDIA_TYPE,
@@ -1868,15 +1916,18 @@ fn aggregator_filter<C: Clock>(
                 reply::with_header(reply::reply(), LOCATION, collect_uri.as_str()),
                 StatusCode::SEE_OTHER,
             ))
-        })
-        .map(error_handler(&response_counter, "collect"))
-        .with(warp::wrap_fn(timing_wrapper(
-            &time_value_recorder,
-            "collect",
-        )))
-        .with(trace::named("collect"));
+        });
+    let collect_endpoint = compose_common_wrappers(
+        collect_routing,
+        collect_responding,
+        warp::cors().build(),
+        &response_counter,
+        &time_value_recorder,
+        "collect",
+    );
 
-    let collect_jobs_endpoint = warp::path("collect_jobs")
+    let collect_jobs_routing = warp::path("collect_jobs");
+    let collect_jobs_responding = warp::get()
         .and(warp::path::param())
         .and(with_cloned_value(aggregator.clone()))
         .then(
@@ -1892,15 +1943,18 @@ fn aggregator_filter<C: Clock>(
                 }
                 .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
             },
-        )
-        .map(error_handler(&response_counter, "collect_jobs"))
-        .with(warp::wrap_fn(timing_wrapper(
-            &time_value_recorder,
-            "collect_jobs",
-        )));
+        );
+    let collect_jobs_endpoint = compose_common_wrappers(
+        collect_jobs_routing,
+        collect_jobs_responding,
+        warp::cors().build(),
+        &response_counter,
+        &time_value_recorder,
+        "collect_jobs",
+    );
 
-    let aggregate_share_endpoint = warp::path("aggregate_share")
-        .and(warp::post())
+    let aggregate_share_routing = warp::path("aggregate_share");
+    let aggregate_share_responding = warp::post()
         .and(warp::header::exact(
             CONTENT_TYPE.as_str(),
             AggregateShareReq::MEDIA_TYPE,
@@ -1917,13 +1971,15 @@ fn aggregator_filter<C: Clock>(
                     .body(resp_bytes)
                     .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
             },
-        )
-        .map(error_handler(&response_counter, "aggregate_share"))
-        .with(warp::wrap_fn(timing_wrapper(
-            &time_value_recorder,
-            "aggregate_share",
-        )))
-        .with(trace::named("aggregate_share"));
+        );
+    let aggregate_share_endpoint = compose_common_wrappers(
+        aggregate_share_routing,
+        aggregate_share_responding,
+        warp::cors().build(),
+        &response_counter,
+        &time_value_recorder,
+        "aggregate_share",
+    );
 
     Ok(hpke_config_endpoint
         .or(upload_endpoint)
@@ -1981,7 +2037,7 @@ mod tests {
     use rand::{thread_rng, Rng};
     use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
-    use warp::{reject::MethodNotAllowed, reply::Reply, Rejection};
+    use warp::{cors::CorsForbidden, reply::Reply, Rejection};
 
     #[tokio::test]
     async fn hpke_config() {
@@ -2676,7 +2732,7 @@ mod tests {
             .filter(&filter)
             .await
             .map(Reply::into_response);
-        assert_matches!(result, Err(rejection) => rejection.find::<MethodNotAllowed>().unwrap());
+        assert_matches!(result, Err(rejection) => rejection.find::<CorsForbidden>().unwrap());
     }
 
     #[tokio::test]
