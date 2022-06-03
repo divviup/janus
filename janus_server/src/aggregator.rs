@@ -60,6 +60,7 @@ use tracing::{debug, error, warn};
 use url::Url;
 use uuid::Uuid;
 use warp::{
+    cors::Cors,
     filters::BoxedFilter,
     reply::{self, Response},
     trace, Filter, Rejection, Reply,
@@ -1733,8 +1734,8 @@ where
 }
 
 /// Convenience function to perform common composition of Warp filters for a single endpoint. A
-/// combined filter is returned, instrumented to measure request processing time for metrics, and
-/// with per-route named tracing spans.
+/// combined filter is returned, with a CORS handler, instrumented to measure request processing
+/// time for metrics, and with per-route named tracing spans.
 ///
 /// `route_filter` should be a filter that determines whether the incoming request matches a
 /// given route or not. It should inspect the ambient request, and either extract the empty tuple
@@ -1746,6 +1747,8 @@ where
 /// different route. This will ensure that a single request doesn't pass through multiple wrapping
 /// filters, skewing the low end of unrelated requests' timing histograms.
 ///
+/// `cors` is a configuration object describing CORS policies for this route.
+///
 /// `timing_value_recorder` is a `ValueRecorder` that will be used to record request handling
 /// timings. It is expected the value recorder will be backed by a histogram.
 ///
@@ -1754,6 +1757,7 @@ where
 fn compose_common_wrappers<F1, F2, T>(
     route_filter: F1,
     response_filter: F2,
+    cors: Cors,
     timing_value_recorder: &ValueRecorder<f64>,
     name: &'static str,
 ) -> BoxedFilter<(impl Reply,)>
@@ -1765,6 +1769,7 @@ where
     route_filter
         .and(
             response_filter
+                .with(cors)
                 .with(warp::wrap_fn(timing_wrapper(timing_value_recorder, name)))
                 .with(trace::named(name)),
         )
@@ -1813,16 +1818,15 @@ fn aggregator_filter<C: Clock>(
                     .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
             },
         )
-        .map(error_handler(&response_counter, "hpke_config"))
-        .with(
-            warp::cors()
-                .allow_any_origin()
-                .allow_method("GET")
-                .max_age(CORS_PREFLIGHT_CACHE_AGE),
-        );
+        .map(error_handler(&response_counter, "hpke_config"));
     let hpke_config_endpoint = compose_common_wrappers(
         hpke_config_routing,
         hpke_config_responding,
+        warp::cors()
+            .allow_any_origin()
+            .allow_method("GET")
+            .max_age(CORS_PREFLIGHT_CACHE_AGE)
+            .build(),
         &time_value_recorder,
         "hpke_config",
     );
@@ -1839,17 +1843,16 @@ fn aggregator_filter<C: Clock>(
             aggregator.handle_upload(&body).await?;
             Ok(StatusCode::OK)
         })
-        .map(error_handler(&response_counter, "upload"))
-        .with(
-            warp::cors()
-                .allow_any_origin()
-                .allow_method("POST")
-                .allow_header("content-type")
-                .max_age(CORS_PREFLIGHT_CACHE_AGE),
-        );
+        .map(error_handler(&response_counter, "upload"));
     let upload_endpoint = compose_common_wrappers(
         upload_routing,
         upload_responding,
+        warp::cors()
+            .allow_any_origin()
+            .allow_method("POST")
+            .allow_header("content-type")
+            .max_age(CORS_PREFLIGHT_CACHE_AGE)
+            .build(),
         &time_value_recorder,
         "upload",
     );
@@ -1887,6 +1890,7 @@ fn aggregator_filter<C: Clock>(
     let aggregate_endpoint = compose_common_wrappers(
         aggregate_routing,
         aggregate_responding,
+        warp::cors().build(),
         &time_value_recorder,
         "aggregate",
     );
@@ -1911,6 +1915,7 @@ fn aggregator_filter<C: Clock>(
     let collect_endpoint = compose_common_wrappers(
         collect_routing,
         collect_responding,
+        warp::cors().build(),
         &time_value_recorder,
         "collect",
     );
@@ -1937,6 +1942,7 @@ fn aggregator_filter<C: Clock>(
     let collect_jobs_endpoint = compose_common_wrappers(
         collect_jobs_routing,
         collect_jobs_responding,
+        warp::cors().build(),
         &time_value_recorder,
         "collect_jobs",
     );
@@ -1964,6 +1970,7 @@ fn aggregator_filter<C: Clock>(
     let aggregate_share_endpoint = compose_common_wrappers(
         aggregate_share_routing,
         aggregate_share_responding,
+        warp::cors().build(),
         &time_value_recorder,
         "aggregate_share",
     );
@@ -2024,7 +2031,7 @@ mod tests {
     use rand::{thread_rng, Rng};
     use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
-    use warp::{reject::MethodNotAllowed, reply::Reply, Rejection};
+    use warp::{cors::CorsForbidden, reply::Reply, Rejection};
 
     #[tokio::test]
     async fn hpke_config() {
@@ -2719,7 +2726,7 @@ mod tests {
             .filter(&filter)
             .await
             .map(Reply::into_response);
-        assert_matches!(result, Err(rejection) => rejection.find::<MethodNotAllowed>().unwrap());
+        assert_matches!(result, Err(rejection) => rejection.find::<CorsForbidden>().unwrap());
     }
 
     #[tokio::test]
