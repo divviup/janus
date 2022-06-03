@@ -2228,6 +2228,8 @@ pub mod models {
         InProgress,
         #[postgres(name = "FINISHED")]
         Finished,
+        #[postgres(name = "ABANDONED")]
+        Abandoned,
     }
 
     /// LeaseToken represents an opaque value used to determine the identity of a lease.

@@ -36,7 +36,7 @@ use prio::{
 };
 use std::{fmt::Debug, sync::Arc};
 use structopt::StructOpt;
-use tracing::{error, info};
+use tracing::{error, warn};
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -120,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
                             if aggregation_job_lease.lease_attempts()
                                 >= config.job_driver_config.maximum_attempts_before_failure
                             {
-                                info!(attempts = ?aggregation_job_lease.lease_attempts(),
+                                warn!(attempts = ?aggregation_job_lease.lease_attempts(),
                                     max_attempts = ?config.job_driver_config.maximum_attempts_before_failure,
                                     "Canceling job due to too many failed attempts");
                                 return aggregation_job_driver
@@ -716,7 +716,6 @@ impl AggregationJobDriver {
         Ok(())
     }
 
-    // XXX: log that we are canceling?
     async fn cancel_aggregation_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
@@ -772,9 +771,9 @@ impl AggregationJobDriver {
                             )
                         })?;
 
-                    // Canceling an aggregation job is just putting it into a non-IN_PROGRESS state.
-                    // We leave all other data (e.g. report aggregations) alone to allow debugging.
-                    aggregation_job.state = AggregationJobState::Finished;
+                    // We leave all other data associated with the aggregation job (e.g. report
+                    // aggregations) alone to ease debugging.
+                    aggregation_job.state = AggregationJobState::Abandoned;
 
                     let write_aggregation_job_future = tx.update_aggregation_job(&aggregation_job);
                     let release_future = tx.release_aggregation_job(&lease);
@@ -1457,11 +1456,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify: check that the datstore state is update as expected (the aggregation job is
+        // Verify: check that the datstore state is updated as expected (the aggregation job is
         // finished, the report aggregation is untouched) and sanity-check that the job can no
-        // longer be leased.
+        // longer be acquired.
         let want_aggregation_job = AggregationJob {
-            state: AggregationJobState::Finished,
+            state: AggregationJobState::Abandoned,
             ..aggregation_job
         };
         let want_report_aggregation = report_aggregation;
