@@ -5,7 +5,7 @@ use crate::{
     datastore::{
         self,
         models::AcquiredCollectJob,
-        models::{BatchUnitAggregation, Lease},
+        models::{BatchUnitAggregation, CollectJobState, Lease},
         Datastore, Transaction,
     },
     message::{AggregateShareReq, AggregateShareResp},
@@ -114,7 +114,7 @@ impl CollectJobDriver {
     {
         let task_id = lease.leased().task_id;
         let collect_job_id = lease.leased().collect_job_id;
-        let (task, collect_job) = datastore
+        let (task, collect_job, batch_unit_aggregations) = datastore
             .run_tx(|tx| {
                 Box::pin(async move {
                     // TODO: Consider fleshing out `AcquiredCollectJob` to include a `Task`,
@@ -123,18 +123,14 @@ impl CollectJobDriver {
                         datastore::Error::User(Error::UnrecognizedTask(task_id).into())
                     })?;
 
-                    let mut collect_job = tx
-                        .get_collect_job::<A>(collect_job_id)
-                        .await?
-                        .ok_or_else(|| {
-                            datastore::Error::User(
-                                Error::UnrecognizedCollectJob(collect_job_id).into(),
-                            )
-                        })?;
-
-                    if collect_job.leader_aggregate_share.is_some() {
-                        return Ok((task, collect_job));
-                    }
+                    let collect_job =
+                        tx.get_collect_job::<A>(collect_job_id)
+                            .await?
+                            .ok_or_else(|| {
+                                datastore::Error::User(
+                                    Error::UnrecognizedCollectJob(collect_job_id).into(),
+                                )
+                            })?;
 
                     let batch_unit_aggregations = tx
                         .get_batch_unit_aggregations_for_task_in_interval::<A>(
@@ -144,39 +140,28 @@ impl CollectJobDriver {
                         )
                         .await?;
 
-                    let (leader_aggregate_share, report_count, checksum) =
-                        compute_aggregate_share::<A>(&task, &batch_unit_aggregations)
-                            .await
-                            .map_err(|e| datastore::Error::User(e.into()))?;
-
-                    collect_job.leader_aggregate_share = Some(leader_aggregate_share);
-                    collect_job.report_count = Some(report_count);
-                    collect_job.checksum = Some(checksum);
-
-                    Ok((task, collect_job))
+                    Ok((task, collect_job, batch_unit_aggregations))
                 })
             })
             .await?;
 
-        if collect_job.helper_aggregate_share.is_some() {
-            warn!("collect job being stepped already has a computed helper share");
-            assert!(
-                collect_job.leader_aggregate_share.is_some()
-                    && collect_job.report_count.is_some()
-                    && collect_job.checksum.is_some(),
-                "collect job results in inconsistent state: {:?}",
-                collect_job
-            );
+        if matches!(collect_job.state, CollectJobState::Finished { .. }) {
+            warn!("Collect job being stepped already has a computed helper share");
             return Ok(());
         }
+
+        let (leader_aggregate_share, report_count, checksum) =
+            compute_aggregate_share::<A>(&task, &batch_unit_aggregations)
+                .await
+                .map_err(|e| datastore::Error::User(e.into()))?;
 
         // Send an aggregate share request to the helper.
         let req = AggregateShareReq {
             task_id: task.id,
             batch_interval: collect_job.batch_interval,
             aggregation_param: collect_job.aggregation_param.get_encoded(),
-            report_count: collect_job.report_count.unwrap(),
-            checksum: collect_job.checksum.unwrap(),
+            report_count,
+            checksum,
         };
 
         let response = self
@@ -193,26 +178,25 @@ impl CollectJobDriver {
             .body(req.get_encoded())
             .send()
             .await?;
+        let encrypted_helper_aggregate_share =
+            AggregateShareResp::get_decoded(&response.bytes().await?)?.encrypted_aggregate_share;
 
         // Store the helper aggregate share in the datastore so that a later request to a collect
         // job URI can serve it up.
-        let helper_aggregate_share = Arc::new(
-            AggregateShareResp::get_decoded(&response.bytes().await?)?.encrypted_aggregate_share,
-        );
-        let collect_job = Arc::new(collect_job);
+        let leader_aggregate_share = Arc::new(leader_aggregate_share);
+        let encrypted_helper_aggregate_share = Arc::new(encrypted_helper_aggregate_share);
         let lease = Arc::new(lease);
         datastore
             .run_tx(|tx| {
-                let helper_aggregate_share = Arc::clone(&helper_aggregate_share);
-                let collect_job = Arc::clone(&collect_job);
+                let leader_aggregate_share = Arc::clone(&leader_aggregate_share);
+                let encrypted_helper_aggregate_share =
+                    Arc::clone(&encrypted_helper_aggregate_share);
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     tx.update_collect_job::<A>(
                         collect_job_id,
-                        collect_job.leader_aggregate_share.as_ref().unwrap(),
-                        collect_job.report_count.unwrap(),
-                        collect_job.checksum.unwrap(),
-                        &helper_aggregate_share,
+                        &leader_aggregate_share,
+                        &encrypted_helper_aggregate_share,
                     )
                     .await?;
 
@@ -364,7 +348,8 @@ mod tests {
     use crate::{
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
+                AggregationJob, AggregationJobState, CollectJobState, ReportAggregation,
+                ReportAggregationState,
             },
             Crypter, Datastore,
         },
@@ -530,11 +515,7 @@ mod tests {
                     .await
                     .unwrap()
                     .unwrap();
-                assert!(collect_job.leader_aggregate_share.is_none());
-                assert!(collect_job.report_count.is_none());
-                assert!(collect_job.checksum.is_none());
-                assert!(collect_job.helper_aggregate_share.is_none());
-
+                assert_eq!(collect_job.state, CollectJobState::Start);
                 Ok(())
             })
         })
@@ -574,16 +555,10 @@ mod tests {
                     .await
                     .unwrap()
                     .unwrap();
-                assert!(collect_job.leader_aggregate_share.is_some());
-                assert_eq!(collect_job.report_count.unwrap(), 10);
-                assert_eq!(
-                    collect_job.checksum.unwrap(),
-                    NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap()
-                );
-                assert_eq!(
-                    collect_job.helper_aggregate_share.unwrap(),
-                    helper_aggregate_share
-                );
+
+                assert_matches!(collect_job.state, CollectJobState::Finished{ encrypted_helper_aggregate_share, .. } => {
+                    assert_eq!(encrypted_helper_aggregate_share, helper_aggregate_share);
+                });
 
                 Ok(())
             })

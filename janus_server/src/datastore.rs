@@ -2,8 +2,8 @@
 
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectJob, AggregateShareJob, AggregationJob, AggregatorRole,
-    BatchUnitAggregation, CollectJob, Lease, LeaseToken, ReportAggregation, ReportAggregationState,
-    ReportAggregationStateCode,
+    BatchUnitAggregation, CollectJob, CollectJobState, CollectJobStateCode, Lease, LeaseToken,
+    ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
 };
 use crate::{
     message::{AggregateShareReq, AggregationJobId, ReportShare},
@@ -1151,10 +1151,9 @@ impl<C: Clock> Transaction<'_, C> {
                     collect_jobs.batch_interval_start,
                     collect_jobs.batch_interval_duration,
                     collect_jobs.aggregation_param,
+                    collect_jobs.state,
                     collect_jobs.helper_aggregate_share,
-                    collect_jobs.leader_aggregate_share,
-                    collect_jobs.report_count,
-                    collect_jobs.checksum
+                    collect_jobs.leader_aggregate_share
                 FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
                 WHERE collect_jobs.collect_job_id = $1",
             )
@@ -1170,28 +1169,28 @@ impl<C: Clock> Transaction<'_, C> {
                 )?;
                 let aggregation_param =
                     A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+                let state: CollectJobStateCode = row.get("state");
                 let helper_aggregate_share_bytes: Option<Vec<u8>> =
                     row.get("helper_aggregate_share");
-                let helper_aggregate_share = helper_aggregate_share_bytes
-                    .map(|bytes| HpkeCiphertext::get_decoded(&bytes))
-                    .transpose()?;
-                let leader_aggregate_share =
-                    row.get_nullable_bytea_and_convert("leader_aggregate_share")?;
-                let report_count = row.get_nullable_bigint_and_convert("report_count")?;
-                let checksum_bytes: Option<Vec<u8>> = row.get("checksum");
-                let checksum = checksum_bytes
-                    .map(|bytes| NonceChecksum::get_decoded(&bytes))
-                    .transpose()?;
+                let leader_aggregate_share_bytes: Option<Vec<u8>> =
+                    row.get("leader_aggregate_share");
+
+                let state = match state {
+                    CollectJobStateCode::Start => CollectJobState::Start,
+
+                    CollectJobStateCode::Finished => {
+                        let encrypted_helper_aggregate_share = HpkeCiphertext::get_decoded(&helper_aggregate_share_bytes.ok_or_else(|| Error::DbState("collect job in state FINISHED but helper_aggregate_share is NULL".to_string()))?)?;
+                        let leader_aggregate_share = A::AggregateShare::try_from(&leader_aggregate_share_bytes.ok_or_else(|| Error::DbState("collect job is in state FINISHED but leader_aggregate_share is NULL".to_string()))?).map_err(|err| Error::DbState(format!("leader_aggregate_share stored in database is invalid: {}", err)))?;
+                        CollectJobState::Finished{ encrypted_helper_aggregate_share, leader_aggregate_share }
+                    }
+                };
 
                 Ok(CollectJob {
                     collect_job_id,
                     task_id,
                     batch_interval,
                     aggregation_param,
-                    helper_aggregate_share,
-                    leader_aggregate_share,
-                    report_count,
-                    checksum,
+                    state,
                 })
             })
             .transpose()
@@ -1237,6 +1236,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Constructs and stores a new collect job for the provided values, and returns the UUID that
     /// was assigned.
+    // TODO(#242): update this function to take a CollectJob.
     #[tracing::instrument(skip(self, encoded_aggregation_parameter), err)]
     pub(crate) async fn put_collect_job(
         &self,
@@ -1254,9 +1254,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "INSERT INTO collect_jobs (
                     collect_job_id, task_id, batch_interval_start, batch_interval_duration,
-                    aggregation_param
+                    aggregation_param, state
                 )
-                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5)",
+                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, 'START')",
             )
             .await?;
         self.tx
@@ -1402,13 +1402,12 @@ ORDER BY id DESC
     }
 
     /// Updates an existing collect job with the provided aggregate shares.
+    // TODO(#242): update this function to take a CollectJob.
     #[tracing::instrument(skip(self), err)]
     pub(crate) async fn update_collect_job<A: vdaf::Aggregator>(
         &self,
         collect_job_id: Uuid,
         leader_aggregate_share: &A::AggregateShare,
-        report_count: u64,
-        checksum: NonceChecksum,
         helper_aggregate_share: &HpkeCiphertext,
     ) -> Result<(), Error>
     where
@@ -1417,19 +1416,16 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let leader_aggregate_share: Option<Vec<u8>> = Some(leader_aggregate_share.into());
-        let report_count = Some(i64::try_from(report_count)?);
-        let checksum = Some(checksum.get_encoded());
         let helper_aggregate_share = Some(helper_aggregate_share.get_encoded());
 
         let stmt = self
             .tx
             .prepare_cached(
                 "UPDATE collect_jobs SET
+                    state = 'FINISHED',
                     leader_aggregate_share = $1,
-                    report_count = $2,
-                    checksum = $3,
-                    helper_aggregate_share = $4
-                WHERE collect_job_id = $5",
+                    helper_aggregate_share = $2
+                WHERE collect_job_id = $3",
             )
             .await?;
         check_update(
@@ -1438,8 +1434,6 @@ ORDER BY id DESC
                     &stmt,
                     &[
                         &leader_aggregate_share,
-                        &report_count,
-                        &checksum,
                         &helper_aggregate_share,
                         &collect_job_id,
                     ],
@@ -1899,12 +1893,6 @@ trait RowExt {
     where
         for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> T: TryFrom<&'a [u8]>;
-
-    /// Like [`Self::get_bytea_and_convert`] but handles nullable columns.
-    fn get_nullable_bytea_and_convert<T>(&self, idx: &'static str) -> Result<Option<T>, Error>
-    where
-        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
-        for<'a> T: TryFrom<&'a [u8]>;
 }
 
 impl RowExt for Row {
@@ -1951,21 +1939,6 @@ impl RowExt for Row {
         let decoded = T::try_from(&encoded)
             .map_err(|e| Error::DbState(format!("{} stored in database is invalid: {}", idx, e)))?;
         Ok(decoded)
-    }
-
-    fn get_nullable_bytea_and_convert<T>(&self, idx: &'static str) -> Result<Option<T>, Error>
-    where
-        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
-        for<'a> T: TryFrom<&'a [u8]>,
-    {
-        let encoded: Option<Vec<u8>> = self.try_get(idx)?;
-        encoded
-            .map(|encoded| {
-                T::try_from(&encoded).map_err(|e| {
-                    Error::DbState(format!("{} stored in database is invalid: {}", idx, e))
-                })
-            })
-            .transpose()
     }
 }
 
@@ -2143,10 +2116,7 @@ pub mod models {
         task::{self, VdafInstance},
     };
     use derivative::Derivative;
-    use janus::{
-        hpke::associated_data_for_aggregate_share,
-        message::{HpkeCiphertext, Interval, Nonce, NonceChecksum, Role, TaskId, Time},
-    };
+    use janus::message::{HpkeCiphertext, Interval, Nonce, NonceChecksum, Role, TaskId, Time};
     use postgres_types::{FromSql, ToSql};
     use prio::{codec::Encode, vdaf};
     use uuid::Uuid;
@@ -2539,52 +2509,66 @@ pub mod models {
         /// The VDAF aggregation parameter used to prepare and aggregate input shares.
         #[derivative(Debug = "ignore")]
         pub(crate) aggregation_param: A::AggregationParam,
-        /// The helper's encrypted aggregate share over the input shares in the interval. `None`
-        /// until the helper has serviced an `AggregateShareReq` for this collect job.
-        #[derivative(Debug = "ignore")]
-        pub(crate) helper_aggregate_share: Option<HpkeCiphertext>,
-        /// The leader's aggregate share over the input shares in the interval. `None` until the
-        /// leader has computed this collect job's aggregate share.
-        #[derivative(Debug = "ignore")]
-        pub(crate) leader_aggregate_share: Option<A::AggregateShare>,
-        /// The number of reports included in the aggregate share, or `None` until the leader has
-        /// computed it.
-        pub(crate) report_count: Option<u64>,
-        /// Checksum over the aggregated report shares, as described in §4.4.4.3, or `None` until
-        /// the leader has computed it.
-        #[derivative(Debug = "ignore")]
-        pub(crate) checksum: Option<NonceChecksum>,
+        /// The current state of the collect job.
+        pub(crate) state: CollectJobState<A>,
     }
 
-    impl<A: vdaf::Aggregator> CollectJob<A>
+    #[derive(Clone, Derivative)]
+    #[derivative(Debug)]
+    pub(crate) enum CollectJobState<A: vdaf::Aggregator>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        /// Returns `Ok(true)` if this collect job has already been run, `Ok(false)` if not, and an
-        /// error if the job is in an inconsistent state.
-        pub(crate) fn has_run(&self) -> Result<bool, Error> {
-            match (
-                self.helper_aggregate_share.as_ref(),
-                self.leader_aggregate_share.as_ref(),
-                self.report_count,
-                self.checksum,
-            ) {
-                (Some(_), Some(_), Some(_), Some(_)) => Ok(true),
-                // If all are none, then the collect job has not been started yet. If only the
-                // helper share is none, then the collect job has started but is waiting on the
-                // helper's AggregateShareResp.
-                (None, None, None, None) | (None, Some(_), Some(_), Some(_)) => Ok(false),
-                _ => Err(Error::DbState(format!(
-                    "collect job {} in inconsistent state",
-                    self.collect_job_id
-                ))),
+        Start,
+        Finished {
+            /// The helper's encrypted aggregate share over the input shares in the interval.
+            #[derivative(Debug = "ignore")]
+            encrypted_helper_aggregate_share: HpkeCiphertext,
+            /// The leader's aggregate share over the input shares in the interval.
+            #[derivative(Debug = "ignore")]
+            leader_aggregate_share: A::AggregateShare,
+        },
+    }
+
+    impl<A: vdaf::Aggregator> PartialEq for CollectJobState<A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::AggregateShare: PartialEq,
+    {
+        fn eq(&self, other: &Self) -> bool {
+            match (self, other) {
+                (
+                    Self::Finished {
+                        encrypted_helper_aggregate_share: self_helper_agg_share,
+                        leader_aggregate_share: self_leader_agg_share,
+                    },
+                    Self::Finished {
+                        encrypted_helper_aggregate_share: other_helper_agg_share,
+                        leader_aggregate_share: other_leader_agg_share,
+                    },
+                ) => {
+                    self_helper_agg_share == other_helper_agg_share
+                        && self_leader_agg_share == other_leader_agg_share
+                }
+                _ => core::mem::discriminant(self) == core::mem::discriminant(other),
             }
         }
+    }
 
-        /// Returns the associated data for aggregate share encryptions related to this collect job.
-        pub(crate) fn associated_data_for_aggregate_share(&self) -> Vec<u8> {
-            associated_data_for_aggregate_share(self.task_id, self.batch_interval)
-        }
+    impl<A: vdaf::Aggregator> Eq for CollectJobState<A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::AggregateShare: Eq,
+    {
+    }
+
+    #[derive(Debug, FromSql, ToSql)]
+    #[postgres(name = "collect_job_state")]
+    pub(super) enum CollectJobStateCode {
+        #[postgres(name = "START")]
+        Start,
+        #[postgres(name = "FINISHED")]
+        Finished,
     }
 
     /// AggregateShareJob represents a row in the `aggregate_share_jobs` table, used by helpers to
@@ -2649,7 +2633,10 @@ pub mod test_util {
 mod tests {
     use super::*;
     use crate::{
-        datastore::{models::AggregationJobState, test_util::ephemeral_datastore},
+        datastore::{
+            models::{AggregationJobState, CollectJobState},
+            test_util::ephemeral_datastore,
+        },
         message::{test_util::new_dummy_report, ReportShareError},
         task::{test_util::new_dummy_task, VdafInstance},
         trace::test_util::install_test_trace_subscriber,
@@ -3978,10 +3965,7 @@ mod tests {
                 assert_eq!(first_collect_job.collect_job_id, first_collect_job_id);
                 assert_eq!(first_collect_job.task_id, task_id);
                 assert_eq!(first_collect_job.batch_interval, first_batch_interval);
-                assert!(first_collect_job.helper_aggregate_share.is_none());
-                assert!(first_collect_job.leader_aggregate_share.is_none());
-                assert!(first_collect_job.report_count.is_none());
-                assert!(first_collect_job.checksum.is_none());
+                assert_eq!(first_collect_job.state, CollectJobState::Start);
 
                 let second_collect_job = tx
                     .get_collect_job::<Prio3Aes128Count>(second_collect_job_id)
@@ -3991,10 +3975,7 @@ mod tests {
                 assert_eq!(second_collect_job.collect_job_id, second_collect_job_id);
                 assert_eq!(second_collect_job.task_id, task_id);
                 assert_eq!(second_collect_job.batch_interval, second_batch_interval);
-                assert!(second_collect_job.helper_aggregate_share.is_none());
-                assert!(second_collect_job.leader_aggregate_share.is_none());
-                assert!(second_collect_job.report_count.is_none());
-                assert!(second_collect_job.checksum.is_none());
+                assert_eq!(second_collect_job.state, CollectJobState::Start);
 
                 let leader_aggregate_share = AggregateShare::from(vec![Field64::from(1)]);
 
@@ -4009,8 +3990,6 @@ mod tests {
                 tx.update_collect_job::<Prio3Aes128Count>(
                     first_collect_job_id,
                     &leader_aggregate_share,
-                    10,
-                    NonceChecksum::get_decoded(&[1; 32]).unwrap(),
                     &encrypted_helper_aggregate_share,
                 )
                 .await
@@ -4025,17 +4004,11 @@ mod tests {
                 assert_eq!(first_collect_job.task_id, task_id);
                 assert_eq!(first_collect_job.batch_interval, first_batch_interval);
                 assert_eq!(
-                    first_collect_job.helper_aggregate_share,
-                    Some(encrypted_helper_aggregate_share)
-                );
-                assert_eq!(
-                    first_collect_job.leader_aggregate_share,
-                    Some(leader_aggregate_share)
-                );
-                assert_eq!(first_collect_job.report_count, Some(10));
-                assert_eq!(
-                    first_collect_job.checksum,
-                    Some(NonceChecksum::get_decoded(&[1; 32]).unwrap())
+                    first_collect_job.state,
+                    CollectJobState::Finished {
+                        encrypted_helper_aggregate_share,
+                        leader_aggregate_share
+                    }
                 );
 
                 Ok(())
@@ -4103,8 +4076,6 @@ mod tests {
                         tx.update_collect_job::<FakeVdaf>(
                             collect_job_id,
                             &dummy_vdaf::AggregateShare(),
-                            1,
-                            NonceChecksum::default(),
                             &HpkeCiphertext::new(HpkeConfigId::from(0), vec![], vec![]),
                         )
                         .await?;

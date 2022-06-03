@@ -140,18 +140,23 @@ CREATE TABLE batch_unit_aggregations(
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
+-- Specifies the possible state of a collect job.
+CREATE TYPE COLLECT_JOB_STATE AS ENUM(
+    'START',    -- the aggregator is waiting to run this collect job
+    'FINISHED'  -- this collect job has run successfully and is ready for collection
+);
+
 -- The leader's view of collect requests from the Collector.
 CREATE TABLE collect_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    collect_job_id          UUID NOT NULL,      -- UUID used by collector to refer to this job
-    task_id                 BIGINT NOT NULL,    -- the task ID being collected
-    batch_interval_start    TIMESTAMP NOT NULL, -- the start of the batch interval
-    batch_interval_duration BIGINT NOT NULL,    -- the length of the batch interval in seconds
-    aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
-    helper_aggregate_share  BYTEA,              -- the helper's encrypted aggregate share; null until the helper has serviced the AggregateShareReq
-    leader_aggregate_share  BYTEA,              -- the leader's unencrypted aggregate share; null until the leader has performed its aggregation for a CollectReq
-    report_count            BIGINT,             -- the count of reports included in the leader's aggregate share; null until the leader has performed its aggregation for a CollectReq
-    checksum                BYTEA,              -- the checksum over the reports included in the leader's aggregate share; null until the leader has performed its aggregation for a CollectReq
+    collect_job_id          UUID NOT NULL,               -- UUID used by collector to refer to this job
+    task_id                 BIGINT NOT NULL,             -- the task ID being collected
+    batch_interval_start    TIMESTAMP NOT NULL,          -- the start of the batch interval
+    batch_interval_duration BIGINT NOT NULL,             -- the length of the batch interval in seconds
+    aggregation_param       BYTEA NOT NULL,              -- the aggregation parameter (opaque VDAF message)
+    state                   COLLECT_JOB_STATE NOT NULL,  -- the current state of this collect job
+    helper_aggregate_share  BYTEA,                       -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
+    leader_aggregate_share  BYTEA,                       -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
 
     lease_expiry            TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collect job expires; -infinity implies no current lease
     lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
