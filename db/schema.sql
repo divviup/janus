@@ -74,7 +74,7 @@ CREATE INDEX client_reports_task_and_time_index ON client_reports(task_id, nonce
 -- Specifies the possible state of an aggregation job.
 CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
     'IN_PROGRESS', -- at least one included report is in a non-terminal (START, WAITING) state
-    'FINISHED'     -- all reports have reached a terminal state (FINISHED, FAILED, INVALID)
+    'FINISHED'     -- all reports have reached a terminal state (FINISHED, FAILED, INVALID) or we have given up on the aggregation job entirely
 );
 
 -- An aggregation job, representing the aggregation of a number of client reports.
