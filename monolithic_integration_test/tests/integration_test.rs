@@ -97,7 +97,7 @@ async fn setup_test() -> TestCase {
     leader_datastore
         .run_tx(|tx| {
             let leader_task = leader_task.clone();
-            Box::pin(async move { tx.put_task(&leader_task).await })
+            async move { tx.put_task(&leader_task).await }
         })
         .await
         .unwrap();
@@ -130,7 +130,7 @@ async fn setup_test() -> TestCase {
     helper_datastore
         .run_tx(|tx| {
             let helper_task = helper_task.clone();
-            Box::pin(async move { tx.put_task(&helper_task).await })
+            async move { tx.put_task(&helper_task).await }
         })
         .await
         .unwrap();

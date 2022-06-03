@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
                         async move {
                             datastore
                                 .run_tx(|tx| {
-                                    Box::pin(async move {
+                                    async move {
                                         // TODO(brandon): only acquire jobs whose batch units have not
                                         // already been collected (probably by modifying
                                         // acquire_incomplete_aggregation_jobs)
@@ -105,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
                                             max_acquire_count,
                                         )
                                         .await
-                                    })
+                                    }
                                 })
                                 .await
                         }
@@ -191,7 +191,7 @@ impl AggregationJobDriver {
         let (task, aggregation_job, report_aggregations, client_reports, verify_param) = datastore
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
-                Box::pin(async move {
+                async move {
                     let task = tx.get_task(task_id).await?.ok_or_else(|| {
                         datastore::Error::User(anyhow!("couldn't find task {}", task_id).into())
                     })?;
@@ -261,7 +261,7 @@ impl AggregationJobDriver {
                         client_reports,
                         verify_param,
                     ))
-                })
+                }
             })
             .await?;
 
@@ -683,7 +683,7 @@ impl AggregationJobDriver {
                     Arc::clone(&aggregation_job_to_write),
                     Arc::clone(&lease),
                 );
-                Box::pin(async move {
+                async move {
                     let report_aggregations_future =
                         try_join_all(report_aggregations_to_write.iter().map(
                             |report_aggregation| tx.update_report_aggregation(report_aggregation),
@@ -700,7 +700,7 @@ impl AggregationJobDriver {
                         aggregation_job_future
                     )?;
                     Ok(())
-                })
+                }
             })
             .await?;
         Ok(())
@@ -800,7 +800,7 @@ mod tests {
 
         ds.run_tx(|tx| {
             let (task, report) = (task.clone(), report.clone());
-            Box::pin(async move {
+            async move {
                 tx.put_task(&task).await?;
                 tx.put_client_report(&report).await?;
 
@@ -819,7 +819,7 @@ mod tests {
                     state: ReportAggregationState::Start,
                 })
                 .await
-            })
+            }
         })
         .await
         .unwrap();
@@ -886,14 +886,12 @@ mod tests {
                     let datastore = Arc::clone(&datastore);
                     async move {
                         datastore
-                            .run_tx(|tx| {
-                                Box::pin(async move {
-                                    tx.acquire_incomplete_aggregation_jobs(
-                                        Duration::from_seconds(600),
-                                        max_acquire_count,
-                                    )
-                                    .await
-                                })
+                            .run_tx(|tx| async move {
+                                tx.acquire_incomplete_aggregation_jobs(
+                                    Duration::from_seconds(600),
+                                    max_acquire_count,
+                                )
+                                .await
                             })
                             .await
                     }
@@ -949,7 +947,7 @@ mod tests {
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let leader_verify_param = leader_verify_param.clone();
-                Box::pin(async move {
+                async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
                         .await?
@@ -964,7 +962,7 @@ mod tests {
                         .await?
                         .unwrap();
                     Ok((aggregation_job, report_aggregation))
-                })
+                }
             })
             .await
             .unwrap();
@@ -1008,7 +1006,7 @@ mod tests {
         let lease = ds
             .run_tx(|tx| {
                 let (task, report) = (task.clone(), report.clone());
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
                     tx.put_client_report(&report).await?;
 
@@ -1032,7 +1030,7 @@ mod tests {
                         .acquire_incomplete_aggregation_jobs(Duration::from_seconds(60), 1)
                         .await?
                         .remove(0))
-                })
+                }
             })
             .await
             .unwrap();
@@ -1109,7 +1107,7 @@ mod tests {
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let leader_verify_param = leader_verify_param.clone();
-                Box::pin(async move {
+                async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
                         .await?
@@ -1124,7 +1122,7 @@ mod tests {
                         .await?
                         .unwrap();
                     Ok((aggregation_job, report_aggregation))
-                })
+                }
             })
             .await
             .unwrap();
@@ -1177,7 +1175,7 @@ mod tests {
                     leader_prep_state.clone(),
                     combined_msg.clone(),
                 );
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
                     tx.put_client_report(&report).await?;
 
@@ -1204,7 +1202,7 @@ mod tests {
                         .acquire_incomplete_aggregation_jobs(Duration::from_seconds(60), 1)
                         .await?
                         .remove(0))
-                })
+                }
             })
             .await
             .unwrap();
@@ -1273,7 +1271,7 @@ mod tests {
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let leader_verify_param = leader_verify_param.clone();
-                Box::pin(async move {
+                async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
                         .await?
@@ -1288,7 +1286,7 @@ mod tests {
                         .await?
                         .unwrap();
                     Ok((aggregation_job, report_aggregation))
-                })
+                }
             })
             .await
             .unwrap();

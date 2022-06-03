@@ -116,7 +116,7 @@ impl CollectJobDriver {
         let collect_job_id = lease.leased().collect_job_id;
         let (task, collect_job) = datastore
             .run_tx(|tx| {
-                Box::pin(async move {
+                async move {
                     // TODO: Consider fleshing out `AcquiredCollectJob` to include a `Task`,
                     // `A::AggregationParam`, etc. so that we don't have to do more DB queries here.
                     let task = tx.get_task(task_id).await?.ok_or_else(|| {
@@ -154,7 +154,7 @@ impl CollectJobDriver {
                     collect_job.checksum = Some(checksum);
 
                     Ok((task, collect_job))
-                })
+                }
             })
             .await?;
 
@@ -206,7 +206,7 @@ impl CollectJobDriver {
                 let helper_aggregate_share = Arc::clone(&helper_aggregate_share);
                 let collect_job = Arc::clone(&collect_job);
                 let lease = Arc::clone(&lease);
-                Box::pin(async move {
+                async move {
                     tx.update_collect_job::<A>(
                         collect_job_id,
                         collect_job.leader_aggregate_share.as_ref().unwrap(),
@@ -217,7 +217,7 @@ impl CollectJobDriver {
                     .await?;
 
                     tx.release_collect_job(&lease).await
-                })
+                }
             })
             .await?;
 
@@ -410,7 +410,7 @@ mod tests {
             .run_tx(|tx| {
                 let clock = clock.clone();
                 let task = task.clone();
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
 
                     let collect_job_id = tx
@@ -448,7 +448,7 @@ mod tests {
                     assert_eq!(task_id, lease.leased().task_id);
                     assert_eq!(collect_job_id, lease.leased().collect_job_id);
                     Ok((collect_job_id, lease))
-                })
+                }
             })
             .await
             .unwrap();
@@ -469,7 +469,7 @@ mod tests {
         // Put some batch unit aggregations in the DB
         ds.run_tx(|tx| {
             let clock = clock.clone();
-            Box::pin(async move {
+            async move {
                 tx.put_batch_unit_aggregation(&BatchUnitAggregation::<FakeVdaf> {
                     task_id,
                     unit_interval_start: clock.now(),
@@ -491,7 +491,7 @@ mod tests {
                 .await?;
 
                 Ok(())
-            })
+            }
         })
         .await
         .unwrap();
@@ -523,20 +523,18 @@ mod tests {
         mocked_failed_aggregate_share.assert();
 
         // Collect job in datastore should be unchanged.
-        ds.run_tx(|tx| {
-            Box::pin(async move {
-                let collect_job = tx
-                    .get_collect_job::<FakeVdaf>(collect_job_id)
-                    .await
-                    .unwrap()
-                    .unwrap();
-                assert!(collect_job.leader_aggregate_share.is_none());
-                assert!(collect_job.report_count.is_none());
-                assert!(collect_job.checksum.is_none());
-                assert!(collect_job.helper_aggregate_share.is_none());
+        ds.run_tx(|tx| async move {
+            let collect_job = tx
+                .get_collect_job::<FakeVdaf>(collect_job_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(collect_job.leader_aggregate_share.is_none());
+            assert!(collect_job.report_count.is_none());
+            assert!(collect_job.checksum.is_none());
+            assert!(collect_job.helper_aggregate_share.is_none());
 
-                Ok(())
-            })
+            Ok(())
         })
         .await
         .unwrap();
@@ -568,7 +566,7 @@ mod tests {
         // Should now have recorded helper encrypted aggregate share, too.
         ds.run_tx(|tx| {
             let helper_aggregate_share = helper_response.encrypted_aggregate_share.clone();
-            Box::pin(async move {
+            async move {
                 let collect_job = tx
                     .get_collect_job::<FakeVdaf>(collect_job_id)
                     .await
@@ -586,7 +584,7 @@ mod tests {
                 );
 
                 Ok(())
-            })
+            }
         })
         .await
         .unwrap();

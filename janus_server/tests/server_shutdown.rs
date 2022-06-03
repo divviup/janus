@@ -75,7 +75,7 @@ async fn server_shutdown() {
     datastore
         .run_tx(|tx| {
             let task = task.clone();
-            Box::pin(async move { tx.put_task(&task).await })
+            async move { tx.put_task(&task).await }
         })
         .await
         .unwrap();

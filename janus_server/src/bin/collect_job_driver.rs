@@ -65,14 +65,12 @@ async fn main() -> anyhow::Result<()> {
                         let datastore = Arc::clone(&datastore);
                         async move {
                             datastore
-                                .run_tx(|tx| {
-                                    Box::pin(async move {
-                                        tx.acquire_incomplete_collect_jobs(
-                                            lease_duration,
-                                            maximum_acquire_count,
-                                        )
-                                        .await
-                                    })
+                                .run_tx(|tx| async move {
+                                    tx.acquire_incomplete_collect_jobs(
+                                        lease_duration,
+                                        maximum_acquire_count,
+                                    )
+                                    .await
                                 })
                                 .await
                         }

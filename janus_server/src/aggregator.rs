@@ -302,7 +302,7 @@ impl<C: Clock> Aggregator<C> {
     async fn handle_collect_job(&self, collect_job_id: Uuid) -> Result<Option<Vec<u8>>, Error> {
         let task_id = self
             .datastore
-            .run_tx(|tx| Box::pin(async move { tx.get_collect_job_task_id(collect_job_id).await }))
+            .run_tx(|tx| async move { tx.get_collect_job_task_id(collect_job_id).await })
             .await?
             .ok_or(Error::UnrecognizedCollectJob(collect_job_id))?;
 
@@ -374,7 +374,7 @@ impl<C: Clock> Aggregator<C> {
         // Slow path: retrieve task, create a task aggregator, store it to the cache, then return it.
         let task = self
             .datastore
-            .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
+            .run_tx(|tx| async move { tx.get_task(task_id).await })
             .await?
             .ok_or(Error::UnrecognizedTask(task_id))?;
         let task_agg = Arc::new(TaskAggregator::new(task)?);
@@ -530,7 +530,7 @@ impl TaskAggregator {
         datastore
             .run_tx(|tx| {
                 let report = report.clone();
-                Box::pin(async move {
+                async move {
                     // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before.
                     if tx
                         .get_client_report(report.task_id(), report.nonce())
@@ -551,7 +551,7 @@ impl TaskAggregator {
                     // Store the report.
                     tx.put_client_report(&report).await?;
                     Ok(())
-                })
+                }
             })
             .await?;
         Ok(())
@@ -915,7 +915,7 @@ impl VdafOps {
                 let aggregation_job = aggregation_job.clone();
                 let report_share_data = report_share_data.clone();
 
-                Box::pin(async move {
+                async move {
                     // Write aggregation job.
                     tx.put_aggregation_job(&aggregation_job).await?;
 
@@ -948,7 +948,7 @@ impl VdafOps {
                     accumulator.flush_to_datastore(tx).await?;
 
                     Ok(())
-                })
+                }
             })
             .await?;
 
@@ -1001,8 +1001,7 @@ impl VdafOps {
                 let vdaf = Arc::clone(&vdaf);
                 let verify_param = Arc::clone(&verify_param);
                 let prep_steps = Arc::clone(&prep_steps);
-
-                Box::pin(async move {
+                async move {
                     // Read existing state.
                     let (aggregation_job, report_aggregations) = try_join!(
                         tx.get_aggregation_job::<A>(task_id, req.job_id),
@@ -1144,7 +1143,7 @@ impl VdafOps {
                         job_id: req.job_id,
                         prepare_steps: response_prep_steps,
                     })
-                })
+                }
             })
             .await?)
     }
@@ -1205,7 +1204,7 @@ impl VdafOps {
             .run_tx(move |tx| {
                 let task = task.clone();
                 let req = req.clone();
-                Box::pin(async move {
+                async move {
                     if let Some(collect_job_id) = tx
                         .get_collect_job_id(task.id, req.batch_interval, &req.agg_param)
                         .await?
@@ -1232,7 +1231,7 @@ impl VdafOps {
 
                     tx.put_collect_job(req.task_id, req.batch_interval, &req.agg_param)
                         .await
-                })
+                }
             })
             .await?)
     }
@@ -1298,7 +1297,7 @@ impl VdafOps {
         let collect_job = datastore
             .run_tx(move |tx| {
                 let task = task.clone();
-                Box::pin(async move {
+                async move {
                     let collect_job =
                         tx.get_collect_job::<A>(collect_job_id)
                             .await?
@@ -1315,7 +1314,7 @@ impl VdafOps {
 
                     debug!(?collect_job_id, ?task.id, "collect job has not run yet");
                     Ok(None)
-                })
+                }
             })
             .await?;
 
@@ -1410,7 +1409,7 @@ impl VdafOps {
             .run_tx(move |tx| {
                 let task = task.clone();
                 let aggregate_share_req = aggregate_share_req.clone();
-                Box::pin(async move {
+                async move {
                     // Check if we have already serviced an aggregate share request with these
                     // parameters and serve the cached results if so.
                     let aggregate_share_job = match tx
@@ -1470,7 +1469,7 @@ impl VdafOps {
                     };
 
                     Ok(aggregate_share_job)
-                })
+                }
             })
             .await?;
 
@@ -1995,7 +1994,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -2089,7 +2088,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -2443,7 +2442,7 @@ mod tests {
             .run_tx(|tx| {
                 let task_id = report.task_id();
                 let nonce = report.nonce();
-                Box::pin(async move { tx.get_client_report(task_id, nonce).await })
+                async move { tx.get_client_report(task_id, nonce).await }
             })
             .await
             .unwrap();
@@ -2565,7 +2564,7 @@ mod tests {
             .run_tx(|tx| {
                 let task_id = report.task_id();
                 let nonce = report.nonce();
-                Box::pin(async move { tx.get_client_report(task_id, nonce).await })
+                async move { tx.get_client_report(task_id, nonce).await }
             })
             .await
             .unwrap();
@@ -2609,7 +2608,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -2691,7 +2690,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -2782,7 +2781,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -2919,7 +2918,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -2986,7 +2985,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -3051,7 +3050,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -3158,8 +3157,7 @@ mod tests {
                 let (report_share_0, report_share_1) =
                     (report_share_0.clone(), report_share_1.clone());
                 let (prep_step_0, prep_step_1) = (prep_step_0.clone(), prep_step_1.clone());
-
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
 
                     tx.put_report_share(task_id, &report_share_0).await?;
@@ -3191,7 +3189,7 @@ mod tests {
                     .await?;
 
                     Ok(())
-                })
+                }
             })
             .await
             .unwrap();
@@ -3245,8 +3243,7 @@ mod tests {
         let (aggregation_job, report_aggregations) = datastore
             .run_tx(|tx| {
                 let verify_params = verify_params.clone();
-
-                Box::pin(async move {
+                async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
                         .await?;
@@ -3259,7 +3256,7 @@ mod tests {
                         .await?;
 
                     Ok((aggregation_job, report_aggregations))
-                })
+                }
             })
             .await
             .unwrap();
@@ -3370,8 +3367,7 @@ mod tests {
                     prep_step_1.clone(),
                     prep_step_2.clone(),
                 );
-
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
 
                     tx.put_report_share(task_id, &report_share_0).await?;
@@ -3412,7 +3408,7 @@ mod tests {
                     .await?;
 
                     Ok(())
-                })
+                }
             })
             .await
             .unwrap();
@@ -3461,7 +3457,7 @@ mod tests {
 
         let batch_unit_aggregations = datastore
             .run_tx(|tx| {
-                Box::pin(async move {
+                async move {
                     tx.get_batch_unit_aggregations_for_task_in_interval::<Prio3Aes128Count>(
                         task_id,
                         Interval::new(
@@ -3476,7 +3472,7 @@ mod tests {
                         &(),
                     )
                     .await
-                })
+                }
             })
             .await
             .unwrap();
@@ -3568,8 +3564,7 @@ mod tests {
                     prep_step_4.clone(),
                     prep_step_5.clone(),
                 );
-
-                Box::pin(async move {
+                async move {
                     tx.put_report_share(task_id, &report_share_3).await?;
                     tx.put_report_share(task_id, &report_share_4).await?;
                     tx.put_report_share(task_id, &report_share_5).await?;
@@ -3608,7 +3603,7 @@ mod tests {
                     .await?;
 
                     Ok(())
-                })
+                }
             })
             .await
             .unwrap();
@@ -3656,7 +3651,7 @@ mod tests {
 
         let batch_unit_aggregations = datastore
             .run_tx(|tx| {
-                Box::pin(async move {
+                async move {
                     tx.get_batch_unit_aggregations_for_task_in_interval::<Prio3Aes128Count>(
                         task_id,
                         Interval::new(
@@ -3671,7 +3666,7 @@ mod tests {
                         &(),
                     )
                     .await
-                })
+                }
             })
             .await
             .unwrap();
@@ -3741,7 +3736,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
 
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(
                         task_id,
@@ -3771,7 +3766,7 @@ mod tests {
                         state: ReportAggregationState::Waiting((), None),
                     })
                     .await
-                })
+                }
             })
             .await
             .unwrap();
@@ -3841,8 +3836,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(
                         task_id,
@@ -3872,7 +3866,7 @@ mod tests {
                         state: ReportAggregationState::Waiting((), None),
                     })
                     .await
-                })
+                }
             })
             .await
             .unwrap();
@@ -3925,21 +3919,19 @@ mod tests {
 
         // Check datastore state.
         let (aggregation_job, report_aggregation) = datastore
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    let aggregation_job = tx
-                        .get_aggregation_job::<dummy_vdaf::Vdaf>(task_id, aggregation_job_id)
-                        .await?;
-                    let report_aggregation = tx
-                        .get_report_aggregation::<dummy_vdaf::Vdaf>(
-                            &(),
-                            task_id,
-                            aggregation_job_id,
-                            nonce,
-                        )
-                        .await?;
-                    Ok((aggregation_job, report_aggregation))
-                })
+            .run_tx(|tx| async move {
+                let aggregation_job = tx
+                    .get_aggregation_job::<dummy_vdaf::Vdaf>(task_id, aggregation_job_id)
+                    .await?;
+                let report_aggregation = tx
+                    .get_report_aggregation::<dummy_vdaf::Vdaf>(
+                        &(),
+                        task_id,
+                        aggregation_job_id,
+                        nonce,
+                    )
+                    .await?;
+                Ok((aggregation_job, report_aggregation))
             })
             .await
             .unwrap();
@@ -3985,8 +3977,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(
                         task_id,
@@ -4016,7 +4007,7 @@ mod tests {
                         state: ReportAggregationState::Waiting((), None),
                     })
                     .await
-                })
+                }
             })
             .await
             .unwrap();
@@ -4093,8 +4084,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
 
                     tx.put_report_share(
@@ -4148,7 +4138,7 @@ mod tests {
                         state: ReportAggregationState::Waiting((), None),
                     })
                     .await
-                })
+                }
             })
             .await
             .unwrap();
@@ -4225,8 +4215,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(
                         task_id,
@@ -4256,7 +4245,7 @@ mod tests {
                         state: ReportAggregationState::Invalid,
                     })
                     .await
-                })
+                }
             })
             .await
             .unwrap();
@@ -4322,8 +4311,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -4381,8 +4369,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -4455,8 +4442,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -4504,7 +4490,7 @@ mod tests {
                 let collector_hpke_config = task.collector_hpke_config.clone();
                 let helper_aggregate_share_bytes: Vec<u8> = (&helper_aggregate_share).into();
                 let leader_aggregate_share = leader_aggregate_share.clone();
-                Box::pin(async move {
+                async move {
                     let encrypted_helper_aggregate_share = hpke::seal(
                         &collector_hpke_config,
                         &HpkeApplicationInfo::new(
@@ -4528,7 +4514,7 @@ mod tests {
                     .unwrap();
 
                     Ok(())
-                })
+                }
             })
             .await
             .unwrap();
@@ -4609,8 +4595,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move {
+                async move {
                     tx.put_task(&task).await?;
 
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<dummy_vdaf::Vdaf> {
@@ -4622,7 +4607,7 @@ mod tests {
                         checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
                     })
                     .await
-                })
+                }
             })
             .await
             .unwrap();
@@ -4701,8 +4686,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -4765,8 +4749,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -4839,8 +4822,7 @@ mod tests {
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
+                async move { tx.put_task(&task).await }
             })
             .await
             .unwrap();
@@ -4892,50 +4874,48 @@ mod tests {
 
         // Put some batch unit aggregations in the DB
         datastore
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(500),
-                        aggregation_param,
-                        aggregate_share: AggregateShare::from(vec![Field64::from(64)]),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
-                    })
-                    .await?;
-
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(1500),
-                        aggregation_param,
-                        aggregate_share: AggregateShare::from(vec![Field64::from(128)]),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
-                    })
-                    .await?;
-
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(2000),
-                        aggregation_param,
-                        aggregate_share: AggregateShare::from(vec![Field64::from(256)]),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[4; 32]).unwrap(),
-                    })
-                    .await?;
-
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(2500),
-                        aggregation_param,
-                        aggregate_share: AggregateShare::from(vec![Field64::from(512)]),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[8; 32]).unwrap(),
-                    })
-                    .await?;
-
-                    Ok(())
+            .run_tx(|tx| async move {
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(500),
+                    aggregation_param,
+                    aggregate_share: AggregateShare::from(vec![Field64::from(64)]),
+                    report_count: 5,
+                    checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
                 })
+                .await?;
+
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(1500),
+                    aggregation_param,
+                    aggregate_share: AggregateShare::from(vec![Field64::from(128)]),
+                    report_count: 5,
+                    checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
+                })
+                .await?;
+
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(2000),
+                    aggregation_param,
+                    aggregate_share: AggregateShare::from(vec![Field64::from(256)]),
+                    report_count: 5,
+                    checksum: NonceChecksum::get_decoded(&[4; 32]).unwrap(),
+                })
+                .await?;
+
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<Prio3Aes128Count> {
+                    task_id,
+                    unit_interval_start: Time::from_seconds_since_epoch(2500),
+                    aggregation_param,
+                    aggregate_share: AggregateShare::from(vec![Field64::from(512)]),
+                    report_count: 5,
+                    checksum: NonceChecksum::get_decoded(&[8; 32]).unwrap(),
+                })
+                .await?;
+
+                Ok(())
             })
             .await
             .unwrap();

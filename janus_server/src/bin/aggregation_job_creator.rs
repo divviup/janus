@@ -108,7 +108,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             info!("Updating tasks");
             let tasks = self
                 .datastore
-                .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+                .run_tx(|tx| async move { tx.get_tasks().await })
                 .await;
             let tasks = match tasks {
                 Ok(tasks) => tasks
@@ -229,7 +229,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         Ok(self
             .datastore
             .run_tx(|tx| {
-                Box::pin(async move {
+                async move {
                     // Find some unaggregated client reports, and group them by their batch unit.
                     let nonces_by_batch_unit = tx
                         .get_unaggregated_client_report_nonces_for_task(task_id)
@@ -298,7 +298,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await?;
 
                     Ok(())
-                })
+                }
             })
             .await?)
     }
@@ -362,13 +362,13 @@ mod tests {
         ds.run_tx(|tx| {
             let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
             let (leader_report, helper_report) = (leader_report.clone(), helper_report.clone());
-            Box::pin(async move {
+            async move {
                 tx.put_task(&leader_task).await?;
                 tx.put_task(&helper_task).await?;
 
                 tx.put_client_report(&leader_report).await?;
                 tx.put_client_report(&helper_report).await
-            })
+            }
         })
         .await
         .unwrap();
@@ -394,14 +394,12 @@ mod tests {
         // Inspect database state to verify that the expected aggregation jobs were created.
         let (leader_agg_jobs, helper_agg_jobs) = job_creator
             .datastore
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    let leader_agg_jobs =
-                        read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, leader_task_id).await;
-                    let helper_agg_jobs =
-                        read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, helper_task_id).await;
-                    Ok((leader_agg_jobs, helper_agg_jobs))
-                })
+            .run_tx(|tx| async move {
+                let leader_agg_jobs =
+                    read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, leader_task_id).await;
+                let helper_agg_jobs =
+                    read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, helper_task_id).await;
+                Ok((leader_agg_jobs, helper_agg_jobs))
             })
             .await
             .unwrap();
@@ -474,7 +472,7 @@ mod tests {
                 small_batch_unit_reports.clone(),
                 big_batch_unit_reports.clone(),
             );
-            Box::pin(async move {
+            async move {
                 tx.put_task(&task).await?;
                 for report in cur_batch_unit_reports
                     .iter()
@@ -484,7 +482,7 @@ mod tests {
                     tx.put_client_report(report).await?;
                 }
                 Ok(())
-            })
+            }
         })
         .await
         .unwrap();
@@ -504,15 +502,14 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let agg_jobs = job_creator
-            .datastore
-            .run_tx(|tx| {
-                Box::pin(
-                    async move { Ok(read_aggregate_jobs_for_task::<Vec<_>, _>(tx, task_id).await) },
-                )
-            })
-            .await
-            .unwrap();
+        let agg_jobs =
+            job_creator
+                .datastore
+                .run_tx(|tx| async move {
+                    Ok(read_aggregate_jobs_for_task::<Vec<_>, _>(tx, task_id).await)
+                })
+                .await
+                .unwrap();
         let mut seen_nonces = HashSet::new();
         for (_, nonces) in agg_jobs {
             // All nonces for aggregation job are in the same batch unit.
@@ -558,10 +555,10 @@ mod tests {
 
         ds.run_tx(|tx| {
             let (task, first_report) = (task.clone(), first_report.clone());
-            Box::pin(async move {
+            async move {
                 tx.put_task(&task).await?;
                 tx.put_client_report(&first_report).await
-            })
+            }
         })
         .await
         .unwrap();
@@ -583,10 +580,8 @@ mod tests {
         // Verify -- we haven't received enough reports yet, so we don't create anything.
         let agg_jobs = job_creator
             .datastore
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    Ok(read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, task_id).await)
-                })
+            .run_tx(|tx| async move {
+                Ok(read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, task_id).await)
             })
             .await
             .unwrap();
@@ -597,7 +592,7 @@ mod tests {
             .datastore
             .run_tx(|tx| {
                 let second_report = second_report.clone();
-                Box::pin(async move { tx.put_client_report(&second_report).await })
+                async move { tx.put_client_report(&second_report).await }
             })
             .await
             .unwrap();
@@ -611,10 +606,8 @@ mod tests {
         // Verify -- the additional report we wrote allows an aggregation job to be created.
         let agg_jobs = job_creator
             .datastore
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    Ok(read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, task_id).await)
-                })
+            .run_tx(|tx| async move {
+                Ok(read_aggregate_jobs_for_task::<HashSet<_>, _>(tx, task_id).await)
             })
             .await
             .unwrap();
