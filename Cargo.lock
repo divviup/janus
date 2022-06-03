@@ -1936,8 +1936,9 @@ checksum = "eb9f9e6e233e5c4a35559a617bf40a4ec447db2e84c20b55a6f83167b7e57872"
 
 [[package]]
 name = "prio"
-version = "0.7.0"
-source = "git+https://github.com/divviup/libprio-rs?rev=229cd9c45924c7dae3ba754a6eb46b2a05ca8451#229cd9c45924c7dae3ba754a6eb46b2a05ca8451"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34dec6b842c17bb4ebff74907295c102f8790d47b8a914eade914efc6e2b1aa8"
 dependencies = [
  "aes 0.8.1",
  "aes-gcm",
