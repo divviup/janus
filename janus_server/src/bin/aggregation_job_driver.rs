@@ -1456,7 +1456,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify: check that the datstore state is updated as expected (the aggregation job is
+        // Verify: check that the datastore state is updated as expected (the aggregation job is
         // finished, the report aggregation is untouched) and sanity-check that the job can no
         // longer be acquired.
         let want_aggregation_job = AggregationJob {
