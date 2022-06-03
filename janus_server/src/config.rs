@@ -127,6 +127,7 @@ impl BinaryConfig for AggregationJobCreatorConfig {
 /// max_concurrent_job_workers: 10
 /// worker_lease_duration_secs: 600
 /// worker_lease_clock_skew_allowance_secs: 60
+/// maximum_attempts_before_failure: 5
 /// "#;
 ///
 /// let _decoded: JobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
@@ -150,6 +151,9 @@ pub struct JobDriverConfig {
     /// order to guard against the possibility of clock skew. Along with worker_lease_duration_secs,
     /// determines the effective timeout of stepping a single job.
     pub worker_lease_clock_skew_allowance_secs: u64,
+    /// The number of attempts to drive a work item before it is placed in a permanent failure
+    /// state.
+    pub maximum_attempts_before_failure: usize,
 }
 
 /// Non-secret configuration options for Janus Aggregation Job Driver jobs.
@@ -170,6 +174,7 @@ pub struct JobDriverConfig {
 /// max_concurrent_job_workers: 10
 /// worker_lease_duration_secs: 600
 /// worker_lease_clock_skew_allowance_secs: 60
+/// maximum_attempts_before_failure: 5
 /// "#;
 ///
 /// let _decoded: AggregationJobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
@@ -206,6 +211,7 @@ impl BinaryConfig for AggregationJobDriverConfig {
 /// max_concurrent_job_workers: 10
 /// worker_lease_duration_secs: 600
 /// worker_lease_clock_skew_allowance_secs: 60
+/// maximum_attempts_before_failure: 5
 /// "#;
 ///
 /// let _decoded: CollectJobDriverConfig = serde_yaml::from_str(yaml_config).unwrap();
@@ -299,6 +305,7 @@ mod tests {
             max_concurrent_job_workers: 10,
             worker_lease_duration_secs: 600,
             worker_lease_clock_skew_allowance_secs: 60,
+            maximum_attempts_before_failure: 5,
         })
     }
 
@@ -316,6 +323,7 @@ mod tests {
                 max_concurrent_job_workers: 10,
                 worker_lease_duration_secs: 600,
                 worker_lease_clock_skew_allowance_secs: 60,
+                maximum_attempts_before_failure: 5,
             },
         })
     }
@@ -334,6 +342,7 @@ mod tests {
                 max_concurrent_job_workers: 10,
                 worker_lease_duration_secs: 600,
                 worker_lease_clock_skew_allowance_secs: 60,
+                maximum_attempts_before_failure: 5,
             },
         })
     }

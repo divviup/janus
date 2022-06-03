@@ -36,7 +36,7 @@ use prio::{
 };
 use std::{fmt::Debug, sync::Arc};
 use structopt::StructOpt;
-use tracing::error;
+use tracing::{error, warn};
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -117,6 +117,17 @@ async fn main() -> anyhow::Result<()> {
                         let (datastore, aggregation_job_driver) =
                             (Arc::clone(&datastore), Arc::clone(&aggregation_job_driver));
                         async move {
+                            if aggregation_job_lease.lease_attempts()
+                                >= config.job_driver_config.maximum_attempts_before_failure
+                            {
+                                warn!(attempts = ?aggregation_job_lease.lease_attempts(),
+                                    max_attempts = ?config.job_driver_config.maximum_attempts_before_failure,
+                                    "Canceling job due to too many failed attempts");
+                                return aggregation_job_driver
+                                    .cancel_aggregation_job(datastore, aggregation_job_lease)
+                                    .await;
+                            }
+
                             aggregation_job_driver
                                 .step_aggregation_job(datastore, aggregation_job_lease)
                                 .await
@@ -150,13 +161,11 @@ impl AggregationJobDriver {
                 self.step_aggregation_job_generic(datastore, vdaf, lease)
                     .await
             }
-
             VdafInstance::Prio3Aes128Sum { bits } => {
                 let vdaf = Prio3Aes128Sum::new(2, bits)?;
                 self.step_aggregation_job_generic(datastore, vdaf, lease)
                     .await
             }
-
             VdafInstance::Prio3Aes128Histogram { ref buckets } => {
                 let vdaf = Prio3Aes128Histogram::new(2, buckets)?;
                 self.step_aggregation_job_generic(datastore, vdaf, lease)
@@ -663,6 +672,7 @@ impl AggregationJobDriver {
 
         // Determine if we've finished the aggregation job (i.e. if all report aggregations are in
         // a terminal state), then write everything back to storage.
+        // TODO(brandon): also update batch_unit_aggregations if this aggregation job finished.
         let aggregation_job_is_finished = report_aggregations_to_write
             .iter()
             .all(|ra| !matches!(ra.state, ReportAggregationState::Waiting(_, _)));
@@ -699,6 +709,75 @@ impl AggregationJobDriver {
                         report_aggregations_future,
                         aggregation_job_future
                     )?;
+                    Ok(())
+                })
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn cancel_aggregation_job<C: Clock>(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        lease: Lease<AcquiredAggregationJob>,
+    ) -> Result<()> {
+        match &lease.leased().vdaf {
+            VdafInstance::Prio3Aes128Count => {
+                self.cancel_aggregation_job_generic::<C, Prio3Aes128Count>(datastore, lease)
+                    .await
+            }
+            VdafInstance::Prio3Aes128Sum { .. } => {
+                self.cancel_aggregation_job_generic::<C, Prio3Aes128Sum>(datastore, lease)
+                    .await
+            }
+            VdafInstance::Prio3Aes128Histogram { .. } => {
+                self.cancel_aggregation_job_generic::<C, Prio3Aes128Histogram>(datastore, lease)
+                    .await
+            }
+
+            _ => panic!("VDAF {:?} is not yet supported", lease.leased().vdaf),
+        }
+    }
+
+    async fn cancel_aggregation_job_generic<C, A>(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        lease: Lease<AcquiredAggregationJob>,
+    ) -> Result<()>
+    where
+        A: vdaf::Aggregator + Send + Sync + 'static,
+        A::AggregationParam: Send + Sync,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        C: Clock,
+    {
+        let lease = Arc::new(lease);
+        let (task_id, aggregation_job_id) =
+            (lease.leased().task_id, lease.leased().aggregation_job_id);
+        datastore
+            .run_tx(|tx| {
+                let lease = Arc::clone(&lease);
+                Box::pin(async move {
+                    let mut aggregation_job = tx
+                        .get_aggregation_job::<A>(task_id, aggregation_job_id)
+                        .await?
+                        .ok_or_else(|| {
+                            datastore::Error::User(
+                                anyhow!(
+                                    "couldn't find aggregation job {} for task {}",
+                                    aggregation_job_id,
+                                    task_id
+                                )
+                                .into(),
+                            )
+                        })?;
+
+                    // We leave all other data associated with the aggregation job (e.g. report
+                    // aggregations) alone to ease debugging.
+                    aggregation_job.state = AggregationJobState::Abandoned;
+
+                    let write_aggregation_job_future = tx.update_aggregation_job(&aggregation_job);
+                    let release_future = tx.release_aggregation_job(&lease);
+                    try_join!(write_aggregation_job_future, release_future)?;
                     Ok(())
                 })
             })
@@ -1295,6 +1374,125 @@ mod tests {
 
         assert_eq!(want_aggregation_job, got_aggregation_job);
         assert_eq!(want_report_aggregation, got_report_aggregation);
+    }
+
+    #[tokio::test]
+    async fn cancel_aggregation_job() {
+        // Setup: insert a client report and add it to a new aggregation job.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
+        let vdaf = Prio3Aes128Count::new(2).unwrap();
+        let (public_param, verify_params) = vdaf.setup().unwrap();
+        let leader_verify_param = verify_params.get(Role::Leader.index().unwrap()).unwrap();
+        let nonce = Nonce::generate(&clock);
+        let input_shares =
+            run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce, &0).input_shares;
+
+        let task_id = TaskId::random();
+        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        task.aggregator_endpoints = vec![
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ];
+        task.vdaf_verify_parameters = vec![leader_verify_param.get_encoded()];
+
+        let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
+        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
+        let report = generate_report(
+            task_id,
+            nonce,
+            &[leader_hpke_config, &helper_hpke_config],
+            &input_shares,
+        );
+        let aggregation_job_id = AggregationJobId::random();
+
+        let aggregation_job = AggregationJob::<Prio3Aes128Count> {
+            aggregation_job_id,
+            task_id,
+            aggregation_param: (),
+            state: AggregationJobState::InProgress,
+        };
+        let report_aggregation = ReportAggregation::<Prio3Aes128Count> {
+            aggregation_job_id,
+            task_id,
+            nonce,
+            ord: 0,
+            state: ReportAggregationState::Start,
+        };
+
+        let lease = ds
+            .run_tx(|tx| {
+                let (task, report, aggregation_job, report_aggregation) = (
+                    task.clone(),
+                    report.clone(),
+                    aggregation_job.clone(),
+                    report_aggregation.clone(),
+                );
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+                    tx.put_client_report(&report).await?;
+                    tx.put_aggregation_job(&aggregation_job).await?;
+                    tx.put_report_aggregation(&report_aggregation).await?;
+
+                    Ok(tx
+                        .acquire_incomplete_aggregation_jobs(Duration::from_seconds(60), 1)
+                        .await?
+                        .remove(0))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(lease.leased().task_id, task_id);
+        assert_eq!(lease.leased().aggregation_job_id, aggregation_job_id);
+
+        // Run: create an aggregation job driver & cancel the aggregation job.
+        let aggregation_job_driver = AggregationJobDriver {
+            http_client: reqwest::Client::builder().build().unwrap(),
+        };
+        aggregation_job_driver
+            .cancel_aggregation_job(Arc::clone(&ds), lease)
+            .await
+            .unwrap();
+
+        // Verify: check that the datastore state is updated as expected (the aggregation job is
+        // finished, the report aggregation is untouched) and sanity-check that the job can no
+        // longer be acquired.
+        let want_aggregation_job = AggregationJob {
+            state: AggregationJobState::Abandoned,
+            ..aggregation_job
+        };
+        let want_report_aggregation = report_aggregation;
+
+        let (got_aggregation_job, got_report_aggregation, got_leases) = ds
+            .run_tx(|tx| {
+                let leader_verify_param = leader_verify_param.clone();
+                Box::pin(async move {
+                    let aggregation_job = tx
+                        .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
+                        .await?
+                        .unwrap();
+                    let report_aggregation = tx
+                        .get_report_aggregation::<Prio3Aes128Count>(
+                            &leader_verify_param,
+                            task_id,
+                            aggregation_job_id,
+                            nonce,
+                        )
+                        .await?
+                        .unwrap();
+                    let leases = tx
+                        .acquire_incomplete_aggregation_jobs(Duration::from_seconds(60), 1)
+                        .await?;
+                    Ok((aggregation_job, report_aggregation, leases))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(want_aggregation_job, got_aggregation_job);
+        assert_eq!(want_report_aggregation, got_report_aggregation);
+        assert!(got_leases.is_empty());
     }
 
     /// Returns a report with the given task ID & nonce values, no extensions, and encrypted input
