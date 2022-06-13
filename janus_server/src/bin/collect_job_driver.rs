@@ -33,7 +33,7 @@ const CLIENT_USER_AGENT: &str = concat!(
     "/collect_job_driver",
 );
 
-// TODO(brandon): make CollectJobDriver repsect JobDriverConfig::maximum_retries_before_failure.
+// TODO(#193): make CollectJobDriver repsect JobDriverConfig::maximum_retries_before_failure.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     janus_main::<Options, _, _, _, _>(

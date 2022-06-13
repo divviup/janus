@@ -92,10 +92,7 @@ impl HpkeApplicationInfo {
 
 /// An HPKE private key, serialized using the `SerializePrivateKey` function as
 /// described in RFC 9180, §4 and §7.1.2.
-// TODO(brandon): refactor HpkePrivateKey to carry around a decoded private key so we don't have to
-// decode on every cryptographic operation.
-// TODO(brandon): everywhere that actually uses an HpkePrivateKey also requires an HpkeConfig for
-// context. Create a type that is effectively (HpkeConfig, HpkePrivateKey) and pass that around instead.
+// TODO(#230): refactor HpkePrivateKey to simplify usage
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HpkePrivateKey(Vec<u8>);
 

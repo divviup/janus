@@ -120,8 +120,8 @@ async fn server_shutdown() {
     wait_for_server(config.listen_address).expect("could not connect to server after starting it");
 
     // Make a test request to the server.
-    // TODO: Expand this further once multi-process integration tests are fleshed out, to catch
-    // more shutdown interactions throughout the codebase.
+    // TODO(#220): expand this further once multi-process integration tests are fleshed out, to
+    // catch more shutdown interactions throughout the codebase.
     let client = Client::new();
     let url = Url::parse(&format!(
         "http://{}/hpke_config?task_id={}",
