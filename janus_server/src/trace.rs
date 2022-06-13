@@ -159,7 +159,9 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
         let tracer = opentelemetry_jaeger::new_pipeline()
             .with_service_name("janus_server")
             .install_batch(opentelemetry::runtime::Tokio)?;
-        let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+        let telemetry = tracing_opentelemetry::layer()
+            .with_threads(true)
+            .with_tracer(tracer);
         layers.push(telemetry.boxed());
     }
 
@@ -203,6 +205,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
             .with_target("h2::codec::framed_write", LevelFilter::OFF);
 
         let telemetry = tracing_opentelemetry::layer()
+            .with_threads(true)
             .with_tracer(tracer)
             .with_filter(filter);
         layers.push(telemetry.boxed());
