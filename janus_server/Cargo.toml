@@ -23,7 +23,7 @@ derivative = "2.2.0"
 futures = "0.3.21"
 hex = "0.4.3"
 hpke-dispatch = "0.3.0"
-http = "0.2.7"
+http = "0.2.8"
 hyper = "0.14.19"
 itertools = "0.10.3"
 janus = { path = "../janus" }
