@@ -696,8 +696,7 @@ impl Decode for HpkeCiphertext {
 }
 
 /// PPM protocol message representing an HPKE public key.
-// TODO(brandon): refactor HpkePublicKey to carry around a decoded public key so we don't have to
-// decode on every cryptographic operation.
+// TODO(#230): refactor HpkePublicKey & HpkeConfig to simplify usage
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkePublicKey(pub(crate) Vec<u8>);
 

@@ -146,7 +146,7 @@ impl Default for MockClock {
 
 /// A type alias for [`prio::vdaf::PrepareTransition`] that derives the appropriate generic types
 /// based on a single aggregator parameter.
-// TODO(brandon): change libprio-rs' PrepareTransition to be generic only on a vdaf::Aggregator.
+// TODO(https://github.com/divviup/libprio-rs/issues/231): change libprio-rs' PrepareTransition to be generic only on a vdaf::Aggregator.
 pub type PrepareTransition<V> = vdaf::PrepareTransition<
     <V as vdaf::Aggregator>::PrepareStep,
     <V as vdaf::Aggregator>::PrepareMessage,

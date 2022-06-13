@@ -35,7 +35,7 @@ use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
 use uuid::Uuid;
 
-// TODO(brandon): retry network-related & other transient failures once we know what they look like
+// TODO(#196): retry network-related & other transient failures once we know what they look like
 
 /// Datastore represents a datastore for Janus, with support for transactional reads and writes.
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
@@ -589,7 +589,7 @@ impl<C: Clock> Transaction<'_, C> {
         // See https://medium.com/swlh/fifo-considered-harmful-793b76f98374 &
         // https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.376.5966&rep=rep1&type=pdf.
 
-        // TODO(brandon): allow the number of returned results to be controlled?
+        // TODO(#224): allow the number of returned results to be controlled?
 
         let stmt = self
             .tx
@@ -780,7 +780,7 @@ impl<C: Clock> Transaction<'_, C> {
         let lease_expiry_time = now.add(lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
 
-        // TODO(brandon): verify that this query is efficient. I am not sure if we would currently
+        // TODO(#224): verify that this query is efficient. I am not sure if we would currently
         // scan over every (in-progress, not-leased) aggregation job for tasks where we are in the
         // HELPER role.
         // We generate the token on the DB to allow each acquired job to receive its own distinct
@@ -1328,7 +1328,7 @@ WITH updated as (
     RETURNING tasks.task_id, tasks.vdaf, collect_jobs.collect_job_id, collect_jobs.id, collect_jobs.lease_token, collect_jobs.lease_attempts
 )
 SELECT task_id, vdaf, collect_job_id, lease_token, lease_attempts FROM updated
--- TODO (issue #174): revisit collect job queueing behavior implied by this ORDER BY
+-- TODO (#174): revisit collect job queueing behavior implied by this ORDER BY
 ORDER BY id DESC
 "#,
             )
@@ -1976,7 +1976,6 @@ pub struct Crypter {
     keys: Vec<LessSafeKey>,
 }
 
-#[allow(dead_code)] // TODO(brandon): remove once Crypter is used by Datastore
 impl Crypter {
     // The internal serialized format of a Crypter encrypted value is:
     //   ciphertext || tag || nonce
@@ -2038,7 +2037,7 @@ impl Crypter {
             return Err(Error::Crypt);
         }
 
-        // TODO(brandon): use `rsplit_array_ref` once it is stabilized. [https://github.com/rust-lang/rust/issues/90091]
+        // TODO(https://github.com/rust-lang/rust/issues/90091): use `rsplit_array_ref` once it is stabilized.
         let (ciphertext_and_tag, nonce_bytes) = value.split_at(value.len() - aead::NONCE_LEN);
         let nonce_bytes: [u8; aead::NONCE_LEN] = nonce_bytes.try_into().unwrap();
         let aad_bytes = Self::aad_bytes_for(table, row, column)?;

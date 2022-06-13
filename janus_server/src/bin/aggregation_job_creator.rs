@@ -91,7 +91,7 @@ struct AggregationJobCreator<C: Clock> {
 impl<C: Clock + 'static> AggregationJobCreator<C> {
     #[tracing::instrument(skip(self))]
     async fn run(self: Arc<Self>) -> ! {
-        // TODO(brandon): add support for handling only a subset of tasks in a single job (i.e. sharding).
+        // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
         // Set up an interval to occasionally update our view of tasks in the DB.
         // (This will fire immediately, so we'll immediately load tasks from the DB when we enter
@@ -341,11 +341,11 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        // TODO(brandon): consider using tokio::time::pause() to make time deterministic, and allow
+        // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
         // this test to run without the need for a (racy, wallclock-consuming) real sleep.
-        // Unfortunately, at time of writing this TODO, calling time::pause() breaks interaction
-        // with the database -- the task-loader transaction deadlocks on attempting to start a
-        // transaction, even if the main test loops on calling yield_now().
+        // Unfortunately, at time of writing, calling time::pause() breaks interaction with the
+        // database -- the job-acquiry transaction deadlocks on attempting to start a transaction,
+        // even if the main test loops on calling yield_now().
 
         let report_time = Time::from_seconds_since_epoch(0);
 

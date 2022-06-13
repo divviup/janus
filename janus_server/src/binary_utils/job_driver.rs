@@ -97,7 +97,6 @@ where
             // underestimate the number of jobs we can acquire, and underestimation is acceptable
             // (we'll pick up any additional jobs on the next iteration of this loop). We can't
             // overestimate since this task is the only place that permits are acquired.
-
             let max_acquire_count = sem.available_permits();
             info!(max_acquire_count, "Acquiring jobs");
             let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
@@ -343,11 +342,11 @@ mod tests {
         ));
         let task_handle = task::spawn(async move { job_driver.run().await });
 
-        // TODO(brandon): consider using tokio::time::pause() to make time deterministic, and allow
+        // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
         // this test to run without the need for a (racy, wallclock-consuming) real sleep.
-        // Unfortunately, at time of writing this TODO, calling time::pause() breaks interaction
-        // with the database -- the job-acquiry transaction deadlocks on attempting to start a
-        // transaction, even if the main test loops on calling yield_now().
+        // Unfortunately, at time of writing, calling time::pause() breaks interaction with the
+        // database -- the job-acquiry transaction deadlocks on attempting to start a transaction,
+        // even if the main test loops on calling yield_now().
         time::sleep(time::Duration::from_secs(5)).await;
         task_handle.abort();
 

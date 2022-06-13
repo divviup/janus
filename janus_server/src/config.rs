@@ -29,7 +29,7 @@ pub trait BinaryConfig: Debug + DeserializeOwned {
 pub struct DbConfig {
     /// URL at which to connect to the database.
     pub url: Url,
-    // TODO: add option for connecting to database over TLS, if necessary
+    // TODO(#231): add option for connecting to database over TLS, if necessary
 }
 
 /// Non-secret configuration options for a Janus aggregator, deserialized from
@@ -55,8 +55,7 @@ pub struct DbConfig {
 pub struct AggregatorConfig {
     /// Address on which this server should listen for connections and serve its
     /// API endpoints.
-    // TODO: Options for terminating TLS, unless that gets handled in a load
-    // balancer?
+    // TODO(#232): options for terminating TLS, unless that gets handled in a load balancer?
     pub listen_address: SocketAddr,
 
     #[serde(flatten)]

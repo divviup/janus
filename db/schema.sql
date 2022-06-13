@@ -44,6 +44,7 @@ CREATE TABLE task_hpke_keys(
 );
 
 -- The VDAF verification parameters used by a given task.
+-- TODO(#229): support multiple verification parameters per task
 CREATE TABLE task_vdaf_verify_params(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id BIGINT NOT NULL,           -- task ID the verification parameter is associated with
@@ -51,10 +52,6 @@ CREATE TABLE task_vdaf_verify_params(
 
     CONSTRAINT vdaf_verify_param_unique_task_id UNIQUE(task_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
-
-    -- TODO(dcook): Once verification parameter rotation is defined in the protocol, add additional
-    -- relevant columns to this table, and change the UNIQUE constraint to allow more than one row
-    -- per task.
 );
 
 -- Individual reports received from clients.
@@ -160,7 +157,7 @@ CREATE TABLE collect_jobs(
     CONSTRAINT unique_collect_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval_start, batch_interval_duration, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
--- TODO: what's the right index here?
+-- TODO(#224): verify that this index is optimal for purposes of acquiring collect jobs.
 CREATE INDEX collect_jobs_lease_expiry ON collect_jobs(lease_expiry);
 
 -- The helper's view of aggregate share jobs.

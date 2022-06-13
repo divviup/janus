@@ -101,10 +101,8 @@ pub enum Error {
     /// Corresponds to `outdatedHpkeConfig`, §3.1
     #[error("outdated HPKE config: {0} {1:?}")]
     OutdatedHpkeConfig(HpkeConfigId, TaskId),
-    /// A report was rejected becuase the timestamp is too far in the future,
-    /// §4.3.4.
-    // TODO(timg): define an error type in §3.1 and clarify language on
-    // rejecting future reports
+    /// A report was rejected becuase the timestamp is too far in the future, §4.3.4.
+    // TODO(#221): define an error type in §3.1 and clarify language on rejecting future reports
     #[error("report from the future: {0} {1:?}")]
     ReportFromTheFuture(Nonce, TaskId),
     /// Corresponds to `unauthorizedRequest`, §3.1
@@ -286,8 +284,6 @@ impl<C: Clock> Aggregator<C> {
 
         // Only the leader supports /collect.
         if task_aggregator.task.role != Role::Leader {
-            // TODO (timg): We should make sure that a helper returns HTTP 404 or 403 when this
-            // happens
             return Err(Error::UnrecognizedTask(collect_req.task_id));
         }
 
@@ -348,8 +344,6 @@ impl<C: Clock> Aggregator<C> {
 
         // Only the helper supports /aggregate_share.
         if task_aggregator.task.role != Role::Helper {
-            // TODO (timg): We should make sure that a leader returns HTTP 404 or 403 when this
-            // happens
             return Err(Error::UnrecognizedTask(req.task_id));
         }
 
@@ -360,7 +354,7 @@ impl<C: Clock> Aggregator<C> {
     }
 
     async fn task_aggregator_for(&self, task_id: TaskId) -> Result<Arc<TaskAggregator>, Error> {
-        // TODO(brandon): don't cache forever (decide on & implement some cache eviction policy).
+        // TODO(#238): don't cache forever (decide on & implement some cache eviction policy).
         // This is important both to avoid ever-growing resource usage, and to allow aggregators to
         // notice when a task changes (e.g. due to key rotation).
 
@@ -387,8 +381,8 @@ impl<C: Clock> Aggregator<C> {
 }
 
 /// TaskAggregator provides aggregation functionality for a single task.
-// TODO: refactor Aggregator to perform indepedent batched operations (e.g. report handling in
-//       Aggregate requests) using a parallelized library like Rayon.
+// TODO(#224): refactor Aggregator to perform indepedent batched operations (e.g. report handling in
+// Aggregate requests) using a parallelized library like Rayon.
 pub struct TaskAggregator {
     /// The task being aggregated.
     task: Task,
@@ -460,7 +454,7 @@ impl TaskAggregator {
     }
 
     fn handle_hpke_config(&self) -> HpkeConfig {
-        // TODO(brandon): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
+        // TODO(#239): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
         // config/key -- right now it's the one with the maximal config ID, but that will run into
         // trouble if we ever need to wrap-around, which we may since config IDs are effectively a u8.
         self.task
@@ -539,13 +533,13 @@ impl TaskAggregator {
                         .is_some()
                     {
                         warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report replayed");
-                        // TODO (issue #34): change this error type.
+                        // TODO(#34): change this error type.
                         return Err(datastore::Error::User(
                             Error::StaleReport(report.nonce(), report.task_id()).into(),
                         ));
                     }
 
-                    // TODO: reject with `staleReport` reports whose timestamps fall in a
+                    // TODO(#221): reject with `reportTooLate` reports whose timestamps fall in a
                     // batch interval that has already been collected (§4.3.2). We don't
                     // support collection so we can't implement this requirement yet.
 
@@ -781,8 +775,8 @@ impl VdafOps {
         }
 
         // Decrypt shares & prepare initialization states. (§4.4.4.1)
-        // TODO(brandon): reject reports that are "too old" with `report-dropped`.
-        // TODO(brandon): reject reports in batches that have completed an aggregate-share request with `batch-collected`.
+        // TODO(#221): reject reports that are "too old" with `report-dropped`.
+        // TODO(#221): reject reports in batches that have completed an aggregate-share request with `batch-collected`.
         struct ReportShareData<A: vdaf::Aggregator>
         where
             for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -830,7 +824,8 @@ impl VdafOps {
             // `vdaf-prep-error` probably isn't the right code, but there is no better one & we
             // don't want to fail the entire aggregation job with an UnrecognizedMessage error
             // because a single client sent bad data.
-            // TODO: agree on/standardize an error code for "client report data can't be decoded" & use it here
+            // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): agree on/standardize
+            // an error code for "client report data can't be decoded" & use it here.
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(verify_param, &plaintext)
                     .map_err(|err| {
@@ -992,9 +987,9 @@ impl VdafOps {
         let verify_param = Arc::new(verify_param.clone());
         let prep_steps = Arc::new(req.prepare_steps);
 
-        // TODO(brandon): don't hold DB transaction open while computing VDAF updates?
-        // TODO(brandon): don't do O(n) network round-trips (where n is the number of transitions)
-        // TODO(timg): We have to reject reports in batches that have completed an aggregate-share
+        // TODO(#224): don't hold DB transaction open while computing VDAF updates?
+        // TODO(#224): don't do O(n) network round-trips (where n is the number of transitions)
+        // TODO(#221): We have to reject reports in batches that have completed an aggregate-share
         // request with `batch-collected` here as well as in the init case. Suppose that an
         // AggregateShareReq arrives in between the AggregateInitReq and AggregateContinueReq.
         Ok(datastore
@@ -1067,7 +1062,6 @@ impl VdafOps {
                                 )?
                             }
                             _ => {
-                                // TODO(brandon): should we record a state change in this case?
                                 warn!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, "Leader sent non-Continued prepare step");
                                 return Err(datastore::Error::User(
                                     Error::UnrecognizedMessage(
@@ -1328,8 +1322,9 @@ impl VdafOps {
                 // was made, and not whatever was valid at the time the aggregate share was first
                 // computed.
                 // However we store the helper's *encrypted* share.
-                // TODO: consider fetching freshly encrypted helper aggregate share if it has been
-                // long enough since the encrypted helper share was cached -- tricky thing is
+
+                // TODO(#240): consider fetching freshly encrypted helper aggregate share if it has
+                // been long enough since the encrypted helper share was cached -- tricky thing is
                 // deciding what "long enough" is.
                 let associated_data = job.associated_data_for_aggregate_share();
                 let encrypted_leader_aggregate_share = hpke::seal(
@@ -1526,7 +1521,7 @@ where
 enum PpmProblemType {
     UnrecognizedMessage,
     UnrecognizedTask,
-    UnrecognizedAggregationJob, // TODO: standardize this value
+    UnrecognizedAggregationJob, // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/270): standardize this value
     OutdatedConfig,
     StaleReport,
     UnauthorizedRequest,
@@ -1600,9 +1595,8 @@ impl PpmProblemType {
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
 /// Construct an error response in accordance with §3.1.
-//
-// TODO (issue abetterinternet/ppm-specification#209): The handling of the instance, title,
-// detail, and taskid fields are subject to change.
+// TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/209): The handling of the instance,
+// title, detail, and taskid fields are subject to change.
 fn build_problem_details_response(error_type: PpmProblemType, task_id: Option<TaskId>) -> Response {
     // So far, 400 Bad Request seems to be the appropriate choice for each defined problem type.
     let status = StatusCode::BAD_REQUEST;
@@ -1664,6 +1658,7 @@ fn error_handler<R: Reply>(
                 build_problem_details_response(PpmProblemType::UnrecognizedMessage, task_id)
             }
             Err(Error::UnrecognizedTask(task_id)) => {
+                // TODO(#237): ensure that a helper returns HTTP 404 or 403 when this happens.
                 build_problem_details_response(PpmProblemType::UnrecognizedTask, Some(task_id))
             }
             Err(Error::UnrecognizedAggregationJob(_, task_id)) => build_problem_details_response(
@@ -1675,8 +1670,8 @@ fn error_handler<R: Reply>(
                 build_problem_details_response(PpmProblemType::OutdatedConfig, Some(task_id))
             }
             Err(Error::ReportFromTheFuture(_, _)) => {
-                // TODO: build a problem details document once an error type is defined for reports
-                // with timestamps too far in the future.
+                // TODO(#221): build a problem details document once an error type is defined for
+                // reports with timestamps too far in the future.
                 StatusCode::BAD_REQUEST.into_response()
             }
             Err(Error::UnauthorizedRequest(task_id)) => {
@@ -2225,7 +2220,7 @@ mod tests {
             .is_empty());
 
         // Verify that we reject duplicate reports with the staleReport type.
-        // TODO (issue #34): change this error type.
+        // TODO(#34): change this error type.
         let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
             .unwrap();
@@ -2354,8 +2349,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!response.status().is_success());
-        // TODO: update this test once an error type has been defined, and validate the problem
-        // details.
+        // TODO(#221): update this test once an error type has been defined, and validate the problem details.
         assert_eq!(response.status().as_u16(), 400);
 
         // Check for appropriate CORS headers in response to a preflight request.
@@ -2506,7 +2500,7 @@ mod tests {
         assert_eq!(Some(&report), got_report.as_ref());
 
         // should reject duplicate reports.
-        // TODO (issue #34): change this error type.
+        // TODO(#34): change this error type.
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::StaleReport(stale_nonce, task_id)) => {
             assert_eq!(task_id, report.task_id());
             assert_eq!(report.nonce(), stale_nonce);

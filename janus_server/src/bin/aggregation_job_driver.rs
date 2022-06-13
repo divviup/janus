@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
                             datastore
                                 .run_tx(|tx| {
                                     Box::pin(async move {
-                                        // TODO(brandon): only acquire jobs whose batch units have not
+                                        // TODO(#193): only acquire jobs whose batch units have not
                                         // already been collected (probably by modifying
                                         // acquire_incomplete_aggregation_jobs)
                                         tx.acquire_incomplete_aggregation_jobs(
@@ -232,7 +232,7 @@ impl AggregationJobDriver {
                     })?;
 
                     // Read client reports, but only for report aggregations in state START.
-                    // TODO(brandon): create "get_client_reports_for_aggregation_job" datastore
+                    // TODO(#224): create "get_client_reports_for_aggregation_job" datastore
                     // operation to avoid needing to join many futures?
                     let client_reports =
                         try_join_all(report_aggregations.iter().filter_map(|report_aggregation| {
@@ -409,8 +409,7 @@ impl AggregationJobDriver {
             ) {
                 Ok(leader_input_share) => leader_input_share,
                 Err(err) => {
-                    // TODO(brandon): is moving to Invalid on a decoding error appropriate?
-                    // [https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255]
+                    // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): is moving to Invalid on a decoding error appropriate?
                     error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decode leader's input share");
                     report_aggregation.state = ReportAggregationState::Invalid;
                     report_aggregations_to_write.push(report_aggregation);
@@ -455,8 +454,8 @@ impl AggregationJobDriver {
         }
 
         // Construct request, send it to the helper, and process the response.
-        // TODO(brandon): what HTTP errors should cause us to abort/stop retrying the aggregation job?
-        // TODO(brandon): should we care about the response's content type?
+        // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
+        // unexepected cases such as unknown/unexpected content type.
         let req = AggregateInitializeReq {
             task_id: task.id,
             job_id: aggregation_job.aggregation_job_id,
@@ -543,8 +542,8 @@ impl AggregationJobDriver {
         }
 
         // Construct request, send it to the helper, and process the response.
-        // TODO(brandon): what HTTP errors should cause us to abort/stop retrying the aggregation job?
-        // TODO(brandon): should we care about the response's content type?
+        // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
+        // unexepected cases such as unknown/unexpected content type.
         let req = AggregateContinueReq {
             task_id: task.id,
             job_id: aggregation_job.aggregation_job_id,
@@ -623,9 +622,9 @@ impl AggregationJobDriver {
                     if let PrepareTransition::Continue(leader_prep_state, leader_prep_msg) =
                         leader_transition
                     {
-                        // TODO(brandon): is it OK to match prep state w/ prep message decoding in
-                        // this way? It works for the existing VDAFs, but I'm not sure if this is
-                        // expected to be generally true.
+                        // TODO(https://github.com/divviup/libprio-rs/issues/245): is it OK to match
+                        // prep state w/ prep message decoding in this way? It works for the existing
+                        // VDAFs, but I'm not sure if this is expected to be generally true.
                         let helper_prep_msg =
                             A::PrepareMessage::get_decoded_with_param(&leader_prep_state, &payload)
                                 .context("couldn't decode helper's prepare message");
@@ -662,7 +661,7 @@ impl AggregationJobDriver {
 
                 PrepareStepResult::Failed(err) => {
                     // If the helper failed, we move to FAILED immediately.
-                    // TODO(brandon): is it correct to just record the transition error that the helper reports?
+                    // TODO(#236): is it correct to just record the transition error that the helper reports?
                     error!(report_nonce = %report_aggregation.nonce, helper_err = ?err, "Helper couldn't step report aggregation");
                     report_aggregation.state = ReportAggregationState::Failed(err);
                 }
@@ -672,7 +671,7 @@ impl AggregationJobDriver {
 
         // Determine if we've finished the aggregation job (i.e. if all report aggregations are in
         // a terminal state), then write everything back to storage.
-        // TODO(brandon): also update batch_unit_aggregations if this aggregation job finished.
+        // TODO(#220): also update batch_unit_aggregations if this aggregation job finished.
         let aggregation_job_is_finished = report_aggregations_to_write
             .iter()
             .all(|ra| !matches!(ra.state, ReportAggregationState::Waiting(_, _)));
@@ -997,11 +996,11 @@ mod tests {
             async move { aggregation_job_driver.run().await }
         });
 
-        // TODO(brandon): consider using tokio::time::pause() to make time deterministic, and allow
+        // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
         // this test to run without the need for a (racy, wallclock-consuming) real sleep.
-        // Unfortunately, at time of writing this TODO, calling time::pause() breaks interaction
-        // with the database -- the job-acquiry transaction deadlocks on attempting to start a
-        // transaction, even if the main test loops on calling yield_now().
+        // Unfortunately, at time of writing, calling time::pause() breaks interaction with the
+        // database -- the job-acquiry transaction deadlocks on attempting to start a transaction,
+        // even if the main test loops on calling yield_now().
         time::sleep(time::Duration::from_secs(5)).await;
         task_handle.abort();
 
@@ -1119,10 +1118,9 @@ mod tests {
         assert_eq!(lease.leased().aggregation_job_id, aggregation_job_id);
 
         // Setup: prepare mocked HTTP response.
-        // TODO(brandon): this is fragile in that it expects the leader request to be
-        // deterministically encoded. It would be nicer to retrieve the request bytes from the mock,
-        // then do our own parsing & verification -- but mockito does not yet expose this
-        // functionality.
+        // (This is fragile in that it expects the leader request to be deterministically encoded.
+        // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
+        // verification -- but mockito does not expose this functionality at time of writing.)
         let leader_request = AggregateInitializeReq {
             task_id,
             job_id: aggregation_job_id,
@@ -1291,10 +1289,9 @@ mod tests {
         assert_eq!(lease.leased().aggregation_job_id, aggregation_job_id);
 
         // Setup: prepare mocked HTTP response.
-        // TODO(brandon): this is fragile in that it expects the leader request to be
-        // deterministically encoded. It would be nicer to retrieve the request bytes from the mock,
-        // then do our own parsing & verification -- but mockito does not yet expose this
-        // functionality.
+        // (This is fragile in that it expects the leader request to be deterministically encoded.
+        // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
+        // verification -- but mockito does not expose this functionality at time of writing.)
         let leader_request = AggregateContinueReq {
             task_id,
             job_id: aggregation_job_id,

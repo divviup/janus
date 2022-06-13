@@ -117,7 +117,7 @@ impl CollectJobDriver {
         let (task, collect_job) = datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    // TODO: Consider fleshing out `AcquiredCollectJob` to include a `Task`,
+                    // TODO(#224): Consider fleshing out `AcquiredCollectJob` to include a `Task`,
                     // `A::AggregationParam`, etc. so that we don't have to do more DB queries here.
                     let task = tx.get_task(task_id).await?.ok_or_else(|| {
                         datastore::Error::User(Error::UnrecognizedTask(task_id).into())
@@ -319,11 +319,10 @@ where
     // if we queried how many rows overlap with that interval, we would get 2 and refuse the
     // request. We must check the unit intervals individually to notice that each has enough
     // remaining lifetime to permit the share request.
-    //
-    // TODO: We believe this to be a correct implementation of currently specified batch
+
+    // TODO(#149): We believe this to be a correct implementation of currently specified batch
     // parameter validation, but we also know it to be inadequate. This should work for interop
-    // experiments, but we should do better before we allow any real user data to be processed
-    // (see issue #149).
+    // experiments, but we should do better before we allow any real user data to be processed.
     let intervals: Vec<_> = batch_unit_aggregations
         .iter()
         .map(|v| {
