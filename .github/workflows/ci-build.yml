@@ -36,6 +36,10 @@ jobs:
       env:
         RUST_LOG: trace
       run: cargo test --verbose
+    - name: document
+      env:
+        RUSTDOCFLAGS: "-Dwarnings"
+      run: cargo doc
   janus_server_docker:
     runs-on: ubuntu-latest
     steps:
