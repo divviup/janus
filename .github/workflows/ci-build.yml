@@ -27,7 +27,7 @@ jobs:
     - name: lint
       run: cargo fmt --message-format human -- --check
     - name: clippy
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy --workspace --all-targets -- -D warnings
     - name: check, all features
       run: cargo check --all-features
     - name: build
