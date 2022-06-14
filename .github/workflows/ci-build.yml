@@ -38,6 +38,7 @@ jobs:
       run: cargo test --verbose
     - name: document
       env:
+        CARGO_TARGET_DIR: "target/doc-deny"
         RUSTDOCFLAGS: "-Dwarnings"
       run: cargo doc
   janus_server_docker:
