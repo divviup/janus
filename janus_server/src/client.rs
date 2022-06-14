@@ -152,7 +152,7 @@ where
         }
     }
 
-    /// Upload a [`crate::message::Report`] to the leader, per §4.3.2 of
+    /// Upload a [`janus::message::Report`] to the leader, per §4.3.2 of
     /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
     /// share plus one proof share for each aggregator and then uploaded to the
     /// leader.
