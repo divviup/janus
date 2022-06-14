@@ -11,8 +11,8 @@ use crate::{
     datastore::{
         self,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, ReportAggregation,
-            ReportAggregationState,
+            AggregateShareJob, AggregationJob, AggregationJobState, CollectJobState,
+            ReportAggregation, ReportAggregationState,
         },
         Datastore,
     },
@@ -30,7 +30,7 @@ use http::{
     StatusCode,
 };
 use janus::{
-    hpke::{self, HpkeApplicationInfo, Label},
+    hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
     message::{HpkeConfig, HpkeConfigId, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
     time::Clock,
 };
@@ -1290,32 +1290,31 @@ impl VdafOps {
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         C: Clock,
     {
+        let task_id = task.id;
         let collect_job = datastore
             .run_tx(move |tx| {
-                let task = task.clone();
                 Box::pin(async move {
-                    let collect_job =
-                        tx.get_collect_job::<A>(collect_job_id)
-                            .await?
-                            .ok_or_else(|| {
-                                datastore::Error::User(
-                                    Error::UnrecognizedCollectJob(collect_job_id).into(),
-                                )
-                            })?;
-
-                    if collect_job.has_run()? {
-                        debug!(?collect_job_id, ?task.id, "serving cached collect job response");
-                        return Ok(Some(collect_job));
-                    }
-
-                    debug!(?collect_job_id, ?task.id, "collect job has not run yet");
-                    Ok(None)
+                    tx.get_collect_job::<A>(collect_job_id)
+                        .await?
+                        .ok_or_else(|| {
+                            datastore::Error::User(
+                                Error::UnrecognizedCollectJob(collect_job_id).into(),
+                            )
+                        })
                 })
             })
             .await?;
 
-        collect_job
-            .map(|job| {
+        match collect_job.state {
+            CollectJobState::Start => {
+                debug!(?collect_job_id, ?task_id, "Collect job has not run yet");
+                Ok(None)
+            }
+
+            CollectJobState::Finished {
+                encrypted_helper_aggregate_share,
+                leader_aggregate_share,
+            } => {
                 // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store the leader
                 // aggregate share *unencrypted* in the datastore so that we can encrypt cached
                 // results to the collector HPKE config valid when the current collect job request
@@ -1326,22 +1325,30 @@ impl VdafOps {
                 // TODO(#240): consider fetching freshly encrypted helper aggregate share if it has
                 // been long enough since the encrypted helper share was cached -- tricky thing is
                 // deciding what "long enough" is.
-                let associated_data = job.associated_data_for_aggregate_share();
+                debug!(
+                    ?collect_job_id,
+                    ?task_id,
+                    "Serving cached collect job response"
+                );
+                let associated_data = associated_data_for_aggregate_share(
+                    collect_job.task_id,
+                    collect_job.batch_interval,
+                );
                 let encrypted_leader_aggregate_share = hpke::seal(
                     &task.collector_hpke_config,
                     &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
-                    &<Vec<u8>>::from(&job.leader_aggregate_share.unwrap()),
+                    &<Vec<u8>>::from(&leader_aggregate_share),
                     &associated_data,
                 )?;
 
-                Ok(CollectResp {
+                Ok(Some(CollectResp {
                     encrypted_agg_shares: vec![
                         encrypted_leader_aggregate_share,
-                        job.helper_aggregate_share.unwrap(),
+                        encrypted_helper_aggregate_share,
                     ],
-                })
-            })
-            .transpose()
+                }))
+            }
+        }
     }
 
     /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
@@ -4570,8 +4577,6 @@ mod tests {
                     tx.update_collect_job::<Prio3Aes128Count>(
                         collect_job_id,
                         &leader_aggregate_share,
-                        10,
-                        NonceChecksum::get_decoded(&[1; 32]).unwrap(),
                         &encrypted_helper_aggregate_share,
                     )
                     .await
