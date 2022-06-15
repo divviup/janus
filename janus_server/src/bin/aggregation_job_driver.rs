@@ -156,17 +156,17 @@ impl AggregationJobDriver {
         lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()> {
         match lease.leased().vdaf {
-            VdafInstance::Prio3Aes128Count => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
                 let vdaf = Prio3Aes128Count::new(2)?;
                 self.step_aggregation_job_generic(datastore, vdaf, lease)
                     .await
             }
-            VdafInstance::Prio3Aes128Sum { bits } => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 let vdaf = Prio3Aes128Sum::new(2, bits)?;
                 self.step_aggregation_job_generic(datastore, vdaf, lease)
                     .await
             }
-            VdafInstance::Prio3Aes128Histogram { ref buckets } => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { ref buckets }) => {
                 let vdaf = Prio3Aes128Histogram::new(2, buckets)?;
                 self.step_aggregation_job_generic(datastore, vdaf, lease)
                     .await
@@ -721,15 +721,15 @@ impl AggregationJobDriver {
         lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()> {
         match &lease.leased().vdaf {
-            VdafInstance::Prio3Aes128Count => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
                 self.cancel_aggregation_job_generic::<C, Prio3Aes128Count>(datastore, lease)
                     .await
             }
-            VdafInstance::Prio3Aes128Sum { .. } => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { .. }) => {
                 self.cancel_aggregation_job_generic::<C, Prio3Aes128Sum>(datastore, lease)
                     .await
             }
-            VdafInstance::Prio3Aes128Histogram { .. } => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.cancel_aggregation_job_generic::<C, Prio3Aes128Histogram>(datastore, lease)
                     .await
             }
@@ -806,6 +806,7 @@ mod tests {
             test_util::generate_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         message::{Duration, HpkeConfig, Nonce, Report, Role, TaskId},
+        task::VdafInstance,
         time::Clock,
     };
     use janus_server::{
@@ -820,7 +821,7 @@ mod tests {
             AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
             AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
         },
-        task::{test_util::new_dummy_task, VdafInstance},
+        task::test_util::new_dummy_task,
         trace::test_util::install_test_trace_subscriber,
     };
     use janus_test_util::{run_vdaf, MockClock};
@@ -855,7 +856,7 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce, &0);
 
         let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         task.aggregator_endpoints = vec![
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
@@ -1065,7 +1066,7 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce, &0);
 
         let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         task.aggregator_endpoints = vec![
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
@@ -1225,7 +1226,7 @@ mod tests {
         let transcript = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce, &0);
 
         let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         task.aggregator_endpoints = vec![
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
@@ -1388,7 +1389,7 @@ mod tests {
             run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce, &0).input_shares;
 
         let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         task.aggregator_endpoints = vec![
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
