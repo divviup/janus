@@ -182,17 +182,21 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     #[tracing::instrument(skip(self), err)]
     async fn create_aggregation_jobs_for_task(&self, task: &Task) -> anyhow::Result<()> {
         match task.vdaf {
-            janus_server::task::VdafInstance::Prio3Aes128Count => {
+            janus_server::task::VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
                 self.create_aggregation_jobs_for_task_no_param::<Prio3Aes128Count>(task)
                     .await
             }
 
-            janus_server::task::VdafInstance::Prio3Aes128Sum { .. } => {
+            janus_server::task::VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum {
+                ..
+            }) => {
                 self.create_aggregation_jobs_for_task_no_param::<Prio3Aes128Sum>(task)
                     .await
             }
 
-            janus_server::task::VdafInstance::Prio3Aes128Histogram { .. } => {
+            janus_server::task::VdafInstance::Real(
+                janus::task::VdafInstance::Prio3Aes128Histogram { .. },
+            ) => {
                 self.create_aggregation_jobs_for_task_no_param::<Prio3Aes128Histogram>(task)
                     .await
             }
@@ -310,12 +314,13 @@ mod tests {
     use futures::{future::try_join_all, TryFutureExt};
     use janus::{
         message::{Nonce, Report, Role, TaskId, Time},
+        task::VdafInstance,
         time::Clock,
     };
     use janus_server::{
         datastore::{Crypter, Datastore, Transaction},
         message::{test_util::new_dummy_report, AggregationJobId},
-        task::{test_util::new_dummy_task, VdafInstance},
+        task::test_util::new_dummy_task,
         trace::test_util::install_test_trace_subscriber,
     };
     use janus_test_util::MockClock;
@@ -350,13 +355,19 @@ mod tests {
         let report_time = Time::from_seconds_since_epoch(0);
 
         let leader_task_id = TaskId::random();
-        let leader_task =
-            new_dummy_task(leader_task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let leader_task = new_dummy_task(
+            leader_task_id,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        );
         let leader_report = new_dummy_report(leader_task_id, report_time);
 
         let helper_task_id = TaskId::random();
-        let helper_task =
-            new_dummy_task(helper_task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
+        let helper_task = new_dummy_task(
+            helper_task_id,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        );
         let helper_report = new_dummy_report(helper_task_id, report_time);
 
         ds.run_tx(|tx| {
@@ -429,7 +440,7 @@ mod tests {
         }
 
         let task_id = TaskId::random();
-        let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         let current_batch_unit = clock
             .now()
             .to_batch_unit_interval_start(task.min_batch_duration)
@@ -552,7 +563,7 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let task_id = TaskId::random();
-        let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         let first_report = new_dummy_report(task_id, clock.now());
         let second_report = new_dummy_report(task_id, clock.now());
 

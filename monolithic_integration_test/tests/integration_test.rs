@@ -2,13 +2,14 @@ use futures::channel::oneshot::Sender;
 use janus::{
     hpke::test_util::generate_hpke_config_and_private_key,
     message::{Duration, Role, TaskId},
+    task::VdafInstance,
     time::{Clock, RealClock},
 };
 use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
     datastore::{Crypter, Datastore},
-    task::{test_util::generate_aggregator_auth_token, Task, VdafInstance},
+    task::{test_util::generate_aggregator_auth_token, Task},
     trace::{install_trace_subscriber, TraceConfiguration},
 };
 use prio::{
@@ -82,7 +83,7 @@ async fn setup_test() -> TestCase {
             Url::parse("http://leader_endpoint").unwrap(),
             Url::parse("http://helper_endpoint").unwrap(),
         ],
-        VdafInstance::Prio3Aes128Count,
+        VdafInstance::Prio3Aes128Count.into(),
         Role::Leader,
         vec![leader_verify_param.get_encoded()],
         1,
@@ -115,7 +116,7 @@ async fn setup_test() -> TestCase {
             Url::parse("http://leader_endpoint").unwrap(),
             Url::parse("http://helper_endpoint").unwrap(),
         ],
-        VdafInstance::Prio3Aes128Count,
+        VdafInstance::Prio3Aes128Count.into(),
         Role::Helper,
         vec![helper_verify_param.get_encoded()],
         1,

@@ -58,7 +58,7 @@ impl CollectJobDriver {
         lease: Lease<AcquiredCollectJob>,
     ) -> Result<(), Error> {
         match lease.leased().vdaf {
-            VdafInstance::Prio3Aes128Count => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
                 self.step_collect_job_generic::<C, Prio3Aes128Count>(
                     datastore,
                     lease
@@ -66,7 +66,7 @@ impl CollectJobDriver {
                 .await
             }
 
-            VdafInstance::Prio3Aes128Sum { .. } => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { .. }) => {
                 self.step_collect_job_generic::<C, Prio3Aes128Sum>(
                     datastore,
                     lease
@@ -74,7 +74,7 @@ impl CollectJobDriver {
                 .await
             }
 
-            VdafInstance::Prio3Aes128Histogram { .. } => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.step_collect_job_generic::<C, Prio3Aes128Histogram>(
                     datastore,
                     lease,

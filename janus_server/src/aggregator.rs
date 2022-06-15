@@ -396,7 +396,7 @@ impl TaskAggregator {
     fn new(task: Task) -> Result<Self, Error> {
         let current_vdaf_verify_parameter = task.vdaf_verify_parameters.last().unwrap();
         let vdaf_ops = match &task.vdaf {
-            VdafInstance::Prio3Aes128Count => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
                 let vdaf = Prio3Aes128Count::new(2)?;
                 let verify_param = <Prio3Aes128Count as Vdaf>::VerifyParam::get_decoded_with_param(
                     &vdaf,
@@ -405,7 +405,7 @@ impl TaskAggregator {
                 VdafOps::Prio3Aes128Count(vdaf, verify_param)
             }
 
-            VdafInstance::Prio3Aes128Sum { bits } => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 let vdaf = Prio3Aes128Sum::new(2, *bits)?;
                 let verify_param = <Prio3Aes128Sum as Vdaf>::VerifyParam::get_decoded_with_param(
                     &vdaf,
@@ -414,7 +414,7 @@ impl TaskAggregator {
                 VdafOps::Prio3Aes128Sum(vdaf, verify_param)
             }
 
-            VdafInstance::Prio3Aes128Histogram { buckets } => {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { buckets }) => {
                 let vdaf = Prio3Aes128Histogram::new(2, &*buckets)?;
                 let verify_param =
                     <Prio3Aes128Histogram as Vdaf>::VerifyParam::get_decoded_with_param(
@@ -2046,7 +2046,11 @@ mod tests {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
-        let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let task = new_dummy_task(
+            task_id,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        );
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -2207,7 +2211,7 @@ mod tests {
 
         let task = new_dummy_task(
             TaskId::random(),
-            VdafInstance::Prio3Aes128Count,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         );
         let clock = MockClock::default();
@@ -2418,7 +2422,11 @@ mod tests {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
-        let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
+        let task = new_dummy_task(
+            task_id,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        );
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -2472,7 +2480,7 @@ mod tests {
     ) {
         let task = new_dummy_task(
             TaskId::random(),
-            VdafInstance::Prio3Aes128Count,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         );
         let clock = MockClock::default();
@@ -2659,7 +2667,11 @@ mod tests {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
-        let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let task = new_dummy_task(
+            task_id,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        );
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -2741,7 +2753,11 @@ mod tests {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
-        let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
+        let task = new_dummy_task(
+            task_id,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        );
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -2827,7 +2843,11 @@ mod tests {
         install_test_trace_subscriber();
 
         let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
+        let mut task = new_dummy_task(
+            task_id,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        );
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -3175,7 +3195,11 @@ mod tests {
 
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
+        let mut task = new_dummy_task(
+            task_id,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        );
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
@@ -3358,7 +3382,11 @@ mod tests {
         let task_id = TaskId::random();
         let aggregation_job_id_0 = AggregationJobId::random();
         let aggregation_job_id_1 = AggregationJobId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
+        let mut task = new_dummy_task(
+            task_id,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        );
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
         let datastore = Arc::new(datastore);
         let first_batch_unit_interval_clock = MockClock::default();
@@ -4490,7 +4518,11 @@ mod tests {
 
         // Prepare parameters.
         let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+        let mut task = new_dummy_task(
+            task_id,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        );
         task.aggregator_endpoints = vec![
             "https://leader.endpoint".parse().unwrap(),
             "https://helper.endpoint".parse().unwrap(),
@@ -4880,7 +4912,11 @@ mod tests {
         let (collector_hpke_config, collector_hpke_recipient) =
             generate_hpke_config_and_private_key();
 
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Helper);
+        let mut task = new_dummy_task(
+            task_id,
+            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        );
         task.max_batch_lifetime = 3;
         task.min_batch_duration = Duration::from_seconds(500);
         task.min_batch_size = 10;

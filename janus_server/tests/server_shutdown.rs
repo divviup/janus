@@ -5,12 +5,13 @@
 
 use janus::{
     message::{Role, TaskId},
+    task::VdafInstance,
     time::{Clock, RealClock},
 };
 use janus_server::{
     config::{AggregatorConfig, CommonConfig, DbConfig},
     datastore::{Crypter, Datastore},
-    task::{test_util::new_dummy_task, VdafInstance},
+    task::test_util::new_dummy_task,
     trace::{install_trace_subscriber, TraceConfiguration},
 };
 use reqwest::{Client, Url};
@@ -71,7 +72,7 @@ async fn server_shutdown() {
     };
 
     let task_id = TaskId::random();
-    let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count, Role::Leader);
+    let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
     datastore
         .run_tx(|tx| {
             let task = task.clone();
