@@ -1348,6 +1348,16 @@ impl VdafOps {
                     ],
                 }))
             }
+
+            CollectJobState::Abandoned => {
+                // TODO(#248): decide how to respond for abandoned collect jobs.
+                warn!(
+                    ?collect_job_id,
+                    ?task_id,
+                    "Attempting to collect abandoned collect job"
+                );
+                Ok(None)
+            }
         }
     }
 

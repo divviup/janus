@@ -207,6 +207,19 @@ impl CollectJobDriver {
 
         Ok(())
     }
+
+    #[tracing::instrument(skip(self, datastore), err)]
+    pub async fn cancel_collect_job<C: Clock>(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        lease: Lease<AcquiredCollectJob>,
+    ) -> Result<(), Error> {
+        let collect_job_id = lease.leased().collect_job_id;
+        datastore
+            .run_tx(|tx| Box::pin(async move { tx.cancel_collect_job(collect_job_id).await }))
+            .await?;
+        Ok(())
+    }
 }
 
 /// Computes the aggregate share over the provided batch unit aggregations.
@@ -347,8 +360,8 @@ mod tests {
     use crate::{
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, CollectJobState, ReportAggregation,
-                ReportAggregationState,
+                AggregationJob, AggregationJobState, CollectJob, CollectJobState,
+                ReportAggregation, ReportAggregationState,
             },
             Crypter, Datastore,
         },
@@ -370,9 +383,10 @@ mod tests {
 
     janus_test_util::define_ephemeral_datastore!();
 
+    type FakeVdaf = VdafWithAggregationParameter<u8>;
+
     #[tokio::test]
     async fn drive_collect_job() {
-        type FakeVdaf = VdafWithAggregationParameter<u8>;
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -570,5 +584,119 @@ mod tests {
             .step_collect_job(ds.clone(), lease)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancel_collect_job() {
+        // Setup: insert a collect job into the datastore.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
+
+        let task_id = TaskId::random();
+        let mut task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
+        task.min_batch_duration = Duration::from_seconds(500);
+        task.min_batch_size = 10;
+        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
+        let aggregation_param = 0u8;
+
+        let (collect_job_id, lease) = ds
+            .run_tx(|tx| {
+                let clock = clock.clone();
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+
+                    let collect_job_id = tx
+                        .put_collect_job(task_id, batch_interval, &aggregation_param.get_encoded())
+                        .await?;
+
+                    let aggregation_job_id = AggregationJobId::random();
+                    tx.put_aggregation_job(&AggregationJob::<FakeVdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param,
+                        state: AggregationJobState::Finished,
+                    })
+                    .await?;
+
+                    let nonce = Nonce::generate(&clock);
+                    tx.put_client_report(&Report::new(task_id, nonce, Vec::new(), Vec::new()))
+                        .await?;
+
+                    tx.put_report_aggregation(&ReportAggregation::<FakeVdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        nonce,
+                        ord: 0,
+                        state: ReportAggregationState::Finished(OutputShare()),
+                    })
+                    .await?;
+
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<FakeVdaf> {
+                        task_id,
+                        unit_interval_start: clock.now(),
+                        aggregation_param,
+                        aggregate_share: AggregateShare(),
+                        report_count: 5,
+                        checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
+                    })
+                    .await?;
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<FakeVdaf> {
+                        task_id,
+                        unit_interval_start: clock.now().add(Duration::from_seconds(1000)).unwrap(),
+                        aggregation_param,
+                        aggregate_share: AggregateShare(),
+                        report_count: 5,
+                        checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
+                    })
+                    .await?;
+
+                    let lease = tx
+                        .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 1)
+                        .await?
+                        .remove(0);
+                    assert_eq!(task_id, lease.leased().task_id);
+                    assert_eq!(collect_job_id, lease.leased().collect_job_id);
+                    Ok((collect_job_id, lease))
+                })
+            })
+            .await
+            .unwrap();
+
+        let collect_job_driver = CollectJobDriver {
+            http_client: reqwest::Client::builder().build().unwrap(),
+        };
+
+        // Run: cancel the collect job.
+        collect_job_driver
+            .cancel_collect_job(Arc::clone(&ds), lease)
+            .await
+            .unwrap();
+
+        // Verify: check that the collect job was abandoned.
+        let collect_job = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let collect_job = tx
+                        .get_collect_job::<FakeVdaf>(collect_job_id)
+                        .await?
+                        .unwrap();
+                    Ok(collect_job)
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            collect_job,
+            CollectJob {
+                collect_job_id,
+                task_id,
+                batch_interval,
+                aggregation_param,
+                state: CollectJobState::Abandoned,
+            }
+        );
     }
 }
