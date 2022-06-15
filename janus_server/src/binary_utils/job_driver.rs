@@ -50,7 +50,7 @@ where
     JobStepperFuture: Future<Output = Result<(), JobStepperError>> + Send,
     AcquiredJob: Clone + Debug + Send + Sync + 'static,
 {
-    /// Create a new [`JobCreator`].
+    /// Create a new [`JobDriver`].
     pub fn new(
         clock: C,
         min_job_discovery_delay: Duration,
