@@ -12,6 +12,7 @@ use crate::{
     task::Task,
     task::{VdafInstance, DAP_AUTH_HEADER},
 };
+use futures::try_join;
 use http::header::CONTENT_TYPE;
 use janus::{
     message::{Interval, NonceChecksum, Role},
@@ -215,8 +216,17 @@ impl CollectJobDriver {
         lease: Lease<AcquiredCollectJob>,
     ) -> Result<(), Error> {
         let collect_job_id = lease.leased().collect_job_id;
+        let lease = Arc::new(lease);
         datastore
-            .run_tx(|tx| Box::pin(async move { tx.cancel_collect_job(collect_job_id).await }))
+            .run_tx(|tx| {
+                let lease = Arc::clone(&lease);
+                Box::pin(async move {
+                    let cancel_future = tx.cancel_collect_job(collect_job_id);
+                    let release_future = tx.release_collect_job(&lease);
+                    try_join!(cancel_future, release_future)?;
+                    Ok(())
+                })
+            })
             .await?;
         Ok(())
     }
@@ -675,15 +685,20 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify: check that the collect job was abandoned.
-        let collect_job = ds
+        // Verify: check that the collect job was abandoned, and that it can no longer be acquired.
+        let (collect_job, leases) = ds
             .run_tx(|tx| {
                 Box::pin(async move {
                     let collect_job = tx
                         .get_collect_job::<FakeVdaf>(collect_job_id)
                         .await?
                         .unwrap();
-                    Ok(collect_job)
+
+                    let leases = tx
+                        .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 1)
+                        .await?;
+
+                    Ok((collect_job, leases))
                 })
             })
             .await
@@ -698,5 +713,6 @@ mod tests {
                 state: CollectJobState::Abandoned,
             }
         );
+        assert!(leases.is_empty());
     }
 }
