@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 assert_matches = "1"
-prio = "0.7.1"
+prio = "0.8.0"
 rand = "0.8"
 ring = "0.16.20"
 janus = { path = "../janus" }

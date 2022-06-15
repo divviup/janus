@@ -43,14 +43,14 @@ CREATE TABLE task_hpke_keys(
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
--- The VDAF verification parameters used by a given task.
+-- The VDAF verification keys used by a given task.
 -- TODO(#229): support multiple verification parameters per task
-CREATE TABLE task_vdaf_verify_params(
+CREATE TABLE task_vdaf_verify_keys(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id BIGINT NOT NULL,           -- task ID the verification parameter is associated with
-    vdaf_verify_param BYTEA NOT NULL,  -- the VDAF verification parameter (opaque VDAF message, encrypted)
+    task_id BIGINT NOT NULL,         -- task ID the verification key is associated with
+    vdaf_verify_key BYTEA NOT NULL,  -- the VDAF verification key (encrypted)
 
-    CONSTRAINT vdaf_verify_param_unique_task_id UNIQUE(task_id),
+    CONSTRAINT vdaf_verify_key_unique_task_id UNIQUE(task_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 

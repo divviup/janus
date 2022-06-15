@@ -8,13 +8,14 @@ use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
     datastore::{Crypter, Datastore},
-    task::{test_util::generate_aggregator_auth_token, Task, VdafInstance},
+    task::{
+        test_util::generate_aggregator_auth_token, Task, VdafInstance,
+        PRIO3_AES128_VERIFY_KEY_LENGTH,
+    },
     trace::{install_trace_subscriber, TraceConfiguration},
 };
-use prio::{
-    codec::Encode,
-    vdaf::{prio3::Prio3Aes128Count, Vdaf as VdafTrait},
-};
+use prio::vdaf::prio3::{Prio3, Prio3Aes128Count};
+use rand::{thread_rng, Rng};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -51,10 +52,8 @@ async fn setup_test() -> TestCase {
 
     let task_id = TaskId::random();
 
-    let vdaf = Prio3Aes128Count::new(2).unwrap();
-    let mut verify_params_iter = vdaf.setup().unwrap().1.into_iter();
-    let leader_verify_param = verify_params_iter.next().unwrap();
-    let helper_verify_param = verify_params_iter.next().unwrap();
+    let mut verify_key = [0u8; PRIO3_AES128_VERIFY_KEY_LENGTH];
+    thread_rng().fill(&mut verify_key[..]);
 
     let (collector_hpke_config, _) = generate_hpke_config_and_private_key();
     let agg_auth_token = generate_aggregator_auth_token();
@@ -84,7 +83,7 @@ async fn setup_test() -> TestCase {
         ],
         VdafInstance::Prio3Aes128Count,
         Role::Leader,
-        vec![leader_verify_param.get_encoded()],
+        vec![Vec::from(verify_key)],
         1,
         0,
         Duration::from_hours(8).unwrap(),
@@ -117,7 +116,7 @@ async fn setup_test() -> TestCase {
         ],
         VdafInstance::Prio3Aes128Count,
         Role::Helper,
-        vec![helper_verify_param.get_encoded()],
+        vec![Vec::from(verify_key)],
         1,
         0,
         Duration::from_hours(8).unwrap(),
@@ -164,12 +163,11 @@ async fn setup_test() -> TestCase {
             .await
             .unwrap();
 
-    let vdaf = Prio3Aes128Count::new(2).unwrap();
+    let vdaf = Prio3::new_aes128_count(2).unwrap();
 
     let client = Client::new(
         client_parameters,
         vdaf,
-        (), // no public parameter for prio3
         RealClock::default(),
         &http_client,
         leader_report_config,

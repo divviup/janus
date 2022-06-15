@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use tracing::debug;
 
 #[derive(Debug)]
-struct Accumulation<A: vdaf::Aggregator>
+struct Accumulation<const L: usize, A: vdaf::Aggregator<L>>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
@@ -21,7 +21,7 @@ where
     checksum: NonceChecksum,
 }
 
-impl<A: vdaf::Aggregator> Accumulation<A>
+impl<const L: usize, A: vdaf::Aggregator<L>> Accumulation<L, A>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
@@ -40,7 +40,7 @@ where
 /// batch unit interval begins to the accumulated aggregate share, report count and checksum.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub(super) struct Accumulator<A: vdaf::Aggregator>
+pub(super) struct Accumulator<const L: usize, A: vdaf::Aggregator<L>>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
@@ -48,10 +48,10 @@ where
     min_batch_duration: Duration,
     #[derivative(Debug = "ignore")]
     aggregation_param: A::AggregationParam,
-    accumulations: HashMap<Time, Accumulation<A>>,
+    accumulations: HashMap<Time, Accumulation<L, A>>,
 }
 
-impl<A: vdaf::Aggregator> Accumulator<A>
+impl<const L: usize, A: vdaf::Aggregator<L>> Accumulator<L, A>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
@@ -110,7 +110,7 @@ where
             let unit_interval = Interval::new(unit_interval_start, self.min_batch_duration)?;
 
             let mut batch_unit_aggregations = tx
-                .get_batch_unit_aggregations_for_task_in_interval::<A>(
+                .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
                     self.task_id,
                     unit_interval,
                     &self.aggregation_param,
@@ -145,7 +145,7 @@ where
                     unit_interval_start = ?unit_interval.start(),
                     "inserting new batch_unit_aggregation row",
                 );
-                tx.put_batch_unit_aggregation::<A>(&BatchUnitAggregation {
+                tx.put_batch_unit_aggregation::<L, A>(&BatchUnitAggregation {
                     task_id: self.task_id,
                     unit_interval_start: unit_interval.start(),
                     aggregation_param: self.aggregation_param.clone(),

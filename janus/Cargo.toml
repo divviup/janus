@@ -12,7 +12,7 @@ chrono = "0.4"
 hex = "0.4.3"
 hpke-dispatch = "0.3.0"
 num_enum = "0.5.6"
-prio = "0.7.1"
+prio = "0.8.0"
 rand = "0.8"
 ring = "0.16.20"
 serde = { version = "1.0.137", features = ["derive"] }

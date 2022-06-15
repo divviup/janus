@@ -49,6 +49,26 @@ pub enum VdafInstance {
     FakeFailsPrepStep,
 }
 
+impl VdafInstance {
+    /// Returns the expected length of a VDAF verification key for a VDAF of this type.
+    fn verify_key_length(&self) -> usize {
+        match self {
+            VdafInstance::Prio3Aes128Count
+            | VdafInstance::Prio3Aes128Sum { .. }
+            | VdafInstance::Prio3Aes128Histogram { .. }
+            | VdafInstance::Poplar1 { .. } => PRIO3_AES128_VERIFY_KEY_LENGTH,
+
+            #[cfg(test)]
+            VdafInstance::Fake
+            | VdafInstance::FakeFailsPrepInit
+            | VdafInstance::FakeFailsPrepStep => 0,
+        }
+    }
+}
+
+/// The length of the verify key parameter for Prio3 AES-128 VDAF instantiations.
+pub const PRIO3_AES128_VERIFY_KEY_LENGTH: usize = 16;
+
 /// An authentication (bearer) token used by aggregators for aggregator-to-aggregator
 /// authentication.
 #[derive(Clone)]
@@ -92,9 +112,9 @@ pub struct Task {
     pub vdaf: VdafInstance,
     /// The role performed by the aggregator.
     pub role: Role,
-    /// Secret verification parameters shared by the aggregators.
+    /// Secret verification keys shared by the aggregators.
     #[derivative(Debug = "ignore")]
-    pub vdaf_verify_parameters: Vec<Vec<u8>>,
+    pub vdaf_verify_keys: Vec<Vec<u8>>,
     /// The maximum number of times a given batch may be collected.
     pub(crate) max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
@@ -121,7 +141,7 @@ impl Task {
         aggregator_endpoints: Vec<Url>,
         vdaf: VdafInstance,
         role: Role,
-        vdaf_verify_parameters: Vec<Vec<u8>>,
+        vdaf_verify_keys: Vec<Vec<u8>>,
         max_batch_lifetime: u64,
         min_batch_size: u64,
         min_batch_duration: Duration,
@@ -140,8 +160,8 @@ impl Task {
         if agg_auth_tokens.is_empty() {
             return Err(Error::InvalidParameter("agg_auth_tokens"));
         }
-        if vdaf_verify_parameters.is_empty() {
-            return Err(Error::InvalidParameter("vdaf_verify_parameters"));
+        if vdaf_verify_keys.is_empty() {
+            return Err(Error::InvalidParameter("vdaf_verify_keys"));
         }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
@@ -158,7 +178,7 @@ impl Task {
             aggregator_endpoints,
             vdaf,
             role,
-            vdaf_verify_parameters,
+            vdaf_verify_keys,
             max_batch_lifetime,
             min_batch_size,
             min_batch_duration,
@@ -204,20 +224,12 @@ impl Task {
 // This is public to allow use in integration tests.
 #[doc(hidden)]
 pub mod test_util {
+    use std::iter;
+
     use super::{AggregatorAuthenticationToken, Task, VdafInstance};
     use janus::{
         hpke::test_util::generate_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
-    };
-    use prio::{
-        codec::Encode,
-        field::Field128,
-        vdaf::{
-            self,
-            poplar1::{Poplar1, ToyIdpf},
-            prg::PrgAes128,
-            prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
-        },
     };
     use rand::{thread_rng, Rng};
 
@@ -238,7 +250,9 @@ pub mod test_util {
             aggregator_config_1.public_key().clone(),
         );
 
-        let vdaf_verify_parameter = verify_param_dispatch(&vdaf, role);
+        let vdaf_verify_key = iter::repeat_with(|| thread_rng().gen())
+            .take(vdaf.verify_key_length())
+            .collect();
 
         Task::new(
             task_id,
@@ -248,7 +262,7 @@ pub mod test_util {
             ],
             vdaf,
             role,
-            vec![vdaf_verify_parameter],
+            vec![vdaf_verify_key],
             0,
             0,
             Duration::from_hours(8).unwrap(),
@@ -272,39 +286,6 @@ pub mod test_util {
         base64::encode_config(&buf, base64::URL_SAFE_NO_PAD)
             .into_bytes()
             .into()
-    }
-
-    fn verify_param_dispatch(vdaf: &VdafInstance, role: Role) -> Vec<u8> {
-        match &vdaf {
-            VdafInstance::Prio3Aes128Count => verify_param(Prio3Aes128Count::new(2).unwrap(), role),
-            VdafInstance::Prio3Aes128Sum { bits } => {
-                verify_param(Prio3Aes128Sum::new(2, *bits).unwrap(), role)
-            }
-            VdafInstance::Prio3Aes128Histogram { buckets } => {
-                verify_param(Prio3Aes128Histogram::new(2, &*buckets).unwrap(), role)
-            }
-            VdafInstance::Poplar1 { bits } => verify_param(
-                Poplar1::<ToyIdpf<Field128>, PrgAes128, 16>::new(*bits),
-                role,
-            ),
-
-            #[cfg(test)]
-            VdafInstance::Fake
-            | VdafInstance::FakeFailsPrepInit
-            | VdafInstance::FakeFailsPrepStep => Vec::new(),
-        }
-    }
-
-    fn verify_param<V: vdaf::Vdaf>(vdaf: V, role: Role) -> Vec<u8>
-    where
-        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-        V::VerifyParam: Encode,
-    {
-        let (_, verify_params) = vdaf.setup().unwrap();
-        verify_params
-            .get(role.index().unwrap())
-            .unwrap()
-            .get_encoded()
     }
 }
 
