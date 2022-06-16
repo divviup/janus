@@ -20,8 +20,6 @@ pub enum Error {
     InvalidParameter(&'static str),
     #[error("URL parse error")]
     Url(#[from] url::ParseError),
-    #[error("aggregator auth key size out of range")]
-    AggregatorAuthKeySize,
 }
 
 /// Identifiers for VDAFs supported by this aggregator, corresponding to
