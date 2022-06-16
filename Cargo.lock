@@ -1293,6 +1293,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "janus_client"
+version = "0.1.0"
+dependencies = [
+ "assert_matches",
+ "http",
+ "janus",
+ "janus_test_util",
+ "mockito",
+ "prio",
+ "reqwest",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "janus_server"
 version = "0.1.0"
 dependencies = [
@@ -1542,6 +1561,7 @@ dependencies = [
  "deadpool-postgres",
  "futures",
  "janus",
+ "janus_client",
  "janus_server",
  "janus_test_util",
  "lazy_static",
