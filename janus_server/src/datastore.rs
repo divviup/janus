@@ -4085,7 +4085,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&new_dummy_task(
                         task_id,
-                        VdafInstance::Prio3Aes128Count,
+                        janus::task::VdafInstance::Prio3Aes128Count.into(),
                         Role::Leader,
                     ))
                     .await?;
