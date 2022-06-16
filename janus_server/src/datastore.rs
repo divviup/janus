@@ -469,7 +469,7 @@ impl<C: Clock> Transaction<'_, C> {
             Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
 
-        // Aggregator authentication keys.
+        // Aggregator authentication tokens.
         let mut agg_auth_tokens = Vec::new();
         for row in agg_auth_token_rows {
             let ord: i64 = row.get("ord");
