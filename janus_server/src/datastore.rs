@@ -1183,6 +1183,8 @@ impl<C: Clock> Transaction<'_, C> {
                         let leader_aggregate_share = A::AggregateShare::try_from(&leader_aggregate_share_bytes.ok_or_else(|| Error::DbState("collect job is in state FINISHED but leader_aggregate_share is NULL".to_string()))?).map_err(|err| Error::DbState(format!("leader_aggregate_share stored in database is invalid: {}", err)))?;
                         CollectJobState::Finished{ encrypted_helper_aggregate_share, leader_aggregate_share }
                     }
+
+                    CollectJobStateCode::Abandoned => CollectJobState::Abandoned,
                 };
 
                 Ok(CollectJob {
@@ -1315,8 +1317,8 @@ WITH updated as (
         WHERE
             -- Constraint for tasks table in FROM position
             tasks.id = collect_jobs.task_id
-            -- Do not acquire collect jobs that have been completed
-            AND collect_jobs.helper_aggregate_share IS NULL
+            -- Only acquire collect jobs in a non-terminal state.
+            AND collect_jobs.state = 'START'
             -- Do not acquire collect jobs with an unexpired lease
             AND collect_jobs.lease_expiry <= $2
         GROUP BY collect_jobs.id
@@ -1441,6 +1443,23 @@ ORDER BY id DESC
                 .await?,
         )?;
 
+        Ok(())
+    }
+
+    /// Cancels an existing collect job.
+    // TODO(#242): remove this function in lieu of update_collect_job once that method takes a CollectJob.
+    pub(crate) async fn cancel_collect_job(&self, collect_job_id: Uuid) -> Result<(), Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "UPDATE collect_jobs SET
+                state = 'ABANDONED',
+                leader_aggregate_share = NULL,
+                helper_aggregate_share = NULL
+            WHERE collect_job_id = $1",
+            )
+            .await?;
+        check_update(self.tx.execute(&stmt, &[&collect_job_id]).await?)?;
         Ok(())
     }
 
@@ -2512,6 +2531,29 @@ pub mod models {
         pub(crate) state: CollectJobState<A>,
     }
 
+    impl<A: vdaf::Aggregator> PartialEq for CollectJob<A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::AggregationParam: PartialEq,
+        CollectJobState<A>: PartialEq,
+    {
+        fn eq(&self, other: &Self) -> bool {
+            self.collect_job_id == other.collect_job_id
+                && self.task_id == other.task_id
+                && self.batch_interval == other.batch_interval
+                && self.aggregation_param == other.aggregation_param
+                && self.state == other.state
+        }
+    }
+
+    impl<A: vdaf::Aggregator> Eq for CollectJob<A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::AggregationParam: Eq,
+        CollectJobState<A>: Eq,
+    {
+    }
+
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
     pub(crate) enum CollectJobState<A: vdaf::Aggregator>
@@ -2527,6 +2569,7 @@ pub mod models {
             #[derivative(Debug = "ignore")]
             leader_aggregate_share: A::AggregateShare,
         },
+        Abandoned,
     }
 
     impl<A: vdaf::Aggregator> PartialEq for CollectJobState<A>
@@ -2568,6 +2611,8 @@ pub mod models {
         Start,
         #[postgres(name = "FINISHED")]
         Finished,
+        #[postgres(name = "ABANDONED")]
+        Abandoned,
     }
 
     /// AggregateShareJob represents a row in the `aggregate_share_jobs` table, used by helpers to
@@ -4019,6 +4064,83 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancel_collect_job() {
+        // Setup: write a collect job to the datastore.
+        install_test_trace_subscriber();
+
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+
+        let task_id = TaskId::random();
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(100),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
+
+        let (collect_job_id, collect_job) = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.put_task(&new_dummy_task(
+                        task_id,
+                        VdafInstance::Prio3Aes128Count,
+                        Role::Leader,
+                    ))
+                    .await?;
+
+                    let collect_job_id = tx.put_collect_job(task_id, batch_interval, &[]).await?;
+
+                    let collect_job = tx
+                        .get_collect_job::<Prio3Aes128Count>(collect_job_id)
+                        .await?
+                        .unwrap();
+
+                    Ok((collect_job_id, collect_job))
+                })
+            })
+            .await
+            .unwrap();
+
+        // Verify: initial state.
+        assert_eq!(
+            collect_job,
+            CollectJob {
+                collect_job_id,
+                task_id,
+                batch_interval,
+                aggregation_param: (),
+                state: CollectJobState::Start,
+            }
+        );
+
+        // Setup: cancel the collect job.
+        let collect_job = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.cancel_collect_job(collect_job_id).await?;
+                    let collect_job = tx
+                        .get_collect_job::<Prio3Aes128Count>(collect_job_id)
+                        .await?
+                        .unwrap();
+                    Ok(collect_job)
+                })
+            })
+            .await
+            .unwrap();
+
+        // Verify: collect job was canceled.
+        assert_eq!(
+            collect_job,
+            CollectJob {
+                collect_job_id,
+                task_id,
+                batch_interval,
+                aggregation_param: (),
+                state: CollectJobState::Abandoned,
+            }
+        );
     }
 
     type FakeVdaf = dummy_vdaf::VdafWithAggregationParameter<u8>;

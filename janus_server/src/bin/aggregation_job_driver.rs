@@ -622,9 +622,6 @@ impl AggregationJobDriver {
                     if let PrepareTransition::Continue(leader_prep_state, leader_prep_msg) =
                         leader_transition
                     {
-                        // TODO(https://github.com/divviup/libprio-rs/issues/245): is it OK to match
-                        // prep state w/ prep message decoding in this way? It works for the existing
-                        // VDAFs, but I'm not sure if this is expected to be generally true.
                         let helper_prep_msg =
                             A::PrepareMessage::get_decoded_with_param(&leader_prep_state, &payload)
                                 .context("couldn't decode helper's prepare message");
