@@ -5,6 +5,12 @@ use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use hpke_dispatch::{Aead, Kdf, Kem};
 use num_enum::TryFromPrimitive;
+#[cfg(feature = "database")]
+use postgres_protocol::types::{
+    range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql,
+};
+#[cfg(feature = "database")]
+use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use rand::{thread_rng, Rng};
 use ring::digest::{digest, SHA256, SHA256_OUTPUT_LEN};
@@ -224,6 +230,118 @@ impl Display for Interval {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "start: {} duration: {}", self.start, self.duration)
     }
+}
+
+/// Number of seconds from 1970-01-01 to 2000-01-01.
+#[cfg(feature = "database")]
+const TIME_SEC_CONVERSION: u64 = 946_684_800;
+/// Number of milliseconds per second.
+#[cfg(feature = "database")]
+const USEC_PER_SEC: u64 = 1_000_000;
+
+#[cfg(feature = "database")]
+impl<'a> FromSql<'a> for Interval {
+    fn from_sql(
+        _: &postgres_types::Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        use postgres_protocol::types::{Range::*, RangeBound::*};
+
+        match range_from_sql(raw)? {
+            Empty => Err("Interval cannot represent an empty timestamp range".into()),
+            Nonempty(Inclusive(None), _)
+            | Nonempty(Exclusive(None), _)
+            | Nonempty(_, Inclusive(None))
+            | Nonempty(_, Exclusive(None)) => {
+                Err("Interval cannot represent a timestamp range with a null bound".into())
+            }
+            Nonempty(Unbounded, _) | Nonempty(_, Unbounded) => {
+                Err("Interval cannot represent an unbounded timestamp range".into())
+            }
+            Nonempty(Exclusive(_), _) | Nonempty(_, Inclusive(_)) => {
+                Err("Interval can only represent timestamp ranges that are closed at the start and open at the end".into())
+            }
+            Nonempty(Inclusive(Some(start_raw)), Exclusive(Some(end_raw))) => {
+                // These timestamps represent the number of microseconds before (if negative) or
+                // after (if positive) midnight, 1/1/2000.
+                let start_timestamp = timestamp_from_sql(start_raw)?;
+                let end_timestamp = timestamp_from_sql(end_raw)?;
+
+                // Convert to Unix timestamp, in seconds since midnight 1/1/1970.
+                let negative = start_timestamp < 0;
+                let abs_start_us = start_timestamp.unsigned_abs();
+                let abs_start_secs = abs_start_us / USEC_PER_SEC;
+                let time = if negative {
+                    if abs_start_secs > TIME_SEC_CONVERSION {
+                        return Err("Interval cannot represent timestamp ranges starting before the Unix epoch".into());
+                    }
+                    Time::from_seconds_since_epoch(TIME_SEC_CONVERSION - abs_start_secs)
+                } else {
+                    Time::from_seconds_since_epoch(TIME_SEC_CONVERSION + abs_start_secs)
+                };
+
+                if end_timestamp < start_timestamp {
+                    return Err("timestamp range ends before it starts".into());
+                }
+                let duration_us = end_timestamp.abs_diff(start_timestamp);
+                let duration = Duration::from_seconds(duration_us / USEC_PER_SEC);
+
+                Ok(Interval::new(time, duration)?)
+            }
+        }
+    }
+
+    accepts!(TS_RANGE);
+}
+
+#[cfg(feature = "database")]
+impl ToSql for Interval {
+    fn to_sql(
+        &self,
+        _: &postgres_types::Type,
+        out: &mut bytes::BytesMut,
+    ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        let start_unix_timestamp_secs = i64::try_from(self.start().as_seconds_since_epoch())
+            .map_err(|_| "Interval start is out of range")?;
+        let duration_secs = i64::try_from(self.duration().as_seconds())
+            .map_err(|_| "Interval duration is out of range")?;
+
+        // Convert from the 2000 epoch to the 1970 epoch, and from seconds to microseconds.
+        let start_sql_usec = start_unix_timestamp_secs
+            .checked_sub(TIME_SEC_CONVERSION as i64)
+            .ok_or("timestamp range start calculation overflowed")?
+            .checked_mul(USEC_PER_SEC as i64)
+            .ok_or("timestamp range start calculation overflowed")?;
+        let end_sql_usec = start_unix_timestamp_secs
+            .checked_add(duration_secs)
+            .ok_or("timestamp range end calculation overflowed")?
+            .checked_sub(TIME_SEC_CONVERSION as i64)
+            .ok_or("timestamp range end calculation overflowed")?
+            .checked_mul(USEC_PER_SEC as i64)
+            .ok_or("timestamp range end calculation overflowed")?;
+
+        range_to_sql(
+            |out| {
+                timestamp_to_sql(start_sql_usec, out);
+                Ok(postgres_protocol::types::RangeBound::Inclusive(
+                    postgres_protocol::IsNull::No,
+                ))
+            },
+            |out| {
+                timestamp_to_sql(end_sql_usec, out);
+                Ok(postgres_protocol::types::RangeBound::Exclusive(
+                    postgres_protocol::IsNull::No,
+                ))
+            },
+            out,
+        )?;
+
+        Ok(postgres_types::IsNull::No)
+    }
+
+    accepts!(TS_RANGE);
+
+    to_sql_checked!();
 }
 
 /// PPM protocol message representing a nonce uniquely identifying a client report.
