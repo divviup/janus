@@ -10,7 +10,6 @@ use crate::{
     task::{self, AggregatorAuthenticationToken, Task, VdafInstance},
 };
 use anyhow::anyhow;
-use chrono::NaiveDateTime;
 use futures::try_join;
 use janus::{
     hpke::HpkePrivateKey,
@@ -1152,8 +1151,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     tasks.task_id,
-                    collect_jobs.batch_interval_start,
-                    collect_jobs.batch_interval_duration,
+                    collect_jobs.batch_interval,
                     collect_jobs.aggregation_param,
                     collect_jobs.state,
                     collect_jobs.helper_aggregate_share,
@@ -1167,10 +1165,7 @@ impl<C: Clock> Transaction<'_, C> {
             .await?
             .map(|row| {
                 let task_id = TaskId::get_decoded(row.get("task_id"))?;
-                let batch_interval = Interval::new(
-                    Time::from_naive_date_time(row.get("batch_interval_start")),
-                    Duration::from_seconds(row.get_bigint_and_convert("batch_interval_duration")?),
-                )?;
+                let batch_interval = row.try_get("batch_interval")?;
                 let aggregation_param =
                     A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
                 let state: CollectJobStateCode = row.get("state");
@@ -1212,16 +1207,12 @@ impl<C: Clock> Transaction<'_, C> {
         batch_interval: Interval,
         encoded_aggregation_parameter: &[u8],
     ) -> Result<Option<Uuid>, Error> {
-        let batch_interval_start = batch_interval.start().as_naive_date_time();
-        let batch_interval_duration = i64::try_from(batch_interval.duration().as_seconds())?;
-
         let stmt = self
             .tx
             .prepare_cached(
                 "SELECT collect_job_id FROM collect_jobs
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND batch_interval_start = $2 AND batch_interval_duration = $3
-                AND aggregation_param = $4",
+                AND batch_interval = $2 AND aggregation_param = $3",
             )
             .await?;
         let row = self
@@ -1230,8 +1221,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    &batch_interval_start,
-                    &batch_interval_duration,
+                    &batch_interval,
                     /* aggregation_param */ &encoded_aggregation_parameter,
                 ],
             )
@@ -1250,19 +1240,16 @@ impl<C: Clock> Transaction<'_, C> {
         batch_interval: Interval,
         encoded_aggregation_parameter: &[u8],
     ) -> Result<Uuid, Error> {
-        let batch_interval_start = batch_interval.start().as_naive_date_time();
-        let batch_interval_duration = i64::try_from(batch_interval.duration().as_seconds())?;
-
         let collect_job_id = Uuid::new_v4();
 
         let stmt = self
             .tx
             .prepare_cached(
                 "INSERT INTO collect_jobs (
-                    collect_job_id, task_id, batch_interval_start, batch_interval_duration,
+                    collect_job_id, task_id, batch_interval,
                     aggregation_param, state
                 )
-                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, 'START')",
+                VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, 'START')",
             )
             .await?;
         self.tx
@@ -1271,8 +1258,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* collect_job_id */ &collect_job_id,
                     /* task_id */ &task_id.as_bytes(),
-                    &batch_interval_start,
-                    &batch_interval_duration,
+                    &batch_interval,
                     /* aggregation_param */ &encoded_aggregation_parameter,
                 ],
             )
@@ -1314,10 +1300,7 @@ WITH updated as (
         -- included in an aggregation job
         INNER JOIN client_reports
             ON client_reports.id = report_aggregations.client_report_id
-            AND client_reports.nonce_time <@ tsrange(
-                collect_jobs.batch_interval_start,
-                collect_jobs.batch_interval_start
-                    + collect_jobs.batch_interval_duration * interval '1 second')
+            AND client_reports.nonce_time <@ collect_jobs.batch_interval
         WHERE
             -- Constraint for tasks table in FROM position
             tasks.id = collect_jobs.task_id
@@ -1638,19 +1621,14 @@ ORDER BY id DESC
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let batch_interval_start = request.batch_interval.start().as_naive_date_time();
-        let batch_interval_duration =
-            i64::try_from(request.batch_interval.duration().as_seconds())?;
-
         let stmt = self
             .tx
             .prepare_cached(
                 "SELECT helper_aggregate_share, report_count, checksum FROM aggregate_share_jobs
                 WHERE
                     task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                    AND batch_interval_start = $2
-                    AND batch_interval_duration = $3
-                    AND aggregation_param = $4",
+                    AND batch_interval = $2
+                    AND aggregation_param = $3",
             )
             .await?;
         let row = match self
@@ -1659,8 +1637,7 @@ ORDER BY id DESC
                 &stmt,
                 &[
                     /* task_id */ &request.task_id.as_bytes(),
-                    &batch_interval_start,
-                    &batch_interval_duration,
+                    /* batch_interval */ &request.batch_interval,
                     /* aggregation_param */ &request.aggregation_param,
                 ],
             )
@@ -1699,42 +1676,28 @@ ORDER BY id DESC
             Role::Helper => "aggregate_share_jobs",
             _ => panic!("unexpected role"),
         };
-        let interval_starts: Vec<NaiveDateTime> = intervals
-            .iter()
-            .map(|interval| interval.start().as_naive_date_time())
-            .collect();
-        let interval_ends: Vec<NaiveDateTime> = intervals
-            .iter()
-            .map(|interval| interval.end().as_naive_date_time())
-            .collect();
 
         let stmt = self
             .tx
-            .prepare_cached(
-                &format!("WITH ranges AS (
-                    SELECT tsrange(x.range_start, x.range_end) as interval
-                    FROM unnest($1::TIMESTAMP[], $2::TIMESTAMP[]) AS x(range_start, range_end)
+            .prepare_cached(&format!(
+                "WITH ranges AS (
+                    SELECT interval
+                    FROM unnest($1::TSRANGE[]) AS x(interval)
                 )
                 SELECT
-                    COUNT({table}.batch_interval_start) as overlap_count,
+                    COUNT({table}.batch_interval) as overlap_count,
                     lower(ranges.interval) as interval_start,
                     upper(ranges.interval) as interval_end
                 FROM {table}
                 INNER JOIN ranges
-                    ON tsrange(
-                        {table}.batch_interval_start,
-                        {table}.batch_interval_start + {table}.batch_interval_duration * interval '1 second'
-                    ) @> ranges.interval
-                WHERE {table}.task_id = (SELECT id FROM tasks WHERE task_id = $3)
-                GROUP BY ranges.interval;")
-            )
+                    ON {table}.batch_interval @> ranges.interval
+                WHERE {table}.task_id = (SELECT id FROM tasks WHERE task_id = $2)
+                GROUP BY ranges.interval;"
+            ))
             .await?;
         let rows = self
             .tx
-            .query(
-                &stmt,
-                &[&interval_starts, &interval_ends, &task_id.as_bytes()],
-            )
+            .query(&stmt, &[&intervals, &task_id.as_bytes()])
             .await?;
 
         rows.into_iter()
@@ -1759,8 +1722,6 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     {
-        let batch_interval_start = job.batch_interval.start().as_naive_date_time();
-        let batch_interval_duration = i64::try_from(job.batch_interval.duration().as_seconds())?;
         let encoded_aggregation_param = job.aggregation_param.get_encoded();
         let encoded_aggregate_share: Vec<u8> = (&job.helper_aggregate_share).into();
         let report_count = i64::try_from(job.report_count)?;
@@ -1769,10 +1730,10 @@ ORDER BY id DESC
             .tx
             .prepare_cached(
                 "INSERT INTO aggregate_share_jobs (
-                    task_id, batch_interval_start, batch_interval_duration, aggregation_param,
+                    task_id, batch_interval, aggregation_param,
                     helper_aggregate_share, report_count, checksum
                 )
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)",
             )
             .await?;
         self.tx
@@ -1780,8 +1741,7 @@ ORDER BY id DESC
                 &stmt,
                 &[
                     /* task_id */ &job.task_id.as_bytes(),
-                    &batch_interval_start,
-                    &batch_interval_duration,
+                    /* batch_interval */ &job.batch_interval,
                     /* aggregation_param */ &encoded_aggregation_param,
                     /* aggregate_share */ &encoded_aggregate_share,
                     &report_count,
@@ -2692,6 +2652,7 @@ mod tests {
     };
     use ::janus_test_util::{dummy_vdaf, generate_aead_key, MockClock};
     use assert_matches::assert_matches;
+    use chrono::NaiveDate;
     use futures::future::try_join_all;
     use janus::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
@@ -5354,5 +5315,101 @@ mod tests {
             .collect();
 
         (prep_states.remove(0), prep_msg, output_shares.remove(0))
+    }
+
+    #[tokio::test]
+    async fn roundtrip_interval_sql() {
+        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let interval = tx
+                        .tx
+                        .query_one(
+                            "SELECT '[2020-01-01 10:00, 2020-01-01 10:30)'::tsrange AS interval",
+                            &[],
+                        )
+                        .await?
+                        .get::<_, Interval>("interval");
+                    let ref_interval = Interval::new(
+                        Time::from_naive_date_time(
+                            NaiveDate::from_ymd(2020, 1, 1).and_hms(10, 0, 0),
+                        ),
+                        Duration::from_minutes(30).unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(interval, ref_interval);
+
+                    let interval = tx
+                        .tx
+                        .query_one(
+                            "SELECT '[1970-02-03 23:00, 1970-02-04 00:00)'::tsrange AS interval",
+                            &[],
+                        )
+                        .await?
+                        .get::<_, Interval>("interval");
+                    let ref_interval = Interval::new(
+                        Time::from_naive_date_time(
+                            NaiveDate::from_ymd(1970, 2, 3).and_hms(23, 0, 0),
+                        ),
+                        Duration::from_hours(1).unwrap(),
+                    )?;
+                    assert_eq!(interval, ref_interval);
+
+                    let res = tx
+                        .tx
+                        .query_one(
+                            "SELECT '[1969-01-01 00:00, 1970-01-01 00:00)'::tsrange AS interval",
+                            &[],
+                        )
+                        .await?
+                        .try_get::<_, Interval>("interval");
+                    assert!(res.is_err());
+
+                    let ok = tx
+                        .tx
+                        .query_one(
+                            "SELECT (lower(interval) = '1972-07-21 05:30:00' AND
+                            upper(interval) = '1972-07-21 06:00:00' AND
+                            lower_inc(interval) AND
+                            NOT upper_inc(interval)) AS ok
+                            FROM (VALUES ($1::tsrange)) AS temp (interval)",
+                            &[&Interval::new(
+                                Time::from_naive_date_time(
+                                    NaiveDate::from_ymd(1972, 7, 21).and_hms(5, 30, 0),
+                                ),
+                                Duration::from_minutes(30).unwrap(),
+                            )
+                            .unwrap()],
+                        )
+                        .await?
+                        .get::<_, bool>("ok");
+                    assert!(ok);
+
+                    let ok = tx
+                        .tx
+                        .query_one(
+                            "SELECT (lower(interval) = '2021-10-05 00:00:00' AND
+                            upper(interval) = '2021-10-06 00:00:00' AND
+                            lower_inc(interval) AND
+                            NOT upper_inc(interval)) AS ok
+                            FROM (VALUES ($1::tsrange)) AS temp (interval)",
+                            &[&Interval::new(
+                                Time::from_naive_date_time(
+                                    NaiveDate::from_ymd(2021, 10, 5).and_hms(0, 0, 0),
+                                ),
+                                Duration::from_hours(24).unwrap(),
+                            )
+                            .unwrap()],
+                        )
+                        .await?
+                        .get::<_, bool>("ok");
+                    assert!(ok);
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
     }
 }
