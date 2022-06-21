@@ -1549,6 +1549,7 @@ dependencies = [
  "janus_test_util",
  "lazy_static",
  "prio",
+ "rand",
  "ring",
  "testcontainers",
  "tokio",
@@ -1939,9 +1940,9 @@ checksum = "eb9f9e6e233e5c4a35559a617bf40a4ec447db2e84c20b55a6f83167b7e57872"
 
 [[package]]
 name = "prio"
-version = "0.7.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34dec6b842c17bb4ebff74907295c102f8790d47b8a914eade914efc6e2b1aa8"
+checksum = "6e58420a9eed730ff64632a63d8f01becd86367999562978c2ac891582ebb720"
 dependencies = [
  "aes 0.8.1",
  "aes-gcm",

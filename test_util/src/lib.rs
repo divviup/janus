@@ -5,7 +5,7 @@ use janus::{
 };
 use prio::{
     codec::Encode,
-    vdaf::{self, VdafError},
+    vdaf::{self, PrepareTransition, VdafError},
 };
 use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
@@ -144,84 +144,75 @@ impl Default for MockClock {
     }
 }
 
-/// A type alias for [`prio::vdaf::PrepareTransition`] that derives the appropriate generic types
-/// based on a single aggregator parameter.
-// TODO(https://github.com/divviup/libprio-rs/issues/231): change libprio-rs' PrepareTransition to be generic only on a vdaf::Aggregator.
-pub type PrepareTransition<V> = vdaf::PrepareTransition<
-    <V as vdaf::Aggregator>::PrepareStep,
-    <V as vdaf::Aggregator>::PrepareMessage,
-    <V as vdaf::Vdaf>::OutputShare,
->;
-
 /// A transcript of a VDAF run. All fields are indexed by natural role index (i.e., index 0 =
 /// leader, index 1 = helper).
-pub struct VdafTranscript<V: vdaf::Aggregator>
+pub struct VdafTranscript<const L: usize, V: vdaf::Aggregator<L>>
 where
     for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
     pub input_shares: Vec<V::InputShare>,
-    pub transitions: Vec<Vec<PrepareTransition<V>>>,
-    pub combined_messages: Vec<V::PrepareMessage>,
+    pub prepare_transitions: Vec<Vec<PrepareTransition<V, L>>>,
+    pub prepare_messages: Vec<V::PrepareMessage>,
 }
 
 /// run_vdaf runs a VDAF state machine from sharding through to generating an output share,
 /// returning a "transcript" of all states & messages.
-pub fn run_vdaf<V: vdaf::Aggregator + vdaf::Client>(
+pub fn run_vdaf<const L: usize, V: vdaf::Aggregator<L> + vdaf::Client>(
     vdaf: &V,
-    public_param: &V::PublicParam,
-    verify_params: &[V::VerifyParam],
+    verify_key: &[u8; L],
     aggregation_param: &V::AggregationParam,
     nonce: Nonce,
     measurement: &V::Measurement,
-) -> VdafTranscript<V>
+) -> VdafTranscript<L, V>
 where
     for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
-    assert_eq!(vdaf.num_aggregators(), verify_params.len());
-
     // Shard inputs into input shares, and initialize the initial PrepareTransitions.
-    let input_shares = vdaf.shard(public_param, measurement).unwrap();
-    let mut prep_trans: Vec<Vec<PrepareTransition<V>>> = input_shares
+    let input_shares = vdaf.shard(measurement).unwrap();
+    let encoded_nonce = nonce.get_encoded();
+    let mut prep_trans: Vec<Vec<PrepareTransition<V, L>>> = input_shares
         .iter()
-        .zip(verify_params)
-        .map(|(input_share, verify_param)| {
-            let prep_step = vdaf.prepare_init(
-                verify_param,
+        .enumerate()
+        .map(|(agg_id, input_share)| {
+            let (prep_state, prep_share) = vdaf.prepare_init(
+                verify_key,
+                agg_id,
                 aggregation_param,
-                &nonce.get_encoded(),
+                &encoded_nonce,
                 input_share,
             )?;
-            let prep_trans = vdaf.prepare_step(prep_step, None);
-            Ok(vec![prep_trans])
+            Ok(vec![PrepareTransition::Continue(prep_state, prep_share)])
         })
-        .collect::<Result<Vec<Vec<PrepareTransition<V>>>, VdafError>>()
+        .collect::<Result<Vec<Vec<PrepareTransition<V, L>>>, VdafError>>()
         .unwrap();
-    let mut combined_prep_msgs = Vec::new();
+    let mut prep_msgs = Vec::new();
 
     // Repeatedly step the VDAF until we reach a terminal state.
     loop {
         // Gather messages from last round & combine them into next round's message; if any
         // participants have reached a terminal state (Finish or Fail), we are done.
-        let mut prep_msgs = Vec::new();
+        let mut prep_shares = Vec::new();
         for pts in &prep_trans {
             match pts.last().unwrap() {
-                PrepareTransition::<V>::Continue(_, prep_msg) => prep_msgs.push(prep_msg.clone()),
+                PrepareTransition::<V, L>::Continue(_, prep_share) => {
+                    prep_shares.push(prep_share.clone())
+                }
                 _ => {
                     return VdafTranscript {
                         input_shares,
-                        transitions: prep_trans,
-                        combined_messages: combined_prep_msgs,
+                        prepare_transitions: prep_trans,
+                        prepare_messages: prep_msgs,
                     }
                 }
             }
         }
-        let combined_prep_msg = vdaf.prepare_preprocess(prep_msgs).unwrap();
-        combined_prep_msgs.push(combined_prep_msg.clone());
+        let prep_msg = vdaf.prepare_preprocess(prep_shares).unwrap();
+        prep_msgs.push(prep_msg.clone());
 
         // Compute each participant's next transition.
         for pts in &mut prep_trans {
-            let prep_step = assert_matches!(pts.last().unwrap(), PrepareTransition::<V>::Continue(prep_step, _) => prep_step).clone();
-            pts.push(vdaf.prepare_step(prep_step, Some(combined_prep_msg.clone())));
+            let prep_state = assert_matches!(pts.last().unwrap(), PrepareTransition::<V, L>::Continue(prep_state, _) => prep_state).clone();
+            pts.push(vdaf.prepare_step(prep_state, prep_msg.clone()).unwrap());
         }
     }
 }

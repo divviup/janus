@@ -88,9 +88,9 @@ impl Encode for PrepareStepResult {
         // The encoding includes an implicit discriminator byte, called PrepareStepResult in the
         // DAP spec.
         match self {
-            Self::Continued(prep_msg) => {
+            Self::Continued(vdaf_msg) => {
                 0u8.encode(bytes);
-                encode_u16_items(bytes, &(), prep_msg);
+                encode_u16_items(bytes, &(), vdaf_msg);
             }
             Self::Finished => 1u8.encode(bytes),
             Self::Failed(error) => {
@@ -522,7 +522,7 @@ mod tests {
                     ),
                     "00", // prepare_step_result
                     concat!(
-                        // prep_msg
+                        // vdaf_msg
                         "0006",         // length
                         "303132333435", // opaque data
                     ),
