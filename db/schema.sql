@@ -27,7 +27,7 @@ CREATE TABLE task_aggregator_auth_tokens(
     ord BIGINT NOT NULL,      -- a value used to specify the ordering of the authentication tokens
     token BYTEA NOT NULL,     -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
 
-    CONSTRAINT auth_key_unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT auth_token_unique_task_id_and_ord UNIQUE(task_id, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -139,8 +139,9 @@ CREATE TABLE batch_unit_aggregations(
 
 -- Specifies the possible state of a collect job.
 CREATE TYPE COLLECT_JOB_STATE AS ENUM(
-    'START',    -- the aggregator is waiting to run this collect job
-    'FINISHED'  -- this collect job has run successfully and is ready for collection
+    'START',     -- the aggregator is waiting to run this collect job
+    'FINISHED',  -- this collect job has run successfully and is ready for collection
+    'ABANDONED'  -- this collect job has been abandoned & will never be run again
 );
 
 -- The leader's view of collect requests from the Collector.

@@ -25,13 +25,115 @@ pub enum Error {
 }
 
 /// Identifiers for VDAFs supported by this aggregator, corresponding to
-/// definitions in [draft-patton-cfrg-vdaf][1] and implementations in
+/// definitions in [draft-irtf-cfrg-vdaf-00][1] and implementations in
 /// [`prio::vdaf::prio3`].
 ///
-/// [1]: https://datatracker.ietf.org/doc/draft-patton-cfrg-vdaf/
+/// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/00/
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum VdafInstance {
+    Real(janus::task::VdafInstance),
+
+    #[cfg(test)]
+    Fake,
+    #[cfg(test)]
+    FakeFailsPrepInit,
+    #[cfg(test)]
+    FakeFailsPrepStep,
+}
+
+impl From<janus::task::VdafInstance> for VdafInstance {
+    fn from(vdaf: janus::task::VdafInstance) -> Self {
+        VdafInstance::Real(vdaf)
+    }
+}
+
+impl VdafInstance {
+    /// Returns the expected length of a VDAF verification key for a VDAF of this type.
+    fn verify_key_length(&self) -> usize {
+        match self {
+            // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
+            // not yet done being specified, so choosing 16 bytes is fine for testing.)
+            VdafInstance::Real(_) => PRIO3_AES128_VERIFY_KEY_LENGTH,
+
+            #[cfg(test)]
+            VdafInstance::Fake
+            | VdafInstance::FakeFailsPrepInit
+            | VdafInstance::FakeFailsPrepStep => 0,
+        }
+    }
+}
+
+/// The length of the verify key parameter for Prio3 AES-128 VDAF instantiations.
+pub const PRIO3_AES128_VERIFY_KEY_LENGTH: usize = 16;
+
+impl Serialize for VdafInstance {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let flattened = match self {
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
+                VdafSerialization::Prio3Aes128Count
+            }
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+                VdafSerialization::Prio3Aes128Sum { bits: *bits }
+            }
+            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { buckets }) => {
+                VdafSerialization::Prio3Aes128Histogram {
+                    buckets: buckets.clone(),
+                }
+            }
+            VdafInstance::Real(janus::task::VdafInstance::Poplar1 { bits }) => {
+                VdafSerialization::Poplar1 { bits: *bits }
+            }
+            #[cfg(test)]
+            VdafInstance::Fake => VdafSerialization::Fake,
+            #[cfg(test)]
+            VdafInstance::FakeFailsPrepInit => VdafSerialization::FakeFailsPrepInit,
+            #[cfg(test)]
+            VdafInstance::FakeFailsPrepStep => VdafSerialization::FakeFailsPrepStep,
+        };
+        flattened.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for VdafInstance {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let flattened = <VdafSerialization as Deserialize<'de>>::deserialize(deserializer)?;
+        match flattened {
+            VdafSerialization::Prio3Aes128Count => Ok(VdafInstance::Real(
+                janus::task::VdafInstance::Prio3Aes128Count,
+            )),
+            VdafSerialization::Prio3Aes128Sum { bits } => Ok(VdafInstance::Real(
+                janus::task::VdafInstance::Prio3Aes128Sum { bits },
+            )),
+            VdafSerialization::Prio3Aes128Histogram { buckets } => Ok(VdafInstance::Real(
+                janus::task::VdafInstance::Prio3Aes128Histogram { buckets },
+            )),
+            VdafSerialization::Poplar1 { bits } => {
+                Ok(VdafInstance::Real(janus::task::VdafInstance::Poplar1 {
+                    bits,
+                }))
+            }
+            #[cfg(test)]
+            VdafSerialization::Fake => Ok(VdafInstance::Fake),
+            #[cfg(test)]
+            VdafSerialization::FakeFailsPrepInit => Ok(VdafInstance::FakeFailsPrepInit),
+            #[cfg(test)]
+            VdafSerialization::FakeFailsPrepStep => Ok(VdafInstance::FakeFailsPrepStep),
+        }
+    }
+}
+
+/// An internal helper enum to allow representing [`VdafInstance`] flattened as a
+/// single JSON object, without having to implement [`Serialize`] and
+/// [`Deserialize`] by hand.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename = "Vdaf")]
-pub enum VdafInstance {
+enum VdafSerialization {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
     Prio3Aes128Count,
     /// A `prio3` sum using the AES 128 pseudorandom generator.
@@ -48,26 +150,6 @@ pub enum VdafInstance {
     #[cfg(test)]
     FakeFailsPrepStep,
 }
-
-impl VdafInstance {
-    /// Returns the expected length of a VDAF verification key for a VDAF of this type.
-    fn verify_key_length(&self) -> usize {
-        match self {
-            VdafInstance::Prio3Aes128Count
-            | VdafInstance::Prio3Aes128Sum { .. }
-            | VdafInstance::Prio3Aes128Histogram { .. }
-            | VdafInstance::Poplar1 { .. } => PRIO3_AES128_VERIFY_KEY_LENGTH,
-
-            #[cfg(test)]
-            VdafInstance::Fake
-            | VdafInstance::FakeFailsPrepInit
-            | VdafInstance::FakeFailsPrepStep => 0,
-        }
-    }
-}
-
-/// The length of the verify key parameter for Prio3 AES-128 VDAF instantiations.
-pub const PRIO3_AES128_VERIFY_KEY_LENGTH: usize = 16;
 
 /// An authentication (bearer) token used by aggregators for aggregator-to-aggregator
 /// authentication.
@@ -371,14 +453,14 @@ mod tests {
         // The `Vdaf` type must have a stable serialization, as it gets stored in a JSON database
         // column.
         assert_tokens(
-            &VdafInstance::Prio3Aes128Count,
+            &VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count),
             &[Token::UnitVariant {
                 name: "Vdaf",
                 variant: "Prio3Aes128Count",
             }],
         );
         assert_tokens(
-            &VdafInstance::Prio3Aes128Sum { bits: 64 },
+            &VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { bits: 64 }),
             &[
                 Token::StructVariant {
                     name: "Vdaf",
@@ -391,9 +473,9 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Prio3Aes128Histogram {
+            &VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram {
                 buckets: vec![0, 100, 200, 400],
-            },
+            }),
             &[
                 Token::StructVariant {
                     name: "Vdaf",
@@ -411,7 +493,7 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Poplar1 { bits: 64 },
+            &VdafInstance::Real(janus::task::VdafInstance::Poplar1 { bits: 64 }),
             &[
                 Token::StructVariant {
                     name: "Vdaf",

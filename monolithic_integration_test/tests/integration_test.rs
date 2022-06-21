@@ -2,16 +2,14 @@ use futures::channel::oneshot::Sender;
 use janus::{
     hpke::test_util::generate_hpke_config_and_private_key,
     message::{Duration, Role, TaskId},
+    task::VdafInstance,
     time::{Clock, RealClock},
 };
 use janus_server::{
     aggregator::aggregator_server,
     client::{self, Client, ClientParameters},
     datastore::{Crypter, Datastore},
-    task::{
-        test_util::generate_aggregator_auth_token, Task, VdafInstance,
-        PRIO3_AES128_VERIFY_KEY_LENGTH,
-    },
+    task::{test_util::generate_aggregator_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     trace::{install_trace_subscriber, TraceConfiguration},
 };
 use prio::vdaf::prio3::{Prio3, Prio3Aes128Count};
@@ -81,7 +79,7 @@ async fn setup_test() -> TestCase {
             Url::parse("http://leader_endpoint").unwrap(),
             Url::parse("http://helper_endpoint").unwrap(),
         ],
-        VdafInstance::Prio3Aes128Count,
+        VdafInstance::Prio3Aes128Count.into(),
         Role::Leader,
         vec![Vec::from(verify_key)],
         1,
@@ -114,7 +112,7 @@ async fn setup_test() -> TestCase {
             Url::parse("http://leader_endpoint").unwrap(),
             Url::parse("http://helper_endpoint").unwrap(),
         ],
-        VdafInstance::Prio3Aes128Count,
+        VdafInstance::Prio3Aes128Count.into(),
         Role::Helper,
         vec![Vec::from(verify_key)],
         1,
