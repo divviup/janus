@@ -16,11 +16,11 @@ use url::Url;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Invalid parameter {0}")]
+    #[error("invalid parameter {0}")]
     InvalidParameter(&'static str),
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
-    #[error("Codec error: {0}")]
+    #[error("codec error: {0}")]
     Codec(#[from] prio::codec::CodecError),
     #[error("HTTP response status {0}")]
     Http(StatusCode),
@@ -118,7 +118,6 @@ where
 {
     parameters: ClientParameters,
     vdaf_client: V,
-    vdaf_public_parameter: V::PublicParam,
     clock: C,
     http_client: reqwest::Client,
     leader_hpke_config: HpkeConfig,
@@ -132,7 +131,6 @@ where
     pub fn new(
         parameters: ClientParameters,
         vdaf_client: V,
-        vdaf_public_parameter: V::PublicParam,
         clock: C,
         http_client: &reqwest::Client,
         leader_hpke_config: HpkeConfig,
@@ -144,7 +142,6 @@ where
         Self {
             parameters,
             vdaf_client,
-            vdaf_public_parameter,
             clock,
             http_client: http_client.clone(),
             leader_hpke_config,
@@ -157,9 +154,7 @@ where
     /// share plus one proof share for each aggregator and then uploaded to the
     /// leader.
     pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
-        let input_shares = self
-            .vdaf_client
-            .shard(&self.vdaf_public_parameter, measurement)?;
+        let input_shares = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // PPM only supports VDAFs using two aggregators.
 
         let nonce = Nonce::generate(&self.clock);
@@ -215,13 +210,10 @@ mod tests {
     use janus::{hpke::test_util::generate_hpke_config_and_private_key, message::TaskId};
     use janus_test_util::MockClock;
     use mockito::mock;
-    use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Sum};
+    use prio::vdaf::prio3::Prio3;
     use url::Url;
 
-    fn setup_client<V: vdaf::Client>(
-        vdaf_client: V,
-        public_parameter: V::PublicParam,
-    ) -> Client<V, MockClock>
+    fn setup_client<V: vdaf::Client>(vdaf_client: V) -> Client<V, MockClock>
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
@@ -241,7 +233,6 @@ mod tests {
         Client::new(
             client_parameters,
             vdaf_client,
-            public_parameter,
             clock,
             &default_http_client().unwrap(),
             leader_hpke_config,
@@ -258,8 +249,7 @@ mod tests {
             .expect(1)
             .create();
 
-        let client = setup_client(Prio3Aes128Count::new(2).unwrap(), ());
-
+        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
         client.upload(&1).await.unwrap();
 
         mocked_upload.assert();
@@ -268,9 +258,9 @@ mod tests {
     #[tokio::test]
     async fn upload_prio3_invalid_measurement() {
         install_test_trace_subscriber();
-        let vdaf = Prio3Aes128Sum::new(2, 16).unwrap();
+        let vdaf = Prio3::new_aes128_sum(2, 16).unwrap();
 
-        let client = setup_client(vdaf, ());
+        let client = setup_client(vdaf);
         // 65536 is too big for a 16 bit sum and will be rejected by the VDAF.
         // Make sure we get the right error variant but otherwise we aren't
         // picky about its contents.
@@ -287,7 +277,7 @@ mod tests {
             .expect(1)
             .create();
 
-        let client = setup_client(Prio3Aes128Count::new(2).unwrap(), ());
+        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
         assert_matches!(
             client.upload(&1).await,
             Err(Error::Http(StatusCode::NOT_IMPLEMENTED))

@@ -11,12 +11,13 @@ use std::sync::Arc;
 pub type Vdaf = VdafWithAggregationParameter<()>;
 
 #[derive(Clone)]
-pub struct VdafWithAggregationParameter<A> {
+pub struct VdafWithAggregationParameter<A: Clone + Debug + Encode + Decode> {
     prep_init_fn: Arc<dyn Fn(&A) -> Result<(), VdafError> + 'static + Send + Sync>,
-    prep_step_fn: Arc<dyn Fn() -> PrepareTransition<(), (), OutputShare> + 'static + Send + Sync>,
+    prep_step_fn:
+        Arc<dyn Fn() -> Result<PrepareTransition<Self, 0>, VdafError> + 'static + Send + Sync>,
 }
 
-impl<A> Debug for VdafWithAggregationParameter<A> {
+impl<A: Clone + Debug + Encode + Decode> Debug for VdafWithAggregationParameter<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Vdaf")
             .field("prep_init_result", &"[omitted]")
@@ -25,12 +26,15 @@ impl<A> Debug for VdafWithAggregationParameter<A> {
     }
 }
 
-impl<A> VdafWithAggregationParameter<A> {
+impl<A: Clone + Debug + Encode + Decode> VdafWithAggregationParameter<A> {
+    /// The length of the verify key parameter for fake VDAF instantiations.
+    pub const VERIFY_KEY_LENGTH: usize = 0;
+
     pub fn new() -> Self {
         Self {
             prep_init_fn: Arc::new(|_| -> Result<(), VdafError> { Ok(()) }),
-            prep_step_fn: Arc::new(|| -> PrepareTransition<(), (), OutputShare> {
-                PrepareTransition::Finish(OutputShare())
+            prep_step_fn: Arc::new(|| -> Result<PrepareTransition<Self, 0>, VdafError> {
+                Ok(PrepareTransition::Finish(OutputShare()))
             }),
         }
     }
@@ -43,7 +47,7 @@ impl<A> VdafWithAggregationParameter<A> {
         self
     }
 
-    pub fn with_prep_step_fn<F: Fn() -> PrepareTransition<(), (), OutputShare>>(
+    pub fn with_prep_step_fn<F: Fn() -> Result<PrepareTransition<Self, 0>, VdafError>>(
         mut self,
         f: F,
     ) -> Self
@@ -55,7 +59,7 @@ impl<A> VdafWithAggregationParameter<A> {
     }
 }
 
-impl<A> Default for VdafWithAggregationParameter<A> {
+impl<A: Clone + Debug + Encode + Decode> Default for VdafWithAggregationParameter<A> {
     fn default() -> Self {
         Self::new()
     }
@@ -65,33 +69,30 @@ impl<A: Clone + Debug + Encode + Decode> vdaf::Vdaf for VdafWithAggregationParam
     type Measurement = ();
     type AggregateResult = ();
     type AggregationParam = A;
-    type PublicParam = ();
-    type VerifyParam = ();
     type InputShare = ();
     type OutputShare = OutputShare;
     type AggregateShare = AggregateShare;
-
-    fn setup(&self) -> Result<(Self::PublicParam, Vec<Self::VerifyParam>), VdafError> {
-        Ok(((), vec![(), ()]))
-    }
 
     fn num_aggregators(&self) -> usize {
         2
     }
 }
 
-impl<A: Clone + Debug + Encode + Decode> vdaf::Aggregator for VdafWithAggregationParameter<A> {
-    type PrepareStep = ();
+impl<A: Clone + Debug + Encode + Decode> vdaf::Aggregator<0> for VdafWithAggregationParameter<A> {
+    type PrepareState = ();
+    type PrepareShare = ();
     type PrepareMessage = ();
 
     fn prepare_init(
         &self,
-        _: &Self::VerifyParam,
+        _: &[u8; 0],
+        _: usize,
         aggregation_param: &Self::AggregationParam,
         _: &[u8],
         _: &Self::InputShare,
-    ) -> Result<Self::PrepareStep, VdafError> {
-        (self.prep_init_fn)(aggregation_param)
+    ) -> Result<(Self::PrepareState, Self::PrepareShare), VdafError> {
+        (self.prep_init_fn)(aggregation_param)?;
+        Ok(((), ()))
     }
 
     fn prepare_preprocess<M: IntoIterator<Item = Self::PrepareMessage>>(
@@ -103,9 +104,9 @@ impl<A: Clone + Debug + Encode + Decode> vdaf::Aggregator for VdafWithAggregatio
 
     fn prepare_step(
         &self,
-        _: Self::PrepareStep,
-        _: Option<Self::PrepareMessage>,
-    ) -> PrepareTransition<Self::PrepareStep, Self::PrepareMessage, Self::OutputShare> {
+        _: Self::PrepareState,
+        _: Self::PrepareMessage,
+    ) -> Result<PrepareTransition<Self, 0>, VdafError> {
         (self.prep_step_fn)()
     }
 
@@ -119,11 +120,7 @@ impl<A: Clone + Debug + Encode + Decode> vdaf::Aggregator for VdafWithAggregatio
 }
 
 impl<A: Clone + Debug + Encode + Decode> vdaf::Client for VdafWithAggregationParameter<A> {
-    fn shard(
-        &self,
-        _: &Self::PublicParam,
-        _: &Self::Measurement,
-    ) -> Result<Vec<Self::InputShare>, VdafError> {
+    fn shard(&self, _: &Self::Measurement) -> Result<Vec<Self::InputShare>, VdafError> {
         Ok(vec![(), ()])
     }
 }
