@@ -29,6 +29,9 @@ pub enum Error {
     IllegalTimeArithmetic(&'static str),
 }
 
+/// Number of milliseconds per second.
+const USEC_PER_SEC: u64 = 1_000_000;
+
 /// PPM protocol message representing a duration with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Duration(u64);
@@ -250,9 +253,6 @@ impl Display for Interval {
 /// The SQL timestamp epoch, midnight UTC on 2000-01-01.
 #[cfg(feature = "database")]
 const SQL_EPOCH_TIME: Time = Time(946_684_800);
-/// Number of milliseconds per second.
-#[cfg(feature = "database")]
-const USEC_PER_SEC: u64 = 1_000_000;
 
 #[cfg(feature = "database")]
 impl<'a> FromSql<'a> for Interval {
@@ -296,7 +296,7 @@ impl<'a> FromSql<'a> for Interval {
                     return Err("timestamp range ends before it starts".into());
                 }
                 let duration_us = end_timestamp.abs_diff(start_timestamp);
-                let duration = Duration::from_seconds(duration_us / USEC_PER_SEC);
+                let duration = Duration::from_microseconds(duration_us);
 
                 Ok(Interval::new(time, duration)?)
             }
