@@ -41,9 +41,24 @@ impl Duration {
         Self(seconds)
     }
 
+    /// Create a duration from a number of microseconds. The time will be
+    /// rounded down to the next second.
+    pub const fn from_microseconds(microseconds: u64) -> Self {
+        Self(microseconds / USEC_PER_SEC)
+    }
+
     /// Get the number of seconds this duration represents.
     pub fn as_seconds(self) -> u64 {
         self.0
+    }
+
+    /// Get the number of microseconds this duration represents. Note that the
+    /// precision of this type is one second, so this method will always
+    /// return a multiple of 1,000,000 microseconds.
+    pub fn as_microseconds(self) -> Result<u64, Error> {
+        self.0
+            .checked_mul(USEC_PER_SEC)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
     /// Create a duration representing the provided number of minutes.
@@ -232,9 +247,9 @@ impl Display for Interval {
     }
 }
 
-/// Number of seconds from 1970-01-01 to 2000-01-01.
+/// The SQL timestamp epoch, midnight UTC on 2000-01-01.
 #[cfg(feature = "database")]
-const TIME_SEC_CONVERSION: u64 = 946_684_800;
+const SQL_EPOCH_TIME: Time = Time(946_684_800);
 /// Number of milliseconds per second.
 #[cfg(feature = "database")]
 const USEC_PER_SEC: u64 = 1_000_000;
@@ -267,17 +282,14 @@ impl<'a> FromSql<'a> for Interval {
                 let start_timestamp = timestamp_from_sql(start_raw)?;
                 let end_timestamp = timestamp_from_sql(end_raw)?;
 
-                // Convert to Unix timestamp, in seconds since midnight 1/1/1970.
+                // Convert from SQL timestamp representation to the internal representation.
                 let negative = start_timestamp < 0;
                 let abs_start_us = start_timestamp.unsigned_abs();
-                let abs_start_secs = abs_start_us / USEC_PER_SEC;
+                let abs_start_duration = Duration::from_microseconds(abs_start_us);
                 let time = if negative {
-                    if abs_start_secs > TIME_SEC_CONVERSION {
-                        return Err("Interval cannot represent timestamp ranges starting before the Unix epoch".into());
-                    }
-                    Time::from_seconds_since_epoch(TIME_SEC_CONVERSION - abs_start_secs)
+                    SQL_EPOCH_TIME.sub(abs_start_duration).map_err(|_| "Interval cannot represent timestamp ranges starting before the Unix epoch")?
                 } else {
-                    Time::from_seconds_since_epoch(TIME_SEC_CONVERSION + abs_start_secs)
+                    SQL_EPOCH_TIME.add(abs_start_duration).map_err(|_| "overflow when converting to Interval")?
                 };
 
                 if end_timestamp < start_timestamp {
@@ -294,6 +306,19 @@ impl<'a> FromSql<'a> for Interval {
     accepts!(TS_RANGE);
 }
 
+fn time_to_sql_timestamp(time: Time) -> Result<i64, Error> {
+    if time.is_after(SQL_EPOCH_TIME) {
+        let absolute_difference_us = time.difference(SQL_EPOCH_TIME)?.as_microseconds()?;
+        absolute_difference_us
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("timestamp conversion overflowed"))
+    } else {
+        let absolute_difference_us = SQL_EPOCH_TIME.difference(time)?.as_microseconds()?;
+        Ok(-i64::try_from(absolute_difference_us)
+            .map_err(|_| Error::IllegalTimeArithmetic("timestamp conversion overflowed"))?)
+    }
+}
+
 #[cfg(feature = "database")]
 impl ToSql for Interval {
     fn to_sql(
@@ -301,24 +326,11 @@ impl ToSql for Interval {
         _: &postgres_types::Type,
         out: &mut bytes::BytesMut,
     ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        let start_unix_timestamp_secs = i64::try_from(self.start().as_seconds_since_epoch())
-            .map_err(|_| "Interval start is out of range")?;
-        let duration_secs = i64::try_from(self.duration().as_seconds())
-            .map_err(|_| "Interval duration is out of range")?;
-
-        // Convert from the 2000 epoch to the 1970 epoch, and from seconds to microseconds.
-        let start_sql_usec = start_unix_timestamp_secs
-            .checked_sub(TIME_SEC_CONVERSION as i64)
-            .ok_or("timestamp range start calculation overflowed")?
-            .checked_mul(USEC_PER_SEC as i64)
-            .ok_or("timestamp range start calculation overflowed")?;
-        let end_sql_usec = start_unix_timestamp_secs
-            .checked_add(duration_secs)
-            .ok_or("timestamp range end calculation overflowed")?
-            .checked_sub(TIME_SEC_CONVERSION as i64)
-            .ok_or("timestamp range end calculation overflowed")?
-            .checked_mul(USEC_PER_SEC as i64)
-            .ok_or("timestamp range end calculation overflowed")?;
+        // Convert the interval start and end to SQL timestamps.
+        let start_sql_usec = time_to_sql_timestamp(self.start())
+            .map_err(|_| "millisecond timestamp of Interval start overflowed")?;
+        let end_sql_usec = time_to_sql_timestamp(self.end())
+            .map_err(|_| "millisecond timestamp of Interval end overflowed")?;
 
         range_to_sql(
             |out| {
