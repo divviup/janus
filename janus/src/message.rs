@@ -306,6 +306,7 @@ impl<'a> FromSql<'a> for Interval {
     accepts!(TS_RANGE);
 }
 
+#[cfg(feature = "database")]
 fn time_to_sql_timestamp(time: Time) -> Result<i64, Error> {
     if time.is_after(SQL_EPOCH_TIME) {
         let absolute_difference_us = time.difference(SQL_EPOCH_TIME)?.as_microseconds()?;
