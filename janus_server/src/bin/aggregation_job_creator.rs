@@ -11,7 +11,7 @@ use janus_server::datastore::models::{
 };
 use janus_server::datastore::{self, Datastore};
 use janus_server::message::AggregationJobId;
-use janus_server::task::Task;
+use janus_server::task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH};
 use prio::codec::Encode;
 use prio::vdaf;
 use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum};
@@ -183,21 +183,17 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     async fn create_aggregation_jobs_for_task(&self, task: &Task) -> anyhow::Result<()> {
         match task.vdaf {
             janus_server::task::VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
-                self.create_aggregation_jobs_for_task_no_param::<Prio3Aes128Count>(task)
+                self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
                     .await
             }
 
-            janus_server::task::VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum {
-                ..
-            }) => {
-                self.create_aggregation_jobs_for_task_no_param::<Prio3Aes128Sum>(task)
+            janus_server::task::VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { .. }) => {
+                self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task)
                     .await
             }
 
-            janus_server::task::VdafInstance::Real(
-                janus::task::VdafInstance::Prio3Aes128Histogram { .. },
-            ) => {
-                self.create_aggregation_jobs_for_task_no_param::<Prio3Aes128Histogram>(task)
+            janus_server::task::VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
+                self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task)
                     .await
             }
 
@@ -209,14 +205,17 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     }
 
     #[tracing::instrument(skip(self), err)]
-    async fn create_aggregation_jobs_for_task_no_param<A: vdaf::Aggregator<AggregationParam = ()>>(
+    async fn create_aggregation_jobs_for_task_no_param<
+        const L: usize,
+        A: vdaf::Aggregator<L, AggregationParam = ()>,
+    >(
         &self,
         task: &Task,
     ) -> anyhow::Result<()>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
-        A::PrepareStep: Send + Sync + Encode,
+        A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
@@ -268,7 +267,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 report_count = agg_job_nonces.len(),
                                 "Creating aggregation job"
                             );
-                            agg_jobs.push(AggregationJob::<A> {
+                            agg_jobs.push(AggregationJob::<L, A> {
                                 aggregation_job_id,
                                 task_id,
                                 aggregation_param: (),
@@ -276,7 +275,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             });
 
                             for (ord, nonce) in agg_job_nonces.iter().enumerate() {
-                                report_aggs.push(ReportAggregation::<A> {
+                                report_aggs.push(ReportAggregation::<L, A> {
                                     aggregation_job_id,
                                     task_id,
                                     nonce: *nonce,
@@ -320,11 +319,11 @@ mod tests {
     use janus_server::{
         datastore::{Crypter, Datastore, Transaction},
         message::{test_util::new_dummy_report, AggregationJobId},
-        task::test_util::new_dummy_task,
+        task::{test_util::new_dummy_task, PRIO3_AES128_VERIFY_KEY_LENGTH},
         trace::test_util::install_test_trace_subscriber,
     };
     use janus_test_util::MockClock;
-    use prio::vdaf::{prio3::Prio3Aes128Count, Vdaf as _};
+    use prio::vdaf::prio3::{Prio3, Prio3Aes128Count};
     use std::{
         collections::{HashMap, HashSet},
         iter,
@@ -645,23 +644,17 @@ mod tests {
         tx: &Transaction<'_, C>,
         task_id: TaskId,
     ) -> HashMap<AggregationJobId, T> {
-        // For this test, all of the report aggregations will be in the Start state, so the verify
-        // parameter effectively does not matter.
-        let verify_param = Prio3Aes128Count::new(2)
-            .unwrap()
-            .setup()
-            .unwrap()
-            .1
-            .remove(0);
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
 
         try_join_all(
-            tx.get_aggregation_jobs_for_task_id::<Prio3Aes128Count>(task_id)
+            tx.get_aggregation_jobs_for_task_id::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task_id)
                 .await
                 .unwrap()
                 .into_iter()
                 .map(|agg_job| {
-                    tx.get_report_aggregations_for_aggregation_job::<Prio3Aes128Count>(
-                        &verify_param,
+                    tx.get_report_aggregations_for_aggregation_job(
+                        &vdaf,
+                        Role::Leader,
                         task_id,
                         agg_job.aggregation_job_id,
                     )

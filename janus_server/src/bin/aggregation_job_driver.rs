@@ -24,13 +24,13 @@ use janus_server::{
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
-    task::{Task, VdafInstance, DAP_AUTH_HEADER},
+    task::{Task, VdafInstance, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
         self,
-        prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
+        prio3::{Prio3, Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
         PrepareTransition,
     },
 };
@@ -157,17 +157,17 @@ impl AggregationJobDriver {
     ) -> Result<()> {
         match lease.leased().vdaf {
             VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
-                let vdaf = Prio3Aes128Count::new(2)?;
+                let vdaf = Prio3::new_aes128_count(2)?;
                 self.step_aggregation_job_generic(datastore, vdaf, lease)
                     .await
             }
             VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { bits }) => {
-                let vdaf = Prio3Aes128Sum::new(2, bits)?;
+                let vdaf = Prio3::new_aes128_sum(2, bits)?;
                 self.step_aggregation_job_generic(datastore, vdaf, lease)
                     .await
             }
             VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { ref buckets }) => {
-                let vdaf = Prio3Aes128Histogram::new(2, buckets)?;
+                let vdaf = Prio3::new_aes128_histogram(2, buckets)?;
                 self.step_aggregation_job_generic(datastore, vdaf, lease)
                     .await
             }
@@ -176,44 +176,51 @@ impl AggregationJobDriver {
         }
     }
 
-    async fn step_aggregation_job_generic<C, A>(
+    async fn step_aggregation_job_generic<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
         &self,
         datastore: Arc<Datastore<C>>,
         vdaf: A,
         lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()>
     where
-        C: Clock,
-        A: vdaf::Aggregator + 'static + Send + Sync,
+        A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::OutputShare: PartialEq + Eq + Send + Sync + for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
-        A::PrepareStep: PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<A::VerifyParam>,
+        for<'a> A::PrepareState:
+            PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
-        A::VerifyParam: Send + Sync + ParameterizedDecode<A>,
     {
         // Read all information about the aggregation job.
         let vdaf = Arc::new(vdaf);
         let task_id = lease.leased().task_id;
         let aggregation_job_id = lease.leased().aggregation_job_id;
-        let (task, aggregation_job, report_aggregations, client_reports, verify_param) = datastore
+        let (task, aggregation_job, report_aggregations, client_reports, verify_key) = datastore
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
                 Box::pin(async move {
                     let task = tx.get_task(task_id).await?.ok_or_else(|| {
                         datastore::Error::User(anyhow!("couldn't find task {}", task_id).into())
                     })?;
-                    let verify_param = A::VerifyParam::get_decoded_with_param(
-                        &vdaf,
-                        task.vdaf_verify_parameters.get(0).unwrap(),
-                    )?;
+                    let verify_key = task
+                        .vdaf_verify_keys
+                        .get(0)
+                        .unwrap()
+                        .clone()
+                        .try_into()
+                        .map_err(|_| {
+                            datastore::Error::User(
+                                anyhow!("VDAF verification key has wrong length").into(),
+                            )
+                        })?;
 
                     let aggregation_job_future =
-                        tx.get_aggregation_job::<A>(task_id, aggregation_job_id);
+                        tx.get_aggregation_job::<L, A>(task_id, aggregation_job_id);
                     let report_aggregations_future = tx
-                        .get_report_aggregations_for_aggregation_job::<A>(
-                            &verify_param,
+                        .get_report_aggregations_for_aggregation_job(
+                            vdaf.as_ref(),
+                            Role::Leader,
                             task_id,
                             aggregation_job_id,
                         );
@@ -268,7 +275,7 @@ impl AggregationJobDriver {
                         aggregation_job,
                         report_aggregations,
                         client_reports,
-                        verify_param,
+                        verify_key,
                     ))
                 })
             })
@@ -287,7 +294,7 @@ impl AggregationJobDriver {
         match (saw_start, saw_waiting, saw_finished) {
             // Only saw report aggregations in state "start" (or failed or invalid).
             (true, false, false) => self.step_aggregation_job_aggregate_init(
-                &datastore, vdaf.as_ref(), lease, task, aggregation_job, report_aggregations, client_reports, verify_param).await,
+                &datastore, vdaf.as_ref(), lease, task, aggregation_job, report_aggregations, client_reports, verify_key).await,
 
             // Only saw report aggregations in state "waiting" (or failed or invalid).
             (false, true, false) => self.step_aggregation_job_aggregate_continue(
@@ -298,25 +305,24 @@ impl AggregationJobDriver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn step_aggregation_job_aggregate_init<C, A>(
+    async fn step_aggregation_job_aggregate_init<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
         &self,
         datastore: &Datastore<C>,
         vdaf: &A,
         lease: Lease<AcquiredAggregationJob>,
         task: Task,
-        aggregation_job: AggregationJob<A>,
-        report_aggregations: Vec<ReportAggregation<A>>,
+        aggregation_job: AggregationJob<L, A>,
+        report_aggregations: Vec<ReportAggregation<L, A>>,
         client_reports: Vec<Report>,
-        verify_param: A::VerifyParam,
+        verify_key: [u8; L],
     ) -> Result<()>
     where
-        C: Clock,
-        A: vdaf::Aggregator + 'static,
+        A: 'static,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::OutputShare: PartialEq + Eq + Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
-        A::PrepareStep: PartialEq + Eq + Send + Sync + Encode,
+        A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
     {
         // Zip the report aggregations at start with the client reports, verifying that their nonces
@@ -404,7 +410,7 @@ impl AggregationJobDriver {
                 }
             };
             let leader_input_share = match A::InputShare::get_decoded_with_param(
-                &verify_param,
+                &(vdaf, Role::Leader.index().unwrap()),
                 &leader_input_share_bytes,
             ) {
                 Ok(leader_input_share) => leader_input_share,
@@ -418,13 +424,14 @@ impl AggregationJobDriver {
             };
 
             // Initialize the leader's preparation state from the input share.
-            let prep_state = match vdaf.prepare_init(
-                &verify_param,
+            let (prep_state, prep_share) = match vdaf.prepare_init(
+                &verify_key,
+                Role::Leader.index().unwrap(),
                 &aggregation_job.aggregation_param,
                 &report.nonce().get_encoded(),
                 &leader_input_share,
             ) {
-                Ok(prep_state) => prep_state,
+                Ok(prep_state_and_share) => prep_state_and_share,
                 Err(err) => {
                     error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
                     report_aggregation.state =
@@ -432,14 +439,6 @@ impl AggregationJobDriver {
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
                 }
-            };
-            let leader_transition = vdaf.prepare_step(prep_state, None);
-            if let PrepareTransition::Fail(err) = leader_transition {
-                error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't step leader's initial preparation state");
-                report_aggregation.state =
-                    ReportAggregationState::Failed(ReportShareError::VdafPrepError);
-                report_aggregations_to_write.push(report_aggregation);
-                continue;
             };
 
             report_shares.push(ReportShare {
@@ -449,7 +448,7 @@ impl AggregationJobDriver {
             });
             stepped_aggregations.push(SteppedAggregation {
                 report_aggregation,
-                leader_transition,
+                leader_transition: PrepareTransition::Continue(prep_state, prep_share),
             });
         }
 
@@ -488,23 +487,26 @@ impl AggregationJobDriver {
         .await
     }
 
-    async fn step_aggregation_job_aggregate_continue<C, A>(
+    async fn step_aggregation_job_aggregate_continue<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         datastore: &Datastore<C>,
         vdaf: &A,
         lease: Lease<AcquiredAggregationJob>,
         task: Task,
-        aggregation_job: AggregationJob<A>,
-        report_aggregations: Vec<ReportAggregation<A>>,
+        aggregation_job: AggregationJob<L, A>,
+        report_aggregations: Vec<ReportAggregation<L, A>>,
     ) -> Result<()>
     where
-        C: Clock,
-        A: vdaf::Aggregator + 'static,
+        A: 'static,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
-        A::PrepareStep: Send + Sync + Encode,
+        A::PrepareState: Send + Sync + Encode,
         A::PrepareMessage: Send + Sync,
     {
         // Visit the report aggregations, ignoring any that have already failed; compute our own
@@ -520,15 +522,18 @@ impl AggregationJobDriver {
                     .ok_or_else(|| anyhow!("report aggregation missing prepare message"))?;
 
                 // Step our own state.
-                let leader_transition =
-                    vdaf.prepare_step(prep_state.clone(), Some(prep_msg.clone()));
-                if let PrepareTransition::Fail(err) = leader_transition {
-                    error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't step report aggregation");
-                    report_aggregation.state =
-                        ReportAggregationState::Failed(ReportShareError::VdafPrepError);
-                    report_aggregations_to_write.push(report_aggregation);
-                    continue;
-                }
+                let leader_transition = match vdaf
+                    .prepare_step(prep_state.clone(), prep_msg.clone())
+                {
+                    Ok(leader_transition) => leader_transition,
+                    Err(err) => {
+                        error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't step report aggregation");
+                        report_aggregation.state =
+                            ReportAggregationState::Failed(ReportShareError::VdafPrepError);
+                        report_aggregations_to_write.push(report_aggregation);
+                        continue;
+                    }
+                };
 
                 prepare_steps.push(PrepareStep {
                     nonce: report_aggregation.nonce,
@@ -576,25 +581,24 @@ impl AggregationJobDriver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn process_response_from_helper<C, A>(
+    async fn process_response_from_helper<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
         &self,
         datastore: &Datastore<C>,
         vdaf: &A,
         lease: Lease<AcquiredAggregationJob>,
-        aggregation_job: AggregationJob<A>,
-        stepped_aggregations: Vec<SteppedAggregation<A>>,
-        mut report_aggregations_to_write: Vec<ReportAggregation<A>>,
+        aggregation_job: AggregationJob<L, A>,
+        stepped_aggregations: Vec<SteppedAggregation<L, A>>,
+        mut report_aggregations_to_write: Vec<ReportAggregation<L, A>>,
         prep_steps: Vec<PrepareStep>,
     ) -> Result<()>
     where
-        C: Clock,
-        A: vdaf::Aggregator + 'static,
+        A: 'static,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
-        A::PrepareStep: Send + Sync + Encode,
+        A::PrepareState: Send + Sync + Encode,
     {
         // Handle response, computing the new report aggregations to be stored.
         if stepped_aggregations.len() != prep_steps.len() {
@@ -616,29 +620,26 @@ impl AggregationJobDriver {
             }
             match helper_prep_step.result {
                 PrepareStepResult::Continued(payload) => {
-                    // If the leader continued too, combine the leader's message with the helper's
-                    // and prepare to store the leader's new state & the combined message for the
-                    // next round. If the leader didn't continue, transition to INVALID.
-                    if let PrepareTransition::Continue(leader_prep_state, leader_prep_msg) =
+                    // If the leader continued too, combine the leader's prepare share with the
+                    // helper's to compute next round's prepare message. Prepare to store the
+                    // leader's new state & the prepare message. If the leader didn't continue,
+                    // transition to INVALID.
+                    if let PrepareTransition::Continue(leader_prep_state, leader_prep_share) =
                         leader_transition
                     {
-                        // TODO(https://github.com/divviup/libprio-rs/issues/245): is it OK to match
-                        // prep state w/ prep message decoding in this way? It works for the existing
-                        // VDAFs, but I'm not sure if this is expected to be generally true.
-                        let helper_prep_msg =
-                            A::PrepareMessage::get_decoded_with_param(&leader_prep_state, &payload)
+                        let helper_prep_share =
+                            A::PrepareShare::get_decoded_with_param(&leader_prep_state, &payload)
                                 .context("couldn't decode helper's prepare message");
-                        let combined_prep_msg = helper_prep_msg.and_then(|helper_prep_msg| {
-                            vdaf.prepare_preprocess([leader_prep_msg, helper_prep_msg])
-                                .context("couldn't combine leader & helper prepare messages")
+                        let prep_msg = helper_prep_share.and_then(|helper_prep_share| {
+                            vdaf.prepare_preprocess([leader_prep_share, helper_prep_share])
+                                .context("couldn't preprocess leader & helper prepare shares into prepare message")
                         });
-                        report_aggregation.state = match combined_prep_msg {
-                            Ok(combined_prep_msg) => ReportAggregationState::Waiting(
-                                leader_prep_state,
-                                Some(combined_prep_msg),
-                            ),
+                        report_aggregation.state = match prep_msg {
+                            Ok(prep_msg) => {
+                                ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg))
+                            }
                             Err(err) => {
-                                error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute combined prepare message");
+                                error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute prepare message");
                                 ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                             }
                         }
@@ -722,15 +723,15 @@ impl AggregationJobDriver {
     ) -> Result<()> {
         match &lease.leased().vdaf {
             VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
-                self.cancel_aggregation_job_generic::<C, Prio3Aes128Count>(datastore, lease)
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(datastore, lease)
                     .await
             }
             VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { .. }) => {
-                self.cancel_aggregation_job_generic::<C, Prio3Aes128Sum>(datastore, lease)
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Sum>(datastore, lease)
                     .await
             }
             VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
-                self.cancel_aggregation_job_generic::<C, Prio3Aes128Histogram>(datastore, lease)
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Histogram>(datastore, lease)
                     .await
             }
 
@@ -738,16 +739,15 @@ impl AggregationJobDriver {
         }
     }
 
-    async fn cancel_aggregation_job_generic<C, A>(
+    async fn cancel_aggregation_job_generic<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
         &self,
         datastore: Arc<Datastore<C>>,
         lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()>
     where
-        A: vdaf::Aggregator + Send + Sync + 'static,
+        A: Send + Sync + 'static,
         A::AggregationParam: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        C: Clock,
     {
         let lease = Arc::new(lease);
         let (task_id, aggregation_job_id) =
@@ -757,7 +757,7 @@ impl AggregationJobDriver {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let mut aggregation_job = tx
-                        .get_aggregation_job::<A>(task_id, aggregation_job_id)
+                        .get_aggregation_job::<L, A>(task_id, aggregation_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -787,12 +787,12 @@ impl AggregationJobDriver {
 
 /// SteppedAggregation represents a report aggregation along with the associated preparation-state
 /// transition representing the next step for the leader.
-struct SteppedAggregation<A: vdaf::Aggregator>
+struct SteppedAggregation<const L: usize, A: vdaf::Aggregator<L>>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
-    report_aggregation: ReportAggregation<A>,
-    leader_transition: PrepareTransition<A::PrepareStep, A::PrepareMessage, A::OutputShare>,
+    report_aggregation: ReportAggregation<L, A>,
+    leader_transition: PrepareTransition<A, L>,
 }
 
 #[cfg(test)]
@@ -821,14 +821,17 @@ mod tests {
             AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
             AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
         },
-        task::test_util::new_dummy_task,
+        task::{test_util::new_dummy_task, PRIO3_AES128_VERIFY_KEY_LENGTH},
         trace::test_util::install_test_trace_subscriber,
     };
     use janus_test_util::{run_vdaf, MockClock};
     use mockito::mock;
     use prio::{
         codec::Encode,
-        vdaf::{prio3::Prio3Aes128Count, PrepareTransition, Vdaf},
+        vdaf::{
+            prio3::{Prio3, Prio3Aes128Count},
+            PrepareTransition,
+        },
     };
     use reqwest::Url;
     use std::{str, sync::Arc};
@@ -849,11 +852,8 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (public_param, verify_params) = vdaf.setup().unwrap();
-        let leader_verify_param = verify_params.get(Role::Leader.index().unwrap()).unwrap();
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let nonce = Nonce::generate(&clock);
-        let transcript = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce, &0);
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
@@ -861,10 +861,15 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        task.vdaf_verify_parameters = vec![verify_params
-            .get(Role::Leader.index().unwrap())
+        let verify_key = task
+            .vdaf_verify_keys
+            .get(0)
             .unwrap()
-            .get_encoded()];
+            .clone()
+            .try_into()
+            .unwrap();
+
+        let transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce, &0);
 
         let agg_auth_token = task.primary_aggregator_auth_token().clone();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
@@ -883,14 +888,20 @@ mod tests {
                 tx.put_task(&task).await?;
                 tx.put_client_report(&report).await?;
 
-                tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                tx.put_aggregation_job(&AggregationJob::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128Count,
+                > {
                     aggregation_job_id,
                     task_id,
                     aggregation_param: (),
                     state: AggregationJobState::InProgress,
                 })
                 .await?;
-                tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                tx.put_report_aggregation(&ReportAggregation::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128Count,
+                > {
                     aggregation_job_id,
                     task_id,
                     nonce: report.nonce(),
@@ -904,7 +915,7 @@ mod tests {
         .unwrap();
 
         // Setup: prepare mocked HTTP responses.
-        let helper_vdaf_msg = assert_matches!(&transcript.transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_msg) => prep_msg);
+        let helper_vdaf_msg = assert_matches!(&transcript.prepare_transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_share) => prep_share);
         let helper_responses = vec![
             (
                 AggregateInitializeReq::MEDIA_TYPE,
@@ -952,6 +963,7 @@ mod tests {
                 .build()
                 .unwrap(),
         });
+
         // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
         let aggregation_job_driver = Arc::new(JobDriver::new(
             clock,
@@ -1010,32 +1022,38 @@ mod tests {
             mocked_aggregate.assert();
         }
 
-        let want_aggregation_job = AggregationJob::<Prio3Aes128Count> {
-            aggregation_job_id,
-            task_id,
-            aggregation_param: (),
-            state: AggregationJobState::Finished,
-        };
-        let leader_output_share = assert_matches!(&transcript.transitions[Role::Leader.index().unwrap()][1], PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
-        let want_report_aggregation = ReportAggregation::<Prio3Aes128Count> {
-            aggregation_job_id,
-            task_id,
-            nonce,
-            ord: 0,
-            state: ReportAggregationState::Finished(leader_output_share),
-        };
+        let want_aggregation_job =
+            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                aggregation_job_id,
+                task_id,
+                aggregation_param: (),
+                state: AggregationJobState::Finished,
+            };
+        let leader_output_share = assert_matches!(&transcript.prepare_transitions[Role::Leader.index().unwrap()][1], PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
+        let want_report_aggregation =
+            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                aggregation_job_id,
+                task_id,
+                nonce,
+                ord: 0,
+                state: ReportAggregationState::Finished(leader_output_share),
+            };
 
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
-                let leader_verify_param = leader_verify_param.clone();
+                let vdaf = Arc::clone(&vdaf);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
+                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                            task_id,
+                            aggregation_job_id,
+                        )
                         .await?
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation::<Prio3Aes128Count>(
-                            &leader_verify_param,
+                        .get_report_aggregation(
+                            vdaf.as_ref(),
+                            Role::Leader,
                             task_id,
                             aggregation_job_id,
                             nonce,
@@ -1059,11 +1077,8 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (public_param, verify_params) = vdaf.setup().unwrap();
-        let leader_verify_param = verify_params.get(Role::Leader.index().unwrap()).unwrap();
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let nonce = Nonce::generate(&clock);
-        let transcript = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce, &0);
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
@@ -1071,7 +1086,15 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        task.vdaf_verify_parameters = vec![leader_verify_param.get_encoded()];
+        let verify_key = task
+            .vdaf_verify_keys
+            .get(0)
+            .unwrap()
+            .clone()
+            .try_into()
+            .unwrap();
+
+        let transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce, &0);
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
@@ -1091,14 +1114,20 @@ mod tests {
                     tx.put_task(&task).await?;
                     tx.put_client_report(&report).await?;
 
-                    tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                    tx.put_aggregation_job(&AggregationJob::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        Prio3Aes128Count,
+                    > {
                         aggregation_job_id,
                         task_id,
                         aggregation_param: (),
                         state: AggregationJobState::InProgress,
                     })
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        Prio3Aes128Count,
+                    > {
                         aggregation_job_id,
                         task_id,
                         nonce: report.nonce(),
@@ -1136,7 +1165,7 @@ mod tests {
                     .clone(),
             }],
         };
-        let helper_vdaf_msg = assert_matches!(&transcript.transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_msg) => prep_msg);
+        let helper_vdaf_msg = assert_matches!(&transcript.prepare_transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_share) => prep_share);
         let helper_response = AggregateInitializeResp {
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
@@ -1168,33 +1197,39 @@ mod tests {
         // Verify.
         mocked_aggregate.assert();
 
-        let want_aggregation_job = AggregationJob::<Prio3Aes128Count> {
-            aggregation_job_id,
-            task_id,
-            aggregation_param: (),
-            state: AggregationJobState::InProgress,
-        };
-        let leader_prep_state = assert_matches!(&transcript.transitions[Role::Leader.index().unwrap()][0], PrepareTransition::Continue(prep_state, _) => prep_state.clone());
-        let combined_prep_msg = transcript.combined_messages[0].clone();
-        let want_report_aggregation = ReportAggregation::<Prio3Aes128Count> {
-            aggregation_job_id,
-            task_id,
-            nonce,
-            ord: 0,
-            state: ReportAggregationState::Waiting(leader_prep_state, Some(combined_prep_msg)),
-        };
+        let want_aggregation_job =
+            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                aggregation_job_id,
+                task_id,
+                aggregation_param: (),
+                state: AggregationJobState::InProgress,
+            };
+        let leader_prep_state = assert_matches!(&transcript.prepare_transitions[Role::Leader.index().unwrap()][0], PrepareTransition::Continue(prep_state, _) => prep_state.clone());
+        let prep_msg = transcript.prepare_messages[0].clone();
+        let want_report_aggregation =
+            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                aggregation_job_id,
+                task_id,
+                nonce,
+                ord: 0,
+                state: ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+            };
 
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
-                let leader_verify_param = leader_verify_param.clone();
+                let vdaf = Arc::clone(&vdaf);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
+                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                            task_id,
+                            aggregation_job_id,
+                        )
                         .await?
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation::<Prio3Aes128Count>(
-                            &leader_verify_param,
+                        .get_report_aggregation(
+                            vdaf.as_ref(),
+                            Role::Leader,
                             task_id,
                             aggregation_job_id,
                             nonce,
@@ -1219,11 +1254,8 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (public_param, verify_params) = vdaf.setup().unwrap();
-        let leader_verify_param = verify_params.get(Role::Leader.index().unwrap()).unwrap();
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let nonce = Nonce::generate(&clock);
-        let transcript = run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce, &0);
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
@@ -1231,7 +1263,15 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        task.vdaf_verify_parameters = vec![leader_verify_param.get_encoded()];
+        let verify_key = task
+            .vdaf_verify_keys
+            .get(0)
+            .unwrap()
+            .clone()
+            .try_into()
+            .unwrap();
+
+        let transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce, &0);
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
@@ -1244,37 +1284,40 @@ mod tests {
         );
         let aggregation_job_id = AggregationJobId::random();
 
-        let leader_prep_state = assert_matches!(&transcript.transitions[Role::Leader.index().unwrap()][0], PrepareTransition::Continue(prep_state, _) => prep_state);
-        let combined_msg = &transcript.combined_messages[0];
+        let leader_prep_state = assert_matches!(&transcript.prepare_transitions[Role::Leader.index().unwrap()][0], PrepareTransition::Continue(prep_state, _) => prep_state);
+        let prep_msg = &transcript.prepare_messages[0];
 
         let lease = ds
             .run_tx(|tx| {
-                let (task, report, leader_prep_state, combined_msg) = (
+                let (task, report, leader_prep_state, prep_msg) = (
                     task.clone(),
                     report.clone(),
                     leader_prep_state.clone(),
-                    combined_msg.clone(),
+                    prep_msg.clone(),
                 );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_client_report(&report).await?;
 
-                    tx.put_aggregation_job(&AggregationJob::<Prio3Aes128Count> {
+                    tx.put_aggregation_job(&AggregationJob::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        Prio3Aes128Count,
+                    > {
                         aggregation_job_id,
                         task_id,
                         aggregation_param: (),
                         state: AggregationJobState::InProgress,
                     })
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<Prio3Aes128Count> {
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        Prio3Aes128Count,
+                    > {
                         aggregation_job_id,
                         task_id,
                         nonce: report.nonce(),
                         ord: 0,
-                        state: ReportAggregationState::Waiting(
-                            leader_prep_state,
-                            Some(combined_msg),
-                        ),
+                        state: ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
                     })
                     .await?;
 
@@ -1298,7 +1341,7 @@ mod tests {
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce,
-                result: PrepareStepResult::Continued(combined_msg.get_encoded()),
+                result: PrepareStepResult::Continued(prep_msg.get_encoded()),
             }],
         };
         let helper_response = AggregateContinueResp {
@@ -1332,32 +1375,38 @@ mod tests {
         // Verify.
         mocked_aggregate.assert();
 
-        let want_aggregation_job = AggregationJob::<Prio3Aes128Count> {
-            aggregation_job_id,
-            task_id,
-            aggregation_param: (),
-            state: AggregationJobState::Finished,
-        };
-        let leader_output_share = assert_matches!(&transcript.transitions[Role::Leader.index().unwrap()][1], PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
-        let want_report_aggregation = ReportAggregation::<Prio3Aes128Count> {
-            aggregation_job_id,
-            task_id,
-            nonce,
-            ord: 0,
-            state: ReportAggregationState::Finished(leader_output_share),
-        };
+        let want_aggregation_job =
+            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                aggregation_job_id,
+                task_id,
+                aggregation_param: (),
+                state: AggregationJobState::Finished,
+            };
+        let leader_output_share = assert_matches!(&transcript.prepare_transitions[Role::Leader.index().unwrap()][1], PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
+        let want_report_aggregation =
+            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                aggregation_job_id,
+                task_id,
+                nonce,
+                ord: 0,
+                state: ReportAggregationState::Finished(leader_output_share),
+            };
 
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
-                let leader_verify_param = leader_verify_param.clone();
+                let vdaf = Arc::clone(&vdaf);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
+                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                            task_id,
+                            aggregation_job_id,
+                        )
                         .await?
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation::<Prio3Aes128Count>(
-                            &leader_verify_param,
+                        .get_report_aggregation(
+                            vdaf.as_ref(),
+                            Role::Leader,
                             task_id,
                             aggregation_job_id,
                             nonce,
@@ -1381,12 +1430,8 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
-        let vdaf = Prio3Aes128Count::new(2).unwrap();
-        let (public_param, verify_params) = vdaf.setup().unwrap();
-        let leader_verify_param = verify_params.get(Role::Leader.index().unwrap()).unwrap();
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let nonce = Nonce::generate(&clock);
-        let input_shares =
-            run_vdaf(&vdaf, &public_param, &verify_params, &(), nonce, &0).input_shares;
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
@@ -1394,7 +1439,15 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        task.vdaf_verify_parameters = vec![leader_verify_param.get_encoded()];
+        let verify_key = task
+            .vdaf_verify_keys
+            .get(0)
+            .unwrap()
+            .clone()
+            .try_into()
+            .unwrap();
+
+        let input_shares = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce, &0).input_shares;
 
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
@@ -1406,19 +1459,20 @@ mod tests {
         );
         let aggregation_job_id = AggregationJobId::random();
 
-        let aggregation_job = AggregationJob::<Prio3Aes128Count> {
+        let aggregation_job = AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
             aggregation_job_id,
             task_id,
             aggregation_param: (),
             state: AggregationJobState::InProgress,
         };
-        let report_aggregation = ReportAggregation::<Prio3Aes128Count> {
-            aggregation_job_id,
-            task_id,
-            nonce,
-            ord: 0,
-            state: ReportAggregationState::Start,
-        };
+        let report_aggregation =
+            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                aggregation_job_id,
+                task_id,
+                nonce,
+                ord: 0,
+                state: ReportAggregationState::Start,
+            };
 
         let lease = ds
             .run_tx(|tx| {
@@ -1465,15 +1519,19 @@ mod tests {
 
         let (got_aggregation_job, got_report_aggregation, got_leases) = ds
             .run_tx(|tx| {
-                let leader_verify_param = leader_verify_param.clone();
+                let vdaf = Arc::clone(&vdaf);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<Prio3Aes128Count>(task_id, aggregation_job_id)
+                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                            task_id,
+                            aggregation_job_id,
+                        )
                         .await?
                         .unwrap();
                     let report_aggregation = tx
-                        .get_report_aggregation::<Prio3Aes128Count>(
-                            &leader_verify_param,
+                        .get_report_aggregation(
+                            vdaf.as_ref(),
+                            Role::Leader,
                             task_id,
                             aggregation_job_id,
                             nonce,

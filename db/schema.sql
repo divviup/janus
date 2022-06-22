@@ -1,4 +1,8 @@
-CREATE EXTENSION pgcrypto;  -- for gen_random_bytes
+-- Load pgcrypto for gen_random_bytes.
+CREATE EXTENSION pgcrypto;
+-- Load an extension to allow indexing over both BIGINT and TSRANGE in a
+-- multicolumn GiST index.
+CREATE EXTENSION btree_gist;
 
 -- Identifies which aggregator role is being played for this task.
 CREATE TYPE AGGREGATOR_ROLE AS ENUM(
@@ -27,7 +31,7 @@ CREATE TABLE task_aggregator_auth_tokens(
     ord BIGINT NOT NULL,      -- a value used to specify the ordering of the authentication tokens
     token BYTEA NOT NULL,     -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
 
-    CONSTRAINT auth_key_unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT auth_token_unique_task_id_and_ord UNIQUE(task_id, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -43,14 +47,14 @@ CREATE TABLE task_hpke_keys(
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
--- The VDAF verification parameters used by a given task.
+-- The VDAF verification keys used by a given task.
 -- TODO(#229): support multiple verification parameters per task
-CREATE TABLE task_vdaf_verify_params(
+CREATE TABLE task_vdaf_verify_keys(
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id BIGINT NOT NULL,           -- task ID the verification parameter is associated with
-    vdaf_verify_param BYTEA NOT NULL,  -- the VDAF verification parameter (opaque VDAF message, encrypted)
+    task_id BIGINT NOT NULL,         -- task ID the verification key is associated with
+    vdaf_verify_key BYTEA NOT NULL,  -- the VDAF verification key (encrypted)
 
-    CONSTRAINT vdaf_verify_param_unique_task_id UNIQUE(task_id),
+    CONSTRAINT vdaf_verify_key_unique_task_id UNIQUE(task_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -139,8 +143,9 @@ CREATE TABLE batch_unit_aggregations(
 
 -- Specifies the possible state of a collect job.
 CREATE TYPE COLLECT_JOB_STATE AS ENUM(
-    'START',    -- the aggregator is waiting to run this collect job
-    'FINISHED'  -- this collect job has run successfully and is ready for collection
+    'START',     -- the aggregator is waiting to run this collect job
+    'FINISHED',  -- this collect job has run successfully and is ready for collection
+    'ABANDONED'  -- this collect job has been abandoned & will never be run again
 );
 
 -- The leader's view of collect requests from the Collector.
@@ -148,8 +153,7 @@ CREATE TABLE collect_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     collect_job_id          UUID NOT NULL,               -- UUID used by collector to refer to this job
     task_id                 BIGINT NOT NULL,             -- the task ID being collected
-    batch_interval_start    TIMESTAMP NOT NULL,          -- the start of the batch interval
-    batch_interval_duration BIGINT NOT NULL,             -- the length of the batch interval in seconds
+    batch_interval          TSRANGE NOT NULL,            -- the batch interval, as a range of timestamps
     aggregation_param       BYTEA NOT NULL,              -- the aggregation parameter (opaque VDAF message)
     state                   COLLECT_JOB_STATE NOT NULL,  -- the current state of this collect job
     helper_aggregate_share  BYTEA,                       -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
@@ -159,23 +163,24 @@ CREATE TABLE collect_jobs(
     lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts          BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
-    CONSTRAINT unique_collect_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval_start, batch_interval_duration, aggregation_param),
+    CONSTRAINT unique_collect_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 -- TODO(#224): verify that this index is optimal for purposes of acquiring collect jobs.
 CREATE INDEX collect_jobs_lease_expiry ON collect_jobs(lease_expiry);
+CREATE INDEX collect_jobs_interval_containment_index ON collect_jobs USING gist (task_id, batch_interval);
 
 -- The helper's view of aggregate share jobs.
 CREATE TABLE aggregate_share_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                 BIGINT NOT NULL,    -- the task ID being collected
-    batch_interval_start    TIMESTAMP NOT NULL, -- the start of the batch interval
-    batch_interval_duration BIGINT NOT NULL,    -- the length of the batch interval in seconds
+    batch_interval          TSRANGE NOT NULL,   -- the batch interval, as a range of timestamps
     aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
     helper_aggregate_share  BYTEA NOT NULL,     -- the helper's unencrypted aggregate share
     report_count            BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share
     checksum                BYTEA NOT NULL,     -- the checksum over the reports included in helper_aggregate_share
 
-    CONSTRAINT unique_aggregate_share_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval_start, batch_interval_duration, aggregation_param),
+    CONSTRAINT unique_aggregate_share_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
+CREATE INDEX aggregate_share_jobs_interval_containment_index ON aggregate_share_jobs USING gist (task_id, batch_interval);

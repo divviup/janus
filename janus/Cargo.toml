@@ -5,14 +5,20 @@ edition = "2021"
 license = "MPL-2.0"
 rust-version = "1.58"
 
+[features]
+database = ["bytes", "postgres-protocol", "postgres-types"]
+
 [dependencies]
 anyhow = "1"
 base64 = "0.13.0"
+bytes = { version = "1.1.0", optional = true }
 chrono = "0.4"
 hex = "0.4.3"
 hpke-dispatch = "0.3.0"
 num_enum = "0.5.6"
-prio = "0.7.1"
+postgres-protocol = { version = "0.6.4", optional = true }
+postgres-types = { version = "0.2.3", optional = true }
+prio = "0.8.0"
 rand = "0.8"
 ring = "0.16.20"
 serde = { version = "1.0.137", features = ["derive"] }

@@ -5,6 +5,12 @@ use anyhow::anyhow;
 use chrono::NaiveDateTime;
 use hpke_dispatch::{Aead, Kdf, Kem};
 use num_enum::TryFromPrimitive;
+#[cfg(feature = "database")]
+use postgres_protocol::types::{
+    range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql,
+};
+#[cfg(feature = "database")]
+use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
 use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
 use rand::{thread_rng, Rng};
 use ring::digest::{digest, SHA256, SHA256_OUTPUT_LEN};
@@ -23,6 +29,9 @@ pub enum Error {
     IllegalTimeArithmetic(&'static str),
 }
 
+/// Number of milliseconds per second.
+const USEC_PER_SEC: u64 = 1_000_000;
+
 /// PPM protocol message representing a duration with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Duration(u64);
@@ -35,9 +44,24 @@ impl Duration {
         Self(seconds)
     }
 
+    /// Create a duration from a number of microseconds. The time will be
+    /// rounded down to the next second.
+    pub const fn from_microseconds(microseconds: u64) -> Self {
+        Self(microseconds / USEC_PER_SEC)
+    }
+
     /// Get the number of seconds this duration represents.
     pub fn as_seconds(self) -> u64 {
         self.0
+    }
+
+    /// Get the number of microseconds this duration represents. Note that the
+    /// precision of this type is one second, so this method will always
+    /// return a multiple of 1,000,000 microseconds.
+    pub fn as_microseconds(self) -> Result<u64, Error> {
+        self.0
+            .checked_mul(USEC_PER_SEC)
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
 
     /// Create a duration representing the provided number of minutes.
@@ -224,6 +248,113 @@ impl Display for Interval {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "start: {} duration: {}", self.start, self.duration)
     }
+}
+
+/// The SQL timestamp epoch, midnight UTC on 2000-01-01.
+#[cfg(feature = "database")]
+const SQL_EPOCH_TIME: Time = Time(946_684_800);
+
+#[cfg(feature = "database")]
+impl<'a> FromSql<'a> for Interval {
+    fn from_sql(
+        _: &postgres_types::Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        use postgres_protocol::types::{Range::*, RangeBound::*};
+
+        match range_from_sql(raw)? {
+            Empty => Err("Interval cannot represent an empty timestamp range".into()),
+            Nonempty(Inclusive(None), _)
+            | Nonempty(Exclusive(None), _)
+            | Nonempty(_, Inclusive(None))
+            | Nonempty(_, Exclusive(None)) => {
+                Err("Interval cannot represent a timestamp range with a null bound".into())
+            }
+            Nonempty(Unbounded, _) | Nonempty(_, Unbounded) => {
+                Err("Interval cannot represent an unbounded timestamp range".into())
+            }
+            Nonempty(Exclusive(_), _) | Nonempty(_, Inclusive(_)) => {
+                Err("Interval can only represent timestamp ranges that are closed at the start and open at the end".into())
+            }
+            Nonempty(Inclusive(Some(start_raw)), Exclusive(Some(end_raw))) => {
+                // These timestamps represent the number of microseconds before (if negative) or
+                // after (if positive) midnight, 1/1/2000.
+                let start_timestamp = timestamp_from_sql(start_raw)?;
+                let end_timestamp = timestamp_from_sql(end_raw)?;
+
+                // Convert from SQL timestamp representation to the internal representation.
+                let negative = start_timestamp < 0;
+                let abs_start_us = start_timestamp.unsigned_abs();
+                let abs_start_duration = Duration::from_microseconds(abs_start_us);
+                let time = if negative {
+                    SQL_EPOCH_TIME.sub(abs_start_duration).map_err(|_| "Interval cannot represent timestamp ranges starting before the Unix epoch")?
+                } else {
+                    SQL_EPOCH_TIME.add(abs_start_duration).map_err(|_| "overflow when converting to Interval")?
+                };
+
+                if end_timestamp < start_timestamp {
+                    return Err("timestamp range ends before it starts".into());
+                }
+                let duration_us = end_timestamp.abs_diff(start_timestamp);
+                let duration = Duration::from_microseconds(duration_us);
+
+                Ok(Interval::new(time, duration)?)
+            }
+        }
+    }
+
+    accepts!(TS_RANGE);
+}
+
+#[cfg(feature = "database")]
+fn time_to_sql_timestamp(time: Time) -> Result<i64, Error> {
+    if time.is_after(SQL_EPOCH_TIME) {
+        let absolute_difference_us = time.difference(SQL_EPOCH_TIME)?.as_microseconds()?;
+        absolute_difference_us
+            .try_into()
+            .map_err(|_| Error::IllegalTimeArithmetic("timestamp conversion overflowed"))
+    } else {
+        let absolute_difference_us = SQL_EPOCH_TIME.difference(time)?.as_microseconds()?;
+        Ok(-i64::try_from(absolute_difference_us)
+            .map_err(|_| Error::IllegalTimeArithmetic("timestamp conversion overflowed"))?)
+    }
+}
+
+#[cfg(feature = "database")]
+impl ToSql for Interval {
+    fn to_sql(
+        &self,
+        _: &postgres_types::Type,
+        out: &mut bytes::BytesMut,
+    ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+        // Convert the interval start and end to SQL timestamps.
+        let start_sql_usec = time_to_sql_timestamp(self.start())
+            .map_err(|_| "millisecond timestamp of Interval start overflowed")?;
+        let end_sql_usec = time_to_sql_timestamp(self.end())
+            .map_err(|_| "millisecond timestamp of Interval end overflowed")?;
+
+        range_to_sql(
+            |out| {
+                timestamp_to_sql(start_sql_usec, out);
+                Ok(postgres_protocol::types::RangeBound::Inclusive(
+                    postgres_protocol::IsNull::No,
+                ))
+            },
+            |out| {
+                timestamp_to_sql(end_sql_usec, out);
+                Ok(postgres_protocol::types::RangeBound::Exclusive(
+                    postgres_protocol::IsNull::No,
+                ))
+            },
+            out,
+        )?;
+
+        Ok(postgres_types::IsNull::No)
+    }
+
+    accepts!(TS_RANGE);
+
+    to_sql_checked!();
 }
 
 /// PPM protocol message representing a nonce uniquely identifying a client report.
