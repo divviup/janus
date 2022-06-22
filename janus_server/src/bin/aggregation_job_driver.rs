@@ -8,6 +8,7 @@ use janus::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
     message::{Duration, Report, Role},
     time::{Clock, RealClock},
+    TokioRuntime,
 };
 use janus_server::{
     binary_utils::{janus_main, job_driver::JobDriver, BinaryOptions, CommonBinaryOptions},
@@ -81,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
             // Start running.
             Arc::new(JobDriver::new(
                 clock,
+                TokioRuntime,
                 Duration::from_seconds(config.job_driver_config.min_job_discovery_delay_secs),
                 Duration::from_seconds(config.job_driver_config.max_job_discovery_delay_secs),
                 config.job_driver_config.max_concurrent_job_workers,
@@ -808,6 +810,7 @@ mod tests {
         message::{Duration, HpkeConfig, Nonce, Report, Role, TaskId},
         task::VdafInstance,
         time::Clock,
+        Runtime,
     };
     use janus_server::{
         binary_utils::job_driver::JobDriver,
@@ -824,7 +827,7 @@ mod tests {
         task::{test_util::new_dummy_task, PRIO3_AES128_VERIFY_KEY_LENGTH},
         trace::test_util::install_test_trace_subscriber,
     };
-    use janus_test_util::{run_vdaf, MockClock};
+    use janus_test_util::{run_vdaf, runtime::TestRuntimeManager, MockClock};
     use mockito::mock;
     use prio::{
         codec::Encode,
@@ -835,7 +838,6 @@ mod tests {
     };
     use reqwest::Url;
     use std::{str, sync::Arc};
-    use tokio::{task, time};
 
     janus_test_util::define_ephemeral_datastore!();
 
@@ -850,6 +852,7 @@ mod tests {
         // Setup.
         install_test_trace_subscriber();
         let clock = MockClock::default();
+        let mut runtime_manager = TestRuntimeManager::new();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
@@ -964,9 +967,10 @@ mod tests {
                 .unwrap(),
         });
 
-        // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
+        // Run. Let the aggregation job driver step aggregation jobs, then kill it.
         let aggregation_job_driver = Arc::new(JobDriver::new(
             clock,
+            runtime_manager.with_label("stepper"),
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
@@ -1004,17 +1008,14 @@ mod tests {
             },
         ));
 
-        let task_handle = task::spawn({
+        let task_handle = runtime_manager.with_label("driver").spawn({
             let aggregation_job_driver = aggregation_job_driver.clone();
             async move { aggregation_job_driver.run().await }
         });
 
-        // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
-        // this test to run without the need for a (racy, wallclock-consuming) real sleep.
-        // Unfortunately, at time of writing, calling time::pause() breaks interaction with the
-        // database -- the job-acquiry transaction deadlocks on attempting to start a transaction,
-        // even if the main test loops on calling yield_now().
-        time::sleep(time::Duration::from_secs(5)).await;
+        // Wait for all of the aggregate job stepper tasks to complete.
+        runtime_manager.wait_for_completed_tasks("stepper", 2).await;
+        // Stop the aggregate job driver task.
         task_handle.abort();
 
         // Verify.

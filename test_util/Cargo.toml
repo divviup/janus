@@ -8,8 +8,13 @@ publish = false
 
 [dependencies]
 assert_matches = "1"
+chrono = "0.4"
+futures = "0.3.21"
+janus = { path = "../janus" }
 prio = "0.8.0"
 rand = "0.8"
 ring = "0.16.20"
-janus = { path = "../janus" }
-chrono = "0.4"
+tokio = { version = "^1.19", features = ["rt", "sync"] }
+
+[dev-dependencies]
+tokio = { version = "*", features = ["macros"] }

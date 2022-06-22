@@ -12,6 +12,7 @@ use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::sync::{Arc, Mutex};
 
 pub mod dummy_vdaf;
+pub mod runtime;
 
 /// The Janus database schema.
 pub static SCHEMA: &str = include_str!("../../db/schema.sql");
