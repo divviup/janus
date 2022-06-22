@@ -47,17 +47,11 @@ where
     pub async fn wait_for_completed_tasks(&mut self, label: L, target_count: usize) {
         let labeled_runtime = self.with_label(label);
         let mut receiver = labeled_runtime.inner.sender.subscribe();
-        if *receiver.borrow_and_update() >= target_count {
-            return;
-        }
-        loop {
+        while *receiver.borrow_and_update() < target_count {
             receiver.changed().await.expect(
                 "The channel sender should not be dropped before waits have \
                 finished, this likely indicates an issue with a test.",
             );
-            if *receiver.borrow() >= target_count {
-                break;
-            }
         }
     }
 }
