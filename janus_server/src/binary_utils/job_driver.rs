@@ -200,16 +200,12 @@ where
 mod tests {
     use super::*;
     use crate::{
-        datastore::{Crypter, Datastore},
-        message::AggregationJobId,
-        task::VdafInstance,
+        message::AggregationJobId, task::VdafInstance,
         trace::test_util::install_test_trace_subscriber,
     };
-    use janus::{message::TaskId, time::Clock};
+    use janus::message::TaskId;
     use janus_test_util::{runtime::TestRuntimeManager, MockClock};
     use tokio::sync::Mutex;
-
-    janus_test_util::define_ephemeral_datastore!();
 
     #[tokio::test]
     async fn job_driver() {
