@@ -142,11 +142,9 @@ impl Runtime for TestRuntime {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use tokio::sync::Barrier;
-
     use super::{Runtime, TestRuntimeManager};
+    use std::sync::Arc;
+    use tokio::{sync::Barrier, task::JoinHandle};
 
     #[tokio::test]
     async fn mock_runtime() {
@@ -155,6 +153,11 @@ mod tests {
             A,
             B,
         }
+
+        /// This is used to smuggle a JoinHandle out to the main task without
+        /// flagging `clippy::async_yields_async`.
+        #[must_use]
+        struct TaskHandleNewtype(JoinHandle<()>);
 
         let mut runtime = TestRuntimeManager::<Label>::new();
         let runtime_a = runtime.with_label(Label::A);
@@ -175,7 +178,7 @@ mod tests {
             let barrier = Arc::clone(&barrier);
             async move {
                 barrier.wait().await;
-                handle_a_3
+                TaskHandleNewtype(handle_a_3)
             }
         });
 
@@ -186,7 +189,7 @@ mod tests {
         runtime.wait_for_completed_tasks(Label::A, 2).await;
 
         handle_a_1.await.unwrap();
-        let handle_a_3 = handle_a_2.await.unwrap();
+        let handle_a_3 = handle_a_2.await.unwrap().0;
         handle_a_3.await.unwrap();
         handle_b_1.await.unwrap();
         assert_eq!(*runtime_a.inner.sender.borrow(), 3);
@@ -197,7 +200,9 @@ mod tests {
     #[should_panic]
     async fn noisy_task_panic() {
         let mut runtime = TestRuntimeManager::<()>::new();
-        let handle = runtime.with_label(()).spawn(async { &[0u8][..2] });
+        let handle = runtime.with_label(()).spawn(async {
+            panic!("panic inside separate task");
+        });
         let _ = handle.await;
         drop(runtime);
     }
