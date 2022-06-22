@@ -4,15 +4,18 @@ use crate::datastore::{self, models::Lease};
 use janus::{
     message::{Duration, Time},
     time::Clock,
+    Runtime,
 };
 use std::{fmt::Debug, future::Future, sync::Arc};
-use tokio::{sync::Semaphore, task, time};
+use tokio::{sync::Semaphore, time};
 use tracing::{debug, error, info, info_span, Instrument};
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
-pub struct JobDriver<C: Clock, JobAcquirer, JobStepper> {
+pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
     /// Clock used to determine when to schedule jobs.
     clock: C,
+    /// Runtime object used to spawn asynchronous tasks.
+    runtime: R,
 
     // Configuration values.
     /// Minimum delay between datastore job discovery passes.
@@ -34,15 +37,17 @@ pub struct JobDriver<C: Clock, JobAcquirer, JobStepper> {
 
 impl<
         C,
+        R,
         JobStepperError,
         JobAcquirer,
         JobAcquirerFuture,
         JobStepper,
         JobStepperFuture,
         AcquiredJob,
-    > JobDriver<C, JobAcquirer, JobStepper>
+    > JobDriver<C, R, JobAcquirer, JobStepper>
 where
     C: Clock,
+    R: Runtime + Send + Sync + 'static,
     JobStepperError: Debug + Send + Sync + 'static,
     JobAcquirer: Fn(usize) -> JobAcquirerFuture + Send + Sync + 'static,
     JobAcquirerFuture: Future<Output = Result<Vec<Lease<AcquiredJob>>, datastore::Error>> + Send,
@@ -53,6 +58,7 @@ where
     /// Create a new [`JobDriver`].
     pub fn new(
         clock: C,
+        runtime: R,
         min_job_discovery_delay: Duration,
         max_job_discovery_delay: Duration,
         max_concurrent_job_workers: usize,
@@ -62,6 +68,7 @@ where
     ) -> Self {
         Self {
             clock,
+            runtime,
             min_job_discovery_delay,
             max_job_discovery_delay,
             max_concurrent_job_workers,
@@ -126,7 +133,7 @@ where
             // Start up tasks for each acquired job.
             job_discovery_delay = Duration::ZERO;
             for lease in leases {
-                task::spawn({
+                self.runtime.spawn({
                     // We acquire a semaphore in the job-discovery task rather than inside the new
                     // job-stepper task to ensure that acquiring a permit does not race with
                     // checking how many permits we have available in the next iteration of this
@@ -199,8 +206,8 @@ mod tests {
         trace::test_util::install_test_trace_subscriber,
     };
     use janus::{message::TaskId, time::Clock};
-    use janus_test_util::MockClock;
-    use tokio::{sync::Mutex, task, time};
+    use janus_test_util::{runtime::TestRuntimeManager, MockClock};
+    use tokio::sync::Mutex;
 
     janus_test_util::define_ephemeral_datastore!();
 
@@ -215,6 +222,7 @@ mod tests {
         // Setup.
         install_test_trace_subscriber();
         let clock = MockClock::default();
+        let mut runtime_manager = TestRuntimeManager::new();
 
         /// A fake incomplete job returned by the job acquirer closure.
         #[derive(Clone, Debug)]
@@ -277,9 +285,10 @@ mod tests {
             ],
         ]);
 
-        // Run. Give the aggregation job driver enough time to step aggregation jobs, then kill it.
+        // Run. Let the aggregation job driver step aggregation jobs, then kill it.
         let job_driver = Arc::new(JobDriver::new(
             clock,
+            runtime_manager.with_label("stepper"),
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
@@ -340,21 +349,21 @@ mod tests {
                 }
             },
         ));
-        let task_handle = task::spawn(async move { job_driver.run().await });
+        let task_handle = runtime_manager
+            .with_label("driver")
+            .spawn(async move { job_driver.run().await });
 
-        // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
-        // this test to run without the need for a (racy, wallclock-consuming) real sleep.
-        // Unfortunately, at time of writing, calling time::pause() breaks interaction with the
-        // database -- the job-acquiry transaction deadlocks on attempting to start a transaction,
-        // even if the main test loops on calling yield_now().
-        time::sleep(time::Duration::from_secs(5)).await;
+        // Wait for all of the job stepper tasks to be started and for them to finish.
+        runtime_manager.wait_for_completed_tasks("stepper", 4).await;
+        // Stop the job driver task.
         task_handle.abort();
 
         // Verify that we got the expected calls to closures.
         let final_test_state = test_state.lock().await;
 
-        // We expect the job acquirer to run at least three times in the 5s we sleep, but we can't
-        // prove it won't run once more.
+        // We expect the job acquirer to run at least three times in the time
+        // it takes to step the four jobs, but we can't prove it won't run
+        // once more.
         assert!(final_test_state.job_acquire_counter >= 3);
         assert_eq!(
             final_test_state.stepped_jobs,

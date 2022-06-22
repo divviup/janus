@@ -1293,6 +1293,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -1361,10 +1362,12 @@ version = "0.1.0"
 dependencies = [
  "assert_matches",
  "chrono",
+ "futures",
  "janus",
  "prio",
  "rand",
  "ring",
+ "tokio",
 ]
 
 [[package]]

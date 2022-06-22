@@ -1,5 +1,5 @@
 use anyhow::Context;
-use janus::{message::Duration, time::RealClock};
+use janus::{message::Duration, time::RealClock, TokioRuntime};
 use janus_server::{
     aggregator::aggregate_share::CollectJobDriver,
     binary_utils::{janus_main, job_driver::JobDriver, BinaryOptions, CommonBinaryOptions},
@@ -53,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
             // Start running.
             Arc::new(JobDriver::new(
                 clock,
+                TokioRuntime,
                 Duration::from_seconds(config.job_driver_config.min_job_discovery_delay_secs),
                 Duration::from_seconds(config.job_driver_config.max_job_discovery_delay_secs),
                 config.job_driver_config.max_concurrent_job_workers,
