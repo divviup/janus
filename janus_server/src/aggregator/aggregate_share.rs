@@ -12,10 +12,10 @@ use crate::{
     task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     task::{VdafInstance, DAP_AUTH_HEADER},
 };
-use futures::try_join;
+use futures::{future::BoxFuture, try_join};
 use http::header::CONTENT_TYPE;
 use janus::{
-    message::{Interval, NonceChecksum, Role},
+    message::{Duration, Interval, NonceChecksum, Role},
     time::Clock,
 };
 use prio::{
@@ -27,7 +27,7 @@ use prio::{
     },
 };
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, error, log::warn};
+use tracing::{debug, error, warn};
 
 /// Drives a collect job.
 #[derive(Debug)]
@@ -230,6 +230,60 @@ impl CollectJobDriver {
             })
             .await?;
         Ok(())
+    }
+
+    /// Produce a closure for use as a `[JobDriver::JobAcquirer`].
+    pub fn make_incomplete_job_acquirer_callback<C: Clock>(
+        &self,
+        datastore: &Arc<Datastore<C>>,
+        lease_duration: Duration,
+    ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectJob>>, datastore::Error>>
+    {
+        let datastore = Arc::clone(datastore);
+        move |maximum_acquire_count| {
+            let datastore = Arc::clone(&datastore);
+            Box::pin(async move {
+                datastore
+                    .run_tx(|tx| {
+                        Box::pin(async move {
+                            tx.acquire_incomplete_collect_jobs(
+                                lease_duration,
+                                maximum_acquire_count,
+                            )
+                            .await
+                        })
+                    })
+                    .await
+            })
+        }
+    }
+
+    /// Produce a closure for use as a `[JobDriver::JobStepper]`.
+    pub fn make_job_stepper_callback<C: Clock>(
+        self: &Arc<Self>,
+        datastore: &Arc<Datastore<C>>,
+        maximum_attempts_before_failure: usize,
+    ) -> impl Fn(Lease<AcquiredCollectJob>) -> BoxFuture<'static, Result<(), super::Error>> {
+        let datastore = Arc::clone(datastore);
+        let driver = Arc::clone(self);
+        move |collect_job_lease: Lease<AcquiredCollectJob>| {
+            let datastore = Arc::clone(&datastore);
+            let driver = Arc::clone(&driver);
+            Box::pin(async move {
+                if collect_job_lease.lease_attempts() >= maximum_attempts_before_failure {
+                    warn!(
+                        attempts = ?collect_job_lease.lease_attempts(),
+                        max_attempts = ?maximum_attempts_before_failure,
+                        "Canceling job due to too many failed attempts"
+                    );
+                    return driver
+                        .cancel_collect_job(datastore, collect_job_lease)
+                        .await;
+                }
+
+                driver.step_collect_job(datastore, collect_job_lease).await
+            })
+        }
     }
 }
 
