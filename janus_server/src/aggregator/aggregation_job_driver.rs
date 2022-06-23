@@ -721,7 +721,7 @@ impl AggregationJobDriver {
             let datastore = Arc::clone(&datastore);
             let driver = Arc::clone(&driver);
             Box::pin(async move {
-                if lease.lease_attempts() >= maximum_attempts_before_failure {
+                if lease.lease_attempts() > maximum_attempts_before_failure {
                     warn!(attempts = ?lease.lease_attempts(),
                         max_attempts = ?maximum_attempts_before_failure,
                         "Canceling job due to too many failed attempts");
