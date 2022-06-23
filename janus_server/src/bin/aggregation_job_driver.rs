@@ -939,7 +939,6 @@ mod tests {
                 AggregateInitializeReq::MEDIA_TYPE,
                 AggregateInitializeResp::MEDIA_TYPE,
                 AggregateInitializeResp {
-                    job_id: aggregation_job_id,
                     prepare_steps: vec![PrepareStep {
                         nonce,
                         result: PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
@@ -951,7 +950,6 @@ mod tests {
                 AggregateContinueReq::MEDIA_TYPE,
                 AggregateContinueResp::MEDIA_TYPE,
                 AggregateContinueResp {
-                    job_id: aggregation_job_id,
                     prepare_steps: vec![PrepareStep {
                         nonce,
                         result: PrepareStepResult::Finished,
@@ -1155,7 +1153,6 @@ mod tests {
         };
         let helper_vdaf_msg = assert_matches!(&transcript.prepare_transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_share) => prep_share);
         let helper_response = AggregateInitializeResp {
-            job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce,
                 result: PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
@@ -1333,7 +1330,6 @@ mod tests {
             }],
         };
         let helper_response = AggregateContinueResp {
-            job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce,
                 result: PrepareStepResult::Finished,

@@ -911,7 +911,6 @@ impl VdafOps {
 
         // Construct response and return.
         Ok(AggregateInitializeResp {
-            job_id: req.job_id,
             prepare_steps: report_share_data
                 .as_ref()
                 .iter()
@@ -1094,7 +1093,6 @@ impl VdafOps {
                     accumulator.flush_to_datastore(tx).await?;
 
                     Ok(AggregateContinueResp {
-                        job_id: req.job_id,
                         prepare_steps: response_prep_steps,
                     })
                 })
@@ -3308,7 +3306,6 @@ mod tests {
         assert_eq!(
             aggregate_resp,
             AggregateContinueResp {
-                job_id: aggregation_job_id,
                 prepare_steps: vec![PrepareStep {
                     nonce: nonce_0,
                     result: PrepareStepResult::Finished,
@@ -4040,7 +4037,6 @@ mod tests {
         assert_eq!(
             aggregate_resp,
             AggregateContinueResp {
-                job_id: aggregation_job_id,
                 prepare_steps: vec![PrepareStep {
                     nonce,
                     result: PrepareStepResult::Failed(ReportShareError::VdafPrepError),
