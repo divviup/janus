@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{
-    future::{try_join_all, FutureExt},
+    future::{try_join_all, BoxFuture, FutureExt},
     try_join,
 };
 use http::header::CONTENT_TYPE;
@@ -91,51 +91,12 @@ async fn main() -> anyhow::Result<()> {
                         .job_driver_config
                         .worker_lease_clock_skew_allowance_secs,
                 ),
-                {
-                    let datastore = Arc::clone(&datastore);
-                    move |max_acquire_count| {
-                        let datastore = Arc::clone(&datastore);
-                        async move {
-                            datastore
-                                .run_tx(|tx| {
-                                    Box::pin(async move {
-                                        // TODO(#193): only acquire jobs whose batch units have not
-                                        // already been collected (probably by modifying
-                                        // acquire_incomplete_aggregation_jobs)
-                                        tx.acquire_incomplete_aggregation_jobs(
-                                            lease_duration,
-                                            max_acquire_count,
-                                        )
-                                        .await
-                                    })
-                                })
-                                .await
-                        }
-                    }
-                },
-                {
-                    let datastore = Arc::clone(&datastore);
-                    move |aggregation_job_lease| {
-                        let (datastore, aggregation_job_driver) =
-                            (Arc::clone(&datastore), Arc::clone(&aggregation_job_driver));
-                        async move {
-                            if aggregation_job_lease.lease_attempts()
-                                >= config.job_driver_config.maximum_attempts_before_failure
-                            {
-                                warn!(attempts = ?aggregation_job_lease.lease_attempts(),
-                                    max_attempts = ?config.job_driver_config.maximum_attempts_before_failure,
-                                    "Canceling job due to too many failed attempts");
-                                return aggregation_job_driver
-                                    .cancel_aggregation_job(datastore, aggregation_job_lease)
-                                    .await;
-                            }
-
-                            aggregation_job_driver
-                                .step_aggregation_job(datastore, aggregation_job_lease)
-                                .await
-                        }
-                    }
-                },
+                aggregation_job_driver
+                    .make_incomplete_job_acquirer_callback(&datastore, lease_duration),
+                aggregation_job_driver.make_job_stepper_callback(
+                    &datastore,
+                    config.job_driver_config.maximum_attempts_before_failure,
+                ),
             ))
             .run()
             .await;
@@ -785,6 +746,60 @@ impl AggregationJobDriver {
             .await?;
         Ok(())
     }
+
+    /// Produce a closure for use as a `[JobDriver::JobAcquirer]`.
+    pub fn make_incomplete_job_acquirer_callback<C: Clock>(
+        &self,
+        datastore: &Arc<Datastore<C>>,
+        lease_duration: Duration,
+    ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredAggregationJob>>, datastore::Error>>
+    {
+        let datastore = Arc::clone(datastore);
+        move |max_acquire_count: usize| {
+            let datastore = Arc::clone(&datastore);
+            Box::pin(async move {
+                datastore
+                    .run_tx(|tx| {
+                        Box::pin(async move {
+                            // TODO(#193): only acquire jobs whose batch units
+                            // have not already been collected (probably by
+                            // modifying acquire_incomplete_aggregation_jobs)
+                            tx.acquire_incomplete_aggregation_jobs(
+                                lease_duration,
+                                max_acquire_count,
+                            )
+                            .await
+                        })
+                    })
+                    .await
+            })
+        }
+    }
+
+    /// Produce a closure for use as a `[JobDriver::JobStepper]`.
+    pub fn make_job_stepper_callback<C: Clock>(
+        self: &Arc<Self>,
+        datastore: &Arc<Datastore<C>>,
+        maximum_attempts_before_failure: usize,
+    ) -> impl Fn(Lease<AcquiredAggregationJob>) -> BoxFuture<'static, Result<(), anyhow::Error>>
+    {
+        let datastore = Arc::clone(datastore);
+        let driver = Arc::clone(self);
+        move |lease| {
+            let datastore = Arc::clone(&datastore);
+            let driver = Arc::clone(&driver);
+            Box::pin(async move {
+                if lease.lease_attempts() >= maximum_attempts_before_failure {
+                    warn!(attempts = ?lease.lease_attempts(),
+                        max_attempts = ?maximum_attempts_before_failure,
+                        "Canceling job due to too many failed attempts");
+                    return driver.cancel_aggregation_job(datastore, lease).await;
+                }
+
+                driver.step_aggregation_job(datastore, lease).await
+            })
+        }
+    }
 }
 
 /// SteppedAggregation represents a report aggregation along with the associated preparation-state
@@ -799,7 +814,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::AggregationJobDriver;
+    use super::AggregationJobDriver;
     use assert_matches::assert_matches;
     use http::header::CONTENT_TYPE;
     use janus::{
@@ -975,37 +990,9 @@ mod tests {
             Duration::from_seconds(1),
             10,
             Duration::from_seconds(60),
-            {
-                let datastore = Arc::clone(&ds);
-                move |max_acquire_count| {
-                    let datastore = Arc::clone(&datastore);
-                    async move {
-                        datastore
-                            .run_tx(|tx| {
-                                Box::pin(async move {
-                                    tx.acquire_incomplete_aggregation_jobs(
-                                        Duration::from_seconds(600),
-                                        max_acquire_count,
-                                    )
-                                    .await
-                                })
-                            })
-                            .await
-                    }
-                }
-            },
-            {
-                let datastore = Arc::clone(&ds);
-                move |aggregation_job_lease| {
-                    let (datastore, aggregation_job_driver) =
-                        (Arc::clone(&datastore), Arc::clone(&aggregation_job_driver));
-                    async move {
-                        aggregation_job_driver
-                            .step_aggregation_job(datastore, aggregation_job_lease)
-                            .await
-                    }
-                }
-            },
+            aggregation_job_driver
+                .make_incomplete_job_acquirer_callback(&ds, Duration::from_seconds(600)),
+            aggregation_job_driver.make_job_stepper_callback(&ds, 5),
         ));
 
         let task_handle = runtime_manager.with_label("driver").spawn({

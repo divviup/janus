@@ -7,7 +7,6 @@ use janus_server::{
 };
 use std::{fmt::Debug, sync::Arc};
 use structopt::StructOpt;
-use tracing::warn;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -62,47 +61,12 @@ async fn main() -> anyhow::Result<()> {
                         .job_driver_config
                         .worker_lease_clock_skew_allowance_secs,
                 ),
-                {
-                    let datastore = Arc::clone(&datastore);
-                    move |maximum_acquire_count| {
-                        let datastore = Arc::clone(&datastore);
-                        async move {
-                            datastore
-                                .run_tx(|tx| {
-                                    Box::pin(async move {
-                                        tx.acquire_incomplete_collect_jobs(
-                                            lease_duration,
-                                            maximum_acquire_count,
-                                        )
-                                        .await
-                                    })
-                                })
-                                .await
-                        }
-                    }
-                },
-                {
-                    let datastore = Arc::clone(&datastore);
-                    move |collect_job_lease| {
-                        let (datastore, collect_job_driver) =
-                            (Arc::clone(&datastore), Arc::clone(&collect_job_driver));
-                        async move {
-                            if collect_job_lease.lease_attempts() >= config.job_driver_config.maximum_attempts_before_failure
-                            {
-                                warn!(attempts = ?collect_job_lease.lease_attempts(),
-                                    max_attempts = ?config.job_driver_config.maximum_attempts_before_failure,
-                                    "Canceling job due to too many failed attempts");
-                                return collect_job_driver
-                                    .cancel_collect_job(datastore, collect_job_lease)
-                                    .await;
-                            }
-
-                            collect_job_driver
-                                .step_collect_job(datastore, collect_job_lease)
-                                .await
-                        }
-                    }
-                },
+                collect_job_driver
+                    .make_incomplete_job_acquirer_callback(&datastore, lease_duration),
+                collect_job_driver.make_job_stepper_callback(
+                    &datastore,
+                    config.job_driver_config.maximum_attempts_before_failure,
+                ),
             ))
             .run()
             .await;
