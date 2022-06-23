@@ -2,6 +2,8 @@
 
 mod accumulator;
 pub mod aggregate_share;
+pub mod aggregation_job_creator;
+pub mod aggregation_job_driver;
 
 use crate::{
     aggregator::{
