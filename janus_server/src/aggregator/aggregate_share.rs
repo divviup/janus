@@ -892,11 +892,9 @@ mod tests {
             .with_status(500)
             .expect(3)
             .create();
-        // Set up a panicking response to make sure the job driver doesn't make more requests
-        // than we expect. If there were no remaining mocks, mockito would have respond with a
-        // fallback error response instead. By panicking in a separate mock's callback, we would
-        // instead poison mockito's mutex, and panic on the main thread when asserting the mock at
-        // the end of the test.
+        // Set up an extra response that should never be used, to make sure the job driver doesn't
+        // make more requests than we expect. If there were no remaining mocks, mockito would have
+        // respond with a fallback error response instead.
         let no_more_requests_mock = mock("POST", "/aggregate_share")
             .match_header(
                 "DAP-Auth-Token",
@@ -904,8 +902,7 @@ mod tests {
             )
             .match_header(CONTENT_TYPE.as_str(), AggregateShareReq::MEDIA_TYPE)
             .with_status(500)
-            .expect_at_most(1)
-            .with_body_from_fn(|_| panic!("Too many requests were made"))
+            .expect(1)
             .create();
 
         // Start up the job driver.
@@ -928,7 +925,7 @@ mod tests {
 
         // Check that the job driver made the HTTP requests we expected.
         failure_mock.assert();
-        no_more_requests_mock.assert();
+        assert!(!no_more_requests_mock.matched());
 
         // Confirm that the collect job was abandoned.
         let collect_job_after = ds
