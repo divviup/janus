@@ -207,7 +207,7 @@ pub struct AggregateInitializeReq {
 
 impl AggregateInitializeReq {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-initialize-req";
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-initialize-req";
 }
 
 impl Encode for AggregateInitializeReq {
@@ -237,30 +237,24 @@ impl Decode for AggregateInitializeReq {
 /// DAP protocol message representing an aggregation initialization response from helper to leader.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateInitializeResp {
-    pub job_id: AggregationJobId,
     pub prepare_steps: Vec<PrepareStep>,
 }
 
 impl AggregateInitializeResp {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-initialize-resp";
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-initialize-resp";
 }
 
 impl Encode for AggregateInitializeResp {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.job_id.encode(bytes);
         encode_u16_items(bytes, &(), &self.prepare_steps);
     }
 }
 
 impl Decode for AggregateInitializeResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let job_id = AggregationJobId::decode(bytes)?;
         let prepare_steps = decode_u16_items(&(), bytes)?;
-        Ok(Self {
-            job_id,
-            prepare_steps,
-        })
+        Ok(Self { prepare_steps })
     }
 }
 
@@ -274,7 +268,7 @@ pub struct AggregateContinueReq {
 
 impl AggregateContinueReq {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-continue-req";
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-continue-req";
 }
 
 impl Encode for AggregateContinueReq {
@@ -301,30 +295,24 @@ impl Decode for AggregateContinueReq {
 /// DAP protocol message representing an aggregation continue response from helper to leader.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateContinueResp {
-    pub job_id: AggregationJobId,
     pub prepare_steps: Vec<PrepareStep>,
 }
 
 impl AggregateContinueResp {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-continue-resp";
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-continue-resp";
 }
 
 impl Encode for AggregateContinueResp {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.job_id.encode(bytes);
         encode_u16_items(bytes, &(), &self.prepare_steps);
     }
 }
 
 impl Decode for AggregateContinueResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let job_id = AggregationJobId::decode(bytes)?;
         let prepare_steps = decode_u16_items(&(), bytes)?;
-        Ok(Self {
-            job_id,
-            prepare_steps,
-        })
+        Ok(Self { prepare_steps })
     }
 }
 
@@ -341,7 +329,7 @@ pub struct AggregateShareReq {
 
 impl AggregateShareReq {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-share-req";
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-share-req";
 
     pub(crate) fn associated_data_for_aggregate_share(&self) -> Vec<u8> {
         associated_data_for_aggregate_share(self.task_id, self.batch_interval)
@@ -385,7 +373,7 @@ pub struct AggregateShareResp {
 
 impl AggregateShareResp {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "message/dap-aggregate-share-resp";
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-share-resp";
 }
 
 impl Encode for AggregateShareResp {
@@ -415,7 +403,7 @@ pub struct CollectReq {
 
 impl CollectReq {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "message/dap-collect-req";
+    pub const MEDIA_TYPE: &'static str = "application/dap-collect-req";
 }
 
 impl Encode for CollectReq {
@@ -449,7 +437,7 @@ pub struct CollectResp {
 
 impl CollectResp {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "message/dap-collect-resp";
+    pub const MEDIA_TYPE: &'static str = "application/dap-collect-resp";
 }
 
 impl Encode for CollectResp {
@@ -716,20 +704,15 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateInitializeResp {
-                    job_id: AggregationJobId([u8::MIN; 32]),
                     prepare_steps: vec![],
                 },
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
-                    concat!(
-                        // prepare_steps
-                        "0000", // length
-                    ),
-                ),
+                concat!(concat!(
+                    // prepare_steps
+                    "0000", // length
+                ),),
             ),
             (
                 AggregateInitializeResp {
-                    job_id: AggregationJobId([u8::MAX; 32]),
                     prepare_steps: vec![
                         PrepareStep {
                             nonce: Nonce::new(
@@ -747,34 +730,31 @@ mod tests {
                         },
                     ],
                 },
-                concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
+                concat!(concat!(
+                    //prepare_steps
+                    "002A", // length
                     concat!(
-                        //prepare_steps
-                        "002A", // length
                         concat!(
-                            concat!(
-                                // nonce
-                                "000000000000D464", // time
-                                "0102030405060708", // rand
-                            ),
-                            "00", // prepare_step_result
-                            concat!(
-                                // payload
-                                "0006",         // length
-                                "303132333435", // opaque data
-                            ),
+                            // nonce
+                            "000000000000D464", // time
+                            "0102030405060708", // rand
                         ),
+                        "00", // prepare_step_result
                         concat!(
-                            concat!(
-                                // nonce
-                                "0000000000003039", // time
-                                "0807060504030201", // rand
-                            ),
-                            "01", // prepare_step_result
+                            // payload
+                            "0006",         // length
+                            "303132333435", // opaque data
                         ),
-                    )
-                ),
+                    ),
+                    concat!(
+                        concat!(
+                            // nonce
+                            "0000000000003039", // time
+                            "0807060504030201", // rand
+                        ),
+                        "01", // prepare_step_result
+                    ),
+                )),
             ),
         ])
     }
@@ -839,20 +819,15 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateContinueResp {
-                    job_id: AggregationJobId([u8::MIN; 32]),
                     prepare_steps: vec![],
                 },
-                concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // job_id
-                    concat!(
-                        // prepare_steps
-                        "0000", // length
-                    ),
-                ),
+                concat!(concat!(
+                    // prepare_steps
+                    "0000", // length
+                ),),
             ),
             (
                 AggregateContinueResp {
-                    job_id: AggregationJobId([u8::MAX; 32]),
                     prepare_steps: vec![
                         PrepareStep {
                             nonce: Nonce::new(
@@ -870,34 +845,31 @@ mod tests {
                         },
                     ],
                 },
-                concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
+                concat!(concat!(
+                    //prepare_steps
+                    "002A", // length
                     concat!(
-                        //prepare_steps
-                        "002A", // length
                         concat!(
-                            concat!(
-                                // nonce
-                                "000000000000D464", // time
-                                "0102030405060708", // rand
-                            ),
-                            "00", // prepare_step_result
-                            concat!(
-                                // payload
-                                "0006",         // length
-                                "303132333435", // opaque data
-                            ),
+                            // nonce
+                            "000000000000D464", // time
+                            "0102030405060708", // rand
                         ),
+                        "00", // prepare_step_result
                         concat!(
-                            concat!(
-                                // nonce
-                                "0000000000003039", // time
-                                "0807060504030201", // rand
-                            ),
-                            "01", // prepare_step_result
+                            // payload
+                            "0006",         // length
+                            "303132333435", // opaque data
                         ),
-                    )
-                ),
+                    ),
+                    concat!(
+                        concat!(
+                            // nonce
+                            "0000000000003039", // time
+                            "0807060504030201", // rand
+                        ),
+                        "01", // prepare_step_result
+                    ),
+                )),
             ),
         ])
     }

@@ -958,7 +958,7 @@ pub struct Report {
 
 impl Report {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "message/dap-report";
+    pub const MEDIA_TYPE: &'static str = "application/dap-report";
 
     /// Construct a report from its components.
     pub fn new(
