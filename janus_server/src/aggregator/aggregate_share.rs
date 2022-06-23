@@ -429,7 +429,7 @@ mod tests {
                 AggregationJob, AggregationJobState, CollectJob, CollectJobState,
                 ReportAggregation, ReportAggregationState,
             },
-            Crypter, Datastore,
+            test_util::ephemeral_datastore,
         },
         message::AggregationJobId,
         task::{test_util::new_dummy_task, VdafInstance},
@@ -446,8 +446,6 @@ mod tests {
     use mockito::mock;
     use std::str;
     use url::Url;
-
-    janus_test_util::define_ephemeral_datastore!();
 
     type FakeVdaf = VdafWithAggregationParameter<u8>;
 
