@@ -945,8 +945,8 @@ mod tests {
                 task_id,
                 batch_interval,
                 aggregation_param,
-                state: CollectJobState::Abandoned
-            }
+                state: CollectJobState::Abandoned,
+            },
         );
     }
 }

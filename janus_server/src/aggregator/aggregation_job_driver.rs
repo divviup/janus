@@ -1490,4 +1490,159 @@ mod tests {
 
         Report::new(task_id, nonce, Vec::new(), encrypted_input_shares)
     }
+
+    #[tokio::test]
+    async fn abandon_failing_aggregation_job() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let mut runtime_manager = TestRuntimeManager::new();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
+
+        let task_id = TaskId::random();
+        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
+        task.aggregator_endpoints = vec![
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ];
+        let agg_auth_token = task.primary_aggregator_auth_token();
+        let aggregation_job_id = AggregationJobId::random();
+        let verify_key = task.vdaf_verify_keys[0].clone().try_into().unwrap();
+
+        let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
+        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
+
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let nonce = Nonce::generate(&clock);
+        let transcript = run_vdaf(&vdaf, &verify_key, &(), nonce, &0);
+        let report = generate_report(
+            task_id,
+            nonce,
+            &[leader_hpke_config, &helper_hpke_config],
+            &transcript.input_shares,
+        );
+
+        // Set up fixtures in the database.
+        ds.run_tx(|tx| {
+            let task = task.clone();
+            let report = report.clone();
+            Box::pin(async move {
+                tx.put_task(&task).await?;
+
+                // We need to store a well-formed report, as it will get parsed by the leader and
+                // run through initial VDAF preparation before sending a request to the helper.
+                tx.put_client_report(&report).await?;
+
+                tx.put_aggregation_job(&AggregationJob::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128Count,
+                > {
+                    aggregation_job_id,
+                    task_id,
+                    aggregation_param: (),
+                    state: AggregationJobState::InProgress,
+                })
+                .await?;
+
+                tx.put_report_aggregation(&ReportAggregation::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128Count,
+                > {
+                    aggregation_job_id,
+                    task_id,
+                    nonce,
+                    ord: 0,
+                    state: ReportAggregationState::Start,
+                })
+                .await?;
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Set up the aggregation job driver.
+        let aggregation_job_driver = Arc::new(AggregationJobDriver::new(reqwest::Client::new()));
+        let job_driver = Arc::new(JobDriver::new(
+            clock.clone(),
+            runtime_manager.with_label("stepper"),
+            Duration::from_seconds(1),
+            Duration::from_seconds(1),
+            10,
+            Duration::from_seconds(60),
+            aggregation_job_driver
+                .make_incomplete_job_acquirer_callback(&ds, Duration::from_seconds(600)),
+            aggregation_job_driver.make_job_stepper_callback(&ds, 3),
+        ));
+
+        // Set up three error responses from our mock helper. These will cause errors in the
+        // leader, because the response body is empty and cannot be decoded.
+        let failure_mock = mock("POST", "/aggregate")
+            .match_header(
+                "DAP-Auth-Token",
+                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+            )
+            .match_header(CONTENT_TYPE.as_str(), AggregateInitializeReq::MEDIA_TYPE)
+            .with_status(500)
+            .expect(3)
+            .create();
+        // Set up an extra response that should never be used, to make sure the job driver doesn't
+        // make more requests than we expect. If there were no remaining mocks, mockito would have
+        // respond with a fallback error response instead.
+        let no_more_requests_mock = mock("POST", "/aggregate")
+            .match_header(
+                "DAP-Auth-Token",
+                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+            )
+            .match_header(CONTENT_TYPE.as_str(), AggregateInitializeReq::MEDIA_TYPE)
+            .with_status(500)
+            .expect(1)
+            .create();
+
+        // Start up the job driver.
+        let task_handle = runtime_manager
+            .with_label("driver")
+            .spawn(async move { job_driver.run().await });
+
+        // Run the job driver until we try to step the collect job four times. The first three
+        // attempts make network requests and fail, while the fourth attempt just marks the job
+        // as abandoned.
+        for i in 1..=4 {
+            // Wait for the next task to be spawned and to complete.
+            runtime_manager.wait_for_completed_tasks("stepper", i).await;
+            // Advance the clock by the lease duration, so that the job driver can pick up the job
+            // and try again.
+            clock.advance(Duration::from_seconds(600));
+        }
+        task_handle.abort();
+
+        // Check that the job driver made the HTTP requests we expected.
+        failure_mock.assert();
+        assert!(!no_more_requests_mock.matched());
+
+        // Confirm in the database that the job was abandoned.
+        let aggregation_job_after = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        task_id,
+                        aggregation_job_id,
+                    )
+                    .await
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            aggregation_job_after,
+            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                aggregation_job_id,
+                task_id,
+                aggregation_param: (),
+                state: AggregationJobState::Abandoned,
+            },
+        );
+    }
 }
