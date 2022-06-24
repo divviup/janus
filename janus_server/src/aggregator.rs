@@ -1863,7 +1863,7 @@ fn aggregator_filter<C: Clock>(
                                 .await?,
                         ),
                     _ => http::Response::builder()
-                        .status(StatusCode::NOT_FOUND)
+                        .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
                         .body(Vec::new()),
                 }
                 .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
