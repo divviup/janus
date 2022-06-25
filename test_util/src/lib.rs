@@ -42,6 +42,20 @@ macro_rules! define_ephemeral_datastore {
         }
 
         impl DbHandle {
+            pub fn datastore<C: Clock>(&self, clock: C) ->  Datastore<C> {
+                // Create a crypter based on the generated key bytes.
+                let datastore_key = ::ring::aead::LessSafeKey::new(::ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &self.datastore_key_bytes).unwrap());
+                let crypter = Crypter::new(vec![datastore_key]);
+
+                Datastore::new(self.pool(), crypter, clock)
+            }
+
+            fn pool(&self) -> ::deadpool_postgres::Pool {
+                let cfg = <::tokio_postgres::Config as std::str::FromStr>::from_str(&self.connection_string).unwrap();
+                let conn_mgr = ::deadpool_postgres::Manager::new(cfg, ::tokio_postgres::NoTls);
+                ::deadpool_postgres::Pool::builder(conn_mgr).build().unwrap()
+            }
+
             /// Get a PostgreSQL connection string to connect to the temporary database.
             pub fn connection_string(&self) -> &str {
                 &self.connection_string
@@ -134,7 +148,7 @@ macro_rules! define_ephemeral_datastore {
             let db_container =
                 CONTAINER_CLIENT.run(::testcontainers::RunnableImage::from(::testcontainers::images::postgres::Postgres::default()).with_tag("14-alpine"));
 
-            // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
+            // Compute the Postgres connection string.
             const POSTGRES_DEFAULT_PORT: u16 = 5432;
             let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
             let connection_string = format!(
@@ -142,29 +156,24 @@ macro_rules! define_ephemeral_datastore {
                 port_number,
             );
             ::tracing::trace!("Postgres container is up with URL {}", connection_string);
-            let cfg = <::tokio_postgres::Config as std::str::FromStr>::from_str(&connection_string).unwrap();
-            let conn_mgr = ::deadpool_postgres::Manager::new(cfg, ::tokio_postgres::NoTls);
-            let pool = ::deadpool_postgres::Pool::builder(conn_mgr).build().unwrap();
 
-            // Create a crypter with a random (ephemeral) key.
+            // Create a random (ephemeral) key.
             let datastore_key_bytes = ::janus_test_util::generate_aead_key_bytes();
-            let datastore_key =
-                ::ring::aead::LessSafeKey::new(::ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &datastore_key_bytes).unwrap());
-            let crypter = Crypter::new(vec![datastore_key]);
 
-            // Connect to the database & run our schema.
+            // Create a DbHandle, and use it to initialize the DB by running our schema.
+            let db_handle = DbHandle{
+                _db_container: db_container,
+                connection_string,
+                port_number,
+                datastore_key_bytes,
+            };
+            let pool = db_handle.pool();
             let client = pool.get().await.unwrap();
             client.batch_execute(::janus_test_util::SCHEMA).await.unwrap();
 
-            (
-                Datastore::new(pool, crypter, clock),
-                DbHandle {
-                    _db_container: db_container,
-                    connection_string,
-                    port_number,
-                    datastore_key_bytes,
-                },
-            )
+            // Create a datastore using our new DB, and return the DB & handle.
+            let ds = db_handle.datastore(clock);
+            (ds, db_handle)
         }
     };
 }
