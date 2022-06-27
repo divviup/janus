@@ -615,6 +615,63 @@ impl<C: Clock> Transaction<'_, C> {
             .collect::<Result<Vec<Nonce>, Error>>()
     }
 
+    /// get_unaggregated_client_report_nonces_by_collect_for_task returns pairs of nonces and
+    /// aggregation parameters, corresponding to client reports that have not yet been aggregated,
+    /// or not aggregated with a certain aggregation parameter, and for which there are collect
+    /// jobs, for a given task.
+    #[cfg(test)]
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_unaggregated_client_report_nonces_by_collect_for_task<
+        const L: usize,
+        A: vdaf::Aggregator<L>,
+    >(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Vec<(Nonce, A::AggregationParam)>, Error>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT DISTINCT nonce_time, nonce_rand, collect_jobs.aggregation_param
+                FROM collect_jobs
+                INNER JOIN client_reports
+                ON collect_jobs.task_id = client_reports.task_id
+                AND client_reports.nonce_time <@ collect_jobs.batch_interval
+                LEFT JOIN (
+                    SELECT report_aggregations.id, report_aggregations.client_report_id,
+                        aggregation_jobs.aggregation_param
+                    FROM report_aggregations
+                    INNER JOIN aggregation_jobs
+                    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                    WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                ) AS report_aggs
+                ON report_aggs.client_report_id = client_reports.id
+                AND report_aggs.aggregation_param = collect_jobs.aggregation_param
+                WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                AND collect_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                AND collect_jobs.state = 'START'
+                AND report_aggs.id IS NULL
+                ORDER BY nonce_time DESC LIMIT 5000",
+            )
+            .await?;
+        let rows = self.tx.query(&stmt, &[&task_id.as_bytes()]).await?;
+
+        rows.into_iter()
+            .map(|row| {
+                let nonce_time = Time::from_naive_date_time(row.get("nonce_time"));
+                let nonce_rand: Vec<u8> = row.get("nonce_rand");
+                let nonce_rand = nonce_rand.try_into().map_err(|err| {
+                    Error::DbState(format!("couldn't convert nonce_rand value: {0:?}", err))
+                })?;
+                let nonce = Nonce::new(nonce_time, nonce_rand);
+                let agg_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+                Ok((nonce, agg_param))
+            })
+            .collect::<Result<Vec<(Nonce, A::AggregationParam)>, Error>>()
+    }
+
     /// put_client_report stores a client report.
     #[tracing::instrument(skip(self), err)]
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
@@ -2658,6 +2715,7 @@ mod tests {
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
         message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
     };
+    use janus_test_util::dummy_vdaf::VdafWithAggregationParameter;
     use prio::{
         field::{Field128, Field64},
         vdaf::{
@@ -2956,6 +3014,243 @@ mod tests {
                 second_unaggregated_report.nonce()
             ]),
         );
+    }
+
+    #[tokio::test]
+    async fn get_unaggregated_client_report_nonces_with_agg_param_for_task() {
+        install_test_trace_subscriber();
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+
+        type FakeVdaf = VdafWithAggregationParameter<u8>;
+        const VERIFY_KEY_LENGTH: usize = FakeVdaf::VERIFY_KEY_LENGTH;
+
+        let task_id = TaskId::random();
+        let unrelated_task_id = TaskId::random();
+
+        let first_unaggregated_report = Report::new(
+            task_id,
+            Nonce::new(
+                Time::from_seconds_since_epoch(12345),
+                [1, 2, 3, 4, 5, 6, 7, 8],
+            ),
+            vec![],
+            vec![],
+        );
+        let second_unaggregated_report = Report::new(
+            task_id,
+            Nonce::new(
+                Time::from_seconds_since_epoch(12346),
+                [1, 2, 3, 4, 5, 6, 7, 8],
+            ),
+            vec![],
+            vec![],
+        );
+        let aggregated_report = Report::new(
+            task_id,
+            Nonce::new(
+                Time::from_seconds_since_epoch(12347),
+                [1, 2, 3, 4, 5, 6, 7, 8],
+            ),
+            vec![],
+            vec![],
+        );
+        let unrelated_report = Report::new(
+            unrelated_task_id,
+            Nonce::new(
+                Time::from_seconds_since_epoch(12348),
+                [1, 2, 3, 4, 5, 6, 7, 8],
+            ),
+            vec![],
+            vec![],
+        );
+
+        // Set up state.
+        ds.run_tx(|tx| {
+            let (
+                first_unaggregated_report,
+                second_unaggregated_report,
+                aggregated_report,
+                unrelated_report,
+            ) = (
+                first_unaggregated_report.clone(),
+                second_unaggregated_report.clone(),
+                aggregated_report.clone(),
+                unrelated_report.clone(),
+            );
+
+            Box::pin(async move {
+                tx.put_task(&new_dummy_task(task_id, VdafInstance::Fake, Role::Leader))
+                    .await?;
+                tx.put_task(&new_dummy_task(
+                    unrelated_task_id,
+                    VdafInstance::Fake,
+                    Role::Leader,
+                ))
+                .await?;
+
+                tx.put_client_report(&first_unaggregated_report).await?;
+                tx.put_client_report(&second_unaggregated_report).await?;
+                tx.put_client_report(&aggregated_report).await?;
+                tx.put_client_report(&unrelated_report).await?;
+
+                // There are no client reports submitted under this task, so we shouldn't see
+                // this aggregation parameter at all.
+                tx.put_collect_job(
+                    unrelated_task_id,
+                    Interval::new(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(8).unwrap(),
+                    )
+                    .unwrap(),
+                    &[255],
+                )
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run query & verify results. None should be returned yet, as there are no relevant
+        // collect requests.
+        let got_reports = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_unaggregated_client_report_nonces_by_collect_for_task::<VERIFY_KEY_LENGTH, FakeVdaf>(task_id)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        assert!(got_reports.is_empty());
+
+        // Add collect jobs, and mark one report as having already been aggregated once.
+        ds.run_tx(|tx| {
+            let aggregated_report_nonce = aggregated_report.nonce();
+            Box::pin(async move {
+                tx.put_collect_job(
+                    task_id,
+                    Interval::new(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(8).unwrap(),
+                    )
+                    .unwrap(),
+                    &[0],
+                )
+                .await?;
+                tx.put_collect_job(
+                    task_id,
+                    Interval::new(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(8).unwrap(),
+                    )
+                    .unwrap(),
+                    &[1],
+                )
+                .await?;
+                // No reports fall in this interval, so we shouldn't see it's aggregation
+                // parameter at all.
+                tx.put_collect_job(
+                    task_id,
+                    Interval::new(
+                        Time::from_seconds_since_epoch(8 * 3600),
+                        Duration::from_hours(8).unwrap(),
+                    )
+                    .unwrap(),
+                    &[2],
+                )
+                .await?;
+
+                let aggregation_job_id = AggregationJobId::random();
+                tx.put_aggregation_job(&AggregationJob::<VERIFY_KEY_LENGTH, FakeVdaf> {
+                    aggregation_job_id,
+                    task_id,
+                    aggregation_param: 0,
+                    state: AggregationJobState::InProgress,
+                })
+                .await?;
+                tx.put_report_aggregation(
+                    &ReportAggregation {
+                        aggregation_job_id,
+                        task_id,
+                        nonce: aggregated_report_nonce,
+                        ord: 0,
+                        state: ReportAggregationState::<
+                            PRIO3_AES128_VERIFY_KEY_LENGTH,
+                            Prio3Aes128Count,
+                        >::Start,
+                    },
+                )
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Run query & verify results. We should have two unaggregated reports with one parameter,
+        // and three with another.
+        let mut got_reports = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_unaggregated_client_report_nonces_by_collect_for_task::<VERIFY_KEY_LENGTH, FakeVdaf>(task_id)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let mut expected_reports = vec![
+            (first_unaggregated_report.nonce(), 0),
+            (first_unaggregated_report.nonce(), 1),
+            (second_unaggregated_report.nonce(), 0),
+            (second_unaggregated_report.nonce(), 1),
+            (aggregated_report.nonce(), 1),
+        ];
+        got_reports.sort();
+        expected_reports.sort();
+        assert_eq!(got_reports, expected_reports);
+
+        // Add overlapping collect jobs with repeated aggregation parameters. Make sure we don't
+        // repeat result tuples, which could lead to double counting in batch unit aggregations.
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                tx.put_collect_job(
+                    task_id,
+                    Interval::new(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(16).unwrap(),
+                    )
+                    .unwrap(),
+                    &[0],
+                )
+                .await?;
+                tx.put_collect_job(
+                    task_id,
+                    Interval::new(
+                        Time::from_seconds_since_epoch(0),
+                        Duration::from_hours(16).unwrap(),
+                    )
+                    .unwrap(),
+                    &[1],
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Verify that we get the same result.
+        let mut got_reports = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_unaggregated_client_report_nonces_by_collect_for_task::<VERIFY_KEY_LENGTH, FakeVdaf>(task_id)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        got_reports.sort();
+        assert_eq!(got_reports, expected_reports);
     }
 
     #[tokio::test]
