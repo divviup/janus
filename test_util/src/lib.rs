@@ -35,16 +35,37 @@ macro_rules! define_ephemeral_datastore {
         pub struct DbHandle {
             _db_container: ::testcontainers::Container<'static, ::testcontainers::images::postgres::Postgres>,
             connection_string: String,
+            port_number: u16,
             datastore_key_bytes: Vec<u8>,
         }
 
         impl DbHandle {
+            /// Get a PostgreSQL connection string to connect to the temporary database.
             pub fn connection_string(&self) -> &str {
                 &self.connection_string
             }
 
             pub fn datastore_key_bytes(&self) -> &[u8] {
                 &self.datastore_key_bytes
+            }
+
+            /// Get the port number that the temporary database is exposed on, via the 127.0.0.1
+            /// loopback interface.
+            pub fn port_number(&self) -> u16 {
+                self.port_number
+            }
+
+            /// Open an interactive terminal to the database in a new gnome-terminal window, and
+            /// block until the user exits from the terminal. This is intended to be used while
+            /// debugging tests.
+            pub fn interactive_db_terminal(&self) {
+                std::process::Command::new("gnome-terminal")
+                    .args(["--wait", "--", "psql", "--host=127.0.0.1", "--user=postgres", "-p"])
+                    .arg(format!("{}", self.port_number()))
+                    .spawn()
+                    .unwrap()
+                    .wait()
+                    .unwrap();
             }
         }
 
@@ -65,9 +86,10 @@ macro_rules! define_ephemeral_datastore {
 
             // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
             const POSTGRES_DEFAULT_PORT: u16 = 5432;
+            let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
             let connection_string = format!(
                 "postgres://postgres:postgres@127.0.0.1:{}/postgres",
-                db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
+                port_number,
             );
             ::tracing::trace!("Postgres container is up with URL {}", connection_string);
             let cfg = <::tokio_postgres::Config as std::str::FromStr>::from_str(&connection_string).unwrap();
@@ -89,6 +111,7 @@ macro_rules! define_ephemeral_datastore {
                 DbHandle {
                     _db_container: db_container,
                     connection_string,
+                    port_number,
                     datastore_key_bytes,
                 },
             )
