@@ -2972,7 +2972,7 @@ mod tests {
                     Prio3Aes128Count,
                 > {
                     aggregation_job_id,
-                    task_id: unrelated_task_id,
+                    task_id,
                     aggregation_param: (),
                     state: AggregationJobState::InProgress,
                 })
