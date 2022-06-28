@@ -12,10 +12,10 @@ use crate::{
     task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     task::{VdafInstance, DAP_AUTH_HEADER},
 };
-use futures::try_join;
+use futures::{future::BoxFuture, try_join};
 use http::header::CONTENT_TYPE;
 use janus::{
-    message::{Interval, NonceChecksum, Role},
+    message::{Duration, Interval, NonceChecksum, Role},
     time::Clock,
 };
 use prio::{
@@ -27,7 +27,7 @@ use prio::{
     },
 };
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, error, log::warn};
+use tracing::{debug, error, warn};
 
 /// Drives a collect job.
 #[derive(Debug)]
@@ -231,6 +231,60 @@ impl CollectJobDriver {
             .await?;
         Ok(())
     }
+
+    /// Produce a closure for use as a `[JobDriver::JobAcquirer`].
+    pub fn make_incomplete_job_acquirer_callback<C: Clock>(
+        &self,
+        datastore: &Arc<Datastore<C>>,
+        lease_duration: Duration,
+    ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectJob>>, datastore::Error>>
+    {
+        let datastore = Arc::clone(datastore);
+        move |maximum_acquire_count| {
+            let datastore = Arc::clone(&datastore);
+            Box::pin(async move {
+                datastore
+                    .run_tx(|tx| {
+                        Box::pin(async move {
+                            tx.acquire_incomplete_collect_jobs(
+                                lease_duration,
+                                maximum_acquire_count,
+                            )
+                            .await
+                        })
+                    })
+                    .await
+            })
+        }
+    }
+
+    /// Produce a closure for use as a `[JobDriver::JobStepper]`.
+    pub fn make_job_stepper_callback<C: Clock>(
+        self: &Arc<Self>,
+        datastore: &Arc<Datastore<C>>,
+        maximum_attempts_before_failure: usize,
+    ) -> impl Fn(Lease<AcquiredCollectJob>) -> BoxFuture<'static, Result<(), super::Error>> {
+        let datastore = Arc::clone(datastore);
+        let driver = Arc::clone(self);
+        move |collect_job_lease: Lease<AcquiredCollectJob>| {
+            let datastore = Arc::clone(&datastore);
+            let driver = Arc::clone(&driver);
+            Box::pin(async move {
+                if collect_job_lease.lease_attempts() > maximum_attempts_before_failure {
+                    warn!(
+                        attempts = ?collect_job_lease.lease_attempts(),
+                        max_attempts = ?maximum_attempts_before_failure,
+                        "Canceling job due to too many failed attempts"
+                    );
+                    return driver
+                        .cancel_collect_job(datastore, collect_job_lease)
+                        .await;
+                }
+
+                driver.step_collect_job(datastore, collect_job_lease).await
+            })
+        }
+    }
 }
 
 /// Computes the aggregate share over the provided batch unit aggregations.
@@ -370,29 +424,31 @@ where
 mod tests {
     use super::*;
     use crate::{
+        binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
                 AggregationJob, AggregationJobState, CollectJob, CollectJobState,
                 ReportAggregation, ReportAggregationState,
             },
-            Crypter, Datastore,
+            test_util::ephemeral_datastore,
         },
         message::AggregationJobId,
         task::{test_util::new_dummy_task, VdafInstance},
     };
     use assert_matches::assert_matches;
-    use janus::message::{
-        Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId,
+    use janus::{
+        message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId},
+        Runtime,
     };
     use janus_test_util::{
         dummy_vdaf::{AggregateShare, OutputShare, VdafWithAggregationParameter},
-        install_test_trace_subscriber, MockClock,
+        install_test_trace_subscriber,
+        runtime::TestRuntimeManager,
+        MockClock,
     };
     use mockito::mock;
     use std::str;
     use url::Url;
-
-    janus_test_util::define_ephemeral_datastore!();
 
     type FakeVdaf = VdafWithAggregationParameter<u8>;
 
@@ -727,5 +783,170 @@ mod tests {
             }
         );
         assert!(leases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn abandon_failing_collect_job() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let mut runtime_manager = TestRuntimeManager::new();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
+
+        type FakeVdaf = VdafWithAggregationParameter<u8>;
+        const VERIFY_KEY_LENGTH: usize = FakeVdaf::VERIFY_KEY_LENGTH;
+
+        let task_id = TaskId::random();
+        let mut task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
+        task.aggregator_endpoints = vec![
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ];
+        task.min_batch_duration = Duration::from_seconds(500);
+        task.min_batch_size = 10;
+        let agg_auth_token = task.primary_aggregator_auth_token();
+        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
+        let aggregation_param = 0u8;
+
+        // Set up the database with enough test fixtures to run a collect job.
+        let collect_job_id = ds
+            .run_tx(|tx| {
+                let clock = clock.clone();
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+
+                    let collect_job_id = tx
+                        .put_collect_job(task_id, batch_interval, &aggregation_param.get_encoded())
+                        .await?;
+
+                    let aggregation_job_id = AggregationJobId::random();
+                    tx.put_aggregation_job(&AggregationJob::<VERIFY_KEY_LENGTH, FakeVdaf> {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param,
+                        state: AggregationJobState::Finished,
+                    })
+                    .await?;
+
+                    // We need to have some report aggregations present, so that our collect job
+                    // can be picked up and the anti-replay check has something to check.
+                    for i in 0..10 {
+                        let nonce = Nonce::generate(&clock);
+                        tx.put_client_report(&Report::new(task_id, nonce, vec![], vec![]))
+                            .await?;
+                        tx.put_report_aggregation(&ReportAggregation::<
+                            VERIFY_KEY_LENGTH,
+                            FakeVdaf,
+                        > {
+                            aggregation_job_id,
+                            task_id,
+                            nonce,
+                            ord: i,
+                            state: ReportAggregationState::Finished(OutputShare()),
+                        })
+                        .await?;
+                    }
+
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                        VERIFY_KEY_LENGTH,
+                        FakeVdaf,
+                    > {
+                        task_id,
+                        unit_interval_start: clock.now(),
+                        aggregation_param,
+                        aggregate_share: AggregateShare(),
+                        report_count: 10,
+                        checksum: NonceChecksum::get_decoded(&[0xff; 32]).unwrap(),
+                    })
+                    .await?;
+
+                    Ok(collect_job_id)
+                })
+            })
+            .await
+            .unwrap();
+
+        // Set up the collect job driver
+        let collect_job_driver = Arc::new(CollectJobDriver::new(reqwest::Client::new()));
+        let job_driver = Arc::new(JobDriver::new(
+            clock.clone(),
+            runtime_manager.with_label("stepper"),
+            Duration::from_seconds(1),
+            Duration::from_seconds(1),
+            10,
+            Duration::from_seconds(60),
+            collect_job_driver
+                .make_incomplete_job_acquirer_callback(&ds, Duration::from_seconds(600)),
+            collect_job_driver.make_job_stepper_callback(&ds, 3),
+        ));
+
+        // Set up three error responses from our mock helper. These will cause errors in the
+        // leader, because the response body is empty and cannot be decoded.
+        let failure_mock = mock("POST", "/aggregate_share")
+            .match_header(
+                "DAP-Auth-Token",
+                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+            )
+            .match_header(CONTENT_TYPE.as_str(), AggregateShareReq::MEDIA_TYPE)
+            .with_status(500)
+            .expect(3)
+            .create();
+        // Set up an extra response that should never be used, to make sure the job driver doesn't
+        // make more requests than we expect. If there were no remaining mocks, mockito would have
+        // respond with a fallback error response instead.
+        let no_more_requests_mock = mock("POST", "/aggregate_share")
+            .match_header(
+                "DAP-Auth-Token",
+                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+            )
+            .match_header(CONTENT_TYPE.as_str(), AggregateShareReq::MEDIA_TYPE)
+            .with_status(500)
+            .expect(1)
+            .create();
+
+        // Start up the job driver.
+        let task_handle = runtime_manager
+            .with_label("driver")
+            .spawn(async move { job_driver.run().await });
+
+        // Run the job driver until we try to step the collect job four times. The first three
+        // attempts make network requests and fail, while the fourth attempt just marks the job
+        // as abandoned.
+        for i in 1..=4 {
+            // Wait for the next task to be spawned and to complete.
+            runtime_manager.wait_for_completed_tasks("stepper", i).await;
+            // Advance the clock by the lease duration, so that the job driver can pick up the job
+            // and try again.
+            clock.advance(Duration::from_seconds(600));
+        }
+        // Shut down the job driver.
+        task_handle.abort();
+
+        // Check that the job driver made the HTTP requests we expected.
+        failure_mock.assert();
+        assert!(!no_more_requests_mock.matched());
+
+        // Confirm that the collect job was abandoned.
+        let collect_job_after = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.get_collect_job::<VERIFY_KEY_LENGTH, FakeVdaf>(collect_job_id)
+                        .await
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            collect_job_after,
+            CollectJob {
+                collect_job_id,
+                task_id,
+                batch_interval,
+                aggregation_param,
+                state: CollectJobState::Abandoned,
+            },
+        );
     }
 }
