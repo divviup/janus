@@ -55,17 +55,65 @@ macro_rules! define_ephemeral_datastore {
                 self.port_number
             }
 
-            /// Open an interactive terminal to the database in a new gnome-terminal window, and
-            /// block until the user exits from the terminal. This is intended to be used while
+            /// Open an interactive terminal to the database in a new terminal window, and block
+            /// until the user exits from the terminal. This is intended to be used while
             /// debugging tests.
+            ///
+            /// By default, this will invoke `gnome-terminal`, which is readily available on
+            /// GNOME-based Linux distributions. To use a different terminal, set the environment
+            /// variable `JANUS_SHELL_CMD` to a shell command that will open a new terminal window
+            /// of your choice. This command line should include a "{}" in the position appropriate
+            /// for what command the terminal should run when it opens. A `psql` invocation will
+            /// be substituted in place of the "{}". Note that this shell command must not exit
+            /// immediately once the terminal is spawned; it should continue running as long as the
+            /// terminal is open. If the command provided exits too soon, then the test will
+            /// continue running without intervention, leading to the test's database shutting
+            /// down.
+            ///
+            /// # Example
+            ///
+            /// ```text
+            /// JANUS_SHELL_CMD='xterm -e {}' cargo test
+            /// ```
             pub fn interactive_db_terminal(&self) {
-                std::process::Command::new("gnome-terminal")
-                    .args(["--wait", "--", "psql", "--host=127.0.0.1", "--user=postgres", "-p"])
-                    .arg(format!("{}", self.port_number()))
-                    .spawn()
-                    .unwrap()
-                    .wait()
-                    .unwrap();
+                let mut command = match ::std::env::var("JANUS_SHELL_CMD") {
+                    Ok(shell_cmd) => {
+                        if let None = shell_cmd.find("{}") {
+                            panic!("JANUS_SHELL_CMD should contain a \"{{}}\" to denote where the database command should be substituted");
+                        }
+
+                        #[cfg(not(windows))]
+                        let mut command = {
+                            let mut command = ::std::process::Command::new("sh");
+                            command.arg("-c");
+                            command
+                        };
+
+                        #[cfg(windows)]
+                        let mut command = {
+                            let mut command = ::std::process::Command::new("cmd.exe");
+                            command.arg("/c");
+                            command
+                        };
+
+                        let psql_command = format!(
+                            "psql --host=127.0.0.1 --user=postgres -p {}",
+                            self.port_number(),
+                        );
+                        command.arg(shell_cmd.replacen("{}", &psql_command, 1));
+                        command
+                    }
+                    Err(::std::env::VarError::NotPresent) => {
+                        let mut command = ::std::process::Command::new("gnome-terminal");
+                        command.args(["--wait", "--", "psql", "--host=127.0.0.1", "--user=postgres", "-p"]);
+                        command.arg(format!("{}", self.port_number()));
+                        command
+                    }
+                    Err(::std::env::VarError::NotUnicode(_)) => {
+                        panic!("JANUS_SHELL_CMD contains invalid unicode data");
+                    }
+                };
+                command.spawn().unwrap().wait().unwrap();
             }
         }
 
