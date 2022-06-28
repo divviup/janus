@@ -82,6 +82,7 @@ impl ClientParameters {
 
 /// Fetches HPKE configuration from the specified aggregator using the
 /// aggregator endpoints in the provided [`ClientParameters`].
+#[tracing::instrument(err)]
 pub async fn aggregator_hpke_config(
     client_parameters: &ClientParameters,
     aggregator_role: Role,
@@ -151,6 +152,7 @@ where
     /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
     /// share plus one proof share for each aggregator and then uploaded to the
     /// leader.
+    #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
         let input_shares = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // PPM only supports VDAFs using two aggregators.
