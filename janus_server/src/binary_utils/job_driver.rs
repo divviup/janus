@@ -196,10 +196,9 @@ mod tests {
         datastore::{Crypter, Datastore},
         message::AggregationJobId,
         task::VdafInstance,
-        trace::test_util::install_test_trace_subscriber,
     };
     use janus::{message::TaskId, time::Clock};
-    use janus_test_util::MockClock;
+    use janus_test_util::{install_test_trace_subscriber, MockClock};
     use tokio::{sync::Mutex, task, time};
 
     janus_test_util::define_ephemeral_datastore!();

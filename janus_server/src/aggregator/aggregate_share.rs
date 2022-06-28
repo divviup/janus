@@ -379,7 +379,6 @@ mod tests {
         },
         message::AggregationJobId,
         task::{test_util::new_dummy_task, VdafInstance},
-        trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use janus::message::{
@@ -387,7 +386,7 @@ mod tests {
     };
     use janus_test_util::{
         dummy_vdaf::{AggregateShare, OutputShare, VdafWithAggregationParameter},
-        MockClock,
+        install_test_trace_subscriber, MockClock,
     };
     use mockito::mock;
     use std::str;

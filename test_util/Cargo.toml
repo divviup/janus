@@ -8,8 +8,11 @@ publish = false
 
 [dependencies]
 assert_matches = "1"
+chrono = "0.4"
+janus = { path = "../janus" }
 prio = "0.8.0"
 rand = "0.8"
 ring = "0.16.20"
-janus = { path = "../janus" }
-chrono = "0.4"
+tracing = "0.1.34"
+tracing-log = "0.1.3"
+tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }

@@ -320,9 +320,8 @@ mod tests {
         datastore::{Crypter, Datastore, Transaction},
         message::{test_util::new_dummy_report, AggregationJobId},
         task::{test_util::new_dummy_task, PRIO3_AES128_VERIFY_KEY_LENGTH},
-        trace::test_util::install_test_trace_subscriber,
     };
-    use janus_test_util::MockClock;
+    use janus_test_util::{install_test_trace_subscriber, MockClock};
     use prio::vdaf::prio3::{Prio3, Prio3Aes128Count};
     use std::{
         collections::{HashMap, HashSet},

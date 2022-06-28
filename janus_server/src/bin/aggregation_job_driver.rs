@@ -822,9 +822,8 @@ mod tests {
             AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
         },
         task::{test_util::new_dummy_task, PRIO3_AES128_VERIFY_KEY_LENGTH},
-        trace::test_util::install_test_trace_subscriber,
     };
-    use janus_test_util::{run_vdaf, MockClock};
+    use janus_test_util::{install_test_trace_subscriber, run_vdaf, MockClock};
     use mockito::mock;
     use prio::{
         codec::Encode,

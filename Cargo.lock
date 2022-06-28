@@ -1384,6 +1384,9 @@ dependencies = [
  "prio",
  "rand",
  "ring",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
 ]
 
 [[package]]

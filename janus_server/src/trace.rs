@@ -234,25 +234,3 @@ pub(crate) fn cleanup_trace_subscriber(_config: &TraceConfiguration) {
         opentelemetry::global::shutdown_tracer_provider();
     }
 }
-
-#[doc(hidden)]
-pub mod test_util {
-    use super::*;
-    use std::sync::Once;
-
-    /// install_test_trace_subscriber installs a tracing subscriber suitable for tests. It should be
-    /// called at the beginning of any test that requires a tracing subscriber.
-    ///
-    /// To see output, you will need to set the RUST_LOG environment variable appropriately.
-    /// See <https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html>.
-    pub fn install_test_trace_subscriber() {
-        static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| {
-            install_trace_subscriber(&TraceConfiguration {
-                use_test_writer: true,
-                ..Default::default()
-            })
-            .unwrap()
-        });
-    }
-}

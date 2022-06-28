@@ -201,41 +201,11 @@ where
 }
 
 #[cfg(test)]
-mod test_util {
-    use std::sync::Once;
-    use tracing_log::LogTracer;
-    use tracing_subscriber::{prelude::*, EnvFilter, Registry};
-
-    /// Install a tracing subscriber for use in unit tests. This should be called at the beginning
-    /// of any test that requires a tracing subscriber.
-    pub fn install_test_trace_subscriber() {
-        static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
-        INSTALL_TRACE_SUBSCRIBER.call_once(|| {
-            let stdout_filter = EnvFilter::from_default_env();
-            let layer = tracing_subscriber::fmt::layer()
-                .with_thread_ids(true)
-                .with_level(true)
-                .with_target(true)
-                .with_file(true)
-                .with_line_number(true)
-                .pretty()
-                .with_test_writer()
-                .with_filter(stdout_filter);
-            let subscriber = Registry::default().with(layer);
-            tracing::subscriber::set_global_default(subscriber).unwrap();
-
-            LogTracer::init().unwrap();
-        })
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::install_test_trace_subscriber;
     use assert_matches::assert_matches;
     use janus::{hpke::test_util::generate_hpke_config_and_private_key, message::TaskId};
-    use janus_test_util::MockClock;
+    use janus_test_util::{install_test_trace_subscriber, MockClock};
     use mockito::mock;
     use prio::vdaf::prio3::Prio3;
     use url::Url;

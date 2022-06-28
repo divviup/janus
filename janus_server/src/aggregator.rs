@@ -68,7 +68,7 @@ use warp::{
 };
 
 #[cfg(test)]
-use ::janus_test_util::dummy_vdaf;
+use janus_test_util::dummy_vdaf;
 #[cfg(test)]
 use prio::vdaf::VdafError;
 
@@ -1993,9 +1993,7 @@ mod tests {
             test_util::{generate_aggregator_auth_token, new_dummy_task},
             VdafInstance,
         },
-        trace::test_util::install_test_trace_subscriber,
     };
-    use ::janus_test_util::{dummy_vdaf, run_vdaf, MockClock};
     use assert_matches::assert_matches;
     use http::Method;
     use janus::{
@@ -2006,6 +2004,7 @@ mod tests {
         },
         message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
     };
+    use janus_test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, MockClock};
     use prio::{
         codec::Decode,
         field::Field64,
