@@ -288,11 +288,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     // This is only used in tests thus far.
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
-    async fn create_aggregation_jobs_for_task_with_param<const L: usize, A: vdaf::Aggregator<L>>(
+    async fn create_aggregation_jobs_for_task_with_param<const L: usize, A>(
         &self,
         task: &Task,
     ) -> anyhow::Result<()>
     where
+        A: vdaf::Aggregator<L>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
         A::PrepareState: Send + Sync + Encode,

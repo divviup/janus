@@ -621,14 +621,12 @@ impl<C: Clock> Transaction<'_, C> {
     /// jobs, for a given task.
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_unaggregated_client_report_nonces_by_collect_for_task<
-        const L: usize,
-        A: vdaf::Aggregator<L>,
-    >(
+    pub async fn get_unaggregated_client_report_nonces_by_collect_for_task<const L: usize, A>(
         &self,
         task_id: TaskId,
     ) -> Result<Vec<(Nonce, A::AggregationParam)>, Error>
     where
+        A: vdaf::Aggregator<L>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
