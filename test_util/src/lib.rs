@@ -291,8 +291,8 @@ where
     }
 }
 
-/// Install a tracing subscriber for use in unit tests. This should be called at the beginning
-/// of any test that requires a tracing subscriber.
+/// Install a tracing subscriber for use in tests. This should be called at the beginning of any
+/// test that requires a tracing subscriber.
 pub fn install_test_trace_subscriber() {
     static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
     INSTALL_TRACE_SUBSCRIBER.call_once(|| {
