@@ -588,7 +588,7 @@ impl<C: Clock> Transaction<'_, C> {
         // See https://medium.com/swlh/fifo-considered-harmful-793b76f98374 &
         // https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.376.5966&rep=rep1&type=pdf.
 
-        // TODO(#224): allow the number of returned results to be controlled?
+        // TODO(#269): allow the number of returned results to be controlled?
 
         let stmt = self
             .tx
@@ -629,6 +629,7 @@ impl<C: Clock> Transaction<'_, C> {
         A: vdaf::Aggregator<L>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+        // TODO(#269): allow the number of returned results to be controlled?
         let stmt = self
             .tx
             .prepare_cached(
