@@ -2703,9 +2703,7 @@ mod tests {
         },
         message::{test_util::new_dummy_report, ReportShareError},
         task::{test_util::new_dummy_task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
-        trace::test_util::install_test_trace_subscriber,
     };
-    use ::janus_test_util::{dummy_vdaf, generate_aead_key, MockClock};
     use assert_matches::assert_matches;
     use chrono::NaiveDate;
     use futures::future::try_join_all;
@@ -2713,7 +2711,10 @@ mod tests {
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
         message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
     };
-    use janus_test_util::dummy_vdaf::VdafWithAggregationParameter;
+    use janus_test_util::{
+        dummy_vdaf::{self, VdafWithAggregationParameter},
+        generate_aead_key, install_test_trace_subscriber, MockClock,
+    };
     use prio::{
         field::{Field128, Field64},
         vdaf::{

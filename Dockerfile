@@ -6,6 +6,7 @@ WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
 COPY janus /src/janus
+COPY janus_client /src/janus_client
 COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test
 COPY test_util /src/test_util

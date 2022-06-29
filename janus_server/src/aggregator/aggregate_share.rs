@@ -434,7 +434,6 @@ mod tests {
         },
         message::AggregationJobId,
         task::{test_util::new_dummy_task, VdafInstance},
-        trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use janus::{
@@ -443,6 +442,7 @@ mod tests {
     };
     use janus_test_util::{
         dummy_vdaf::{AggregateShare, OutputShare, VdafWithAggregationParameter},
+        install_test_trace_subscriber,
         runtime::TestRuntimeManager,
         MockClock,
     };
@@ -945,8 +945,8 @@ mod tests {
                 task_id,
                 batch_interval,
                 aggregation_param,
-                state: CollectJobState::Abandoned
-            }
+                state: CollectJobState::Abandoned,
+            },
         );
     }
 }

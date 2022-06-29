@@ -5,9 +5,9 @@ use janus::{
     task::VdafInstance,
     time::{Clock, RealClock},
 };
+use janus_client::{self, Client, ClientParameters};
 use janus_server::{
     aggregator::aggregator_server,
-    client::{self, Client, ClientParameters},
     datastore::{Crypter, Datastore},
     task::{test_util::generate_aggregator_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     trace::{install_trace_subscriber, TraceConfiguration},
@@ -150,16 +150,24 @@ async fn setup_test() -> TestCase {
         ],
     );
 
-    let http_client = client::default_http_client().unwrap();
-    let leader_report_config =
-        client::aggregator_hpke_config(&client_parameters, Role::Leader, task_id, &http_client)
-            .await
-            .unwrap();
+    let http_client = janus_client::default_http_client().unwrap();
+    let leader_report_config = janus_client::aggregator_hpke_config(
+        &client_parameters,
+        Role::Leader,
+        task_id,
+        &http_client,
+    )
+    .await
+    .unwrap();
 
-    let helper_report_config =
-        client::aggregator_hpke_config(&client_parameters, Role::Helper, task_id, &http_client)
-            .await
-            .unwrap();
+    let helper_report_config = janus_client::aggregator_hpke_config(
+        &client_parameters,
+        Role::Helper,
+        task_id,
+        &http_client,
+    )
+    .await
+    .unwrap();
 
     let vdaf = Prio3::new_aes128_count(2).unwrap();
 

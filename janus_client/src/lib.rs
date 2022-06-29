@@ -30,8 +30,6 @@ pub enum Error {
     Vdaf(#[from] prio::vdaf::VdafError),
     #[error("HPKE error: {0}")]
     Hpke(#[from] janus::hpke::Error),
-    #[error("invalid task parameters: {0}")]
-    TaskParameters(#[from] crate::task::Error),
 }
 
 static CLIENT_USER_AGENT: &str = concat!(
@@ -84,6 +82,7 @@ impl ClientParameters {
 
 /// Fetches HPKE configuration from the specified aggregator using the
 /// aggregator endpoints in the provided [`ClientParameters`].
+#[tracing::instrument(err)]
 pub async fn aggregator_hpke_config(
     client_parameters: &ClientParameters,
     aggregator_role: Role,
@@ -153,6 +152,7 @@ where
     /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
     /// share plus one proof share for each aggregator and then uploaded to the
     /// leader.
+    #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
         let input_shares = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // PPM only supports VDAFs using two aggregators.
@@ -205,10 +205,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trace::test_util::install_test_trace_subscriber;
     use assert_matches::assert_matches;
     use janus::{hpke::test_util::generate_hpke_config_and_private_key, message::TaskId};
-    use janus_test_util::MockClock;
+    use janus_test_util::{install_test_trace_subscriber, MockClock};
     use mockito::mock;
     use prio::vdaf::prio3::Prio3;
     use url::Url;

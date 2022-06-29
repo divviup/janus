@@ -9,7 +9,9 @@ use prio::{
 };
 use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
+use tracing_log::LogTracer;
+use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 
 pub mod dummy_vdaf;
 pub mod runtime;
@@ -35,16 +37,85 @@ macro_rules! define_ephemeral_datastore {
         pub struct DbHandle {
             _db_container: ::testcontainers::Container<'static, ::testcontainers::images::postgres::Postgres>,
             connection_string: String,
+            port_number: u16,
             datastore_key_bytes: Vec<u8>,
         }
 
         impl DbHandle {
+            /// Get a PostgreSQL connection string to connect to the temporary database.
             pub fn connection_string(&self) -> &str {
                 &self.connection_string
             }
 
             pub fn datastore_key_bytes(&self) -> &[u8] {
                 &self.datastore_key_bytes
+            }
+
+            /// Get the port number that the temporary database is exposed on, via the 127.0.0.1
+            /// loopback interface.
+            pub fn port_number(&self) -> u16 {
+                self.port_number
+            }
+
+            /// Open an interactive terminal to the database in a new terminal window, and block
+            /// until the user exits from the terminal. This is intended to be used while
+            /// debugging tests.
+            ///
+            /// By default, this will invoke `gnome-terminal`, which is readily available on
+            /// GNOME-based Linux distributions. To use a different terminal, set the environment
+            /// variable `JANUS_SHELL_CMD` to a shell command that will open a new terminal window
+            /// of your choice. This command line should include a "{}" in the position appropriate
+            /// for what command the terminal should run when it opens. A `psql` invocation will
+            /// be substituted in place of the "{}". Note that this shell command must not exit
+            /// immediately once the terminal is spawned; it should continue running as long as the
+            /// terminal is open. If the command provided exits too soon, then the test will
+            /// continue running without intervention, leading to the test's database shutting
+            /// down.
+            ///
+            /// # Example
+            ///
+            /// ```text
+            /// JANUS_SHELL_CMD='xterm -e {}' cargo test
+            /// ```
+            pub fn interactive_db_terminal(&self) {
+                let mut command = match ::std::env::var("JANUS_SHELL_CMD") {
+                    Ok(shell_cmd) => {
+                        if let None = shell_cmd.find("{}") {
+                            panic!("JANUS_SHELL_CMD should contain a \"{{}}\" to denote where the database command should be substituted");
+                        }
+
+                        #[cfg(not(windows))]
+                        let mut command = {
+                            let mut command = ::std::process::Command::new("sh");
+                            command.arg("-c");
+                            command
+                        };
+
+                        #[cfg(windows)]
+                        let mut command = {
+                            let mut command = ::std::process::Command::new("cmd.exe");
+                            command.arg("/c");
+                            command
+                        };
+
+                        let psql_command = format!(
+                            "psql --host=127.0.0.1 --user=postgres -p {}",
+                            self.port_number(),
+                        );
+                        command.arg(shell_cmd.replacen("{}", &psql_command, 1));
+                        command
+                    }
+                    Err(::std::env::VarError::NotPresent) => {
+                        let mut command = ::std::process::Command::new("gnome-terminal");
+                        command.args(["--wait", "--", "psql", "--host=127.0.0.1", "--user=postgres", "-p"]);
+                        command.arg(format!("{}", self.port_number()));
+                        command
+                    }
+                    Err(::std::env::VarError::NotUnicode(_)) => {
+                        panic!("JANUS_SHELL_CMD contains invalid unicode data");
+                    }
+                };
+                command.spawn().unwrap().wait().unwrap();
             }
         }
 
@@ -65,9 +136,10 @@ macro_rules! define_ephemeral_datastore {
 
             // Create a connection pool whose clients will talk to our newly-running instance of Postgres.
             const POSTGRES_DEFAULT_PORT: u16 = 5432;
+            let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
             let connection_string = format!(
                 "postgres://postgres:postgres@127.0.0.1:{}/postgres",
-                db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT)
+                port_number,
             );
             ::tracing::trace!("Postgres container is up with URL {}", connection_string);
             let cfg = <::tokio_postgres::Config as std::str::FromStr>::from_str(&connection_string).unwrap();
@@ -89,6 +161,7 @@ macro_rules! define_ephemeral_datastore {
                 DbHandle {
                     _db_container: db_container,
                     connection_string,
+                    port_number,
                     datastore_key_bytes,
                 },
             )
@@ -216,4 +289,26 @@ where
             pts.push(vdaf.prepare_step(prep_state, prep_msg.clone()).unwrap());
         }
     }
+}
+
+/// Install a tracing subscriber for use in tests. This should be called at the beginning of any
+/// test that requires a tracing subscriber.
+pub fn install_test_trace_subscriber() {
+    static INSTALL_TRACE_SUBSCRIBER: Once = Once::new();
+    INSTALL_TRACE_SUBSCRIBER.call_once(|| {
+        let stdout_filter = EnvFilter::from_default_env();
+        let layer = tracing_subscriber::fmt::layer()
+            .with_thread_ids(true)
+            .with_level(true)
+            .with_target(true)
+            .with_file(true)
+            .with_line_number(true)
+            .pretty()
+            .with_test_writer()
+            .with_filter(stdout_filter);
+        let subscriber = Registry::default().with(layer);
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+
+        LogTracer::init().unwrap();
+    })
 }

@@ -386,7 +386,6 @@ mod tests {
         datastore::{test_util::ephemeral_datastore, Transaction},
         message::{test_util::new_dummy_report, AggregationJobId},
         task::{test_util::new_dummy_task, PRIO3_AES128_VERIFY_KEY_LENGTH},
-        trace::test_util::install_test_trace_subscriber,
     };
     use futures::{future::try_join_all, TryFutureExt};
     use janus::{
@@ -394,7 +393,9 @@ mod tests {
         task::VdafInstance,
         time::Clock,
     };
-    use janus_test_util::{dummy_vdaf::VdafWithAggregationParameter, MockClock};
+    use janus_test_util::{
+        dummy_vdaf::VdafWithAggregationParameter, install_test_trace_subscriber, MockClock,
+    };
     use prio::{
         codec::ParameterizedDecode,
         vdaf::{

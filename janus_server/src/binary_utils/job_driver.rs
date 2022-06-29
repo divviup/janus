@@ -199,12 +199,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        message::AggregationJobId, task::VdafInstance,
-        trace::test_util::install_test_trace_subscriber,
-    };
+    use crate::{message::AggregationJobId, task::VdafInstance};
     use janus::message::TaskId;
-    use janus_test_util::{runtime::TestRuntimeManager, MockClock};
+    use janus_test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager, MockClock};
     use tokio::sync::Mutex;
 
     #[tokio::test]
