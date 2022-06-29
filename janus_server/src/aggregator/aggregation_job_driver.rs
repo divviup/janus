@@ -760,7 +760,6 @@ mod tests {
             AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
         },
         task::{test_util::new_dummy_task, PRIO3_AES128_VERIFY_KEY_LENGTH},
-        trace::test_util::install_test_trace_subscriber,
     };
     use assert_matches::assert_matches;
     use http::header::CONTENT_TYPE;
@@ -773,7 +772,9 @@ mod tests {
         task::VdafInstance,
         Runtime,
     };
-    use janus_test_util::{run_vdaf, runtime::TestRuntimeManager, MockClock};
+    use janus_test_util::{
+        install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager, MockClock,
+    };
     use mockito::mock;
     use prio::{
         codec::Encode,
