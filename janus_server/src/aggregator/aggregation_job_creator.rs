@@ -28,6 +28,14 @@ use tokio::{
 };
 use tracing::{debug, error, info};
 
+/// A marker trait for VDAFs that have an aggregation parameter other than the unit type.
+trait VdafHasAggregationParameter {}
+
+impl<I, P, const L: usize> VdafHasAggregationParameter for prio::vdaf::poplar1::Poplar1<I, P, L> {}
+
+#[cfg(test)]
+impl VdafHasAggregationParameter for janus_test_util::dummy_vdaf::VdafWithAggregationParameter<u8> {}
+
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
     datastore: Datastore<C>,
@@ -294,6 +302,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> anyhow::Result<()>
     where
         A: vdaf::Aggregator<L>,
+        A: VdafHasAggregationParameter,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
