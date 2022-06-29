@@ -574,8 +574,13 @@ impl<C: Clock> Transaction<'_, C> {
             .transpose()
     }
 
-    /// get_unaggregated_client_report_nonces_for_task returns some nonces corresponding to
+    /// `get_unaggregated_client_report_nonces_for_task` returns some nonces corresponding to
     /// unaggregated client reports for the task identified by the given task ID.
+    ///
+    /// This should only be used with VDAFs that have an aggregation parameter of the unit type.
+    /// It relies on this assumption to find relevant reports without consulting collect jobs. For
+    /// VDAFs that do have a different aggregation parameter,
+    /// `get_unaggregated_client_report_nonces_by_collect_for_task` should be used instead.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_unaggregated_client_report_nonces_for_task(
         &self,
@@ -615,10 +620,15 @@ impl<C: Clock> Transaction<'_, C> {
             .collect::<Result<Vec<Nonce>, Error>>()
     }
 
-    /// get_unaggregated_client_report_nonces_by_collect_for_task returns pairs of nonces and
+    /// `get_unaggregated_client_report_nonces_by_collect_for_task` returns pairs of nonces and
     /// aggregation parameters, corresponding to client reports that have not yet been aggregated,
     /// or not aggregated with a certain aggregation parameter, and for which there are collect
     /// jobs, for a given task.
+    ///
+    /// This should only be used with VDAFs with a non-unit type aggregation parameter. If a VDAF
+    /// has the unit type as its aggregation parameter, then
+    /// `get_unaggregated_client_report_nonces_for_task` should be used instead. In such cases, it
+    /// is not necessary to wait for a collect job to arrive before preparing reports.
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
     pub async fn get_unaggregated_client_report_nonces_by_collect_for_task<const L: usize, A>(
