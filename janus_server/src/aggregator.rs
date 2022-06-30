@@ -88,7 +88,7 @@ pub enum Error {
     Message(#[from] janus::message::Error),
     /// Corresponds to `staleReport`, §3.1
     #[error("stale report: {0} {1:?}")]
-    StaleReport(Nonce, TaskId),
+    ReportTooLate(Nonce, TaskId),
     /// Corresponds to `unrecognizedMessage`, §3.1
     #[error("unrecognized message: {0} {1:?}")]
     UnrecognizedMessage(&'static str, Option<TaskId>),
@@ -119,7 +119,7 @@ pub enum Error {
     Vdaf(#[from] vdaf::VdafError),
     /// A collect or aggregate share request was rejected because the interval is valid, per §4.6
     #[error("invalid batch interval: {0} {1:?}")]
-    InvalidBatchInterval(Interval, TaskId),
+    BatchInvalid(Interval, TaskId),
     /// There are not enough reports in the batch interval to meet the task's minimum batch size.
     #[error("insufficient number of reports ({0}) for task {1:?}")]
     InsufficientBatchSize(u64, TaskId),
@@ -131,7 +131,7 @@ pub enum Error {
         "batch misalignment: own checksum: {own_checksum:?} own report count: {own_report_count} \
 peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
     )]
-    BatchMisalignment {
+    BatchMismatch {
         task_id: TaskId,
         own_checksum: NonceChecksum,
         own_report_count: u64,
@@ -538,7 +538,7 @@ impl TaskAggregator {
                         warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report replayed");
                         // TODO(#34): change this error type.
                         return Err(datastore::Error::User(
-                            Error::StaleReport(report.nonce(), report.task_id()).into(),
+                            Error::ReportTooLate(report.nonce(), report.task_id()).into(),
                         ));
                     }
 
@@ -609,10 +609,7 @@ impl TaskAggregator {
     ) -> Result<AggregateShareResp, Error> {
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
         if !self.task.validate_batch_interval(req.batch_interval) {
-            return Err(Error::InvalidBatchInterval(
-                req.batch_interval,
-                self.task.id,
-            ));
+            return Err(Error::BatchInvalid(req.batch_interval, self.task.id));
         }
 
         self.vdaf_ops
@@ -1162,7 +1159,7 @@ impl VdafOps {
     {
         // §4.5: check that the batch interval meets the requirements from §4.6
         if !task.validate_batch_interval(req.batch_interval) {
-            return Err(Error::InvalidBatchInterval(req.batch_interval, task.id));
+            return Err(Error::BatchInvalid(req.batch_interval, task.id));
         }
 
         Ok(datastore
@@ -1464,7 +1461,7 @@ impl VdafOps {
         if aggregate_share_job.report_count != aggregate_share_req.report_count
             || aggregate_share_job.checksum != aggregate_share_req.checksum
         {
-            return Err(Error::BatchMisalignment {
+            return Err(Error::BatchMismatch {
                 task_id: aggregate_share_req.task_id,
                 own_checksum: aggregate_share_job.checksum,
                 own_report_count: aggregate_share_job.report_count,
@@ -1500,40 +1497,46 @@ where
 }
 
 /// Representation of the different problem types defined in Table 1 in §3.1.
-enum PpmProblemType {
+enum DapProblemType {
     UnrecognizedMessage,
     UnrecognizedTask,
     UnrecognizedAggregationJob, // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/270): standardize this value
     OutdatedConfig,
-    StaleReport,
-    UnauthorizedRequest,
-    InvalidBatchInterval,
+    ReportTooLate,
+    // TODO(#273): reject reports from too far in the future with ReportTooEarly
+    #[allow(dead_code)]
+    ReportTooEarly,
+    BatchInvalid,
     InsufficientBatchSize,
-    BatchMisaligned,
     BatchLifetimeExceeded,
+    BatchMismatch,
+    UnauthorizedRequest,
 }
 
-impl PpmProblemType {
+impl DapProblemType {
     /// Returns the problem type URI for a particular kind of error.
     fn type_uri(&self) -> &'static str {
         match self {
-            PpmProblemType::UnrecognizedMessage => "urn:ietf:params:ppm:error:unrecognizedMessage",
-            PpmProblemType::UnrecognizedTask => "urn:ietf:params:ppm:error:unrecognizedTask",
-            PpmProblemType::UnrecognizedAggregationJob => {
-                "urn:ietf:params:ppm:error:unrecognizedAggregationJob"
+            DapProblemType::UnrecognizedMessage => {
+                "urn:ietf:params:ppm:dap:error:unrecognizedMessage"
             }
-            PpmProblemType::OutdatedConfig => "urn:ietf:params:ppm:error:outdatedConfig",
-            PpmProblemType::StaleReport => "urn:ietf:params:ppm:error:staleReport",
-            PpmProblemType::UnauthorizedRequest => "urn:ietf:params:ppm:error:unauthorizedRequest",
-            PpmProblemType::InvalidBatchInterval => {
-                "urn:ietf:params:ppm:error:invalidBatchInterval"
+            DapProblemType::UnrecognizedTask => "urn:ietf:params:ppm:dap:error:unrecognizedTask",
+            DapProblemType::UnrecognizedAggregationJob => {
+                "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob"
             }
-            PpmProblemType::InsufficientBatchSize => {
-                "urn:ietf:params:ppm:error:insufficientBatchSize"
+            DapProblemType::OutdatedConfig => "urn:ietf:params:ppm:dap:error:outdatedConfig",
+            DapProblemType::ReportTooLate => "urn:ietf:params:ppm:dap:error:reportTooLate",
+            DapProblemType::ReportTooEarly => "urn:ietf:params:ppm:dap:error:reportTooEarly",
+            DapProblemType::BatchInvalid => "urn:ietf:params:ppm:dap:error:batchInvalid",
+            DapProblemType::InsufficientBatchSize => {
+                "urn:ietf:params:ppm:dap:error:insufficientBatchSize"
             }
-            PpmProblemType::BatchMisaligned => "urn:ietf:params:ppm:error:batchMisaligned",
-            PpmProblemType::BatchLifetimeExceeded => {
-                "urn:ietf:params:ppm:error:batchLifetimeExceeded"
+            DapProblemType::BatchLifetimeExceeded => {
+                "urn:ietf:params:ppm:dap:error:batchLifetimeExceeded"
+            }
+            DapProblemType::BatchMismatch => "urn:ietf:params:ppm:dap:error:batchMismatch",
+            DapProblemType::UnauthorizedRequest => {
+                "urn:ietf:params:ppm:dap:error:unauthorizedRequest"
             }
         }
     }
@@ -1541,34 +1544,31 @@ impl PpmProblemType {
     /// Returns a human-readable summary of a problem type.
     fn description(&self) -> &'static str {
         match self {
-            PpmProblemType::UnrecognizedMessage => {
+            DapProblemType::UnrecognizedMessage => {
                 "The message type for a response was incorrect or the payload was malformed."
             }
-            PpmProblemType::UnrecognizedTask => {
+            DapProblemType::UnrecognizedTask => {
                 "An endpoint received a message with an unknown task ID."
             }
-            PpmProblemType::UnrecognizedAggregationJob => {
+            DapProblemType::UnrecognizedAggregationJob => {
                 "An endpoint received a message with an unknown aggregation job ID."
             }
-            PpmProblemType::OutdatedConfig => {
+            DapProblemType::OutdatedConfig => {
                 "The message was generated using an outdated configuration."
             }
-            PpmProblemType::StaleReport => {
+            DapProblemType::ReportTooLate => {
                 "Report could not be processed because it arrived too late."
             }
-            PpmProblemType::UnauthorizedRequest => "The request's authorization is not valid.",
-            PpmProblemType::InvalidBatchInterval => {
-                "The batch interval in the collect or aggregate share request is not valid for the task."
-            }
-            PpmProblemType::InsufficientBatchSize => {
-                "There are not enough reports in the batch interval."
-            }
-            PpmProblemType::BatchMisaligned => {
-                "The checksums or report counts in the two aggregator's aggregate shares do not match."
-            }
-            PpmProblemType::BatchLifetimeExceeded => {
+            DapProblemType::ReportTooEarly => "Report could not be processed because it arrived too early.",
+            DapProblemType::BatchInvalid => "The batch interval in the collect or aggregate share request is not valid for the task.",
+            DapProblemType::InsufficientBatchSize => "There are not enough reports in the batch interval.",
+            DapProblemType::BatchLifetimeExceeded => {
                 "The batch lifetime has been exceeded for one or more reports included in the batch interval."
             }
+            DapProblemType::BatchMismatch => {
+                "Leader and helper disagree on reports aggregated in a batch."
+            }
+            DapProblemType::UnauthorizedRequest => "The request's authorization is not valid.",
         }
     }
 }
@@ -1579,7 +1579,7 @@ static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 /// Construct an error response in accordance with §3.1.
 // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/209): The handling of the instance,
 // title, detail, and taskid fields are subject to change.
-fn build_problem_details_response(error_type: PpmProblemType, task_id: Option<TaskId>) -> Response {
+fn build_problem_details_response(error_type: DapProblemType, task_id: Option<TaskId>) -> Response {
     // So far, 400 Bad Request seems to be the appropriate choice for each defined problem type.
     let status = StatusCode::BAD_REQUEST;
     warp::reply::with_status(
@@ -1633,23 +1633,23 @@ fn error_handler<R: Reply>(
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
             Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
-            Err(Error::StaleReport(_, task_id)) => {
-                build_problem_details_response(PpmProblemType::StaleReport, Some(task_id))
+            Err(Error::ReportTooLate(_, task_id)) => {
+                build_problem_details_response(DapProblemType::ReportTooLate, Some(task_id))
             }
             Err(Error::UnrecognizedMessage(_, task_id)) => {
-                build_problem_details_response(PpmProblemType::UnrecognizedMessage, task_id)
+                build_problem_details_response(DapProblemType::UnrecognizedMessage, task_id)
             }
             Err(Error::UnrecognizedTask(task_id)) => {
                 // TODO(#237): ensure that a helper returns HTTP 404 or 403 when this happens.
-                build_problem_details_response(PpmProblemType::UnrecognizedTask, Some(task_id))
+                build_problem_details_response(DapProblemType::UnrecognizedTask, Some(task_id))
             }
             Err(Error::UnrecognizedAggregationJob(_, task_id)) => build_problem_details_response(
-                PpmProblemType::UnrecognizedAggregationJob,
+                DapProblemType::UnrecognizedAggregationJob,
                 Some(task_id),
             ),
             Err(Error::UnrecognizedCollectJob(_)) => StatusCode::NOT_FOUND.into_response(),
             Err(Error::OutdatedHpkeConfig(_, task_id)) => {
-                build_problem_details_response(PpmProblemType::OutdatedConfig, Some(task_id))
+                build_problem_details_response(DapProblemType::OutdatedConfig, Some(task_id))
             }
             Err(Error::ReportFromTheFuture(_, _)) => {
                 // TODO(#221): build a problem details document once an error type is defined for
@@ -1657,19 +1657,19 @@ fn error_handler<R: Reply>(
                 StatusCode::BAD_REQUEST.into_response()
             }
             Err(Error::UnauthorizedRequest(task_id)) => {
-                build_problem_details_response(PpmProblemType::UnauthorizedRequest, Some(task_id))
+                build_problem_details_response(DapProblemType::UnauthorizedRequest, Some(task_id))
             }
-            Err(Error::InvalidBatchInterval(_, task_id)) => {
-                build_problem_details_response(PpmProblemType::InvalidBatchInterval, Some(task_id))
+            Err(Error::BatchInvalid(_, task_id)) => {
+                build_problem_details_response(DapProblemType::BatchInvalid, Some(task_id))
             }
             Err(Error::InsufficientBatchSize(_, task_id)) => {
-                build_problem_details_response(PpmProblemType::InsufficientBatchSize, Some(task_id))
+                build_problem_details_response(DapProblemType::InsufficientBatchSize, Some(task_id))
             }
-            Err(Error::BatchMisalignment { task_id, .. }) => {
-                build_problem_details_response(PpmProblemType::BatchMisaligned, Some(task_id))
+            Err(Error::BatchMismatch { task_id, .. }) => {
+                build_problem_details_response(DapProblemType::BatchMismatch, Some(task_id))
             }
             Err(Error::BatchLifetimeExceeded(task_id)) => {
-                build_problem_details_response(PpmProblemType::BatchLifetimeExceeded, Some(task_id))
+                build_problem_details_response(DapProblemType::BatchLifetimeExceeded, Some(task_id))
             }
             Err(Error::Hpke(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -2217,7 +2217,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": 400u16,
-                "type": "urn:ietf:params:ppm:error:staleReport",
+                "type": "urn:ietf:params:ppm:dap:error:reportTooLate",
                 "title": "Report could not be processed because it arrived too late.",
                 "detail": "Report could not be processed because it arrived too late.",
                 "instance": "..",
@@ -2253,7 +2253,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": 400u16,
-                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
@@ -2299,7 +2299,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": 400u16,
-                "type": "urn:ietf:params:ppm:error:outdatedConfig",
+                "type": "urn:ietf:params:ppm:dap:error:outdatedConfig",
                 "title": "The message was generated using an outdated configuration.",
                 "detail": "The message was generated using an outdated configuration.",
                 "instance": "..",
@@ -2426,7 +2426,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": 400,
-                "type": "urn:ietf:params:ppm:error:unrecognizedTask",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
                 "instance": "..",
@@ -2490,7 +2490,7 @@ mod tests {
 
         // should reject duplicate reports.
         // TODO(#34): change this error type.
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::StaleReport(stale_nonce, task_id)) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooLate(stale_nonce, task_id)) => {
             assert_eq!(task_id, report.task_id());
             assert_eq!(report.nonce(), stale_nonce);
         });
@@ -2688,7 +2688,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": 400,
-                "type": "urn:ietf:params:ppm:error:unrecognizedTask",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
                 "instance": "..",
@@ -2774,7 +2774,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": want_status,
-                "type": "urn:ietf:params:ppm:error:unauthorizedRequest",
+                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "detail": "The request's authorization is not valid.",
                 "instance": "..",
@@ -2801,7 +2801,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": want_status,
-                "type": "urn:ietf:params:ppm:error:unauthorizedRequest",
+                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
                 "detail": "The request's authorization is not valid.",
                 "instance": "..",
@@ -3157,7 +3157,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": want_status,
-                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
@@ -3927,7 +3927,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
@@ -4192,7 +4192,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
@@ -4338,7 +4338,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
@@ -4449,7 +4449,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:unrecognizedMessage",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
                 "detail": "The message type for a response was incorrect or the payload was malformed.",
                 "instance": "..",
@@ -4508,7 +4508,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:unrecognizedTask",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
                 "instance": "..",
@@ -4568,7 +4568,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:invalidBatchInterval",
+                "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
                 "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
                 "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
                 "instance": "..",
@@ -4836,7 +4836,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:batchLifetimeExceeded",
+                "type": "urn:ietf:params:ppm:dap:error:batchLifetimeExceeded",
                 "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
                 "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
                 "instance": "..",
@@ -4900,7 +4900,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:unrecognizedTask",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
                 "instance": "..",
@@ -4965,7 +4965,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:invalidBatchInterval",
+                "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
                 "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
                 "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
                 "instance": "..",
@@ -5043,7 +5043,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:insufficientBatchSize",
+                "type": "urn:ietf:params:ppm:dap:error:insufficientBatchSize",
                 "title": "There are not enough reports in the batch interval.",
                 "detail": "There are not enough reports in the batch interval.",
                 "instance": "..",
@@ -5148,7 +5148,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:insufficientBatchSize",
+                "type": "urn:ietf:params:ppm:dap:error:insufficientBatchSize",
                 "title": "There are not enough reports in the batch interval.",
                 "detail": "There are not enough reports in the batch interval.",
                 "instance": "..",
@@ -5207,9 +5207,9 @@ mod tests {
                 problem_details,
                 serde_json::json!({
                     "status": StatusCode::BAD_REQUEST.as_u16(),
-                    "type": "urn:ietf:params:ppm:error:batchMisaligned",
-                    "title": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
-                    "detail": "The checksums or report counts in the two aggregator's aggregate shares do not match.",
+                    "type": "urn:ietf:params:ppm:dap:error:batchMismatch",
+                    "title": "Leader and helper disagree on reports aggregated in a batch.",
+                    "detail": "Leader and helper disagree on reports aggregated in a batch.",
                     "instance": "..",
                     "taskid": format!("{}", task_id),
                 })
@@ -5361,7 +5361,7 @@ mod tests {
             problem_details,
             serde_json::json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:error:batchLifetimeExceeded",
+                "type": "urn:ietf:params:ppm:dap:error:batchLifetimeExceeded",
                 "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
                 "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
                 "instance": "..",
