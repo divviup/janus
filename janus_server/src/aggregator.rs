@@ -105,7 +105,6 @@ pub enum Error {
     #[error("outdated HPKE config: {0} {1:?}")]
     OutdatedHpkeConfig(HpkeConfigId, TaskId),
     /// A report was rejected becuase the timestamp is too far in the future, §4.3.4.
-    // TODO(#221): define an error type in §3.1 and clarify language on rejecting future reports
     #[error("report from the future: {0} {1:?}")]
     ReportFromTheFuture(Nonce, TaskId),
     /// Corresponds to `unauthorizedRequest`, §3.1
