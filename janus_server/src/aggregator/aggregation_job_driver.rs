@@ -726,9 +726,6 @@ impl AggregationJobDriver {
                 datastore
                     .run_tx(|tx| {
                         Box::pin(async move {
-                            // TODO(#193): only acquire jobs whose batch units
-                            // have not already been collected (probably by
-                            // modifying acquire_incomplete_aggregation_jobs)
                             tx.acquire_incomplete_aggregation_jobs(
                                 lease_duration,
                                 max_acquire_count,
