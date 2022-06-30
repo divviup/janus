@@ -86,7 +86,7 @@ pub enum Error {
     /// Error handling a message.
     #[error("invalid message: {0}")]
     Message(#[from] janus::message::Error),
-    /// Corresponds to `staleReport`, §3.1
+    /// Corresponds to `reportTooLate`, §3.1
     #[error("stale report: {0} {1:?}")]
     ReportTooLate(Nonce, TaskId),
     /// Corresponds to `unrecognizedMessage`, §3.1
@@ -475,83 +475,7 @@ impl TaskAggregator {
         clock: &C,
         report: Report,
     ) -> Result<(), Error> {
-        // §4.2.2 The leader's report is the first one
-        if report.encrypted_input_shares().len() != 2 {
-            warn!(
-                share_count = report.encrypted_input_shares().len(),
-                "Unexpected number of encrypted shares in report"
-            );
-            return Err(Error::UnrecognizedMessage(
-                "unexpected number of encrypted shares in report",
-                Some(report.task_id()),
-            ));
-        }
-        let leader_report = &report.encrypted_input_shares()[0];
-
-        // §4.2.2: verify that the report's HPKE config ID is known
-        let (hpke_config, hpke_private_key) = self
-            .task
-            .hpke_keys
-            .get(&leader_report.config_id())
-            .ok_or_else(|| {
-            warn!(
-                config_id = ?leader_report.config_id(),
-                "Unknown HPKE config ID"
-            );
-            Error::OutdatedHpkeConfig(leader_report.config_id(), report.task_id())
-        })?;
-
-        let report_deadline = clock.now().add(self.task.tolerable_clock_skew)?;
-
-        // §4.2.4: reject reports from too far in the future
-        if report.nonce().time().is_after(report_deadline) {
-            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report timestamp exceeds tolerable clock skew");
-            return Err(Error::ReportFromTheFuture(report.nonce(), report.task_id()));
-        }
-
-        // Check that we can decrypt the report. This isn't required by the spec
-        // but this exercises HPKE decryption and saves us the trouble of
-        // storing reports we can't use. We don't inform the client if this
-        // fails.
-        if let Err(err) = hpke::open(
-            hpke_config,
-            hpke_private_key,
-            &HpkeApplicationInfo::new(Label::InputShare, Role::Client, self.task.role),
-            leader_report,
-            &report.associated_data(),
-        ) {
-            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
-            return Ok(());
-        }
-
-        datastore
-            .run_tx(|tx| {
-                let report = report.clone();
-                Box::pin(async move {
-                    // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before.
-                    if tx
-                        .get_client_report(report.task_id(), report.nonce())
-                        .await?
-                        .is_some()
-                    {
-                        warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report replayed");
-                        // TODO(#34): change this error type.
-                        return Err(datastore::Error::User(
-                            Error::ReportTooLate(report.nonce(), report.task_id()).into(),
-                        ));
-                    }
-
-                    // TODO(#221): reject with `reportTooLate` reports whose timestamps fall in a
-                    // batch interval that has already been collected (§4.3.2). We don't
-                    // support collection so we can't implement this requirement yet.
-
-                    // Store the report.
-                    tx.put_client_report(&report).await?;
-                    Ok(())
-                })
-            })
-            .await?;
-        Ok(())
+        self.vdaf_ops.handle_upload(datastore, clock, &self.task, report).await
     }
 
     async fn handle_aggregate_init<C: Clock>(
@@ -630,6 +554,44 @@ enum VdafOps {
 }
 
 impl VdafOps {
+    async fn handle_upload<C: Clock>(
+        &self,
+        datastore: &Datastore<C>,
+        clock: &C,
+        task: &Task,
+        report: Report,
+    ) -> Result<(), Error> {
+        match self {
+            VdafOps::Prio3Aes128Count(_, _) => {
+                Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
+                    datastore, clock, task,report,
+                )
+                .await
+            }
+            VdafOps::Prio3Aes128Sum(_, _) => {
+                Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum, _>(
+                    datastore, clock, task,report,
+                )
+                .await
+            }
+            VdafOps::Prio3Aes128Histogram(_, _) => Self::handle_upload_generic::<
+                PRIO3_AES128_VERIFY_KEY_LENGTH,
+                Prio3Aes128Histogram,
+                _,
+            >(datastore, clock, task,report)
+            .await,
+
+            #[cfg(test)]
+            VdafOps::Fake(_) => {
+                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+                Self::handle_upload_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
+                    datastore, clock, task, report,
+                )
+                .await
+            }
+        }
+    }
+
     /// Implements the `/aggregate` endpoint for initialization requests for the helper, described
     /// in §4.4.4.1 & §4.4.4.2 of draft-gpew-priv-ppm.
     async fn handle_aggregate_init<C: Clock>(
@@ -720,6 +682,102 @@ impl VdafOps {
                 .await
             }
         }
+    }
+
+    async fn handle_upload_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+        datastore: &Datastore<C>,
+        clock: &C,
+        task: &Task,
+        report: Report,
+    ) -> Result<(), Error>
+    where
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+                // §4.2.2 The leader's report is the first one
+                if report.encrypted_input_shares().len() != 2 {
+                    warn!(
+                        share_count = report.encrypted_input_shares().len(),
+                        "Unexpected number of encrypted shares in report"
+                    );
+                    return Err(Error::UnrecognizedMessage(
+                        "unexpected number of encrypted shares in report",
+                        Some(report.task_id()),
+                    ));
+                }
+                let leader_report = &report.encrypted_input_shares()[0];
+        
+                // §4.2.2: verify that the report's HPKE config ID is known
+                let (hpke_config, hpke_private_key) = task
+                    .hpke_keys
+                    .get(&leader_report.config_id())
+                    .ok_or_else(|| {
+                    warn!(
+                        config_id = ?leader_report.config_id(),
+                        "Unknown HPKE config ID"
+                    );
+                    Error::OutdatedHpkeConfig(leader_report.config_id(), report.task_id())
+                })?;
+        
+                let report_deadline = clock.now().add(task.tolerable_clock_skew)?;
+        
+                // §4.2.4: reject reports from too far in the future
+                if report.nonce().time().is_after(report_deadline) {
+                    warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report timestamp exceeds tolerable clock skew");
+                    return Err(Error::ReportFromTheFuture(report.nonce(), report.task_id()));
+                }
+        
+                // Check that we can decrypt the report. This isn't required by the spec
+                // but this exercises HPKE decryption and saves us the trouble of
+                // storing reports we can't use. We don't inform the client if this
+                // fails.
+                if let Err(err) = hpke::open(
+                    hpke_config,
+                    hpke_private_key,
+                    &HpkeApplicationInfo::new(Label::InputShare, Role::Client, task.role),
+                    leader_report,
+                    &report.associated_data(),
+                ) {
+                    warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
+                    return Ok(());
+                }
+        
+                datastore
+                    .run_tx(|tx| {
+                        let report = report.clone();
+                        Box::pin(async move {        
+                            let (existing_client_report, conflicting_collect_jobs) = try_join!(
+                                tx.get_client_report(report.task_id(), report.nonce()),
+                                tx.find_collect_jobs_including_time::<L, A>(report.task_id(), report.nonce().time()),
+                            )?;
+        
+                            // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before.
+                            if existing_client_report.is_some() {
+                                warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report replayed");
+                                // TODO(#34): change this error type.
+                                return Err(datastore::Error::User(
+                                    Error::ReportTooLate(report.nonce(), report.task_id()).into(),
+                                ));
+                            }
+
+                            // §4.3.2: reject reports whose timestamps fall into a batch interval
+                            // that has already been collected.
+                            if !conflicting_collect_jobs.is_empty() {
+                                return Err(datastore::Error::User(
+                                    Error::ReportTooLate(report.nonce(), report.task_id()).into(),
+                                ));
+                            }
+        
+                            // Store the report.
+                            tx.put_client_report(&report).await?;
+                            Ok(())
+                        })
+                    })
+                    .await?;
+                Ok(())
+        
     }
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
@@ -2630,6 +2688,29 @@ mod tests {
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id());
             assert_eq!(report.nonce(), nonce);
+        });
+    }
+
+    #[tokio::test]
+    async fn upload_report_for_collected_batch() {
+        install_test_trace_subscriber();
+
+        let (aggregator, task, report, datastore, _db_handle) = setup_upload_test().await;
+        let (task_id, nonce) = (task.id, report.nonce());
+
+        // Insert a collect job for the batch interval including our report.
+        let batch_interval = Interval::new(
+            nonce.time().to_batch_unit_interval_start(task.min_batch_duration).unwrap(),
+            task.min_batch_duration,
+        ).unwrap();
+        datastore.run_tx(|tx| Box::pin(async move{
+            tx.put_collect_job(task_id, batch_interval, &[]).await
+        })).await.unwrap();
+
+        // Try to upload the report, verify that we get the expected error.
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err(), Error::ReportTooLate(err_nonce, err_task_id) => {
+            assert_eq!(nonce, err_nonce);
+            assert_eq!(task_id, err_task_id);
         });
     }
 

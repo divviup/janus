@@ -555,10 +555,10 @@ mod tests {
     fn roundtrip_report_share_error() {
         roundtrip_encoding(&[
             (ReportShareError::BatchCollected, "00"),
-            (ReportShareError::HpkeDecryptError, "04"),
-            (ReportShareError::HpkeUnknownConfigId, "03"),
-            (ReportShareError::ReportDropped, "02"),
             (ReportShareError::ReportReplayed, "01"),
+            (ReportShareError::ReportDropped, "02"),
+            (ReportShareError::HpkeUnknownConfigId, "03"),
+            (ReportShareError::HpkeDecryptError, "04"),
             (ReportShareError::VdafPrepError, "05"),
         ])
     }
