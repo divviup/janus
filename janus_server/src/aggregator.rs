@@ -1651,10 +1651,8 @@ fn error_handler<R: Reply>(
             Err(Error::OutdatedHpkeConfig(_, task_id)) => {
                 build_problem_details_response(DapProblemType::OutdatedConfig, Some(task_id))
             }
-            Err(Error::ReportFromTheFuture(_, _)) => {
-                // TODO(#221): build a problem details document once an error type is defined for
-                // reports with timestamps too far in the future.
-                StatusCode::BAD_REQUEST.into_response()
+            Err(Error::ReportFromTheFuture(_, task_id)) => {
+                build_problem_details_response(DapProblemType::ReportTooEarly, Some(task_id))
             }
             Err(Error::UnauthorizedRequest(task_id)) => {
                 build_problem_details_response(DapProblemType::UnauthorizedRequest, Some(task_id))
