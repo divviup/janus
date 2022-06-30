@@ -597,7 +597,6 @@ impl AggregationJobDriver {
 
         // Determine if we've finished the aggregation job (i.e. if all report aggregations are in
         // a terminal state), then write everything back to storage.
-        // TODO(#220): also update batch_unit_aggregations if this aggregation job finished.
         let aggregation_job_is_finished = report_aggregations_to_write
             .iter()
             .all(|ra| !matches!(ra.state, ReportAggregationState::Waiting(_, _)));

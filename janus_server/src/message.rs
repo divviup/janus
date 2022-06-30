@@ -396,9 +396,9 @@ impl Decode for AggregateShareResp {
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectReq {
-    pub(crate) task_id: TaskId,
-    pub(crate) batch_interval: Interval,
-    pub(crate) agg_param: Vec<u8>,
+    pub task_id: TaskId,
+    pub batch_interval: Interval,
+    pub agg_param: Vec<u8>,
 }
 
 impl CollectReq {
@@ -432,7 +432,7 @@ impl Decode for CollectReq {
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectResp {
-    pub(crate) encrypted_agg_shares: Vec<HpkeCiphertext>,
+    pub encrypted_agg_shares: Vec<HpkeCiphertext>,
 }
 
 impl CollectResp {

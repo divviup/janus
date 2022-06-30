@@ -16,6 +16,7 @@ janus_server = { path = "../janus_server" }
 lazy_static = "1"
 prio = "0.8.0"
 rand = "0.8"
+reqwest = { version = "0.11.11", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 testcontainers = "0.14.0"
 janus_test_util = { path = "../test_util" }
