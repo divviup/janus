@@ -37,7 +37,13 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{mpsc, Arc},
 };
-use tokio::{select, sync::oneshot, task, time, try_join};
+use tokio::{
+    select,
+    sync::oneshot,
+    task,
+    time::{self, Instant},
+    try_join,
+};
 use url::Url;
 
 janus_test_util::define_ephemeral_datastore!();
@@ -47,7 +53,7 @@ async fn end_to_end() {
     // Create a test case, and connect to the leader's database.
     let test_case = TestCase::new().await;
 
-    // Upload a measurement, recording a timestamp before measurement upload to allow us to
+    // Upload some measurements, recording a timestamp before measurement upload to allow us to
     // determine the correct collect interval.
     let clock = RealClock::default();
     const NUM_NONZERO_MEASUREMENTS: usize = 23;
@@ -56,9 +62,6 @@ async fn end_to_end() {
         test_case.client.upload(&0).await.unwrap();
         test_case.client.upload(&1).await.unwrap();
     }
-
-    // Wait long enough for aggregation jobs to be created.
-    time::sleep(time::Duration::from_secs(2)).await;
 
     // Send a collect request, recording the collect job URL.
     let http_client = reqwest::Client::builder()
@@ -76,7 +79,7 @@ async fn end_to_end() {
             .to_batch_unit_interval_start(test_case.leader_task.min_batch_duration)
             .unwrap(),
         // Use two minimum batch durations as the interval duration in order to avoid a race
-        // condition if this test runs very close to the end of a batch window.
+        // condition if this test happens to run very close to the end of a batch window.
         Duration::from_seconds(2 * test_case.leader_task.min_batch_duration.as_seconds()),
     )
     .unwrap();
@@ -103,13 +106,28 @@ async fn end_to_end() {
     )
     .unwrap();
 
-    // Wait long enough for the collect job to complete.
-    time::sleep(time::Duration::from_secs(2)).await;
+    // Poll until the collect job completes.
+    let collect_job_poll_timeout = Instant::now()
+        .checked_add(time::Duration::from_secs(20))
+        .unwrap();
+    let mut poll_interval = time::interval(time::Duration::from_millis(500));
+    let collect_resp = loop {
+        assert!(Instant::now() < collect_job_poll_timeout);
+        let collect_job_resp = http_client
+            .get(collect_job_url.clone())
+            .send()
+            .await
+            .unwrap();
+        let status = collect_job_resp.status();
+        assert!(status == StatusCode::OK || status == StatusCode::ACCEPTED);
+        if status == StatusCode::ACCEPTED {
+            poll_interval.tick().await;
+            continue;
+        }
+        break CollectResp::get_decoded(&collect_job_resp.bytes().await.unwrap()).unwrap();
+    };
 
-    // Verify that we got the right result.
-    let collect_job_resp = http_client.get(collect_job_url).send().await.unwrap();
-    assert_eq!(collect_job_resp.status(), StatusCode::OK);
-    let collect_resp = CollectResp::get_decoded(&collect_job_resp.bytes().await.unwrap()).unwrap();
+    // Verify that the aggregate in the collect response is the correct value.
     let associated_data =
         associated_data_for_aggregate_share(test_case.leader_task.id, batch_interval);
     let aggregate_result = test_case
