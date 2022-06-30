@@ -80,8 +80,8 @@ where
             .time()
             .to_batch_unit_interval_start(self.min_batch_duration)
             .map_err(|e| datastore::Error::User(e.into()))?;
-        if let Some(accumulate) = self.accumulations.get_mut(&key) {
-            accumulate
+        if let Some(accumulation) = self.accumulations.get_mut(&key) {
+            accumulation
                 .update(output_share, nonce)
                 .map_err(|e| datastore::Error::User(e.into()))?;
         } else {
@@ -103,11 +103,11 @@ where
     /// aggregation exists, one is created and initialized with the accumulated values.
     #[tracing::instrument(skip(self, tx), err)]
     pub(super) async fn flush_to_datastore<C: Clock>(
-        self,
+        &self,
         tx: &Transaction<'_, C>,
     ) -> Result<(), datastore::Error> {
-        for (unit_interval_start, accumulate) in self.accumulations {
-            let unit_interval = Interval::new(unit_interval_start, self.min_batch_duration)?;
+        for (unit_interval_start, accumulation) in &self.accumulations {
+            let unit_interval = Interval::new(*unit_interval_start, self.min_batch_duration)?;
 
             let mut batch_unit_aggregations = tx
                 .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
@@ -133,10 +133,12 @@ where
                 );
                 batch_unit_aggregation
                     .aggregate_share
-                    .merge(&accumulate.aggregate_share)
+                    .merge(&accumulation.aggregate_share)
                     .map_err(|e| datastore::Error::User(e.into()))?;
-                batch_unit_aggregation.report_count += accumulate.report_count;
-                batch_unit_aggregation.checksum.combine(accumulate.checksum);
+                batch_unit_aggregation.report_count += accumulation.report_count;
+                batch_unit_aggregation
+                    .checksum
+                    .combine(accumulation.checksum);
 
                 tx.update_batch_unit_aggregation(&batch_unit_aggregations[0])
                     .await?;
@@ -149,9 +151,9 @@ where
                     task_id: self.task_id,
                     unit_interval_start: unit_interval.start(),
                     aggregation_param: self.aggregation_param.clone(),
-                    aggregate_share: accumulate.aggregate_share,
-                    report_count: accumulate.report_count,
-                    checksum: accumulate.checksum,
+                    aggregate_share: accumulation.aggregate_share.clone(),
+                    report_count: accumulation.report_count,
+                    checksum: accumulation.checksum,
                 })
                 .await?;
             }
