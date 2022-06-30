@@ -5,6 +5,8 @@ use self::models::{
     BatchUnitAggregation, CollectJob, CollectJobState, CollectJobStateCode, Lease, LeaseToken,
     ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
 };
+#[cfg(test)]
+use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
 use crate::{
     message::{AggregateShareReq, AggregationJobId, ReportShare},
     task::{self, AggregatorAuthenticationToken, Task, VdafInstance},
@@ -636,7 +638,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: TaskId,
     ) -> Result<Vec<(Nonce, A::AggregationParam)>, Error>
     where
-        A: vdaf::Aggregator<L>,
+        A: vdaf::Aggregator<L> + VdafHasAggregationParameter,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         // TODO(#269): allow the number of returned results to be controlled?
