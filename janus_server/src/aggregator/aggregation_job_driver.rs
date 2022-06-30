@@ -898,7 +898,9 @@ mod tests {
         .unwrap();
 
         // Setup: prepare mocked HTTP responses.
-        let helper_vdaf_msg = assert_matches!(&transcript.prepare_transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_share) => prep_share);
+        let helper_vdaf_msg = assert_matches!(
+            &transcript.prepare_transitions[Role::Helper.index().unwrap()][0],
+            PrepareTransition::Continue(_, prep_share) => prep_share);
         let helper_responses = vec![
             (
                 AggregateInitializeReq::MEDIA_TYPE,
@@ -977,7 +979,9 @@ mod tests {
                 aggregation_param: (),
                 state: AggregationJobState::Finished,
             };
-        let leader_output_share = assert_matches!(&transcript.prepare_transitions[Role::Leader.index().unwrap()][1], PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
+        let leader_output_share = assert_matches!(
+            &transcript.prepare_transitions[Role::Leader.index().unwrap()][1],
+            PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
         let want_report_aggregation =
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
@@ -1113,7 +1117,9 @@ mod tests {
                     .clone(),
             }],
         };
-        let helper_vdaf_msg = assert_matches!(&transcript.prepare_transitions[Role::Helper.index().unwrap()][0], PrepareTransition::Continue(_, prep_share) => prep_share);
+        let helper_vdaf_msg = assert_matches!(
+            &transcript.prepare_transitions[Role::Helper.index().unwrap()][0],
+            PrepareTransition::Continue(_, prep_share) => prep_share);
         let helper_response = AggregateInitializeResp {
             prepare_steps: vec![PrepareStep {
                 nonce,
@@ -1151,7 +1157,9 @@ mod tests {
                 aggregation_param: (),
                 state: AggregationJobState::InProgress,
             };
-        let leader_prep_state = assert_matches!(&transcript.prepare_transitions[Role::Leader.index().unwrap()][0], PrepareTransition::Continue(prep_state, _) => prep_state.clone());
+        let leader_prep_state = assert_matches!(
+            &transcript.prepare_transitions[Role::Leader.index().unwrap()][0],
+            PrepareTransition::Continue(prep_state, _) => prep_state.clone());
         let prep_msg = transcript.prepare_messages[0].clone();
         let want_report_aggregation =
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
@@ -1231,8 +1239,12 @@ mod tests {
         );
         let aggregation_job_id = AggregationJobId::random();
 
-        let leader_prep_state = assert_matches!(&transcript.prepare_transitions[Role::Leader.index().unwrap()][0], PrepareTransition::Continue(prep_state, _) => prep_state);
-        let leader_output_share = assert_matches!(&transcript.prepare_transitions[Role::Leader.index().unwrap()].last().unwrap(), PrepareTransition::Finish(out_share) => out_share.clone());
+        let leader_prep_state = assert_matches!(
+            &transcript.prepare_transitions[Role::Leader.index().unwrap()][0],
+            PrepareTransition::Continue(prep_state, _) => prep_state);
+        let leader_output_share = assert_matches!(
+            &transcript.prepare_transitions[Role::Leader.index().unwrap()].last().unwrap(),
+            PrepareTransition::Finish(out_share) => out_share.clone());
         let leader_aggregate_share = vdaf.aggregate(&(), [leader_output_share]).unwrap();
         let prep_msg = &transcript.prepare_messages[0];
 
@@ -1330,7 +1342,9 @@ mod tests {
                 aggregation_param: (),
                 state: AggregationJobState::Finished,
             };
-        let leader_output_share = assert_matches!(&transcript.prepare_transitions[Role::Leader.index().unwrap()][1], PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
+        let leader_output_share = assert_matches!(
+            &transcript.prepare_transitions[Role::Leader.index().unwrap()][1],
+            PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
         let want_report_aggregation =
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
@@ -1377,7 +1391,12 @@ mod tests {
                         .await?
                         .unwrap();
                     let batch_unit_aggregations = tx
-                        .get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task_id, Interval::new(nonce.time().to_batch_unit_interval_start(task.min_batch_duration).unwrap(), task.min_batch_duration).unwrap(), &())
+                        .get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                            task_id,
+                            Interval::new(
+                                nonce.time().to_batch_unit_interval_start(task.min_batch_duration).unwrap(),
+                                task.min_batch_duration).unwrap(),
+                            &())
                         .await
                         .unwrap();
                     Ok((aggregation_job, report_aggregation, batch_unit_aggregations))
