@@ -475,7 +475,9 @@ impl TaskAggregator {
         clock: &C,
         report: Report,
     ) -> Result<(), Error> {
-        self.vdaf_ops.handle_upload(datastore, clock, &self.task, report).await
+        self.vdaf_ops
+            .handle_upload(datastore, clock, &self.task, report)
+            .await
     }
 
     async fn handle_aggregate_init<C: Clock>(
@@ -564,13 +566,13 @@ impl VdafOps {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
                 Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
-                    datastore, clock, task,report,
+                    datastore, clock, task, report,
                 )
                 .await
             }
             VdafOps::Prio3Aes128Sum(_, _) => {
                 Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum, _>(
-                    datastore, clock, task,report,
+                    datastore, clock, task, report,
                 )
                 .await
             }
@@ -578,7 +580,7 @@ impl VdafOps {
                 PRIO3_AES128_VERIFY_KEY_LENGTH,
                 Prio3Aes128Histogram,
                 _,
-            >(datastore, clock, task,report)
+            >(datastore, clock, task, report)
             .await,
 
             #[cfg(test)]
@@ -696,55 +698,55 @@ impl VdafOps {
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-                // §4.2.2 The leader's report is the first one
-                if report.encrypted_input_shares().len() != 2 {
-                    warn!(
-                        share_count = report.encrypted_input_shares().len(),
-                        "Unexpected number of encrypted shares in report"
-                    );
-                    return Err(Error::UnrecognizedMessage(
-                        "unexpected number of encrypted shares in report",
-                        Some(report.task_id()),
-                    ));
-                }
-                let leader_report = &report.encrypted_input_shares()[0];
-        
-                // §4.2.2: verify that the report's HPKE config ID is known
-                let (hpke_config, hpke_private_key) = task
-                    .hpke_keys
-                    .get(&leader_report.config_id())
-                    .ok_or_else(|| {
-                    warn!(
-                        config_id = ?leader_report.config_id(),
-                        "Unknown HPKE config ID"
-                    );
-                    Error::OutdatedHpkeConfig(leader_report.config_id(), report.task_id())
-                })?;
-        
-                let report_deadline = clock.now().add(task.tolerable_clock_skew)?;
-        
-                // §4.2.4: reject reports from too far in the future
-                if report.nonce().time().is_after(report_deadline) {
-                    warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report timestamp exceeds tolerable clock skew");
-                    return Err(Error::ReportFromTheFuture(report.nonce(), report.task_id()));
-                }
-        
-                // Check that we can decrypt the report. This isn't required by the spec
-                // but this exercises HPKE decryption and saves us the trouble of
-                // storing reports we can't use. We don't inform the client if this
-                // fails.
-                if let Err(err) = hpke::open(
-                    hpke_config,
-                    hpke_private_key,
-                    &HpkeApplicationInfo::new(Label::InputShare, Role::Client, task.role),
-                    leader_report,
-                    &report.associated_data(),
-                ) {
-                    warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
-                    return Ok(());
-                }
-        
-                datastore
+        // §4.2.2 The leader's report is the first one
+        if report.encrypted_input_shares().len() != 2 {
+            warn!(
+                share_count = report.encrypted_input_shares().len(),
+                "Unexpected number of encrypted shares in report"
+            );
+            return Err(Error::UnrecognizedMessage(
+                "unexpected number of encrypted shares in report",
+                Some(report.task_id()),
+            ));
+        }
+        let leader_report = &report.encrypted_input_shares()[0];
+
+        // §4.2.2: verify that the report's HPKE config ID is known
+        let (hpke_config, hpke_private_key) = task
+            .hpke_keys
+            .get(&leader_report.config_id())
+            .ok_or_else(|| {
+                warn!(
+                    config_id = ?leader_report.config_id(),
+                    "Unknown HPKE config ID"
+                );
+                Error::OutdatedHpkeConfig(leader_report.config_id(), report.task_id())
+            })?;
+
+        let report_deadline = clock.now().add(task.tolerable_clock_skew)?;
+
+        // §4.2.4: reject reports from too far in the future
+        if report.nonce().time().is_after(report_deadline) {
+            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report timestamp exceeds tolerable clock skew");
+            return Err(Error::ReportFromTheFuture(report.nonce(), report.task_id()));
+        }
+
+        // Check that we can decrypt the report. This isn't required by the spec
+        // but this exercises HPKE decryption and saves us the trouble of
+        // storing reports we can't use. We don't inform the client if this
+        // fails.
+        if let Err(err) = hpke::open(
+            hpke_config,
+            hpke_private_key,
+            &HpkeApplicationInfo::new(Label::InputShare, Role::Client, task.role),
+            leader_report,
+            &report.associated_data(),
+        ) {
+            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
+            return Ok(());
+        }
+
+        datastore
                     .run_tx(|tx| {
                         let report = report.clone();
                         Box::pin(async move {        
@@ -776,8 +778,7 @@ impl VdafOps {
                         })
                     })
                     .await?;
-                Ok(())
-        
+        Ok(())
     }
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
@@ -2700,12 +2701,19 @@ mod tests {
 
         // Insert a collect job for the batch interval including our report.
         let batch_interval = Interval::new(
-            nonce.time().to_batch_unit_interval_start(task.min_batch_duration).unwrap(),
+            nonce
+                .time()
+                .to_batch_unit_interval_start(task.min_batch_duration)
+                .unwrap(),
             task.min_batch_duration,
-        ).unwrap();
-        datastore.run_tx(|tx| Box::pin(async move{
-            tx.put_collect_job(task_id, batch_interval, &[]).await
-        })).await.unwrap();
+        )
+        .unwrap();
+        datastore
+            .run_tx(|tx| {
+                Box::pin(async move { tx.put_collect_job(task_id, batch_interval, &[]).await })
+            })
+            .await
+            .unwrap();
 
         // Try to upload the report, verify that we get the expected error.
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err(), Error::ReportTooLate(err_nonce, err_task_id) => {
