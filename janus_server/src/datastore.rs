@@ -1219,6 +1219,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     tasks.task_id,
+                    collect_jobs.collect_job_id,
                     collect_jobs.batch_interval,
                     collect_jobs.aggregation_param,
                     collect_jobs.state,
@@ -1231,37 +1232,7 @@ impl<C: Clock> Transaction<'_, C> {
         self.tx
             .query_opt(&stmt, &[&collect_job_id])
             .await?
-            .map(|row| {
-                let task_id = TaskId::get_decoded(row.get("task_id"))?;
-                let batch_interval = row.try_get("batch_interval")?;
-                let aggregation_param =
-                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                let state: CollectJobStateCode = row.get("state");
-                let helper_aggregate_share_bytes: Option<Vec<u8>> =
-                    row.get("helper_aggregate_share");
-                let leader_aggregate_share_bytes: Option<Vec<u8>> =
-                    row.get("leader_aggregate_share");
-
-                let state = match state {
-                    CollectJobStateCode::Start => CollectJobState::Start,
-
-                    CollectJobStateCode::Finished => {
-                        let encrypted_helper_aggregate_share = HpkeCiphertext::get_decoded(&helper_aggregate_share_bytes.ok_or_else(|| Error::DbState("collect job in state FINISHED but helper_aggregate_share is NULL".to_string()))?)?;
-                        let leader_aggregate_share = A::AggregateShare::try_from(&leader_aggregate_share_bytes.ok_or_else(|| Error::DbState("collect job is in state FINISHED but leader_aggregate_share is NULL".to_string()))?).map_err(|err| Error::DbState(format!("leader_aggregate_share stored in database is invalid: {}", err)))?;
-                        CollectJobState::Finished{ encrypted_helper_aggregate_share, leader_aggregate_share }
-                    }
-
-                    CollectJobStateCode::Abandoned => CollectJobState::Abandoned,
-                };
-
-                Ok(CollectJob {
-                    collect_job_id,
-                    task_id,
-                    batch_interval,
-                    aggregation_param,
-                    state,
-                })
-            })
+            .map(Self::collect_job_from_row)
             .transpose()
     }
 
@@ -1296,6 +1267,105 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
 
         Ok(row.map(|row| row.get("collect_job_id")))
+    }
+
+    /// Returns all collect jobs for the given task which include the given timestamp.
+    pub(crate) async fn find_collect_jobs_including_time<const L: usize, A: vdaf::Aggregator<L>>(
+        &self,
+        task_id: TaskId,
+        timestamp: Time,
+    ) -> Result<Vec<CollectJob<L, A>>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT
+                    tasks.task_id,
+                    collect_jobs.collect_job_id,
+                    collect_jobs.batch_interval,
+                    collect_jobs.aggregation_param,
+                    collect_jobs.state,
+                    collect_jobs.helper_aggregate_share,
+                    collect_jobs.leader_aggregate_share
+                FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND collect_jobs.batch_interval @> $2::TIMESTAMP",
+            )
+            .await?;
+        self.tx
+            .query(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.as_bytes(),
+                    /* timestamp */ &timestamp.as_naive_date_time(),
+                ],
+            )
+            .await?
+            .into_iter()
+            .map(Self::collect_job_from_row)
+            .collect()
+    }
+
+    fn collect_job_from_row<const L: usize, A: vdaf::Aggregator<L>>(
+        row: Row,
+    ) -> Result<CollectJob<L, A>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let task_id = TaskId::get_decoded(row.get("task_id"))?;
+        let collect_job_id = row.get("collect_job_id");
+        let batch_interval = row.try_get("batch_interval")?;
+        let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+        let state: CollectJobStateCode = row.get("state");
+        let helper_aggregate_share_bytes: Option<Vec<u8>> = row.get("helper_aggregate_share");
+        let leader_aggregate_share_bytes: Option<Vec<u8>> = row.get("leader_aggregate_share");
+
+        let state = match state {
+            CollectJobStateCode::Start => CollectJobState::Start,
+
+            CollectJobStateCode::Finished => {
+                let encrypted_helper_aggregate_share = HpkeCiphertext::get_decoded(
+                    &helper_aggregate_share_bytes.ok_or_else(|| {
+                        Error::DbState(
+                            "collect job in state FINISHED but helper_aggregate_share is NULL"
+                                .to_string(),
+                        )
+                    })?,
+                )?;
+                let leader_aggregate_share = A::AggregateShare::try_from(
+                    &leader_aggregate_share_bytes.ok_or_else(|| {
+                        Error::DbState(
+                            "collect job is in state FINISHED but leader_aggregate_share is NULL"
+                                .to_string(),
+                        )
+                    })?,
+                )
+                .map_err(|err| {
+                    Error::DbState(format!(
+                        "leader_aggregate_share stored in database is invalid: {}",
+                        err
+                    ))
+                })?;
+                CollectJobState::Finished {
+                    encrypted_helper_aggregate_share,
+                    leader_aggregate_share,
+                }
+            }
+
+            CollectJobStateCode::Abandoned => CollectJobState::Abandoned,
+        };
+
+        Ok(CollectJob {
+            collect_job_id,
+            task_id,
+            batch_interval,
+            aggregation_param,
+            state,
+        })
     }
 
     /// Constructs and stores a new collect job for the provided values, and returns the UUID that
@@ -4115,6 +4185,7 @@ mod tests {
             Duration::from_seconds(100),
         )
         .unwrap();
+        let timestamp = Time::from_seconds_since_epoch(150);
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
@@ -4133,10 +4204,7 @@ mod tests {
 
         let collect_job_id = ds
             .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.get_collect_job_id(task_id, batch_interval, &[0, 1, 2, 3, 4])
-                        .await
-                })
+                Box::pin(async move { tx.get_collect_job_id(task_id, batch_interval, &[]).await })
             })
             .await
             .unwrap();
@@ -4144,20 +4212,14 @@ mod tests {
 
         let collect_job_id = ds
             .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.put_collect_job(task_id, batch_interval, &[0, 1, 2, 3, 4])
-                        .await
-                })
+                Box::pin(async move { tx.put_collect_job(task_id, batch_interval, &[]).await })
             })
             .await
             .unwrap();
 
         let same_collect_job_id = ds
             .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.get_collect_job_id(task_id, batch_interval, &[0, 1, 2, 3, 4])
-                        .await
-                })
+                Box::pin(async move { tx.get_collect_job_id(task_id, batch_interval, &[]).await })
             })
             .await
             .unwrap()
@@ -4165,6 +4227,30 @@ mod tests {
 
         // Should get the same UUID for the same values.
         assert_eq!(collect_job_id, same_collect_job_id);
+
+        // Check that we can find the collect job by timestamp.
+        let collect_jobs = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.find_collect_jobs_including_time::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task_id, timestamp)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            collect_jobs,
+            Vec::from([
+                CollectJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                    collect_job_id,
+                    task_id,
+                    batch_interval,
+                    aggregation_param: (),
+                    state: CollectJobState::Start,
+                }
+            ])
+        );
 
         let rows = ds
             .run_tx(|tx| {
@@ -4180,19 +4266,16 @@ mod tests {
 
         assert!(rows.len() == 1);
 
+        let different_batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(101),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
         let different_collect_job_id = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_collect_job(
-                        task_id,
-                        Interval::new(
-                            Time::from_seconds_since_epoch(101),
-                            Duration::from_seconds(100),
-                        )
-                        .unwrap(),
-                        &[0, 1, 2, 3, 4],
-                    )
-                    .await
+                    tx.put_collect_job(task_id, different_batch_interval, &[])
+                        .await
                 })
             })
             .await
@@ -4215,6 +4298,38 @@ mod tests {
 
         // A new row should be present.
         assert!(rows.len() == 2);
+
+        // Check that we can find both collect jobs by timestamp.
+        let mut collect_jobs = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    tx.find_collect_jobs_including_time::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task_id, timestamp)
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        collect_jobs.sort_by(|x, y| x.collect_job_id.cmp(&y.collect_job_id));
+
+        let mut want_collect_jobs = Vec::from([
+            CollectJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                collect_job_id,
+                task_id,
+                batch_interval,
+                aggregation_param: (),
+                state: CollectJobState::Start,
+            },
+            CollectJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
+                collect_job_id: different_collect_job_id,
+                task_id,
+                batch_interval: different_batch_interval,
+                aggregation_param: (),
+                state: CollectJobState::Start,
+            },
+        ]);
+        want_collect_jobs.sort_by(|x, y| x.collect_job_id.cmp(&y.collect_job_id));
+
+        assert_eq!(collect_jobs, want_collect_jobs);
     }
 
     #[tokio::test]
