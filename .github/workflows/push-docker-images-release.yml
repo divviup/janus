@@ -1,0 +1,67 @@
+name: push-docker-images-release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  DOCKER_BUILDKIT: 1
+
+jobs:
+  push-containers:
+    permissions:
+      id-token: "write"
+      contents: "read"
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - id: "gcp-auth"
+      name: "Authenticate to GCP"
+      uses: "google-github-actions/auth@v0"
+      with:
+        workload_identity_provider: ${{ secrets.GCP_ARTIFACT_PUBISHER_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
+        token_format: "access_token"
+        access_token_lifetime: "3600s"
+        access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
+        export_environment_variables: true
+    # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry
+    - uses: "docker/login-action@v2"
+      with:
+        registry: "us-west2-docker.pkg.dev"
+        username: "oauth2accesstoken"
+        password: ${{ steps.gcp-auth.outputs.access_token }}
+    - name: Get the version
+      id: get_version
+      run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
+    - name: update-version
+      run: sed -i "s/^version =.*/version = \"${{ steps.get_version.outputs.VERSION }}\"/" janus_server/Cargo.toml
+    - run: |-
+        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:latest \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:${{ steps.get_version.outputs.VERSION }} \
+          .
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:latest
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:${{ steps.get_version.outputs.VERSION }}
+    - run: |-
+        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:latest \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }} \
+          --build-arg BINARY=aggregation_job_creator \
+          .
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:latest
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }}
+    - run: |-
+        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:latest \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }} \
+          --build-arg BINARY=aggregation_job_driver \
+          .
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:latest
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}
+    - run: |-
+        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:latest \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }} \
+          --build-arg BINARY=collect_job_driver \
+          .
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:latest
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }}
