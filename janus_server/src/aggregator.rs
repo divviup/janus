@@ -89,6 +89,9 @@ pub enum Error {
     /// Corresponds to `reportTooLate`, §3.1
     #[error("stale report: {0} {1:?}")]
     ReportTooLate(Nonce, TaskId),
+    /// Corresponds to `reportTooEarly`, §3.1. A report was rejected becuase the timestamp is too far in the future, §4.3.4.
+    #[error("report from the future: {0} {1:?}")]
+    ReportTooEarly(Nonce, TaskId),
     /// Corresponds to `unrecognizedMessage`, §3.1
     #[error("unrecognized message: {0} {1:?}")]
     UnrecognizedMessage(&'static str, Option<TaskId>),
@@ -104,9 +107,6 @@ pub enum Error {
     /// Corresponds to `outdatedHpkeConfig`, §3.1
     #[error("outdated HPKE config: {0} {1:?}")]
     OutdatedHpkeConfig(HpkeConfigId, TaskId),
-    /// A report was rejected becuase the timestamp is too far in the future, §4.3.4.
-    #[error("report from the future: {0} {1:?}")]
-    ReportFromTheFuture(Nonce, TaskId),
     /// Corresponds to `unauthorizedRequest`, §3.1
     #[error("unauthorized request: {0:?}")]
     UnauthorizedRequest(TaskId),
@@ -728,7 +728,7 @@ impl VdafOps {
         // §4.2.4: reject reports from too far in the future
         if report.nonce().time().is_after(report_deadline) {
             warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report timestamp exceeds tolerable clock skew");
-            return Err(Error::ReportFromTheFuture(report.nonce(), report.task_id()));
+            return Err(Error::ReportTooEarly(report.nonce(), report.task_id()));
         }
 
         // Check that we can decrypt the report. This isn't required by the spec
@@ -1561,8 +1561,6 @@ enum DapProblemType {
     UnrecognizedAggregationJob, // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/270): standardize this value
     OutdatedConfig,
     ReportTooLate,
-    // TODO(#273): reject reports from too far in the future with ReportTooEarly
-    #[allow(dead_code)]
     ReportTooEarly,
     BatchInvalid,
     InsufficientBatchSize,
@@ -1709,7 +1707,7 @@ fn error_handler<R: Reply>(
             Err(Error::OutdatedHpkeConfig(_, task_id)) => {
                 build_problem_details_response(DapProblemType::OutdatedConfig, Some(task_id))
             }
-            Err(Error::ReportFromTheFuture(_, task_id)) => {
+            Err(Error::ReportTooEarly(_, task_id)) => {
                 build_problem_details_response(DapProblemType::ReportTooEarly, Some(task_id))
             }
             Err(Error::UnauthorizedRequest(task_id)) => {
@@ -2052,6 +2050,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use http::Method;
+    use hyper::body;
     use janus::{
         hpke::associated_data_for_report_share,
         hpke::{
@@ -2114,7 +2113,7 @@ mod tests {
             HpkeConfig::MEDIA_TYPE
         );
 
-        let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let bytes = body::to_bytes(response.into_body()).await.unwrap();
         let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
         assert_eq!(hpke_config, want_hpke_key.0);
 
@@ -2255,20 +2254,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(hyper::body::to_bytes(response.into_body())
+        assert!(body::to_bytes(response.into_body())
             .await
             .unwrap()
             .is_empty());
 
         // Verify that we reject duplicate reports with the staleReport type.
         // TODO(#34): change this error type.
-        let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
+        let mut response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
             .unwrap();
-        let (part, body) = response.into_parts();
-        assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -2280,16 +2278,6 @@ mod tests {
                 "taskid": format!("{}", report.task_id()),
             })
         );
-        assert_eq!(
-            problem_details
-                .as_object()
-                .unwrap()
-                .get("status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            part.status.as_u16() as u64
-        );
 
         // should reject a report with only one share with the unrecognizedMessage type.
         let bad_report = Report::new(
@@ -2298,13 +2286,13 @@ mod tests {
             report.extensions().to_vec(),
             vec![report.encrypted_input_shares()[0].clone()],
         );
-        let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
-            .await
-            .unwrap();
-        let (part, body) = response.into_parts();
-        assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mut response =
+            drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -2315,16 +2303,6 @@ mod tests {
                 "instance": "..",
                 "taskid": format!("{}", report.task_id()),
             })
-        );
-        assert_eq!(
-            problem_details
-                .as_object()
-                .unwrap()
-                .get("status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            part.status.as_u16() as u64
         );
 
         // should reject a report using the wrong HPKE config for the leader, and reply with
@@ -2344,13 +2322,13 @@ mod tests {
                 report.encrypted_input_shares()[1].clone(),
             ],
         );
-        let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
-            .await
-            .unwrap();
-        let (part, body) = response.into_parts();
-        assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mut response =
+            drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -2362,18 +2340,8 @@ mod tests {
                 "taskid": format!("{}", report.task_id()),
             })
         );
-        assert_eq!(
-            problem_details
-                .as_object()
-                .unwrap()
-                .get("status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            part.status.as_u16() as u64
-        );
 
-        // reports from the future should be rejected.
+        // Reports from the future should be rejected.
         let bad_report_time = clock
             .now()
             .add(Duration::from_minutes(10).unwrap())
@@ -2386,12 +2354,24 @@ mod tests {
             report.extensions().to_vec(),
             report.encrypted_input_shares().to_vec(),
         );
-        let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
-            .await
-            .unwrap();
-        assert!(!response.status().is_success());
-        // TODO(#221): update this test once an error type has been defined, and validate the problem details.
-        assert_eq!(response.status().as_u16(), 400);
+        let mut response =
+            drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": 400u16,
+                "type": "urn:ietf:params:ppm:dap:error:reportTooEarly",
+                "title": "Report could not be processed because it arrived too early.",
+                "detail": "Report could not be processed because it arrived too early.",
+                "instance": "..",
+                "taskid": format!("{}", report.task_id()),
+            })
+        );
 
         // Check for appropriate CORS headers in response to a preflight request.
         let response = warp::test::request()
@@ -2476,7 +2456,7 @@ mod tests {
             .into_parts();
 
         assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let bytes = body::to_bytes(body).await.unwrap();
         let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             problem_details,
@@ -2686,7 +2666,7 @@ mod tests {
             ),
             &task.hpke_keys.values().next().unwrap().0,
         );
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooEarly(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id());
             assert_eq!(report.nonce(), nonce);
         });
@@ -2768,7 +2748,7 @@ mod tests {
             .into_parts();
 
         assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let bytes = body::to_bytes(body).await.unwrap();
         let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             problem_details,
@@ -2855,7 +2835,7 @@ mod tests {
 
         let want_status = 400;
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -2882,7 +2862,7 @@ mod tests {
 
         let want_status = 400;
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -3015,7 +2995,7 @@ mod tests {
             response.headers().get(CONTENT_TYPE).unwrap(),
             AggregateInitializeResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -3100,7 +3080,7 @@ mod tests {
             response.headers().get(CONTENT_TYPE).unwrap(),
             AggregateInitializeResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -3167,7 +3147,7 @@ mod tests {
             response.headers().get(CONTENT_TYPE).unwrap(),
             AggregateInitializeResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -3238,7 +3218,7 @@ mod tests {
 
         let want_status = 400;
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -3386,7 +3366,7 @@ mod tests {
             response.headers().get(CONTENT_TYPE).unwrap(),
             AggregateContinueResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp = AggregateContinueResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -4008,7 +3988,7 @@ mod tests {
         // Check that response is as desired.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4119,7 +4099,7 @@ mod tests {
             parts.headers.get(CONTENT_TYPE).unwrap(),
             AggregateContinueResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+        let body_bytes = body::to_bytes(body).await.unwrap();
         let aggregate_resp = AggregateContinueResp::get_decoded(&body_bytes).unwrap();
         assert_eq!(
             aggregate_resp,
@@ -4273,7 +4253,7 @@ mod tests {
         // Check that response is as desired.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4419,7 +4399,7 @@ mod tests {
         // Check that response is as desired.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4530,7 +4510,7 @@ mod tests {
         // Check that response is as desired.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4589,7 +4569,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4649,7 +4629,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4785,7 +4765,7 @@ mod tests {
             parts.headers.get(CONTENT_TYPE).unwrap(),
             CollectResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+        let body_bytes = body::to_bytes(body).await.unwrap();
         let collect_resp = CollectResp::get_decoded(body_bytes.as_ref()).unwrap();
         assert_eq!(collect_resp.encrypted_agg_shares.len(), 2);
 
@@ -4917,7 +4897,7 @@ mod tests {
             .into_parts();
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4981,7 +4961,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -5046,7 +5026,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -5124,7 +5104,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -5229,7 +5209,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -5288,7 +5268,7 @@ mod tests {
 
             assert_eq!(parts.status, StatusCode::BAD_REQUEST);
             let problem_details: serde_json::Value =
-                serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+                serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
             assert_eq!(
                 problem_details,
                 serde_json::json!({
@@ -5387,7 +5367,7 @@ mod tests {
                     label,
                     iteration
                 );
-                let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+                let body_bytes = body::to_bytes(body).await.unwrap();
                 let aggregate_share_resp = AggregateShareResp::get_decoded(&body_bytes).unwrap();
 
                 let aggregate_share = hpke::open(
@@ -5442,7 +5422,7 @@ mod tests {
             .into_parts();
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
