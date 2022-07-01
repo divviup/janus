@@ -749,12 +749,12 @@ impl VdafOps {
         datastore
                     .run_tx(|tx| {
                         let report = report.clone();
-                        Box::pin(async move {        
+                        Box::pin(async move {
                             let (existing_client_report, conflicting_collect_jobs) = try_join!(
                                 tx.get_client_report(report.task_id(), report.nonce()),
                                 tx.find_collect_jobs_including_time::<L, A>(report.task_id(), report.nonce().time()),
                             )?;
-        
+
                             // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before.
                             if existing_client_report.is_some() {
                                 warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report replayed");
@@ -771,7 +771,7 @@ impl VdafOps {
                                     Error::ReportTooLate(report.nonce(), report.task_id()).into(),
                                 ));
                             }
-        
+
                             // Store the report.
                             tx.put_client_report(&report).await?;
                             Ok(())
