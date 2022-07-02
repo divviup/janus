@@ -718,12 +718,45 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
+    /// check_report_share_exists checks if a report share has been recorded in the datastore, given
+    /// its associated task ID & nonce.
+    ///
+    /// This method is intended for use by aggregators acting in the helper role.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn check_report_share_exists(
+        &self,
+        task_id: TaskId,
+        nonce: Nonce,
+    ) -> Result<bool, Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT 1 FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
+                WHERE tasks.task_id = $1
+                  AND client_reports.nonce_time = $2
+                  AND client_reports.nonce_rand = $3",
+            )
+            .await?;
+        Ok(self
+            .tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.as_bytes(),
+                    /* nonce_time */ &nonce.time().as_naive_date_time(),
+                    /* nonce_rand */ &&nonce.rand()[..],
+                ],
+            )
+            .await
+            .map(|row| row.is_some())?)
+    }
+
     /// put_report_share stores a report share, given its associated task ID.
     ///
-    /// This method is intended for use by the helper; notably, it does not store extensions or
-    /// input_shares, as these are not required to be stored for the helper workflow (and the helper
-    /// never observes the entire set of encrypted input shares, so it could not record the full
-    /// client report in any case).
+    /// This method is intended for use by aggregators acting in the helper role; notably, it does
+    /// not store extensions or input_shares, as these are not required to be stored for the helper
+    /// workflow (and the helper never observes the entire set of encrypted input shares, so it
+    /// could not record the full client report in any case).
     #[tracing::instrument(skip(self), err)]
     pub async fn put_report_share(
         &self,
@@ -1219,7 +1252,6 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     tasks.task_id,
-                    collect_jobs.collect_job_id,
                     collect_jobs.batch_interval,
                     collect_jobs.aggregation_param,
                     collect_jobs.state,
@@ -1232,7 +1264,10 @@ impl<C: Clock> Transaction<'_, C> {
         self.tx
             .query_opt(&stmt, &[&collect_job_id])
             .await?
-            .map(Self::collect_job_from_row)
+            .map(|row| {
+                let task_id = TaskId::get_decoded(row.get("task_id"))?;
+                Self::collect_job_from_row(task_id, collect_job_id, row)
+            })
             .transpose()
     }
 
@@ -1283,7 +1318,6 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT
-                    tasks.task_id,
                     collect_jobs.collect_job_id,
                     collect_jobs.batch_interval,
                     collect_jobs.aggregation_param,
@@ -1305,19 +1339,22 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?
             .into_iter()
-            .map(Self::collect_job_from_row)
+            .map(|row| {
+                let collect_job_id = row.get("collect_job_id");
+                Self::collect_job_from_row(task_id, collect_job_id, row)
+            })
             .collect()
     }
 
     fn collect_job_from_row<const L: usize, A: vdaf::Aggregator<L>>(
+        task_id: TaskId,
+        collect_job_id: Uuid,
         row: Row,
     ) -> Result<CollectJob<L, A>, Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let task_id = TaskId::get_decoded(row.get("task_id"))?;
-        let collect_job_id = row.get("collect_job_id");
         let batch_interval = row.try_get("batch_interval")?;
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectJobStateCode = row.get("state");
@@ -1769,8 +1806,7 @@ ORDER BY id DESC
                     AND aggregation_param = $3",
             )
             .await?;
-        let row = match self
-            .tx
+        self.tx
             .query_opt(
                 &stmt,
                 &[
@@ -1780,24 +1816,87 @@ ORDER BY id DESC
                 ],
             )
             .await?
-        {
-            Some(row) => row,
-            None => return Ok(None),
-        };
+            .map(|row| {
+                let aggregation_param =
+                    A::AggregationParam::get_decoded(&request.aggregation_param)?;
+                Self::aggregate_share_job_from_row(
+                    request.task_id,
+                    request.batch_interval,
+                    aggregation_param,
+                    row,
+                )
+            })
+            .transpose()
+    }
 
-        let aggregation_param = A::AggregationParam::get_decoded(&request.aggregation_param)?;
+    /// Returns all aggregate share jobs for the given task which include the given timestamp.
+    pub(crate) async fn find_aggregate_share_jobs_including_time<
+        const L: usize,
+        A: vdaf::Aggregator<L>,
+    >(
+        &self,
+        task_id: TaskId,
+        timestamp: Time,
+    ) -> Result<Vec<AggregateShareJob<L, A>>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT
+                    aggregate_share_jobs.batch_interval,
+                    aggregate_share_jobs.aggregation_param,
+                    aggregate_share_jobs.helper_aggregate_share,
+                    aggregate_share_jobs.report_count,
+                    aggregate_share_jobs.checksum
+                FROM aggregate_share_jobs JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND aggregate_share_jobs.batch_interval @> $2::TIMESTAMP",
+            )
+            .await?;
+        self.tx
+            .query(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.as_bytes(),
+                    /* timestamp */ &timestamp.as_naive_date_time(),
+                ],
+            )
+            .await?
+            .into_iter()
+            .map(|row| {
+                let batch_interval = row.get("batch_interval");
+                let aggregation_param =
+                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+                Self::aggregate_share_job_from_row(task_id, batch_interval, aggregation_param, row)
+            })
+            .collect()
+    }
+
+    fn aggregate_share_job_from_row<const L: usize, A: vdaf::Aggregator<L>>(
+        task_id: TaskId,
+        batch_interval: Interval,
+        aggregation_param: A::AggregationParam,
+        row: Row,
+    ) -> Result<AggregateShareJob<L, A>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         let helper_aggregate_share = row.get_bytea_and_convert("helper_aggregate_share")?;
         let report_count = row.get_bigint_and_convert("report_count")?;
         let checksum = NonceChecksum::get_decoded(row.get("checksum"))?;
 
-        Ok(Some(AggregateShareJob {
-            task_id: request.task_id,
-            batch_interval: request.batch_interval,
+        Ok(AggregateShareJob {
+            task_id,
+            batch_interval,
             aggregation_param,
             helper_aggregate_share,
             report_count,
             checksum,
-        }))
+        })
     }
 
     /// Returns a map whose keys are those values from `intervals` that fall within the batch
@@ -3357,24 +3456,32 @@ mod tests {
             ),
         };
 
-        ds.run_tx(|tx| {
-            let report_share = report_share.clone();
-            Box::pin(async move {
-                tx.put_task(&new_dummy_task(
-                    task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
-                    Role::Leader,
-                ))
-                .await?;
-                tx.put_report_share(task_id, &report_share).await
+        let got_report_share_exists = ds
+            .run_tx(|tx| {
+                let report_share = report_share.clone();
+                Box::pin(async move {
+                    tx.put_task(&new_dummy_task(
+                        task_id,
+                        janus::task::VdafInstance::Prio3Aes128Count.into(),
+                        Role::Leader,
+                    ))
+                    .await?;
+                    let report_share_exists = tx
+                        .check_report_share_exists(task_id, report_share.nonce)
+                        .await?;
+                    tx.put_report_share(task_id, &report_share).await?;
+                    Ok(report_share_exists)
+                })
             })
-        })
-        .await
-        .unwrap();
+            .await
+            .unwrap();
+        assert!(!got_report_share_exists);
 
-        let (got_task_id, got_extensions, got_input_shares) = ds
+        let (got_report_share_exists, got_task_id, got_extensions, got_input_shares) = ds
             .run_tx(|tx| {
                 Box::pin(async move {
+                    let report_share_exists = tx.check_report_share_exists(task_id, report_share.nonce).await?;
+
                     let nonce_time = report_share.nonce.time().as_naive_date_time();
                     let nonce_rand = report_share.nonce.rand();
                     let row = tx
@@ -3392,12 +3499,13 @@ mod tests {
                     let maybe_extensions: Option<Vec<u8>> = row.get("extensions");
                     let maybe_input_shares: Option<Vec<u8>> = row.get("input_shares");
 
-                    Ok((task_id, maybe_extensions, maybe_input_shares))
+                    Ok((report_share_exists, task_id, maybe_extensions, maybe_input_shares))
                 })
             })
             .await
             .unwrap();
 
+        assert!(got_report_share_exists);
         assert_eq!(task_id, got_task_id);
         assert!(got_extensions.is_none());
         assert!(got_input_shares.is_none());
@@ -4412,7 +4520,6 @@ mod tests {
             Duration::from_seconds(200),
         )
         .unwrap();
-        let agg_param = ();
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
@@ -4426,11 +4533,11 @@ mod tests {
                 tx.put_task(&task).await.unwrap();
 
                 let first_collect_job_id = tx
-                    .put_collect_job(task_id, first_batch_interval, &agg_param.get_encoded())
+                    .put_collect_job(task_id, first_batch_interval, &().get_encoded())
                     .await
                     .unwrap();
                 let second_collect_job_id = tx
-                    .put_collect_job(task_id, second_batch_interval, &agg_param.get_encoded())
+                    .put_collect_job(task_id, second_batch_interval, &().get_encoded())
                     .await
                     .unwrap();
 
@@ -5514,6 +5621,10 @@ mod tests {
                     .await
                     .unwrap()
                     .is_none());
+
+                let got_aggregate_share_jobs = tx.find_aggregate_share_jobs_including_time::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    task_id, Time::from_seconds_since_epoch(150)).await?;
+                assert_eq!(got_aggregate_share_jobs, Vec::from([aggregate_share_job]));
 
                 Ok(())
             })
