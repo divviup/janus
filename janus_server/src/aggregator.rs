@@ -2971,13 +2971,13 @@ mod tests {
 
         // report_share_3 has an unknown HPKE config ID.
         let nonce_3 = Nonce::generate(&clock);
-        let wrong_hpke_config = HpkeConfig::new(
-            HpkeConfigId::from(u8::from(hpke_key.0.id()) + 1),
-            hpke_key.0.kem_id(),
-            hpke_key.0.kdf_id(),
-            hpke_key.0.aead_id(),
-            hpke_key.0.public_key().clone(),
-        );
+        let wrong_hpke_config = loop {
+            let hpke_config = generate_hpke_config_and_private_key().0;
+            if task.hpke_keys.contains_key(&hpke_config.id()) {
+                continue;
+            }
+            break hpke_config;
+        };
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_3,
