@@ -5077,7 +5077,6 @@ mod tests {
         task.min_batch_duration = Duration::from_seconds(500);
         task.min_batch_size = 10;
         task.collector_hpke_config = collector_hpke_config.clone();
-        let aggregation_param = ();
 
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -5147,7 +5146,7 @@ mod tests {
                     > {
                         task_id,
                         unit_interval_start: Time::from_seconds_since_epoch(500),
-                        aggregation_param,
+                        aggregation_param: (),
                         aggregate_share: AggregateShare::from(vec![Field64::from(64)]),
                         report_count: 5,
                         checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
@@ -5160,7 +5159,7 @@ mod tests {
                     > {
                         task_id,
                         unit_interval_start: Time::from_seconds_since_epoch(1500),
-                        aggregation_param,
+                        aggregation_param: (),
                         aggregate_share: AggregateShare::from(vec![Field64::from(128)]),
                         report_count: 5,
                         checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
@@ -5173,7 +5172,7 @@ mod tests {
                     > {
                         task_id,
                         unit_interval_start: Time::from_seconds_since_epoch(2000),
-                        aggregation_param,
+                        aggregation_param: (),
                         aggregate_share: AggregateShare::from(vec![Field64::from(256)]),
                         report_count: 5,
                         checksum: NonceChecksum::get_decoded(&[4; 32]).unwrap(),
@@ -5186,7 +5185,7 @@ mod tests {
                     > {
                         task_id,
                         unit_interval_start: Time::from_seconds_since_epoch(2500),
-                        aggregation_param,
+                        aggregation_param: (),
                         aggregate_share: AggregateShare::from(vec![Field64::from(512)]),
                         report_count: 5,
                         checksum: NonceChecksum::get_decoded(&[8; 32]).unwrap(),

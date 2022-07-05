@@ -4412,7 +4412,6 @@ mod tests {
             Duration::from_seconds(200),
         )
         .unwrap();
-        let agg_param = ();
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
@@ -4425,12 +4424,13 @@ mod tests {
                 );
                 tx.put_task(&task).await.unwrap();
 
+                let agg_param_encoded = ().get_encoded();
                 let first_collect_job_id = tx
-                    .put_collect_job(task_id, first_batch_interval, &agg_param.get_encoded())
+                    .put_collect_job(task_id, first_batch_interval, &agg_param_encoded)
                     .await
                     .unwrap();
                 let second_collect_job_id = tx
-                    .put_collect_job(task_id, second_batch_interval, &agg_param.get_encoded())
+                    .put_collect_job(task_id, second_batch_interval, &agg_param_encoded)
                     .await
                     .unwrap();
 
