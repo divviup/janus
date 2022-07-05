@@ -89,6 +89,9 @@ pub enum Error {
     /// Corresponds to `reportTooLate`, §3.1
     #[error("stale report: {0} {1:?}")]
     ReportTooLate(Nonce, TaskId),
+    /// Corresponds to `reportTooEarly`, §3.1. A report was rejected becuase the timestamp is too far in the future, §4.3.4.
+    #[error("report from the future: {0} {1:?}")]
+    ReportTooEarly(Nonce, TaskId),
     /// Corresponds to `unrecognizedMessage`, §3.1
     #[error("unrecognized message: {0} {1:?}")]
     UnrecognizedMessage(&'static str, Option<TaskId>),
@@ -104,9 +107,6 @@ pub enum Error {
     /// Corresponds to `outdatedHpkeConfig`, §3.1
     #[error("outdated HPKE config: {0} {1:?}")]
     OutdatedHpkeConfig(HpkeConfigId, TaskId),
-    /// A report was rejected becuase the timestamp is too far in the future, §4.3.4.
-    #[error("report from the future: {0} {1:?}")]
-    ReportFromTheFuture(Nonce, TaskId),
     /// Corresponds to `unauthorizedRequest`, §3.1
     #[error("unauthorized request: {0:?}")]
     UnauthorizedRequest(TaskId),
@@ -728,7 +728,7 @@ impl VdafOps {
         // §4.2.4: reject reports from too far in the future
         if report.nonce().time().is_after(report_deadline) {
             warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report timestamp exceeds tolerable clock skew");
-            return Err(Error::ReportFromTheFuture(report.nonce(), report.task_id()));
+            return Err(Error::ReportTooEarly(report.nonce(), report.task_id()));
         }
 
         // Check that we can decrypt the report. This isn't required by the spec
@@ -817,8 +817,6 @@ impl VdafOps {
         }
 
         // Decrypt shares & prepare initialization states. (§4.4.4.1)
-        // TODO(#221): reject reports that are "too old" with `report-dropped`.
-        // TODO(#221): reject reports in batches that have completed an aggregate-share request with `batch-collected`.
         struct ReportShareData<const L: usize, A: vdaf::Aggregator<L>>
         where
             for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -924,7 +922,7 @@ impl VdafOps {
             state: aggregation_job_state,
         });
         let report_share_data = Arc::new(report_share_data);
-        datastore
+        let prep_steps = datastore
             .run_tx(|tx| {
                 let aggregation_job = aggregation_job.clone();
                 let report_share_data = report_share_data.clone();
@@ -939,7 +937,32 @@ impl VdafOps {
                         &aggregation_job.aggregation_param,
                     );
 
-                    for (ord, share_data) in report_share_data.as_ref().iter().enumerate() {
+                    let mut prep_steps = Vec::new();
+                    for (ord, share_data) in report_share_data.iter().enumerate() {
+                        // Verify that we haven't seen this nonce before, and that the report isn't
+                        // for a batch interval that has already started collection.
+                        let (report_share_exists, conflicting_aggregate_share_jobs) = try_join!(
+                            tx.check_report_share_exists(task_id, share_data.report_share.nonce),
+                            tx.find_aggregate_share_jobs_including_time::<L, A>(
+                                task_id,
+                                share_data.report_share.nonce.time()
+                            ),
+                        )?;
+                        if report_share_exists {
+                            prep_steps.push(PrepareStep {
+                                nonce: share_data.report_share.nonce,
+                                result: PrepareStepResult::Failed(ReportShareError::ReportReplayed),
+                            });
+                            continue;
+                        }
+                        if !conflicting_aggregate_share_jobs.is_empty() {
+                            prep_steps.push(PrepareStep {
+                                nonce: share_data.report_share.nonce,
+                                result: PrepareStepResult::Failed(ReportShareError::BatchCollected),
+                            });
+                            continue;
+                        }
+
                         // Write client report & report aggregation.
                         tx.put_report_share(task_id, &share_data.report_share)
                             .await?;
@@ -957,25 +980,22 @@ impl VdafOps {
                         {
                             accumulator.update(output_share, share_data.report_share.nonce)?;
                         }
+
+                        prep_steps.push(PrepareStep {
+                            nonce: share_data.report_share.nonce,
+                            result: share_data.prep_result.clone(),
+                        })
                     }
 
                     accumulator.flush_to_datastore(tx).await?;
-
-                    Ok(())
+                    Ok(prep_steps)
                 })
             })
             .await?;
 
         // Construct response and return.
         Ok(AggregateInitializeResp {
-            prepare_steps: report_share_data
-                .as_ref()
-                .iter()
-                .map(|d| PrepareStep {
-                    nonce: d.report_share.nonce,
-                    result: d.prep_result.clone(),
-                })
-                .collect(),
+            prepare_steps: prep_steps,
         })
     }
 
@@ -1003,10 +1023,7 @@ impl VdafOps {
         let prep_steps = Arc::new(req.prepare_steps);
 
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
-        // TODO(#224): don't do O(n) network round-trips (where n is the number of transitions)
-        // TODO(#221): We have to reject reports in batches that have completed an aggregate-share
-        // request with `batch-collected` here as well as in the init case. Suppose that an
-        // AggregateShareReq arrives in between the AggregateInitReq and AggregateContinueReq.
+        // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
@@ -1054,6 +1071,20 @@ impl VdafOps {
                             }
                             break report_agg;
                         };
+
+                        // Make sure this report isn't in an interval that has already started
+                        // collection.
+                        let conflicting_aggregate_share_jobs = tx.find_aggregate_share_jobs_including_time::<L, A>(task_id, prep_step.nonce.time()).await?;
+                        if !conflicting_aggregate_share_jobs.is_empty() {
+                            report_aggregation.state = ReportAggregationState::Failed(ReportShareError::BatchCollected);
+                            response_prep_steps.push(PrepareStep {
+                                nonce: prep_step.nonce,
+                                result: PrepareStepResult::Failed(ReportShareError::BatchCollected),
+                            });
+                            tx.update_report_aggregation(&report_aggregation).await?;
+                            continue;
+                        }
+
                         let prep_state =
                             match report_aggregation.state {
                                 ReportAggregationState::Waiting(prep_state, _) => prep_state,
@@ -1561,8 +1592,6 @@ enum DapProblemType {
     UnrecognizedAggregationJob, // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/270): standardize this value
     OutdatedConfig,
     ReportTooLate,
-    // TODO(#273): reject reports from too far in the future with ReportTooEarly
-    #[allow(dead_code)]
     ReportTooEarly,
     BatchInvalid,
     InsufficientBatchSize,
@@ -1709,7 +1738,7 @@ fn error_handler<R: Reply>(
             Err(Error::OutdatedHpkeConfig(_, task_id)) => {
                 build_problem_details_response(DapProblemType::OutdatedConfig, Some(task_id))
             }
-            Err(Error::ReportFromTheFuture(_, task_id)) => {
+            Err(Error::ReportTooEarly(_, task_id)) => {
                 build_problem_details_response(DapProblemType::ReportTooEarly, Some(task_id))
             }
             Err(Error::UnauthorizedRequest(task_id)) => {
@@ -2052,6 +2081,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use http::Method;
+    use hyper::body;
     use janus::{
         hpke::associated_data_for_report_share,
         hpke::{
@@ -2114,7 +2144,7 @@ mod tests {
             HpkeConfig::MEDIA_TYPE
         );
 
-        let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let bytes = body::to_bytes(response.into_body()).await.unwrap();
         let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
         assert_eq!(hpke_config, want_hpke_key.0);
 
@@ -2255,20 +2285,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(hyper::body::to_bytes(response.into_body())
+        assert!(body::to_bytes(response.into_body())
             .await
             .unwrap()
             .is_empty());
 
         // Verify that we reject duplicate reports with the staleReport type.
         // TODO(#34): change this error type.
-        let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
+        let mut response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
             .unwrap();
-        let (part, body) = response.into_parts();
-        assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -2280,16 +2309,6 @@ mod tests {
                 "taskid": format!("{}", report.task_id()),
             })
         );
-        assert_eq!(
-            problem_details
-                .as_object()
-                .unwrap()
-                .get("status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            part.status.as_u16() as u64
-        );
 
         // should reject a report with only one share with the unrecognizedMessage type.
         let bad_report = Report::new(
@@ -2298,13 +2317,13 @@ mod tests {
             report.extensions().to_vec(),
             vec![report.encrypted_input_shares()[0].clone()],
         );
-        let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
-            .await
-            .unwrap();
-        let (part, body) = response.into_parts();
-        assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mut response =
+            drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -2315,16 +2334,6 @@ mod tests {
                 "instance": "..",
                 "taskid": format!("{}", report.task_id()),
             })
-        );
-        assert_eq!(
-            problem_details
-                .as_object()
-                .unwrap()
-                .get("status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            part.status.as_u16() as u64
         );
 
         // should reject a report using the wrong HPKE config for the leader, and reply with
@@ -2344,13 +2353,13 @@ mod tests {
                 report.encrypted_input_shares()[1].clone(),
             ],
         );
-        let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
-            .await
-            .unwrap();
-        let (part, body) = response.into_parts();
-        assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
-        let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mut response =
+            drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -2362,18 +2371,8 @@ mod tests {
                 "taskid": format!("{}", report.task_id()),
             })
         );
-        assert_eq!(
-            problem_details
-                .as_object()
-                .unwrap()
-                .get("status")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            part.status.as_u16() as u64
-        );
 
-        // reports from the future should be rejected.
+        // Reports from the future should be rejected.
         let bad_report_time = clock
             .now()
             .add(Duration::from_minutes(10).unwrap())
@@ -2386,12 +2385,24 @@ mod tests {
             report.extensions().to_vec(),
             report.encrypted_input_shares().to_vec(),
         );
-        let response = drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
-            .await
-            .unwrap();
-        assert!(!response.status().is_success());
-        // TODO(#221): update this test once an error type has been defined, and validate the problem details.
-        assert_eq!(response.status().as_u16(), 400);
+        let mut response =
+            drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
+                .await
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            serde_json::json!({
+                "status": 400u16,
+                "type": "urn:ietf:params:ppm:dap:error:reportTooEarly",
+                "title": "Report could not be processed because it arrived too early.",
+                "detail": "Report could not be processed because it arrived too early.",
+                "instance": "..",
+                "taskid": format!("{}", report.task_id()),
+            })
+        );
 
         // Check for appropriate CORS headers in response to a preflight request.
         let response = warp::test::request()
@@ -2476,7 +2487,7 @@ mod tests {
             .into_parts();
 
         assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let bytes = body::to_bytes(body).await.unwrap();
         let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             problem_details,
@@ -2686,7 +2697,7 @@ mod tests {
             ),
             &task.hpke_keys.values().next().unwrap().0,
         );
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportFromTheFuture(nonce, task_id)) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooEarly(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id());
             assert_eq!(report.nonce(), nonce);
         });
@@ -2768,7 +2779,7 @@ mod tests {
             .into_parts();
 
         assert!(!part.status.is_success());
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let bytes = body::to_bytes(body).await.unwrap();
         let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             problem_details,
@@ -2855,7 +2866,7 @@ mod tests {
 
         let want_status = 400;
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -2882,7 +2893,7 @@ mod tests {
 
         let want_status = 400;
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -2920,14 +2931,6 @@ mod tests {
             .try_into()
             .unwrap();
         let hpke_key = current_hpke_key(&task.hpke_keys);
-
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
 
         // report_share_0 is a "happy path" report.
         let nonce_0 = Nonce::generate(&clock);
@@ -2968,19 +2971,74 @@ mod tests {
 
         // report_share_3 has an unknown HPKE config ID.
         let nonce_3 = Nonce::generate(&clock);
-        let wrong_hpke_config = HpkeConfig::new(
-            HpkeConfigId::from(u8::from(hpke_key.0.id()) + 1),
-            hpke_key.0.kem_id(),
-            hpke_key.0.kdf_id(),
-            hpke_key.0.aead_id(),
-            hpke_key.0.public_key().clone(),
-        );
+        let wrong_hpke_config = loop {
+            let hpke_config = generate_hpke_config_and_private_key().0;
+            if task.hpke_keys.contains_key(&hpke_config.id()) {
+                continue;
+            }
+            break hpke_config;
+        };
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             nonce_3,
             &wrong_hpke_config,
             &input_share,
         );
+
+        // report_share_4 has already been aggregated.
+        let nonce_4 = Nonce::generate(&clock);
+        let input_share = run_vdaf(&vdaf, &verify_key, &(), nonce_4, &0)
+            .input_shares
+            .remove(1);
+        let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_4,
+            &hpke_key.0,
+            &input_share,
+        );
+
+        // report_share_5 falls into a batch unit that has already been collected.
+        let past_clock = MockClock::new(Time::from_seconds_since_epoch(
+            task.min_batch_duration.as_seconds() / 2,
+        ));
+        let nonce_5 = Nonce::generate(&past_clock);
+        let input_share = run_vdaf(&vdaf, &verify_key, &(), nonce_5, &0)
+            .input_shares
+            .remove(1);
+        let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_5,
+            &hpke_key.0,
+            &input_share,
+        );
+
+        datastore
+            .run_tx(|tx| {
+                let (task, report_share_4) = (task.clone(), report_share_4.clone());
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+                    tx.put_report_share(task_id, &report_share_4).await?;
+                    tx.put_aggregate_share_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &AggregateShareJob {
+                            task_id,
+                            batch_interval: Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                task.min_batch_duration,
+                            )
+                            .unwrap(),
+                            aggregation_param: (),
+                            helper_aggregate_share: AggregateShare::from(Vec::from([
+                                Field64::from(7),
+                            ])),
+                            report_count: 0,
+                            checksum: NonceChecksum::default(),
+                        },
+                    )
+                    .await
+                })
+            })
+            .await
+            .unwrap();
 
         let request = AggregateInitializeReq {
             task_id,
@@ -2991,6 +3049,8 @@ mod tests {
                 report_share_1.clone(),
                 report_share_2.clone(),
                 report_share_3.clone(),
+                report_share_4.clone(),
+                report_share_5.clone(),
             ],
         };
 
@@ -3015,11 +3075,11 @@ mod tests {
             response.headers().get(CONTENT_TYPE).unwrap(),
             AggregateInitializeResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
-        assert_eq!(aggregate_resp.prepare_steps.len(), 4);
+        assert_eq!(aggregate_resp.prepare_steps.len(), 6);
 
         let prepare_step_0 = aggregate_resp.prepare_steps.get(0).unwrap();
         assert_eq!(prepare_step_0.nonce, report_share_0.nonce);
@@ -3044,6 +3104,20 @@ mod tests {
         assert_matches!(
             prepare_step_3.result,
             PrepareStepResult::Failed(ReportShareError::HpkeUnknownConfigId)
+        );
+
+        let prepare_step_4 = aggregate_resp.prepare_steps.get(4).unwrap();
+        assert_eq!(prepare_step_4.nonce, report_share_4.nonce);
+        assert_eq!(
+            prepare_step_4.result,
+            PrepareStepResult::Failed(ReportShareError::ReportReplayed)
+        );
+
+        let prepare_step_5 = aggregate_resp.prepare_steps.get(5).unwrap();
+        assert_eq!(prepare_step_5.nonce, report_share_5.nonce);
+        assert_eq!(
+            prepare_step_5.result,
+            PrepareStepResult::Failed(ReportShareError::BatchCollected)
         );
     }
 
@@ -3100,7 +3174,7 @@ mod tests {
             response.headers().get(CONTENT_TYPE).unwrap(),
             AggregateInitializeResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -3167,7 +3241,7 @@ mod tests {
             response.headers().get(CONTENT_TYPE).unwrap(),
             AggregateInitializeResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
@@ -3238,7 +3312,7 @@ mod tests {
 
         let want_status = 400;
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -3303,18 +3377,41 @@ mod tests {
             &transcript_1.input_shares[1],
         );
 
+        // report_share_2 falls into a batch unit that has already been collected.
+        let past_clock = MockClock::new(Time::from_seconds_since_epoch(
+            task.min_batch_duration.as_seconds() / 2,
+        ));
+        let nonce_2 = Nonce::generate(&past_clock);
+        let transcript_2 = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce_2, &0);
+        let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
+        let prep_msg_2 = transcript_2.prepare_messages[0].clone();
+        let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
+            task_id,
+            nonce_2,
+            &hpke_key.0,
+            &transcript_2.input_shares[1],
+        );
+
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
-                let (report_share_0, report_share_1) =
-                    (report_share_0.clone(), report_share_1.clone());
-                let (prep_state_0, prep_state_1) = (prep_state_0.clone(), prep_state_1.clone());
+                let (report_share_0, report_share_1, report_share_2) = (
+                    report_share_0.clone(),
+                    report_share_1.clone(),
+                    report_share_2.clone(),
+                );
+                let (prep_state_0, prep_state_1, prep_state_2) = (
+                    prep_state_0.clone(),
+                    prep_state_1.clone(),
+                    prep_state_2.clone(),
+                );
 
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
                     tx.put_report_share(task_id, &report_share_0).await?;
                     tx.put_report_share(task_id, &report_share_1).await?;
+                    tx.put_report_share(task_id, &report_share_2).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -3327,30 +3424,54 @@ mod tests {
                     })
                     .await?;
 
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        Prio3Aes128Count,
-                    > {
-                        aggregation_job_id,
-                        task_id,
-                        nonce: nonce_0,
-                        ord: 0,
-                        state: ReportAggregationState::Waiting(prep_state_0, None),
-                    })
+                    tx.put_report_aggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &ReportAggregation {
+                            aggregation_job_id,
+                            task_id,
+                            nonce: nonce_0,
+                            ord: 0,
+                            state: ReportAggregationState::Waiting(prep_state_0, None),
+                        },
+                    )
                     .await?;
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        Prio3Aes128Count,
-                    > {
-                        aggregation_job_id,
-                        task_id,
-                        nonce: nonce_1,
-                        ord: 1,
-                        state: ReportAggregationState::Waiting(prep_state_1, None),
-                    })
+                    tx.put_report_aggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &ReportAggregation {
+                            aggregation_job_id,
+                            task_id,
+                            nonce: nonce_1,
+                            ord: 1,
+                            state: ReportAggregationState::Waiting(prep_state_1, None),
+                        },
+                    )
+                    .await?;
+                    tx.put_report_aggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &ReportAggregation {
+                            aggregation_job_id,
+                            task_id,
+                            nonce: nonce_2,
+                            ord: 2,
+                            state: ReportAggregationState::Waiting(prep_state_2, None),
+                        },
+                    )
                     .await?;
 
-                    Ok(())
+                    tx.put_aggregate_share_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &AggregateShareJob {
+                            task_id,
+                            batch_interval: Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                task.min_batch_duration,
+                            )
+                            .unwrap(),
+                            aggregation_param: (),
+                            helper_aggregate_share: AggregateShare::from(Vec::from([
+                                Field64::from(7),
+                            ])),
+                            report_count: 0,
+                            checksum: NonceChecksum::default(),
+                        },
+                    )
+                    .await
                 })
             })
             .await
@@ -3359,10 +3480,16 @@ mod tests {
         let request = AggregateContinueReq {
             task_id,
             job_id: aggregation_job_id,
-            prepare_steps: vec![PrepareStep {
-                nonce: nonce_0,
-                result: PrepareStepResult::Continued(prep_msg_0.get_encoded()),
-            }],
+            prepare_steps: Vec::from([
+                PrepareStep {
+                    nonce: nonce_0,
+                    result: PrepareStepResult::Continued(prep_msg_0.get_encoded()),
+                },
+                PrepareStep {
+                    nonce: nonce_2,
+                    result: PrepareStepResult::Continued(prep_msg_2.get_encoded()),
+                },
+            ]),
         };
 
         // Create aggregator filter, send request, and parse response.
@@ -3386,17 +3513,23 @@ mod tests {
             response.headers().get(CONTENT_TYPE).unwrap(),
             AggregateContinueResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(response.body_mut()).await.unwrap();
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp = AggregateContinueResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(
             aggregate_resp,
             AggregateContinueResp {
-                prepare_steps: vec![PrepareStep {
-                    nonce: nonce_0,
-                    result: PrepareStepResult::Finished,
-                }]
+                prepare_steps: Vec::from([
+                    PrepareStep {
+                        nonce: nonce_0,
+                        result: PrepareStepResult::Finished,
+                    },
+                    PrepareStep {
+                        nonce: nonce_2,
+                        result: PrepareStepResult::Failed(ReportShareError::BatchCollected),
+                    }
+                ])
             }
         );
 
@@ -3452,6 +3585,13 @@ mod tests {
                     ord: 1,
                     state: ReportAggregationState::Failed(ReportShareError::ReportDropped),
                 },
+                ReportAggregation {
+                    aggregation_job_id,
+                    task_id,
+                    nonce: nonce_2,
+                    ord: 2,
+                    state: ReportAggregationState::Failed(ReportShareError::BatchCollected),
+                }
             ]
         );
     }
@@ -4008,7 +4148,7 @@ mod tests {
         // Check that response is as desired.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4119,7 +4259,7 @@ mod tests {
             parts.headers.get(CONTENT_TYPE).unwrap(),
             AggregateContinueResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+        let body_bytes = body::to_bytes(body).await.unwrap();
         let aggregate_resp = AggregateContinueResp::get_decoded(&body_bytes).unwrap();
         assert_eq!(
             aggregate_resp,
@@ -4273,7 +4413,7 @@ mod tests {
         // Check that response is as desired.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4419,7 +4559,7 @@ mod tests {
         // Check that response is as desired.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4530,7 +4670,7 @@ mod tests {
         // Check that response is as desired.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4589,7 +4729,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4649,7 +4789,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4785,7 +4925,7 @@ mod tests {
             parts.headers.get(CONTENT_TYPE).unwrap(),
             CollectResp::MEDIA_TYPE
         );
-        let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+        let body_bytes = body::to_bytes(body).await.unwrap();
         let collect_resp = CollectResp::get_decoded(body_bytes.as_ref()).unwrap();
         assert_eq!(collect_resp.encrypted_agg_shares.len(), 2);
 
@@ -4917,7 +5057,7 @@ mod tests {
             .into_parts();
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -4981,7 +5121,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -5046,7 +5186,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -5123,7 +5263,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -5228,7 +5368,7 @@ mod tests {
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
@@ -5287,7 +5427,7 @@ mod tests {
 
             assert_eq!(parts.status, StatusCode::BAD_REQUEST);
             let problem_details: serde_json::Value =
-                serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+                serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
             assert_eq!(
                 problem_details,
                 serde_json::json!({
@@ -5386,7 +5526,7 @@ mod tests {
                     label,
                     iteration
                 );
-                let body_bytes = hyper::body::to_bytes(body).await.unwrap();
+                let body_bytes = body::to_bytes(body).await.unwrap();
                 let aggregate_share_resp = AggregateShareResp::get_decoded(&body_bytes).unwrap();
 
                 let aggregate_share = hpke::open(
@@ -5441,7 +5581,7 @@ mod tests {
             .into_parts();
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
-            serde_json::from_slice(&hyper::body::to_bytes(body).await.unwrap()).unwrap();
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             serde_json::json!({
