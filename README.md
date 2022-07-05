@@ -5,7 +5,7 @@
 [actions]: https://github.com/divviup/janus/actions?query=branch%3Amain
 
 Janus is an experimental implementation of the
-[Privacy Preserving Measurement (PPM) specification](https://github.com/abetterinternet/ppm-specification).
+[Privacy Preserving Measurement (PPM) specification](https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap).
 
 It is currently in active development.
 
@@ -111,13 +111,3 @@ metrics_config:
 ```
 
 The command line flag `--otlp-metrics-metadata` or environment variable `OTLP_METRICS_METADATA` may alternately be used to supply gRPC metadata for the metrics exporter.
-
-## `janus_client`
-[![client library latest version]][client crates.io] [![client docs badge]][client docs.rs]
-
-[client library latest version]: https://img.shields.io/crates/v/janus_client.svg
-[client crates.io]: https://crates.io/crates/janus_client
-[client docs badge]: https://img.shields.io/badge/docs.rs-rustdoc-green
-[client docs.rs]: https://docs.rs/janus_client/
-
-The `janus_client` crate in the workspace is a self-contained client for Janus and [Divvi Up](https://divviup.org), [ISRG](https://abetterinternet.org)'s privacy-respecting metrics service. `janus_client` is published to crates.io by a GitHub Action that runs when a `janus` release is created.

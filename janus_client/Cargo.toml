@@ -3,8 +3,10 @@ name = "janus_client"
 version = "0.1.1"
 edition = "2021"
 description = "Client for Janus, the server powering ISRG's Divvi Up."
+documentation = "https://docs.rs/janus_client"
+homepage = "https://divviup.org"
 license = "MPL-2.0"
-repository = "https://github.com/abetterinternet/janus"
+repository = "https://github.com/divviup/janus"
 rust-version = "1.58"
 
 [dependencies]
