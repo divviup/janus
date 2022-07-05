@@ -1275,7 +1275,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aab8fc367588b89dcee83ab0fd66b72b50b72fa1904d7095045ace2b0c81c35"
 
 [[package]]
-name = "janus"
+name = "janus_client"
+version = "0.1.0"
+dependencies = [
+ "assert_matches",
+ "http",
+ "janus_core",
+ "janus_test_util",
+ "mockito",
+ "prio",
+ "reqwest",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "janus_core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1298,25 +1317,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "janus_client"
-version = "0.1.0"
-dependencies = [
- "assert_matches",
- "http",
- "janus",
- "janus_test_util",
- "mockito",
- "prio",
- "reqwest",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-log",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
 name = "janus_server"
 version = "0.1.0"
 dependencies = [
@@ -1335,7 +1335,7 @@ dependencies = [
  "http",
  "hyper",
  "itertools",
- "janus",
+ "janus_core",
  "janus_test_util",
  "lazy_static",
  "libc",
@@ -1383,7 +1383,7 @@ dependencies = [
  "assert_matches",
  "chrono",
  "futures",
- "janus",
+ "janus_core",
  "prio",
  "rand",
  "ring",
@@ -1570,8 +1570,8 @@ dependencies = [
  "chrono",
  "deadpool-postgres",
  "futures",
- "janus",
  "janus_client",
+ "janus_core",
  "janus_server",
  "janus_test_util",
  "lazy_static",

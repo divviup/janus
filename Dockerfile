@@ -5,7 +5,7 @@ RUN apk add libc-dev
 WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
-COPY janus /src/janus
+COPY janus_core /src/janus_core
 COPY janus_client /src/janus_client
 COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test

@@ -1,4 +1,5 @@
-use janus::{
+use janus_client::{self, Client, ClientParameters};
+use janus_core::{
     hpke::{
         self, associated_data_for_aggregate_share, test_util::generate_hpke_config_and_private_key,
         HpkeApplicationInfo, HpkePrivateKey, Label,
@@ -8,7 +9,6 @@ use janus::{
     time::{Clock, RealClock},
     TokioRuntime,
 };
-use janus_client::{self, Client, ClientParameters};
 use janus_server::{
     aggregator::{
         aggregate_share::CollectJobDriver, aggregation_job_creator::AggregationJobCreator,

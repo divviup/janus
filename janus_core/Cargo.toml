@@ -1,8 +1,10 @@
 [package]
-name = "janus"
+name = "janus_core"
 version = "0.1.0"
 edition = "2021"
+description = "Core type definitions and utilities used in various components of Janus."
 license = "MPL-2.0"
+repository = "https://github.com/abetterinternet/janus"
 rust-version = "1.58"
 
 [features]

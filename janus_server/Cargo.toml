@@ -26,7 +26,7 @@ hpke-dispatch = "0.3.0"
 http = "0.2.8"
 hyper = "0.14.19"
 itertools = "0.10.3"
-janus = { path = "../janus", features = ["database"] }
+janus_core = { path = "../janus_core", features = ["database"] }
 num_enum = "0.5.6"
 opentelemetry = { version = "0.17.0", features = ["metrics", "rt-tokio"] }
 opentelemetry-jaeger = { version = "0.16.0", optional = true, features = ["rt-tokio"] }

@@ -1,5 +1,5 @@
 use futures::FutureExt;
-use janus::Runtime;
+use janus_core::Runtime;
 use std::{
     collections::HashMap,
     future::Future,
