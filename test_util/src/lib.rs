@@ -42,6 +42,7 @@ macro_rules! define_ephemeral_datastore {
         }
 
         impl DbHandle {
+            // Retrieve a datastore attached to the ephemeral database.
             pub fn datastore<C: Clock>(&self, clock: C) ->  Datastore<C> {
                 // Create a crypter based on the generated key bytes.
                 let datastore_key = ::ring::aead::LessSafeKey::new(::ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &self.datastore_key_bytes).unwrap());
@@ -50,10 +51,17 @@ macro_rules! define_ephemeral_datastore {
                 Datastore::new(self.pool(), crypter, clock)
             }
 
-            fn pool(&self) -> ::deadpool_postgres::Pool {
+            // Retrieve a Postgres connection pool attached to the ephemeral database.
+            pub fn pool(&self) -> ::deadpool_postgres::Pool {
                 let cfg = <::tokio_postgres::Config as std::str::FromStr>::from_str(&self.connection_string).unwrap();
                 let conn_mgr = ::deadpool_postgres::Manager::new(cfg, ::tokio_postgres::NoTls);
                 ::deadpool_postgres::Pool::builder(conn_mgr).build().unwrap()
+            }
+
+            /// Write the Janus schema into the datastore.
+            pub async fn write_schema(&self) {
+                let client = self.pool().get().await.unwrap();
+                client.batch_execute(::janus_test_util::SCHEMA).await.unwrap();
             }
 
             /// Get a PostgreSQL connection string to connect to the temporary database.
@@ -61,6 +69,7 @@ macro_rules! define_ephemeral_datastore {
                 &self.connection_string
             }
 
+            /// Get the bytes of the key used to encrypt sensitive datastore values.
             pub fn datastore_key_bytes(&self) -> &[u8] {
                 &self.datastore_key_bytes
             }
@@ -139,11 +148,12 @@ macro_rules! define_ephemeral_datastore {
             }
         }
 
-        /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database which
-        /// has the Janus schema applied but is otherwise empty.
+        /// ephemeral_db_handle creates a new ephemeral database which has no schema & is empty.
+        /// Dropping the return value causes the database to be shut down & cleaned up.
         ///
-        /// Dropping the second return value causes the database to be shut down & cleaned up.
-        pub async fn ephemeral_datastore<C: Clock>(clock: C) -> (Datastore<C>, DbHandle) {
+        /// Most users will want to call ephemeral_datastore() instead, which applies the Janus
+        /// schema and creates a datastore.
+        pub fn ephemeral_db_handle() -> DbHandle {
             // Start an instance of Postgres running in a container.
             let db_container =
                 CONTAINER_CLIENT.run(::testcontainers::RunnableImage::from(::testcontainers::images::postgres::Postgres::default()).with_tag("14-alpine"));
@@ -160,20 +170,22 @@ macro_rules! define_ephemeral_datastore {
             // Create a random (ephemeral) key.
             let datastore_key_bytes = ::janus_test_util::generate_aead_key_bytes();
 
-            // Create a DbHandle, and use it to initialize the DB by running our schema.
-            let db_handle = DbHandle{
+            DbHandle{
                 _db_container: db_container,
                 connection_string,
                 port_number,
                 datastore_key_bytes,
-            };
-            let pool = db_handle.pool();
-            let client = pool.get().await.unwrap();
-            client.batch_execute(::janus_test_util::SCHEMA).await.unwrap();
+            }
+        }
 
-            // Create a datastore using our new DB, and return the DB & handle.
-            let ds = db_handle.datastore(clock);
-            (ds, db_handle)
+        /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database
+        /// which has the Janus schema applied but is otherwise empty.
+        ///
+        /// Dropping the second return value causes the database to be shut down & cleaned up.
+        pub async fn ephemeral_datastore<C: Clock>(clock: C) -> (Datastore<C>, DbHandle) {
+            let db_handle = ephemeral_db_handle();
+            db_handle.write_schema().await;
+            (db_handle.datastore(clock), db_handle)
         }
     };
 }
