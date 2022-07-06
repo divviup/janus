@@ -3,6 +3,7 @@ name = "janus_server"
 version = "0.1.0"
 edition = "2021"
 license = "MPL-2.0"
+publish = false
 rust-version = "1.58"
 
 [features]
@@ -27,7 +28,7 @@ hpke-dispatch = "0.3.0"
 http = "0.2.8"
 hyper = "0.14.19"
 itertools = "0.10.3"
-janus = { path = "../janus", features = ["database"] }
+janus_core = { path = "../janus_core", features = ["database"] }
 janus_test_util = { path = "../test_util", optional = true }
 lazy_static = { version = "1", optional = true }
 num_enum = "0.5.6"

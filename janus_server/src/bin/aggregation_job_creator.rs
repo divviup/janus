@@ -1,4 +1,4 @@
-use janus::time::RealClock;
+use janus_core::time::RealClock;
 use janus_server::aggregator::aggregation_job_creator::AggregationJobCreator;
 use janus_server::binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions};
 use janus_server::config::AggregationJobCreatorConfig;

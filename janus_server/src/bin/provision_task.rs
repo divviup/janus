@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use janus::time::{Clock, RealClock};
+use janus_core::time::{Clock, RealClock};
 use janus_server::{
     binary_utils::{janus_main, BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
@@ -88,7 +88,7 @@ impl BinaryConfig for Config {
 #[cfg(test)]
 mod tests {
     use super::{run, Config};
-    use janus::{
+    use janus_core::{
         message::{Role, TaskId},
         task::VdafInstance,
         time::RealClock,

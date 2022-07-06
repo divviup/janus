@@ -1,5 +1,5 @@
 use assert_matches::assert_matches;
-use janus::{
+use janus_core::{
     message::{Duration, Nonce, Time},
     time::Clock,
 };

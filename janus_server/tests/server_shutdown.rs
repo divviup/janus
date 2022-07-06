@@ -3,7 +3,7 @@
 //! The server should promptly shut down, and this test will fail if it times
 //! out waiting for the server to do so.
 
-use janus::{
+use janus_core::{
     message::{Role, TaskId},
     task::VdafInstance,
     time::{Clock, RealClock},

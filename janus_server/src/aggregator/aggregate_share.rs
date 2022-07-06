@@ -14,7 +14,7 @@ use crate::{
 };
 use futures::{future::BoxFuture, try_join};
 use http::header::CONTENT_TYPE;
-use janus::{
+use janus_core::{
     message::{Duration, Interval, NonceChecksum, Role},
     time::Clock,
 };
@@ -59,7 +59,7 @@ impl CollectJobDriver {
         lease: Lease<AcquiredCollectJob>,
     ) -> Result<(), Error> {
         match lease.leased().vdaf {
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(
                     datastore,
                     lease
@@ -67,7 +67,7 @@ impl CollectJobDriver {
                 .await
             }
 
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { .. }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. }) => {
                 self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Sum>(
                     datastore,
                     lease
@@ -75,7 +75,7 @@ impl CollectJobDriver {
                 .await
             }
 
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Histogram>(
                     datastore,
                     lease,
@@ -436,7 +436,7 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
     };
     use assert_matches::assert_matches;
-    use janus::{
+    use janus_core::{
         message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId},
         Runtime,
     };

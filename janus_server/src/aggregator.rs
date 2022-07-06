@@ -31,7 +31,7 @@ use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
     StatusCode,
 };
-use janus::{
+use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
     message::{HpkeConfig, HpkeConfigId, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
     time::Clock,
@@ -85,7 +85,7 @@ pub enum Error {
     MessageDecode(#[from] prio::codec::CodecError),
     /// Error handling a message.
     #[error("invalid message: {0}")]
-    Message(#[from] janus::message::Error),
+    Message(#[from] janus_core::message::Error),
     /// Corresponds to `reportTooLate`, §3.1
     #[error("stale report: {0} {1:?}")]
     ReportTooLate(Nonce, TaskId),
@@ -142,7 +142,7 @@ peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
     BatchLifetimeExceeded(TaskId),
     /// HPKE failure.
     #[error("HPKE error: {0}")]
-    Hpke(#[from] janus::hpke::Error),
+    Hpke(#[from] janus_core::hpke::Error),
     /// Error handling task parameters
     #[error("invalid task parameters: {0}")]
     TaskParameters(#[from] crate::task::Error),
@@ -398,7 +398,7 @@ impl TaskAggregator {
     fn new(task: Task) -> Result<Self, Error> {
         let current_vdaf_verify_key = task.vdaf_verify_keys.last().unwrap();
         let vdaf_ops = match &task.vdaf {
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 let vdaf = Prio3::new_aes128_count(2)?;
                 let verify_key = current_vdaf_verify_key
                     .clone()
@@ -407,7 +407,7 @@ impl TaskAggregator {
                 VdafOps::Prio3Aes128Count(vdaf, verify_key)
             }
 
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 let vdaf = Prio3::new_aes128_sum(2, *bits)?;
                 let verify_key = current_vdaf_verify_key
                     .clone()
@@ -416,7 +416,9 @@ impl TaskAggregator {
                 VdafOps::Prio3Aes128Sum(vdaf, verify_key)
             }
 
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { buckets }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
+                buckets,
+            }) => {
                 let vdaf = Prio3::new_aes128_histogram(2, &*buckets)?;
                 let verify_key = current_vdaf_verify_key
                     .clone()
@@ -2082,7 +2084,7 @@ mod tests {
     use assert_matches::assert_matches;
     use http::Method;
     use hyper::body;
-    use janus::{
+    use janus_core::{
         hpke::associated_data_for_report_share,
         hpke::{
             associated_data_for_aggregate_share, test_util::generate_hpke_config_and_private_key,
@@ -2108,7 +2110,7 @@ mod tests {
         let task_id = TaskId::random();
         let task = new_dummy_task(
             task_id,
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         );
         let clock = MockClock::default();
@@ -2271,7 +2273,7 @@ mod tests {
 
         let task = new_dummy_task(
             TaskId::random(),
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         );
         let clock = MockClock::default();
@@ -2465,7 +2467,7 @@ mod tests {
         let task_id = TaskId::random();
         let task = new_dummy_task(
             task_id,
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Helper,
         );
         let clock = MockClock::default();
@@ -2521,7 +2523,7 @@ mod tests {
     ) {
         let task = new_dummy_task(
             TaskId::random(),
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         );
         let clock = MockClock::default();
@@ -2740,7 +2742,7 @@ mod tests {
         let task_id = TaskId::random();
         let task = new_dummy_task(
             task_id,
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         );
         let clock = MockClock::default();
@@ -2826,7 +2828,7 @@ mod tests {
         let task_id = TaskId::random();
         let task = new_dummy_task(
             task_id,
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Helper,
         );
         let clock = MockClock::default();
@@ -2916,7 +2918,7 @@ mod tests {
         let task_id = TaskId::random();
         let task = new_dummy_task(
             task_id,
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Helper,
         );
         let clock = MockClock::default();
@@ -3336,7 +3338,7 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let task = new_dummy_task(
             task_id,
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Helper,
         );
         let clock = MockClock::default();
@@ -3605,7 +3607,7 @@ mod tests {
         let aggregation_job_id_1 = AggregationJobId::random();
         let task = new_dummy_task(
             task_id,
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Helper,
         );
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
@@ -4811,7 +4813,7 @@ mod tests {
         let task_id = TaskId::random();
         let mut task = new_dummy_task(
             task_id,
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         );
         task.aggregator_endpoints = vec![
@@ -5210,7 +5212,7 @@ mod tests {
 
         let mut task = new_dummy_task(
             task_id,
-            janus::task::VdafInstance::Prio3Aes128Count.into(),
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
             Role::Helper,
         );
         task.max_batch_lifetime = 3;

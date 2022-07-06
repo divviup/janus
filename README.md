@@ -1,7 +1,11 @@
 # janus
+[![Build Status]][actions]
+
+[Build Status]: https://github.com/divviup/janus/workflows/ci-build/badge.svg
+[actions]: https://github.com/divviup/janus/actions?query=branch%3Amain
 
 Janus is an experimental implementation of the
-[Privacy Preserving Measurement (PPM) specification](https://github.com/abetterinternet/ppm-specification).
+[Privacy Preserving Measurement (PPM) specification](https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap).
 
 It is currently in active development.
 

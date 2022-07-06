@@ -3,7 +3,7 @@
 use super::Error;
 use crate::datastore::{self, models::BatchUnitAggregation, Transaction};
 use derivative::Derivative;
-use janus::{
+use janus_core::{
     message::{Duration, Interval, Nonce, NonceChecksum, TaskId, Time},
     time::Clock,
 };

@@ -10,7 +10,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use deadpool_postgres::{Manager, Pool};
-use janus::time::Clock;
+use janus_core::time::Clock;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},

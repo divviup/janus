@@ -1,7 +1,7 @@
 //! PPM protocol client
 
 use http::{header::CONTENT_TYPE, StatusCode};
-use janus::{
+use janus_core::{
     hpke::associated_data_for_report_share,
     hpke::{self, HpkeApplicationInfo, Label},
     message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
@@ -29,7 +29,7 @@ pub enum Error {
     #[error("VDAF error: {0}")]
     Vdaf(#[from] prio::vdaf::VdafError),
     #[error("HPKE error: {0}")]
-    Hpke(#[from] janus::hpke::Error),
+    Hpke(#[from] janus_core::hpke::Error),
 }
 
 static CLIENT_USER_AGENT: &str = concat!(
@@ -148,7 +148,7 @@ where
         }
     }
 
-    /// Upload a [`janus::message::Report`] to the leader, per §4.3.2 of
+    /// Upload a [`janus_core::message::Report`] to the leader, per §4.3.2 of
     /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
     /// share plus one proof share for each aggregator and then uploaded to the
     /// leader.
@@ -206,7 +206,7 @@ where
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
-    use janus::{hpke::test_util::generate_hpke_config_and_private_key, message::TaskId};
+    use janus_core::{hpke::test_util::generate_hpke_config_and_private_key, message::TaskId};
     use janus_test_util::{install_test_trace_subscriber, MockClock};
     use mockito::mock;
     use prio::vdaf::prio3::Prio3;

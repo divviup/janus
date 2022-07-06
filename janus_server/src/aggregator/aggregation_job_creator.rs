@@ -9,9 +9,10 @@ use crate::{
 use anyhow::Result;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use janus::message::{Nonce, Time};
-use janus::message::{Role, TaskId};
-use janus::time::Clock;
+use janus_core::{
+    message::{Nonce, Role, TaskId, Time},
+    time::Clock,
+};
 use prio::codec::Encode;
 use prio::vdaf;
 use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum};
@@ -175,17 +176,17 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     #[tracing::instrument(skip(self), err)]
     async fn create_aggregation_jobs_for_task(&self, task: &Task) -> anyhow::Result<()> {
         match task.vdaf {
-            crate::task::VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
+            crate::task::VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
                     .await
             }
 
-            crate::task::VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { .. }) => {
+            crate::task::VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. }) => {
                 self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task)
                     .await
             }
 
-            crate::task::VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
+            crate::task::VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task)
                     .await
             }
@@ -405,7 +406,7 @@ mod tests {
         task::{test_util::new_dummy_task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use futures::{future::try_join_all, TryFutureExt};
-    use janus::{
+    use janus_core::{
         message::{Interval, Nonce, Report, Role, TaskId, Time},
         task::VdafInstance,
         time::Clock,
@@ -851,7 +852,7 @@ mod tests {
                         task_id,
                         Interval::new(
                             report_time,
-                            janus::message::Duration::from_seconds(
+                            janus_core::message::Duration::from_seconds(
                                 task.min_batch_duration.as_seconds() * 2,
                             ),
                         )

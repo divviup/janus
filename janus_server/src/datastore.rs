@@ -13,7 +13,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use futures::try_join;
-use janus::{
+use janus_core::{
     hpke::HpkePrivateKey,
     message::{
         Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, NonceChecksum, Report,
@@ -25,7 +25,7 @@ use opentelemetry::{metrics::Counter, KeyValue};
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
-    vdaf::{self},
+    vdaf,
 };
 use rand::{thread_rng, Rng};
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
@@ -2351,7 +2351,7 @@ pub enum Error {
     #[error("integer conversion failed: {0}")]
     TryFromInt(#[from] std::num::TryFromIntError),
     #[error(transparent)]
-    Message(#[from] janus::message::Error),
+    Message(#[from] janus_core::message::Error),
 }
 
 impl Error {
@@ -2384,7 +2384,7 @@ pub mod models {
         task::{self, VdafInstance},
     };
     use derivative::Derivative;
-    use janus::message::{HpkeCiphertext, Interval, Nonce, NonceChecksum, Role, TaskId, Time};
+    use janus_core::message::{HpkeCiphertext, Interval, Nonce, NonceChecksum, Role, TaskId, Time};
     use postgres_types::{FromSql, ToSql};
     use prio::{codec::Encode, vdaf};
     use uuid::Uuid;
@@ -2918,7 +2918,7 @@ pub mod models {
 #[cfg(feature = "test-util")]
 pub mod test_util {
     use super::{Crypter, Datastore};
-    use janus::time::Clock;
+    use janus_core::time::Clock;
 
     janus_test_util::define_ephemeral_datastore!();
 }
@@ -2937,7 +2937,7 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::NaiveDate;
     use futures::future::try_join_all;
-    use janus::{
+    use janus_core::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
         message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
     };
@@ -2968,41 +2968,41 @@ mod tests {
         let values = [
             (
                 TaskId::random(),
-                janus::task::VdafInstance::Prio3Aes128Count,
+                janus_core::task::VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             ),
             (
                 TaskId::random(),
-                janus::task::VdafInstance::Prio3Aes128Sum { bits: 64 },
+                janus_core::task::VdafInstance::Prio3Aes128Sum { bits: 64 },
                 Role::Helper,
             ),
             (
                 TaskId::random(),
-                janus::task::VdafInstance::Prio3Aes128Sum { bits: 32 },
+                janus_core::task::VdafInstance::Prio3Aes128Sum { bits: 32 },
                 Role::Helper,
             ),
             (
                 TaskId::random(),
-                janus::task::VdafInstance::Prio3Aes128Histogram {
+                janus_core::task::VdafInstance::Prio3Aes128Histogram {
                     buckets: vec![0, 100, 200, 400],
                 },
                 Role::Leader,
             ),
             (
                 TaskId::random(),
-                janus::task::VdafInstance::Prio3Aes128Histogram {
+                janus_core::task::VdafInstance::Prio3Aes128Histogram {
                     buckets: vec![0, 25, 50, 75, 100],
                 },
                 Role::Leader,
             ),
             (
                 TaskId::random(),
-                janus::task::VdafInstance::Poplar1 { bits: 8 },
+                janus_core::task::VdafInstance::Poplar1 { bits: 8 },
                 Role::Helper,
             ),
             (
                 TaskId::random(),
-                janus::task::VdafInstance::Poplar1 { bits: 64 },
+                janus_core::task::VdafInstance::Poplar1 { bits: 64 },
                 Role::Helper,
             ),
         ];
@@ -3103,7 +3103,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     report.task_id(),
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 ))
                 .await?;
@@ -3211,13 +3211,13 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 ))
                 .await?;
                 tx.put_task(&new_dummy_task(
                     unrelated_task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 ))
                 .await?;
@@ -3542,7 +3542,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&new_dummy_task(
                         task_id,
-                        janus::task::VdafInstance::Prio3Aes128Count.into(),
+                        janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                         Role::Leader,
                     ))
                     .await?;
@@ -3615,7 +3615,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     aggregation_job.task_id,
-                    janus::task::VdafInstance::Poplar1 { bits: 64 }.into(),
+                    janus_core::task::VdafInstance::Poplar1 { bits: 64 }.into(),
                     Role::Leader,
                 ))
                 .await?;
@@ -3684,7 +3684,7 @@ mod tests {
                 // acquire_incomplete_aggregation_jobs().
                 tx.put_task(&new_dummy_task(
                     task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 ))
                 .await?;
@@ -3718,7 +3718,7 @@ mod tests {
                 let helper_task_id = TaskId::random();
                 tx.put_task(&new_dummy_task(
                     helper_task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Helper,
                 ))
                 .await?;
@@ -3779,7 +3779,7 @@ mod tests {
                 (
                     AcquiredAggregationJob {
                         task_id,
-                        vdaf: janus::task::VdafInstance::Prio3Aes128Count.into(),
+                        vdaf: janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                         aggregation_job_id: agg_job_id,
                     },
                     want_expiry_time,
@@ -3861,7 +3861,7 @@ mod tests {
                 (
                     AcquiredAggregationJob {
                         task_id,
-                        vdaf: janus::task::VdafInstance::Prio3Aes128Count.into(),
+                        vdaf: janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                         aggregation_job_id: job_id,
                     },
                     want_expiry_time,
@@ -4002,7 +4002,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     task_id,
-                    janus::task::VdafInstance::Poplar1 { bits: 64 }.into(),
+                    janus_core::task::VdafInstance::Poplar1 { bits: 64 }.into(),
                     Role::Leader,
                 ))
                 .await?;
@@ -4014,7 +4014,7 @@ mod tests {
                 let unrelated_task_id = TaskId::random();
                 tx.put_task(&new_dummy_task(
                     unrelated_task_id,
-                    janus::task::VdafInstance::Poplar1 { bits: 64 }.into(),
+                    janus_core::task::VdafInstance::Poplar1 { bits: 64 }.into(),
                     Role::Leader,
                 ))
                 .await?;
@@ -4080,7 +4080,7 @@ mod tests {
                     Box::pin(async move {
                         tx.put_task(&new_dummy_task(
                             task_id,
-                            janus::task::VdafInstance::Prio3Aes128Count.into(),
+                            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                             Role::Leader,
                         ))
                         .await?;
@@ -4240,7 +4240,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&new_dummy_task(
                         task_id,
-                        janus::task::VdafInstance::Prio3Aes128Count.into(),
+                        janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                         Role::Leader,
                     ))
                     .await?;
@@ -4381,7 +4381,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 ))
                 .await
@@ -4538,7 +4538,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&new_dummy_task(
                     first_task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 ))
                 .await
@@ -4546,7 +4546,7 @@ mod tests {
 
                 tx.put_task(&new_dummy_task(
                     second_task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 ))
                 .await
@@ -4607,7 +4607,7 @@ mod tests {
             Box::pin(async move {
                 let task = new_dummy_task(
                     task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 );
                 tx.put_task(&task).await.unwrap();
@@ -4707,7 +4707,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&new_dummy_task(
                         task_id,
-                        janus::task::VdafInstance::Prio3Aes128Count.into(),
+                        janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                         Role::Leader,
                     ))
                     .await?;
@@ -5439,7 +5439,7 @@ mod tests {
             Box::pin(async move {
                 let mut task = new_dummy_task(
                     task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 );
                 task.min_batch_duration = Duration::from_seconds(100);
@@ -5447,7 +5447,7 @@ mod tests {
 
                 tx.put_task(&new_dummy_task(
                     other_task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Leader,
                 ))
                 .await?;
@@ -5638,7 +5638,7 @@ mod tests {
                 let task_id = TaskId::random();
                 let task = new_dummy_task(
                     task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Helper,
                 );
                 tx.put_task(&task).await?;
@@ -5724,7 +5724,7 @@ mod tests {
                 let first_task_id = TaskId::random();
                 let mut task = new_dummy_task(
                     first_task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Helper,
                 );
                 task.max_batch_lifetime = 2;
@@ -5734,7 +5734,7 @@ mod tests {
                 let second_task_id = TaskId::random();
                 let other_task = new_dummy_task(
                     second_task_id,
-                    janus::task::VdafInstance::Prio3Aes128Count.into(),
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Helper,
                 );
                 tx.put_task(&other_task).await?;

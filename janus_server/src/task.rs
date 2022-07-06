@@ -2,7 +2,7 @@
 
 use base64::URL_SAFE_NO_PAD;
 use derivative::Derivative;
-use janus::{
+use janus_core::{
     hpke::HpkePrivateKey,
     message::{Duration, HpkeConfig, HpkeConfigId, Interval, Role, TaskId},
 };
@@ -32,7 +32,7 @@ pub enum Error {
 /// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/00/
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VdafInstance {
-    Real(janus::task::VdafInstance),
+    Real(janus_core::task::VdafInstance),
 
     #[cfg(test)]
     Fake,
@@ -42,8 +42,8 @@ pub enum VdafInstance {
     FakeFailsPrepStep,
 }
 
-impl From<janus::task::VdafInstance> for VdafInstance {
-    fn from(vdaf: janus::task::VdafInstance) -> Self {
+impl From<janus_core::task::VdafInstance> for VdafInstance {
+    fn from(vdaf: janus_core::task::VdafInstance) -> Self {
         VdafInstance::Real(vdaf)
     }
 }
@@ -73,18 +73,18 @@ impl Serialize for VdafInstance {
         S: serde::Serializer,
     {
         let flattened = match self {
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 VdafSerialization::Prio3Aes128Count
             }
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 VdafSerialization::Prio3Aes128Sum { bits: *bits }
             }
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { buckets }) => {
-                VdafSerialization::Prio3Aes128Histogram {
-                    buckets: buckets.clone(),
-                }
-            }
-            VdafInstance::Real(janus::task::VdafInstance::Poplar1 { bits }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
+                buckets,
+            }) => VdafSerialization::Prio3Aes128Histogram {
+                buckets: buckets.clone(),
+            },
+            VdafInstance::Real(janus_core::task::VdafInstance::Poplar1 { bits }) => {
                 VdafSerialization::Poplar1 { bits: *bits }
             }
             #[cfg(test)]
@@ -106,19 +106,17 @@ impl<'de> Deserialize<'de> for VdafInstance {
         let flattened = <VdafSerialization as Deserialize<'de>>::deserialize(deserializer)?;
         match flattened {
             VdafSerialization::Prio3Aes128Count => Ok(VdafInstance::Real(
-                janus::task::VdafInstance::Prio3Aes128Count,
+                janus_core::task::VdafInstance::Prio3Aes128Count,
             )),
             VdafSerialization::Prio3Aes128Sum { bits } => Ok(VdafInstance::Real(
-                janus::task::VdafInstance::Prio3Aes128Sum { bits },
+                janus_core::task::VdafInstance::Prio3Aes128Sum { bits },
             )),
             VdafSerialization::Prio3Aes128Histogram { buckets } => Ok(VdafInstance::Real(
-                janus::task::VdafInstance::Prio3Aes128Histogram { buckets },
+                janus_core::task::VdafInstance::Prio3Aes128Histogram { buckets },
             )),
-            VdafSerialization::Poplar1 { bits } => {
-                Ok(VdafInstance::Real(janus::task::VdafInstance::Poplar1 {
-                    bits,
-                }))
-            }
+            VdafSerialization::Poplar1 { bits } => Ok(VdafInstance::Real(
+                janus_core::task::VdafInstance::Poplar1 { bits },
+            )),
             #[cfg(test)]
             VdafSerialization::Fake => Ok(VdafInstance::Fake),
             #[cfg(test)]
@@ -434,7 +432,7 @@ pub mod test_util {
     use std::iter;
 
     use super::{AggregatorAuthenticationToken, Task, VdafInstance};
-    use janus::{
+    use janus_core::{
         hpke::test_util::generate_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
     };
@@ -502,7 +500,7 @@ mod tests {
 
     use super::test_util::new_dummy_task;
     use super::*;
-    use janus::message::{Duration, TaskId, Time};
+    use janus_core::message::{Duration, TaskId, Time};
     use serde_test::{assert_tokens, Token};
 
     #[test]
@@ -580,14 +578,14 @@ mod tests {
         // The `Vdaf` type must have a stable serialization, as it gets stored in a JSON database
         // column.
         assert_tokens(
-            &VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count),
+            &VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             &[Token::UnitVariant {
                 name: "Vdaf",
                 variant: "Prio3Aes128Count",
             }],
         );
         assert_tokens(
-            &VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { bits: 64 }),
+            &VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits: 64 }),
             &[
                 Token::StructVariant {
                     name: "Vdaf",
@@ -600,7 +598,7 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram {
+            &VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
                 buckets: vec![0, 100, 200, 400],
             }),
             &[
@@ -620,7 +618,7 @@ mod tests {
             ],
         );
         assert_tokens(
-            &VdafInstance::Real(janus::task::VdafInstance::Poplar1 { bits: 64 }),
+            &VdafInstance::Real(janus_core::task::VdafInstance::Poplar1 { bits: 64 }),
             &[
                 Token::StructVariant {
                     name: "Vdaf",
@@ -659,7 +657,7 @@ mod tests {
     fn task_serialization() {
         roundtrip_encoding(new_dummy_task(
             TaskId::random(),
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count),
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
         ));
     }
