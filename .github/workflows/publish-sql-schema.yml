@@ -1,0 +1,34 @@
+name: publish-sql-schema
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  push-schema:
+    permissions:
+      id-token: "write"
+      contents: "read"
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - id: "gcp-auth"
+      name: "Authenticate to GCP"
+      uses: "google-github-actions/auth@v0"
+      with:
+        workload_identity_provider: ${{ secrets.GCP_ARTIFACT_PUBISHER_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
+    - name: "Set up Google Cloud SDK"
+      uses: "google-github-actions/setup-gcloud@v0"
+      with:
+        # We opt into the alpha components so we can use the storage subcommand of gcloud, which
+        # uses Workload Identity Federation more reliably than gsutil.
+        install_components: "alpha"
+    - name: Get the version
+      id: get_version
+      run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
+    - name: "Upload schema file(s)"
+      run: gcloud alpha storage cp db/schema.sql gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.VERSION }}/schema.sql
+    - name: "Upload schema file(s) to latest"
+      run: gcloud alpha storage cp db/schema.sql gs://janus-artifacts-sql-schemas/latest/schema.sql
