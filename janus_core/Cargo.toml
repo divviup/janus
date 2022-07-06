@@ -11,6 +11,7 @@ rust-version = "1.58"
 
 [features]
 database = ["bytes", "postgres-protocol", "postgres-types"]
+test-util = []
 
 [dependencies]
 anyhow = "1"

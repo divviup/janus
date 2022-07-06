@@ -170,8 +170,7 @@ pub fn open(
         .map_err(Into::into)
 }
 
-// This is public to allow use in integration tests.
-#[doc(hidden)]
+#[cfg(feature = "test-util")]
 pub mod test_util {
     use crate::{
         hpke::HpkePrivateKey,

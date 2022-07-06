@@ -427,7 +427,7 @@ impl<'de> Deserialize<'de> for Task {
 }
 
 // This is public to allow use in integration tests.
-#[doc(hidden)]
+#[cfg(feature = "test-util")]
 pub mod test_util {
     use std::iter;
 

@@ -139,6 +139,7 @@ pub struct Transaction<'a, C: Clock> {
 
 impl<C: Clock> Transaction<'_, C> {
     /// Writes a task into the datastore.
+    #[cfg(feature = "test-util")]
     #[tracing::instrument(skip(self), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
         let aggregator_role = AggregatorRole::from_role(task.role)?;
@@ -863,10 +864,9 @@ impl<C: Clock> Transaction<'_, C> {
             .transpose()
     }
 
-    /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID. It is
-    /// intended for use in tests.
+    /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID.
+    #[cfg(feature = "test-util")]
     #[tracing::instrument(skip(self), err)]
-    #[doc(hidden)]
     pub async fn get_aggregation_jobs_for_task_id<const L: usize, A: vdaf::Aggregator<L>>(
         &self,
         task_id: TaskId,
