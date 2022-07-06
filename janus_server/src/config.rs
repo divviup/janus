@@ -32,7 +32,7 @@ pub struct DbConfig {
     // TODO(#231): add option for connecting to database over TLS, if necessary
 }
 
-// TODO: move binary-specific configs (& their tests) into the binaries
+// TODO(#296): move binary-specific configs (& their tests) into the binaries
 
 /// Non-secret configuration options for a Janus aggregator, deserialized from
 /// YAML.
