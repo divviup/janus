@@ -2918,7 +2918,7 @@ pub mod test_util {
     use super::{Crypter, Datastore};
     use janus_core::time::Clock;
 
-    janus_test_util::define_ephemeral_datastore!();
+    janus_core::define_ephemeral_datastore!();
 }
 
 #[cfg(test)]
@@ -2938,10 +2938,10 @@ mod tests {
     use janus_core::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
         message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
-    };
-    use janus_test_util::{
-        dummy_vdaf::{self, VdafWithAggregationParameter},
-        generate_aead_key, install_test_trace_subscriber, MockClock,
+        test_util::{
+            dummy_vdaf::{self, VdafWithAggregationParameter},
+            generate_aead_key, install_test_trace_subscriber, MockClock,
+        },
     };
     use prio::{
         field::{Field128, Field64},

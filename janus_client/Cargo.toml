@@ -22,7 +22,6 @@ url = "2.2.2"
 [dev-dependencies]
 assert_matches = "1"
 janus_core = { path = "../janus_core", features = ["test-util"]}
-janus_test_util = { path = "../test_util" }
 mockito = "0.31.0"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }

@@ -1281,7 +1281,6 @@ dependencies = [
  "assert_matches",
  "http",
  "janus_core",
- "janus_test_util",
  "mockito",
  "prio",
  "reqwest",
@@ -1302,6 +1301,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
+ "futures",
  "hex",
  "hpke-dispatch",
  "num_enum",
@@ -1314,6 +1314,9 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1337,7 +1340,6 @@ dependencies = [
  "itertools",
  "janus_core",
  "janus_server",
- "janus_test_util",
  "lazy_static",
  "libc",
  "mockito",
@@ -1375,23 +1377,6 @@ dependencies = [
  "uuid",
  "wait-timeout",
  "warp",
-]
-
-[[package]]
-name = "janus_test_util"
-version = "0.1.0"
-dependencies = [
- "assert_matches",
- "chrono",
- "futures",
- "janus_core",
- "prio",
- "rand",
- "ring",
- "tokio",
- "tracing",
- "tracing-log",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1574,7 +1559,6 @@ dependencies = [
  "janus_client",
  "janus_core",
  "janus_server",
- "janus_test_util",
  "lazy_static",
  "prio",
  "rand",

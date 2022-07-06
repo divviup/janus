@@ -226,8 +226,8 @@ mod tests {
     use janus_core::{
         hpke::test_util::generate_hpke_config_and_private_key,
         message::{TaskId, Time},
+        test_util::{install_test_trace_subscriber, MockClock},
     };
-    use janus_test_util::{install_test_trace_subscriber, MockClock};
     use mockito::mock;
     use prio::vdaf::prio3::Prio3;
     use url::Url;

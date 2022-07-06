@@ -1,8 +1,8 @@
-use assert_matches::assert_matches;
-use janus_core::{
+use crate::{
     message::{Duration, Nonce, Time},
     time::Clock,
 };
+use assert_matches::assert_matches;
 use prio::{
     codec::Encode,
     vdaf::{self, PrepareTransition, VdafError},
@@ -17,7 +17,7 @@ pub mod dummy_vdaf;
 pub mod runtime;
 
 /// The Janus database schema.
-pub static SCHEMA: &str = include_str!("../../db/schema.sql");
+pub static SCHEMA: &str = include_str!("../../../db/schema.sql");
 
 /// This macro injects definitions of `DbHandle` and `ephemeral_datastore()`, for use in tests.
 /// It should be invoked once per binary target, and then `ephemeral_datastore()` can be called
@@ -168,7 +168,7 @@ macro_rules! define_ephemeral_datastore {
             ::tracing::trace!("Postgres container is up with URL {}", connection_string);
 
             // Create a random (ephemeral) key.
-            let datastore_key_bytes = ::janus_test_util::generate_aead_key_bytes();
+            let datastore_key_bytes = ::janus_core::test_util::generate_aead_key_bytes();
 
             DbHandle{
                 _db_container: db_container,
