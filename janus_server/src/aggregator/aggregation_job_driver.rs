@@ -20,7 +20,7 @@ use futures::{
     try_join,
 };
 use http::header::CONTENT_TYPE;
-use janus::{
+use janus_core::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
     message::{Duration, Report, Role},
     time::Clock,
@@ -55,17 +55,19 @@ impl AggregationJobDriver {
         lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()> {
         match lease.leased().vdaf {
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 let vdaf = Prio3::new_aes128_count(2)?;
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(datastore, vdaf, lease)
                     .await
             }
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 let vdaf = Prio3::new_aes128_sum(2, bits)?;
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Sum>(datastore, vdaf, lease)
                     .await
             }
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { ref buckets }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
+                ref buckets,
+            }) => {
                 let vdaf = Prio3::new_aes128_histogram(2, buckets)?;
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Histogram>(datastore, vdaf, lease)
                     .await
@@ -650,15 +652,15 @@ impl AggregationJobDriver {
         lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()> {
         match &lease.leased().vdaf {
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Count) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(datastore, lease)
                     .await
             }
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Sum { .. }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. }) => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Sum>(datastore, lease)
                     .await
             }
-            VdafInstance::Real(janus::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Histogram>(datastore, lease)
                     .await
             }
@@ -794,7 +796,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use http::header::CONTENT_TYPE;
-    use janus::{
+    use janus_core::{
         hpke::{
             self, associated_data_for_report_share,
             test_util::generate_hpke_config_and_private_key, HpkeApplicationInfo, Label,

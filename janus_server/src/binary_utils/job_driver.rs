@@ -1,7 +1,7 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
 use crate::datastore::{self, models::Lease};
-use janus::{
+use janus_core::{
     message::{Duration, Time},
     time::Clock,
     Runtime,
@@ -200,7 +200,7 @@ where
 mod tests {
     use super::*;
     use crate::{message::AggregationJobId, task::VdafInstance};
-    use janus::message::TaskId;
+    use janus_core::message::TaskId;
     use janus_test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager, MockClock};
     use tokio::sync::Mutex;
 

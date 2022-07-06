@@ -1,8 +1,12 @@
 [package]
-name = "janus"
-version = "0.1.0"
+name = "janus_core"
+version = "0.1.1"
 edition = "2021"
+description = "Core type definitions and utilities used in various components of Janus."
+documentation = "https://docs.rs/janus_core"
+homepage = "https://divviup.org"
 license = "MPL-2.0"
+repository = "https://github.com/divviup/janus"
 rust-version = "1.58"
 
 [features]

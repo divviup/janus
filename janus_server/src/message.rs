@@ -2,7 +2,7 @@
 
 use anyhow::anyhow;
 use base64::display::Base64Display;
-use janus::{
+use janus_core::{
     hpke::{associated_data_for_aggregate_share, associated_data_for_report_share},
     message::{Extension, HpkeCiphertext, Interval, Nonce, NonceChecksum, TaskId},
 };
@@ -459,7 +459,7 @@ impl Decode for CollectResp {
 #[doc(hidden)]
 pub mod test_util {
     use super::{Nonce, TaskId};
-    use janus::message::{Report, Time};
+    use janus_core::message::{Report, Time};
     use rand::{thread_rng, Rng};
 
     pub fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
@@ -475,7 +475,7 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use janus::message::{Duration, ExtensionType, HpkeConfigId, Time};
+    use janus_core::message::{Duration, ExtensionType, HpkeConfigId, Time};
 
     fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
     where
