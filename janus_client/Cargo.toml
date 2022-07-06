@@ -1,6 +1,6 @@
 [package]
 name = "janus_client"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Client for Janus, the server powering ISRG's Divvi Up."
 documentation = "https://docs.rs/janus_client"
@@ -11,7 +11,7 @@ rust-version = "1.58"
 
 [dependencies]
 http = "0.2.8"
-janus_core = { version = "0.1.1", path = "../janus_core" }
+janus_core = { version = "0.1.2", path = "../janus_core" }
 prio = "0.8.0"
 reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls"] }
 thiserror = "1.0"
