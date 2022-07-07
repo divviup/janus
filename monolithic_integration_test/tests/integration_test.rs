@@ -360,6 +360,7 @@ impl TestCase {
         let client_parameters = ClientParameters::new(
             task_id,
             vec![leader_endpoint.clone(), helper_endpoint.clone()],
+            leader_task.min_batch_duration,
         );
         let http_client = janus_client::default_http_client().unwrap();
         let leader_report_config = janus_client::aggregator_hpke_config(

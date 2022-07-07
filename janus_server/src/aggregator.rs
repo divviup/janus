@@ -2439,7 +2439,7 @@ mod tests {
             .body(
                 Report::new(
                     report.task_id(),
-                    Nonce::generate(&clock),
+                    Nonce::generate(&clock, task.min_batch_duration).unwrap(),
                     vec![],
                     report.encrypted_input_shares().to_vec(),
                 )
@@ -2935,7 +2935,7 @@ mod tests {
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(&clock);
+        let nonce_0 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let input_share = run_vdaf(&vdaf, &verify_key, &(), nonce_0, &0)
             .input_shares
             .remove(1);
@@ -2948,7 +2948,7 @@ mod tests {
 
         // report_share_1 fails decryption.
         let mut report_share_1 = report_share_0.clone();
-        report_share_1.nonce = Nonce::generate(&clock);
+        report_share_1.nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let mut corrupted_payload = report_share_1.encrypted_input_share.payload().to_vec();
         corrupted_payload[0] ^= 0xFF;
         report_share_1.encrypted_input_share = HpkeCiphertext::new(
@@ -2961,7 +2961,7 @@ mod tests {
         );
 
         // report_share_2 fails decoding.
-        let nonce_2 = Nonce::generate(&clock);
+        let nonce_2 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
         let report_share_2 = generate_helper_report_share_for_plaintext(
@@ -2972,7 +2972,7 @@ mod tests {
         );
 
         // report_share_3 has an unknown HPKE config ID.
-        let nonce_3 = Nonce::generate(&clock);
+        let nonce_3 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let wrong_hpke_config = loop {
             let hpke_config = generate_hpke_config_and_private_key().0;
             if task.hpke_keys.contains_key(&hpke_config.id()) {
@@ -2988,7 +2988,7 @@ mod tests {
         );
 
         // report_share_4 has already been aggregated.
-        let nonce_4 = Nonce::generate(&clock);
+        let nonce_4 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let input_share = run_vdaf(&vdaf, &verify_key, &(), nonce_4, &0)
             .input_shares
             .remove(1);
@@ -3003,7 +3003,7 @@ mod tests {
         let past_clock = MockClock::new(Time::from_seconds_since_epoch(
             task.min_batch_duration.as_seconds() / 2,
         ));
-        let nonce_5 = Nonce::generate(&past_clock);
+        let nonce_5 = Nonce::generate(&past_clock, task.min_batch_duration).unwrap();
         let input_share = run_vdaf(&vdaf, &verify_key, &(), nonce_5, &0)
             .input_shares
             .remove(1);
@@ -3144,7 +3144,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
-            Nonce::generate(&clock),
+            Nonce::generate(&clock, task.min_batch_duration).unwrap(),
             &hpke_key.0,
             &(),
         );
@@ -3211,7 +3211,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
-            Nonce::generate(&clock),
+            Nonce::generate(&clock, task.min_batch_duration).unwrap(),
             &hpke_key.0,
             &(),
         );
@@ -3356,7 +3356,7 @@ mod tests {
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(&clock);
+        let nonce_0 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let transcript_0 = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce_0, &0);
         let prep_state_0 = assert_matches!(&transcript_0.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_0 = assert_matches!(&transcript_0.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
@@ -3369,7 +3369,7 @@ mod tests {
         );
 
         // report_share_1 is omitted by the leader's request.
-        let nonce_1 = Nonce::generate(&clock);
+        let nonce_1 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let transcript_1 = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce_1, &0);
         let prep_state_1 = assert_matches!(&transcript_1.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -3383,7 +3383,7 @@ mod tests {
         let past_clock = MockClock::new(Time::from_seconds_since_epoch(
             task.min_batch_duration.as_seconds() / 2,
         ));
-        let nonce_2 = Nonce::generate(&past_clock);
+        let nonce_2 = Nonce::generate(&past_clock, task.min_batch_duration).unwrap();
         let transcript_2 = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce_2, &0);
         let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
@@ -3631,7 +3631,8 @@ mod tests {
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(&first_batch_unit_interval_clock);
+        let nonce_0 =
+            Nonce::generate(&first_batch_unit_interval_clock, task.min_batch_duration).unwrap();
         let transcript_0 = run_vdaf(&vdaf, &verify_key, &(), nonce_0, &0);
         let prep_state_0 = assert_matches!(&transcript_0.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_0 = assert_matches!(&transcript_0.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
@@ -3645,7 +3646,8 @@ mod tests {
 
         // report_share_1 is another "happy path" report to exercise in-memory accumulation of
         // output shares
-        let nonce_1 = Nonce::generate(&first_batch_unit_interval_clock);
+        let nonce_1 =
+            Nonce::generate(&first_batch_unit_interval_clock, task.min_batch_duration).unwrap();
         let transcript_1 = run_vdaf(&vdaf, &verify_key, &(), nonce_1, &0);
         let prep_state_1 = assert_matches!(&transcript_1.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_1 = assert_matches!(&transcript_1.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
@@ -3658,7 +3660,8 @@ mod tests {
         );
 
         // report share 2 aggregates successfully, but into a distinct batch unit aggregation.
-        let nonce_2 = Nonce::generate(&second_batch_unit_interval_clock);
+        let nonce_2 =
+            Nonce::generate(&second_batch_unit_interval_clock, task.min_batch_duration).unwrap();
         let transcript_2 = run_vdaf(&vdaf, &verify_key, &(), nonce_2, &0);
         let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_2 = assert_matches!(&transcript_2.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
@@ -3843,7 +3846,8 @@ mod tests {
         // Aggregate some more reports, which should get accumulated into the
         // batch_unit_aggregations rows created earlier.
         // report_share_3 gets aggreated into the first batch unit interval.
-        let nonce_3 = Nonce::generate(&first_batch_unit_interval_clock);
+        let nonce_3 =
+            Nonce::generate(&first_batch_unit_interval_clock, task.min_batch_duration).unwrap();
         let transcript_3 = run_vdaf(&vdaf, &verify_key, &(), nonce_3, &0);
         let prep_state_3 = assert_matches!(&transcript_3.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_3 = assert_matches!(&transcript_3.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
@@ -3856,7 +3860,8 @@ mod tests {
         );
 
         // report_share_4 gets aggregated into the second batch unit interval
-        let nonce_4 = Nonce::generate(&second_batch_unit_interval_clock);
+        let nonce_4 =
+            Nonce::generate(&second_batch_unit_interval_clock, task.min_batch_duration).unwrap();
         let transcript_4 = run_vdaf(&vdaf, &verify_key, &(), nonce_4, &0);
         let prep_state_4 = assert_matches!(&transcript_4.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_4 = assert_matches!(&transcript_4.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
@@ -3869,7 +3874,8 @@ mod tests {
         );
 
         // report share 5 also gets aggregated into the second batch unit interval
-        let nonce_5 = Nonce::generate(&second_batch_unit_interval_clock);
+        let nonce_5 =
+            Nonce::generate(&second_batch_unit_interval_clock, task.min_batch_duration).unwrap();
         let transcript_5 = run_vdaf(&vdaf, &verify_key, &(), nonce_5, &0);
         let prep_state_5 = assert_matches!(&transcript_5.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_5 = assert_matches!(&transcript_5.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());

@@ -372,12 +372,14 @@ impl Nonce {
         Nonce { time, rand }
     }
 
-    /// Generate a fresh nonce with the current time.
-    pub fn generate<C: Clock>(clock: &C) -> Nonce {
-        Nonce {
-            time: clock.now(),
+    /// Generate a fresh nonce based on the current time.
+    pub fn generate<C: Clock>(clock: &C, min_batch_duration: Duration) -> Result<Nonce, Error> {
+        Ok(Nonce {
+            time: clock
+                .now()
+                .to_batch_unit_interval_start(min_batch_duration)?,
             rand: rand::random(),
-        }
+        })
     }
 
     /// Get the time component of a nonce.

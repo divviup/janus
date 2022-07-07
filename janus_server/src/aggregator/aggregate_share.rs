@@ -494,7 +494,7 @@ mod tests {
                     })
                     .await?;
 
-                    let nonce = Nonce::generate(&clock);
+                    let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
                     tx.put_client_report(&Report::new(task_id, nonce, Vec::new(), Vec::new()))
                         .await?;
 
@@ -694,7 +694,7 @@ mod tests {
                     })
                     .await?;
 
-                    let nonce = Nonce::generate(&clock);
+                    let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
                     tx.put_client_report(&Report::new(task_id, nonce, Vec::new(), Vec::new()))
                         .await?;
 
@@ -832,7 +832,7 @@ mod tests {
                     // We need to have some report aggregations present, so that our collect job
                     // can be picked up and the anti-replay check has something to check.
                     for i in 0..10 {
-                        let nonce = Nonce::generate(&clock);
+                        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
                         tx.put_client_report(&Report::new(task_id, nonce, vec![], vec![]))
                             .await?;
                         tx.put_report_aggregation(&ReportAggregation::<
