@@ -9,7 +9,6 @@ COPY janus_core /src/janus_core
 COPY janus_client /src/janus_client
 COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test
-COPY test_util /src/test_util
 COPY db/schema.sql /src/db/schema.sql
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release --bin $BINARY --features=prometheus && cp /src/target/release/$BINARY /$BINARY
 

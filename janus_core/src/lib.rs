@@ -4,6 +4,8 @@ use tokio::task::JoinHandle;
 pub mod hpke;
 pub mod message;
 pub mod task;
+#[cfg(feature = "test-util")]
+pub mod test_util;
 pub mod time;
 
 /// This trait provides a mockable facade for [`tokio::task::spawn`].

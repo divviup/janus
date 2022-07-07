@@ -1,15 +1,12 @@
+use crate::message::Nonce;
 use assert_matches::assert_matches;
-use janus_core::{
-    message::{Duration, Nonce, Time},
-    time::Clock,
-};
 use prio::{
     codec::Encode,
     vdaf::{self, PrepareTransition, VdafError},
 };
 use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::Once;
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 
@@ -17,7 +14,7 @@ pub mod dummy_vdaf;
 pub mod runtime;
 
 /// The Janus database schema.
-pub static SCHEMA: &str = include_str!("../../db/schema.sql");
+pub static SCHEMA: &str = include_str!("../../../db/schema.sql");
 
 /// This macro injects definitions of `DbHandle` and `ephemeral_datastore()`, for use in tests.
 /// It should be invoked once per binary target, and then `ephemeral_datastore()` can be called
@@ -42,7 +39,7 @@ macro_rules! define_ephemeral_datastore {
         }
 
         impl DbHandle {
-            // Retrieve a datastore attached to the ephemeral database.
+            /// Retrieve a datastore attached to the ephemeral database.
             pub fn datastore<C: Clock>(&self, clock: C) ->  Datastore<C> {
                 // Create a crypter based on the generated key bytes.
                 let datastore_key = ::ring::aead::LessSafeKey::new(::ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &self.datastore_key_bytes).unwrap());
@@ -51,7 +48,7 @@ macro_rules! define_ephemeral_datastore {
                 Datastore::new(self.pool(), crypter, clock)
             }
 
-            // Retrieve a Postgres connection pool attached to the ephemeral database.
+            /// Retrieve a Postgres connection pool attached to the ephemeral database.
             pub fn pool(&self) -> ::deadpool_postgres::Pool {
                 let cfg = <::tokio_postgres::Config as std::str::FromStr>::from_str(&self.connection_string).unwrap();
                 let conn_mgr = ::deadpool_postgres::Manager::new(cfg, ::tokio_postgres::NoTls);
@@ -61,7 +58,7 @@ macro_rules! define_ephemeral_datastore {
             /// Write the Janus schema into the datastore.
             pub async fn write_schema(&self) {
                 let client = self.pool().get().await.unwrap();
-                client.batch_execute(::janus_test_util::SCHEMA).await.unwrap();
+                client.batch_execute(::janus_core::test_util::SCHEMA).await.unwrap();
             }
 
             /// Get a PostgreSQL connection string to connect to the temporary database.
@@ -168,7 +165,7 @@ macro_rules! define_ephemeral_datastore {
             ::tracing::trace!("Postgres container is up with URL {}", connection_string);
 
             // Create a random (ephemeral) key.
-            let datastore_key_bytes = ::janus_test_util::generate_aead_key_bytes();
+            let datastore_key_bytes = ::janus_core::test_util::generate_aead_key_bytes();
 
             DbHandle{
                 _db_container: db_container,
@@ -199,44 +196,6 @@ pub fn generate_aead_key_bytes() -> Vec<u8> {
 pub fn generate_aead_key() -> LessSafeKey {
     let unbound_key = UnboundKey::new(&AES_128_GCM, &generate_aead_key_bytes()).unwrap();
     LessSafeKey::new(unbound_key)
-}
-
-/// A mock clock for use in testing. Clones are identical: all clones of a given MockClock will
-/// be controlled by a controller retrieved from any of the clones.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub struct MockClock {
-    /// The time that this clock will return from [`Self::now`].
-    current_time: Arc<Mutex<Time>>,
-}
-
-impl MockClock {
-    pub fn new(when: Time) -> MockClock {
-        MockClock {
-            current_time: Arc::new(Mutex::new(when)),
-        }
-    }
-
-    pub fn advance(&self, dur: Duration) {
-        let mut current_time = self.current_time.lock().unwrap();
-        *current_time = current_time.add(dur).unwrap();
-    }
-}
-
-impl Clock for MockClock {
-    fn now(&self) -> Time {
-        let current_time = self.current_time.lock().unwrap();
-        *current_time
-    }
-}
-
-impl Default for MockClock {
-    fn default() -> Self {
-        Self {
-            // Sunday, September 9, 2001 1:46:40 AM UTC
-            current_time: Arc::new(Mutex::new(Time::from_seconds_since_epoch(1000000000))),
-        }
-    }
 }
 
 /// A transcript of a VDAF run. All fields are indexed by natural role index (i.e., index 0 =

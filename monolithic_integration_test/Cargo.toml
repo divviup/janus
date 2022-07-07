@@ -3,23 +3,22 @@ name = "monolithic_integration_test"
 version = "0.1.0"
 edition = "2021"
 license = "MPL-2.0"
-rust-version = "1.58"
+rust-version = "1.60"
 publish = false
 
 [dev-dependencies]
 chrono = "0.4.19"
 deadpool-postgres = "0.10.1"
 futures = "0.3.21"
-janus_core = { path = "../janus_core" }
+janus_core = { path = "../janus_core", features = ["test-util"] }
 janus_client = { path = "../janus_client" }
-janus_server = { path = "../janus_server" }
+janus_server = { path = "../janus_server", features = ["test-util"] }
 lazy_static = "1"
 prio = "0.8.0"
 rand = "0.8"
 reqwest = { version = "0.11.11", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 testcontainers = "0.14.0"
-janus_test_util = { path = "../test_util" }
 tokio = { version = "^1.19", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
 tracing = "0.1.34"

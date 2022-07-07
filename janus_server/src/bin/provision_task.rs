@@ -5,6 +5,7 @@ use janus_core::time::{Clock, RealClock};
 use janus_server::{
     binary_utils::{janus_main, BinaryContext, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
+    datastore,
     task::Task,
 };
 use serde::{Deserialize, Serialize};
@@ -35,7 +36,13 @@ async fn run<C: Clock>(ctx: BinaryContext<C, Config>) -> Result<()> {
                 let tasks = Arc::clone(&tasks);
                 Box::pin(async move {
                     for task in tasks.iter() {
-                        tx.delete_task(task.id).await?;
+                        // We attempt to delete the task, but ignore "task not found" errors since
+                        // the task not existing is an OK outcome too.
+                        match tx.delete_task(task.id).await {
+                            Ok(_) | Err(datastore::Error::MutationTargetNotFound) => (),
+                            err => err?,
+                        }
+
                         tx.put_task(task).await?;
                     }
                     Ok(())
@@ -109,6 +116,7 @@ mod tests {
         trace::TraceConfiguration,
     };
     use reqwest::Url;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn provision_task() {
@@ -173,14 +181,15 @@ mod tests {
 
             // Check that the expected tasks were written.
             let ds = db_handle.datastore(RealClock::default());
-            for task in tasks {
-                let task_id = task.id;
-                let got_task = ds
-                    .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
-                    .await
-                    .unwrap();
-                assert_eq!(Some(task), got_task);
-            }
+            let want_tasks: HashMap<_, _> = tasks.into_iter().map(|task| (task.id, task)).collect();
+            let got_tasks = ds
+                .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|task| (task.id, task))
+                .collect();
+            assert_eq!(want_tasks, got_tasks);
         }
     }
 

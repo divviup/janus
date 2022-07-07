@@ -4,7 +4,7 @@ use http::{header::CONTENT_TYPE, StatusCode};
 use janus_core::{
     hpke::associated_data_for_report_share,
     hpke::{self, HpkeApplicationInfo, Label},
-    message::{HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
+    message::{Duration, HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
     time::Clock,
 };
 use prio::{
@@ -48,14 +48,22 @@ pub struct ClientParameters {
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
     aggregator_endpoints: Vec<Url>,
+    /// The minimum batch duration of the task. This value is shared by all
+    /// parties in the protocol, and is used to compute report nonces.
+    min_batch_duration: Duration,
 }
 
 impl ClientParameters {
     /// Creates a new set of client task parameters.
-    pub fn new(task_id: TaskId, aggregator_endpoints: Vec<Url>) -> Self {
+    pub fn new(
+        task_id: TaskId,
+        aggregator_endpoints: Vec<Url>,
+        min_batch_duration: Duration,
+    ) -> Self {
         Self {
             task_id,
             aggregator_endpoints,
+            min_batch_duration,
         }
     }
 
@@ -148,16 +156,16 @@ where
         }
     }
 
-    /// Upload a [`janus_core::message::Report`] to the leader, per §4.3.2 of
-    /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
-    /// share plus one proof share for each aggregator and then uploaded to the
-    /// leader.
-    #[tracing::instrument(skip(measurement), err)]
-    pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
+    /// Shard a measurement, encrypt its shares, and construct a [`janus_core::message::Report`]
+    /// to be uploaded.
+    fn prepare_report(&self, measurement: &V::Measurement) -> Result<Report, Error> {
         let input_shares = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // PPM only supports VDAFs using two aggregators.
 
-        let nonce = Nonce::generate(&self.clock);
+        let nonce =
+            Nonce::generate(&self.clock, self.parameters.min_batch_duration).map_err(|_| {
+                Error::InvalidParameter("Error rounding time down to min_batch_duration")
+            })?;
         let extensions = vec![]; // No extensions supported yet
         let associated_data =
             associated_data_for_report_share(self.parameters.task_id, nonce, &extensions);
@@ -178,12 +186,21 @@ where
         })
         .collect::<Result<_, Error>>()?;
 
-        let report = Report::new(
+        Ok(Report::new(
             self.parameters.task_id,
             nonce,
             extensions,
             encrypted_input_shares,
-        );
+        ))
+    }
+
+    /// Upload a [`janus_core::message::Report`] to the leader, per §4.3.2 of
+    /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
+    /// share plus one proof share for each aggregator and then uploaded to the
+    /// leader.
+    #[tracing::instrument(skip(measurement), err)]
+    pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
+        let report = self.prepare_report(measurement)?;
 
         let upload_response = self
             .http_client
@@ -206,8 +223,12 @@ where
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
-    use janus_core::{hpke::test_util::generate_hpke_config_and_private_key, message::TaskId};
-    use janus_test_util::{install_test_trace_subscriber, MockClock};
+    use janus_core::{
+        hpke::test_util::generate_hpke_config_and_private_key,
+        message::{TaskId, Time},
+        test_util::install_test_trace_subscriber,
+        time::test_util::MockClock,
+    };
     use mockito::mock;
     use prio::vdaf::prio3::Prio3;
     use url::Url;
@@ -227,6 +248,7 @@ mod tests {
         let client_parameters = ClientParameters {
             task_id,
             aggregator_endpoints: vec![server_url.clone(), server_url],
+            min_batch_duration: Duration::from_seconds(1),
         };
 
         Client::new(
@@ -283,5 +305,49 @@ mod tests {
         );
 
         mocked_upload.assert();
+    }
+
+    #[tokio::test]
+    async fn upload_bad_min_batch_duration() {
+        install_test_trace_subscriber();
+
+        let client_parameters =
+            ClientParameters::new(TaskId::random(), vec![], Duration::from_seconds(0));
+        let client = Client::new(
+            client_parameters,
+            Prio3::new_aes128_count(2).unwrap(),
+            MockClock::default(),
+            &default_http_client().unwrap(),
+            generate_hpke_config_and_private_key().0,
+            generate_hpke_config_and_private_key().0,
+        );
+        let result = client.upload(&1).await;
+        assert_matches!(result, Err(Error::InvalidParameter(_)));
+    }
+
+    #[test]
+    fn report_nonce_time() {
+        install_test_trace_subscriber();
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let mut client = setup_client(vdaf);
+
+        client.parameters.min_batch_duration = Duration::from_seconds(100);
+        client.clock = MockClock::new(Time::from_seconds_since_epoch(101));
+        assert_eq!(
+            client.prepare_report(&1).unwrap().nonce().time(),
+            Time::from_seconds_since_epoch(100),
+        );
+
+        client.clock = MockClock::new(Time::from_seconds_since_epoch(5200));
+        assert_eq!(
+            client.prepare_report(&1).unwrap().nonce().time(),
+            Time::from_seconds_since_epoch(5200),
+        );
+
+        client.clock = MockClock::new(Time::from_seconds_since_epoch(9814));
+        assert_eq!(
+            client.prepare_report(&1).unwrap().nonce().time(),
+            Time::from_seconds_since_epoch(9800),
+        );
     }
 }

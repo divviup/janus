@@ -327,7 +327,7 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached("DELETE FROM tasks WHERE task_id = $1")
             .await?;
-        self.tx.execute(&stmt, params).await?;
+        check_single_row_mutation(self.tx.execute(&stmt, params).await?)?;
         Ok(())
     }
 
@@ -394,8 +394,6 @@ impl<C: Clock> Transaction<'_, C> {
     /// Fetch all the tasks in the database.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
-        use std::collections::HashMap;
-
         let stmt = self
             .tx
             .prepare_cached(
@@ -865,10 +863,9 @@ impl<C: Clock> Transaction<'_, C> {
             .transpose()
     }
 
-    /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID. It is
-    /// intended for use in tests.
+    /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID.
+    #[cfg(feature = "test-util")]
     #[tracing::instrument(skip(self), err)]
-    #[doc(hidden)]
     pub async fn get_aggregation_jobs_for_task_id<const L: usize, A: vdaf::Aggregator<L>>(
         &self,
         task_id: TaskId,
@@ -1003,7 +1000,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND aggregation_jobs.lease_token = $4",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1062,7 +1059,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE aggregation_job_id = $3 AND task_id = (SELECT id FROM tasks WHERE task_id = $4)",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1242,7 +1239,7 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE task_id = (SELECT id FROM tasks WHERE task_id = $8)
                     AND nonce_time = $9 AND nonce_rand = $10)")
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1598,7 +1595,7 @@ ORDER BY id DESC
                   AND collect_jobs.lease_token = $4",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1639,7 +1636,7 @@ ORDER BY id DESC
                 WHERE collect_job_id = $3",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1668,7 +1665,7 @@ ORDER BY id DESC
             WHERE collect_job_id = $1",
             )
             .await?;
-        check_update(self.tx.execute(&stmt, &[&collect_job_id]).await?)?;
+        check_single_row_mutation(self.tx.execute(&stmt, &[&collect_job_id]).await?)?;
         Ok(())
     }
 
@@ -1746,7 +1743,7 @@ ORDER BY id DESC
                     AND aggregation_param = $6",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -2039,7 +2036,7 @@ ORDER BY id DESC
     }
 }
 
-fn check_update(row_count: u64) -> Result<(), Error> {
+fn check_single_row_mutation(row_count: u64) -> Result<(), Error> {
     match row_count {
         0 => Err(Error::MutationTargetNotFound),
         1 => Ok(()),
@@ -2920,7 +2917,7 @@ pub mod test_util {
     use super::{Crypter, Datastore};
     use janus_core::time::Clock;
 
-    janus_test_util::define_ephemeral_datastore!();
+    janus_core::define_ephemeral_datastore!();
 }
 
 #[cfg(test)]
@@ -2940,10 +2937,11 @@ mod tests {
     use janus_core::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
         message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
-    };
-    use janus_test_util::{
-        dummy_vdaf::{self, VdafWithAggregationParameter},
-        generate_aead_key, install_test_trace_subscriber, MockClock,
+        test_util::{
+            dummy_vdaf::{self, VdafWithAggregationParameter},
+            generate_aead_key, install_test_trace_subscriber,
+        },
+        time::test_util::MockClock,
     };
     use prio::{
         field::{Field128, Field64},
@@ -3013,6 +3011,12 @@ mod tests {
             let task = new_dummy_task(task_id, vdaf.into(), role);
             want_tasks.insert(task_id, task.clone());
 
+            let err = ds
+                .run_tx(|tx| Box::pin(async move { tx.delete_task(task_id).await }))
+                .await
+                .unwrap_err();
+            assert_matches!(err, Error::MutationTargetNotFound);
+
             let retrieved_task = ds
                 .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
                 .await
@@ -3041,6 +3045,12 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(None, retrieved_task);
+
+            let err = ds
+                .run_tx(|tx| Box::pin(async move { tx.delete_task(task_id).await }))
+                .await
+                .unwrap_err();
+            assert_matches!(err, Error::MutationTargetNotFound);
 
             // Rewrite & retrieve the task again, to test that the delete is "clean" in the sense
             // that it deletes all task-related data (& therefore does not conflict with a later
@@ -3078,7 +3088,7 @@ mod tests {
             TaskId::random(),
             Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
@@ -3137,7 +3147,7 @@ mod tests {
                         TaskId::random(),
                         Nonce::new(
                             Time::from_seconds_since_epoch(12345),
-                            [1, 2, 3, 4, 5, 6, 7, 8],
+                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                         ),
                     )
                     .await
@@ -3161,7 +3171,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3170,7 +3180,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12346),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3179,7 +3189,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12347),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3188,7 +3198,7 @@ mod tests {
             unrelated_task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12348),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3292,7 +3302,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3301,7 +3311,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12346),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3310,7 +3320,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12347),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3319,7 +3329,7 @@ mod tests {
             unrelated_task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12348),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3523,7 +3533,7 @@ mod tests {
         let report_share = ReportShare {
             nonce: Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             extensions: vec![
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
@@ -4071,7 +4081,7 @@ mod tests {
             let aggregation_job_id = AggregationJobId::random();
             let nonce = Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             );
 
             let report_aggregation = ds
@@ -4188,7 +4198,7 @@ mod tests {
                         AggregationJobId::random(),
                         Nonce::new(
                             Time::from_seconds_since_epoch(12345),
-                            [1, 2, 3, 4, 5, 6, 7, 8],
+                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                         ),
                     )
                     .await
@@ -4207,7 +4217,7 @@ mod tests {
                             task_id: TaskId::random(),
                             nonce: Nonce::new(
                                 Time::from_seconds_since_epoch(12345),
-                                [1, 2, 3, 4, 5, 6, 7, 8],
+                                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                             ),
                             ord: 0,
                             state: ReportAggregationState::Invalid,
@@ -4273,7 +4283,7 @@ mod tests {
                     {
                         let nonce = Nonce::new(
                             Time::from_seconds_since_epoch(12345),
-                            (ord as u64).to_be_bytes(),
+                            (ord as u128).to_be_bytes(),
                         );
                         tx.put_report_share(
                             task_id,
