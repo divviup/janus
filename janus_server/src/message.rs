@@ -498,15 +498,15 @@ mod tests {
                 PrepareStep {
                     nonce: Nonce::new(
                         Time::from_seconds_since_epoch(54372),
-                        [1, 2, 3, 4, 5, 6, 7, 8],
+                        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                     ),
                     result: PrepareStepResult::Continued(Vec::from("012345")),
                 },
                 concat!(
                     concat!(
                         // nonce
-                        "000000000000D464", // time
-                        "0102030405060708", // rand
+                        "000000000000D464",                 // time
+                        "0102030405060708090a0b0c0d0e0f10", // rand
                     ),
                     "00", // prepare_step_result
                     concat!(
@@ -520,29 +520,29 @@ mod tests {
                 PrepareStep {
                     nonce: Nonce::new(
                         Time::from_seconds_since_epoch(12345),
-                        [8, 7, 6, 5, 4, 3, 2, 1],
+                        [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
                     ),
                     result: PrepareStepResult::Finished,
                 },
                 concat!(
                     concat!(
                         // nonce
-                        "0000000000003039", // time
-                        "0807060504030201", // rand
+                        "0000000000003039",                 // time
+                        "100f0e0d0c0b0a090807060504030201", // rand
                     ),
                     "01", // prepare_step_result
                 ),
             ),
             (
                 PrepareStep {
-                    nonce: Nonce::new(Time::from_seconds_since_epoch(345078), [255; 8]),
+                    nonce: Nonce::new(Time::from_seconds_since_epoch(345078), [255; 16]),
                     result: PrepareStepResult::Failed(ReportShareError::VdafPrepError),
                 },
                 concat!(
                     concat!(
                         // nonce
-                        "00000000000543F6", // time
-                        "FFFFFFFFFFFFFFFF", // rand
+                        "00000000000543F6",                 // time
+                        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // rand
                     ),
                     "02", // prepare_step_result
                     "05", // report_share_error
@@ -595,7 +595,7 @@ mod tests {
                     ReportShare {
                         nonce: Nonce::new(
                             Time::from_seconds_since_epoch(54321),
-                            [1, 2, 3, 4, 5, 6, 7, 8],
+                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                         ),
                         extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                         encrypted_input_share: HpkeCiphertext::new(
@@ -607,7 +607,7 @@ mod tests {
                     ReportShare {
                         nonce: Nonce::new(
                             Time::from_seconds_since_epoch(73542),
-                            [8, 7, 6, 5, 4, 3, 2, 1],
+                            [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
                         ),
                         extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
                         encrypted_input_share: HpkeCiphertext::new(
@@ -628,12 +628,12 @@ mod tests {
                 ),
                 concat!(
                     // report_shares
-                    "0052", // length
+                    "0062", // length
                     concat!(
                         concat!(
                             // nonce
-                            "000000000000D431", // time
-                            "0102030405060708", // rand
+                            "000000000000D431",                 // time
+                            "0102030405060708090a0b0c0d0e0f10", // rand
                         ),
                         concat!(
                             // extensions
@@ -665,8 +665,8 @@ mod tests {
                     concat!(
                         concat!(
                             // nonce
-                            "0000000000011F46", // time
-                            "0807060504030201", // rand
+                            "0000000000011F46",                 // time
+                            "100f0e0d0c0b0a090807060504030201", // rand
                         ),
                         concat!(
                             // extensions
@@ -717,14 +717,14 @@ mod tests {
                         PrepareStep {
                             nonce: Nonce::new(
                                 Time::from_seconds_since_epoch(54372),
-                                [1, 2, 3, 4, 5, 6, 7, 8],
+                                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                             ),
                             result: PrepareStepResult::Continued(Vec::from("012345")),
                         },
                         PrepareStep {
                             nonce: Nonce::new(
                                 Time::from_seconds_since_epoch(12345),
-                                [8, 7, 6, 5, 4, 3, 2, 1],
+                                [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
                             ),
                             result: PrepareStepResult::Finished,
                         },
@@ -732,12 +732,12 @@ mod tests {
                 },
                 concat!(concat!(
                     //prepare_steps
-                    "002A", // length
+                    "003A", // length
                     concat!(
                         concat!(
                             // nonce
-                            "000000000000D464", // time
-                            "0102030405060708", // rand
+                            "000000000000D464",                 // time
+                            "0102030405060708090a0b0c0d0e0f10", // rand
                         ),
                         "00", // prepare_step_result
                         concat!(
@@ -749,8 +749,8 @@ mod tests {
                     concat!(
                         concat!(
                             // nonce
-                            "0000000000003039", // time
-                            "0807060504030201", // rand
+                            "0000000000003039",                 // time
+                            "100f0e0d0c0b0a090807060504030201", // rand
                         ),
                         "01", // prepare_step_result
                     ),
@@ -769,14 +769,14 @@ mod tests {
                     PrepareStep {
                         nonce: Nonce::new(
                             Time::from_seconds_since_epoch(54372),
-                            [1, 2, 3, 4, 5, 6, 7, 8],
+                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                         ),
                         result: PrepareStepResult::Continued(Vec::from("012345")),
                     },
                     PrepareStep {
                         nonce: Nonce::new(
                             Time::from_seconds_since_epoch(12345),
-                            [8, 7, 6, 5, 4, 3, 2, 1],
+                            [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
                         ),
                         result: PrepareStepResult::Finished,
                     },
@@ -787,12 +787,12 @@ mod tests {
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
                 concat!(
                     // prepare_steps
-                    "002A", // length
+                    "003A", // length
                     concat!(
                         concat!(
                             // nonce
-                            "000000000000D464", // time
-                            "0102030405060708", // rand
+                            "000000000000D464",                 // time
+                            "0102030405060708090a0b0c0d0e0f10", // rand
                         ),
                         "00", // prepare_step_result
                         concat!(
@@ -804,8 +804,8 @@ mod tests {
                     concat!(
                         concat!(
                             // nonce
-                            "0000000000003039", // time
-                            "0807060504030201", // rand
+                            "0000000000003039",                 // time
+                            "100f0e0d0c0b0a090807060504030201", // rand
                         ),
                         "01", // prepare_step_result
                     )
@@ -832,14 +832,14 @@ mod tests {
                         PrepareStep {
                             nonce: Nonce::new(
                                 Time::from_seconds_since_epoch(54372),
-                                [1, 2, 3, 4, 5, 6, 7, 8],
+                                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                             ),
                             result: PrepareStepResult::Continued(Vec::from("012345")),
                         },
                         PrepareStep {
                             nonce: Nonce::new(
                                 Time::from_seconds_since_epoch(12345),
-                                [8, 7, 6, 5, 4, 3, 2, 1],
+                                [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
                             ),
                             result: PrepareStepResult::Finished,
                         },
@@ -847,12 +847,12 @@ mod tests {
                 },
                 concat!(concat!(
                     //prepare_steps
-                    "002A", // length
+                    "003A", // length
                     concat!(
                         concat!(
                             // nonce
-                            "000000000000D464", // time
-                            "0102030405060708", // rand
+                            "000000000000D464",                 // time
+                            "0102030405060708090a0b0c0d0e0f10", // rand
                         ),
                         "00", // prepare_step_result
                         concat!(
@@ -864,8 +864,8 @@ mod tests {
                     concat!(
                         concat!(
                             // nonce
-                            "0000000000003039", // time
-                            "0807060504030201", // rand
+                            "0000000000003039",                 // time
+                            "100f0e0d0c0b0a090807060504030201", // rand
                         ),
                         "01", // prepare_step_result
                     ),

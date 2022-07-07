@@ -834,7 +834,6 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let nonce = Nonce::generate(&clock);
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
@@ -842,6 +841,7 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
+        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let verify_key = task
             .vdaf_verify_keys
             .get(0)
@@ -1028,7 +1028,6 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let nonce = Nonce::generate(&clock);
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
@@ -1036,6 +1035,7 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
+        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let verify_key = task
             .vdaf_verify_keys
             .get(0)
@@ -1208,7 +1208,6 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let nonce = Nonce::generate(&clock);
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
@@ -1216,6 +1215,7 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
+        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let verify_key = task
             .vdaf_verify_keys
             .get(0)
@@ -1416,7 +1416,6 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let nonce = Nonce::generate(&clock);
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
@@ -1424,6 +1423,7 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
+        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let verify_key = task
             .vdaf_verify_keys
             .get(0)
@@ -1588,7 +1588,7 @@ mod tests {
         let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let nonce = Nonce::generate(&clock);
+        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let transcript = run_vdaf(&vdaf, &verify_key, &(), nonce, &0);
         let report = generate_report(
             task_id,
