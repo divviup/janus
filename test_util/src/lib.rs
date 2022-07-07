@@ -42,7 +42,7 @@ macro_rules! define_ephemeral_datastore {
         }
 
         impl DbHandle {
-            // Retrieve a datastore attached to the ephemeral database.
+            /// Retrieve a datastore attached to the ephemeral database.
             pub fn datastore<C: Clock>(&self, clock: C) ->  Datastore<C> {
                 // Create a crypter based on the generated key bytes.
                 let datastore_key = ::ring::aead::LessSafeKey::new(::ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &self.datastore_key_bytes).unwrap());
@@ -51,7 +51,7 @@ macro_rules! define_ephemeral_datastore {
                 Datastore::new(self.pool(), crypter, clock)
             }
 
-            // Retrieve a Postgres connection pool attached to the ephemeral database.
+            /// Retrieve a Postgres connection pool attached to the ephemeral database.
             pub fn pool(&self) -> ::deadpool_postgres::Pool {
                 let cfg = <::tokio_postgres::Config as std::str::FromStr>::from_str(&self.connection_string).unwrap();
                 let conn_mgr = ::deadpool_postgres::Manager::new(cfg, ::tokio_postgres::NoTls);
