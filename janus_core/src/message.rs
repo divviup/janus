@@ -363,12 +363,12 @@ pub struct Nonce {
     /// The time at which the report was generated.
     time: Time,
     /// A randomly generated value.
-    rand: [u8; 8],
+    rand: [u8; 16],
 }
 
 impl Nonce {
     /// Construct a nonce with the given time and random parts.
-    pub fn new(time: Time, rand: [u8; 8]) -> Nonce {
+    pub fn new(time: Time, rand: [u8; 16]) -> Nonce {
         Nonce { time, rand }
     }
 
@@ -388,7 +388,7 @@ impl Nonce {
     }
 
     /// Get the random component of a nonce.
-    pub fn rand(&self) -> [u8; 8] {
+    pub fn rand(&self) -> [u8; 16] {
         self.rand
     }
 }
@@ -409,7 +409,7 @@ impl Encode for Nonce {
 impl Decode for Nonce {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let time = Time::decode(bytes)?;
-        let mut rand = [0; 8];
+        let mut rand = [0; 16];
         bytes.read_exact(&mut rand)?;
 
         Ok(Self { time, rand })
@@ -1134,21 +1134,21 @@ mod tests {
             (
                 Nonce::new(
                     Time::from_seconds_since_epoch(12345),
-                    [1, 2, 3, 4, 5, 6, 7, 8],
+                    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                 ),
                 concat!(
-                    "0000000000003039", // time
-                    "0102030405060708", // rand
+                    "0000000000003039",                 // time
+                    "0102030405060708090a0b0c0d0e0f10", // rand
                 ),
             ),
             (
                 Nonce::new(
                     Time::from_seconds_since_epoch(54321),
-                    [8, 7, 6, 5, 4, 3, 2, 1],
+                    [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
                 ),
                 concat!(
-                    "000000000000D431", // time
-                    "0807060504030201", // rand
+                    "000000000000D431",                 // time
+                    "100f0e0d0c0b0a090807060504030201", // rand
                 ),
             ),
         ])
@@ -1365,7 +1365,7 @@ mod tests {
                     TaskId::new([u8::MIN; 32]),
                     Nonce::new(
                         Time::from_seconds_since_epoch(12345),
-                        [1, 2, 3, 4, 5, 6, 7, 8],
+                        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                     ),
                     vec![],
                     vec![],
@@ -1374,8 +1374,8 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
                         // nonce
-                        "0000000000003039", // time
-                        "0102030405060708", // rand
+                        "0000000000003039",                 // time
+                        "0102030405060708090a0b0c0d0e0f10", // rand
                     ),
                     concat!(
                         // extensions
@@ -1392,7 +1392,7 @@ mod tests {
                     TaskId::new([u8::MAX; 32]),
                     Nonce::new(
                         Time::from_seconds_since_epoch(54321),
-                        [8, 7, 6, 5, 4, 3, 2, 1],
+                        [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
                     ),
                     vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                     vec![
@@ -1411,8 +1411,8 @@ mod tests {
                 concat!(
                     "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
                     concat!(
-                        "000000000000D431", // time
-                        "0807060504030201", // rand
+                        "000000000000D431",                 // time
+                        "100f0e0d0c0b0a090807060504030201", // rand
                     ),
                     concat!(
                         // extensions

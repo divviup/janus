@@ -3277,7 +3277,7 @@ mod tests {
         let report_share = ReportShare {
             nonce: Nonce::new(
                 Time::from_seconds_since_epoch(54321),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             extensions: Vec::new(),
             encrypted_input_share: HpkeCiphertext::new(
@@ -4072,7 +4072,7 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         );
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
         let clock = MockClock::default();
@@ -4180,7 +4180,7 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         );
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepStep, Role::Helper);
         let clock = MockClock::default();
@@ -4335,7 +4335,7 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         );
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
         let clock = MockClock::default();
@@ -4395,7 +4395,7 @@ mod tests {
             prepare_steps: vec![PrepareStep {
                 nonce: Nonce::new(
                     Time::from_seconds_since_epoch(54321),
-                    [8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
+                    [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
                 ),
                 result: PrepareStepResult::Continued(Vec::new()),
             }],
@@ -4445,11 +4445,11 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce_0 = Nonce::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         );
         let nonce_1 = Nonce::new(
             Time::from_seconds_since_epoch(54321),
-            [8, 7, 6, 5, 4, 3, 2, 1],
+            [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
         );
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
@@ -4591,7 +4591,7 @@ mod tests {
         let aggregation_job_id = AggregationJobId::random();
         let nonce = Nonce::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         );
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
@@ -4652,7 +4652,7 @@ mod tests {
             prepare_steps: vec![PrepareStep {
                 nonce: Nonce::new(
                     Time::from_seconds_since_epoch(54321),
-                    [1, 2, 3, 4, 5, 6, 7, 8],
+                    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                 ),
                 result: PrepareStepResult::Continued(Vec::new()),
             }],

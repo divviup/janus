@@ -2998,7 +2998,7 @@ mod tests {
             TaskId::random(),
             Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
@@ -3057,7 +3057,7 @@ mod tests {
                         TaskId::random(),
                         Nonce::new(
                             Time::from_seconds_since_epoch(12345),
-                            [1, 2, 3, 4, 5, 6, 7, 8],
+                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                         ),
                     )
                     .await
@@ -3081,7 +3081,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3090,7 +3090,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12346),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3099,7 +3099,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12347),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3108,7 +3108,7 @@ mod tests {
             unrelated_task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12348),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3212,7 +3212,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3221,7 +3221,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12346),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3230,7 +3230,7 @@ mod tests {
             task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12347),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3239,7 +3239,7 @@ mod tests {
             unrelated_task_id,
             Nonce::new(
                 Time::from_seconds_since_epoch(12348),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             vec![],
             vec![],
@@ -3443,7 +3443,7 @@ mod tests {
         let report_share = ReportShare {
             nonce: Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             ),
             extensions: vec![
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
@@ -3991,7 +3991,7 @@ mod tests {
             let aggregation_job_id = AggregationJobId::random();
             let nonce = Nonce::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8],
+                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             );
 
             let report_aggregation = ds
@@ -4108,7 +4108,7 @@ mod tests {
                         AggregationJobId::random(),
                         Nonce::new(
                             Time::from_seconds_since_epoch(12345),
-                            [1, 2, 3, 4, 5, 6, 7, 8],
+                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                         ),
                     )
                     .await
@@ -4127,7 +4127,7 @@ mod tests {
                             task_id: TaskId::random(),
                             nonce: Nonce::new(
                                 Time::from_seconds_since_epoch(12345),
-                                [1, 2, 3, 4, 5, 6, 7, 8],
+                                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
                             ),
                             ord: 0,
                             state: ReportAggregationState::Invalid,
@@ -4193,7 +4193,7 @@ mod tests {
                     {
                         let nonce = Nonce::new(
                             Time::from_seconds_since_epoch(12345),
-                            (ord as u64).to_be_bytes(),
+                            (ord as u128).to_be_bytes(),
                         );
                         tx.put_report_share(
                             task_id,
