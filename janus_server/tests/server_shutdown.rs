@@ -9,14 +9,13 @@ use janus_core::{
     time::{Clock, RealClock},
 };
 use janus_server::{
-    config::{AggregatorConfig, CommonConfig, DbConfig},
     datastore::{Crypter, Datastore},
     task::test_util::new_dummy_task,
     trace::{install_trace_subscriber, TraceConfiguration},
 };
 use reqwest::{Client, Url};
 use std::{
-    io::Read,
+    io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream},
     process::{Command, Stdio},
 };
@@ -59,17 +58,17 @@ async fn server_shutdown() {
     let (datastore, db_handle) = ephemeral_datastore(RealClock::default()).await;
 
     let aggregator_port = select_open_port().unwrap();
+    let listen_address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port));
 
-    let config = AggregatorConfig {
-        listen_address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port)),
-        common_config: CommonConfig {
-            database: DbConfig {
-                url: db_handle.connection_string().parse().unwrap(),
-            },
-            logging_config: Default::default(),
-            metrics_config: Default::default(),
-        },
-    };
+    let config = format!(
+        r#"---
+    listen_address: "{}"
+    database:
+        url: "{}"
+    "#,
+        listen_address,
+        db_handle.connection_string()
+    );
 
     let task_id = TaskId::random();
     let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
@@ -84,7 +83,7 @@ async fn server_shutdown() {
     // Save the above configuration to a temporary file, so that we can pass
     // the file's path to the aggregator on the command line.
     let mut config_temp_file = tempfile::NamedTempFile::new().unwrap();
-    serde_yaml::to_writer(&mut config_temp_file, &config).unwrap();
+    config_temp_file.write_all(config.as_ref()).unwrap();
     let config_path = config_temp_file.into_temp_path();
 
     let mut child = Command::new(trycmd::cargo::cargo_bin!("aggregator"))
@@ -118,7 +117,8 @@ async fn server_shutdown() {
     });
 
     // Try to connect to the server in a loop, until it's ready.
-    wait_for_server(config.listen_address).expect("could not connect to server after starting it");
+    let listen_address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port));
+    wait_for_server(listen_address).expect("could not connect to server after starting it");
 
     // Make a test request to the server.
     // TODO(#220): expand this further once multi-process integration tests are fleshed out, to
@@ -126,7 +126,7 @@ async fn server_shutdown() {
     let client = Client::new();
     let url = Url::parse(&format!(
         "http://{}/hpke_config?task_id={}",
-        &config.listen_address, task_id,
+        listen_address, task_id
     ))
     .unwrap();
     assert!(client.get(url).send().await.unwrap().status().is_success());
