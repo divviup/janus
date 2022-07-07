@@ -27,12 +27,15 @@ use tracing::info;
 /// exclusive with the database password specified in the connection URL in `db_config`. `ds_keys`
 /// are a list of AES-128-GCM keys, encoded in base64 with no padding, used to protect secret values
 /// stored in the datastore; it must not be empty.
+///
+/// Returns both the datastore as well as the connection pool underlying the datastore. In most
+/// cases, callers will only care about the datastore.
 pub fn datastore<C: Clock>(
     clock: C,
     db_config: &DbConfig,
     db_password: &Option<String>,
     ds_keys: &[String],
-) -> Result<Datastore<C>> {
+) -> Result<(Datastore<C>, Pool)> {
     let mut database_config = tokio_postgres::Config::from_str(db_config.url.as_str())
         .with_context(|| {
             format!(
@@ -70,7 +73,10 @@ pub fn datastore<C: Clock>(
     if ds_keys.is_empty() {
         return Err(anyhow!("ds_keys is empty"));
     }
-    Ok(Datastore::new(pool, Crypter::new(ds_keys), clock))
+    Ok((
+        Datastore::new(pool.clone(), Crypter::new(ds_keys), clock),
+        pool,
+    ))
 }
 
 /// Options for Janus binaries.
@@ -154,12 +160,20 @@ fn parse_metadata_entry(input: &str) -> Result<(String, String)> {
     }
 }
 
+/// BinaryContext provides contextual objects related to a Janus binary.
+pub struct BinaryContext<C: Clock, Config: BinaryConfig> {
+    pub clock: C,
+    pub config: Config,
+    pub datastore: Datastore<C>,
+    pub pool: Pool,
+}
+
 pub async fn janus_main<O, C, Config, F, Fut>(clock: C, f: F) -> anyhow::Result<()>
 where
     O: BinaryOptions,
     C: Clock,
     Config: BinaryConfig,
-    F: FnOnce(C, Config, Datastore<C>) -> Fut,
+    F: FnOnce(BinaryContext<C, Config>) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
     // Read arguments, read & parse config.
@@ -202,7 +216,7 @@ where
     info!(?common_options, ?config, "Starting up");
 
     // Connect to database.
-    let datastore = datastore(
+    let (datastore, pool) = datastore(
         clock.clone(),
         &config.common_config().database,
         &common_options.database_password,
@@ -212,7 +226,13 @@ where
 
     let logging_config = config.common_config().logging_config.clone();
 
-    f(clock, config, datastore).await?;
+    f(BinaryContext {
+        clock,
+        config,
+        datastore,
+        pool,
+    })
+    .await?;
 
     cleanup_trace_subscriber(&logging_config);
 

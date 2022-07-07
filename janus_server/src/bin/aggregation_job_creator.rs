@@ -26,17 +26,17 @@ impl BinaryOptions for Options {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    janus_main::<Options, _, _, _, _>(
+    janus_main::<Options, _, AggregationJobCreatorConfig, _, _>(
         RealClock::default(),
-        |clock, config: AggregationJobCreatorConfig, datastore| async move {
+        |ctx| async move {
             // Start creating aggregation jobs.
             Arc::new(AggregationJobCreator::new(
-                datastore,
-                clock,
-                Duration::from_secs(config.tasks_update_frequency_secs),
-                Duration::from_secs(config.aggregation_job_creation_interval_secs),
-                config.min_aggregation_job_size,
-                config.max_aggregation_job_size,
+                ctx.datastore,
+                ctx.clock,
+                Duration::from_secs(ctx.config.tasks_update_frequency_secs),
+                Duration::from_secs(ctx.config.aggregation_job_creation_interval_secs),
+                ctx.config.min_aggregation_job_size,
+                ctx.config.max_aggregation_job_size,
             ))
             .run()
             .await;

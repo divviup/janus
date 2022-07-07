@@ -138,8 +138,7 @@ pub struct Transaction<'a, C: Clock> {
 }
 
 impl<C: Clock> Transaction<'_, C> {
-    // This is pub to be used in integration tests
-    #[doc(hidden)]
+    /// Writes a task into the datastore.
     #[tracing::instrument(skip(self), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
         let aggregator_role = AggregatorRole::from_role(task.role)?;
@@ -283,6 +282,55 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
+    /// Deletes a task from the datastore. Fails if there is any data related to the task, such as
+    /// client reports, aggregations, etc.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn delete_task(&self, task_id: TaskId) -> Result<(), Error> {
+        let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_bytes()];
+
+        // Clean up dependent tables first.
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "DELETE FROM task_aggregator_auth_tokens
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        let task_aggregator_auth_tokens_future = self.tx.execute(&stmt, params);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "DELETE FROM task_hpke_keys
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        let task_hpke_keys_future = self.tx.execute(&stmt, params);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "DELETE FROM task_vdaf_verify_keys
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        let task_vdaf_verify_keys_future = self.tx.execute(&stmt, params);
+
+        try_join!(
+            task_aggregator_auth_tokens_future,
+            task_hpke_keys_future,
+            task_vdaf_verify_keys_future,
+        )?;
+
+        // Then clean up tasks table itself.
+        let stmt = self
+            .tx
+            .prepare_cached("DELETE FROM tasks WHERE task_id = $1")
+            .await?;
+        check_single_row_mutation(self.tx.execute(&stmt, params).await?)?;
+        Ok(())
+    }
+
     /// Fetch the task parameters corresponing to the provided `task_id`.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_task(&self, task_id: TaskId) -> Result<Option<Task>, Error> {
@@ -346,8 +394,6 @@ impl<C: Clock> Transaction<'_, C> {
     /// Fetch all the tasks in the database.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
-        use std::collections::HashMap;
-
         let stmt = self
             .tx
             .prepare_cached(
@@ -955,7 +1001,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND aggregation_jobs.lease_token = $4",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1014,7 +1060,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE aggregation_job_id = $3 AND task_id = (SELECT id FROM tasks WHERE task_id = $4)",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1194,7 +1240,7 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE task_id = (SELECT id FROM tasks WHERE task_id = $8)
                     AND nonce_time = $9 AND nonce_rand = $10)")
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1550,7 +1596,7 @@ ORDER BY id DESC
                   AND collect_jobs.lease_token = $4",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1591,7 +1637,7 @@ ORDER BY id DESC
                 WHERE collect_job_id = $3",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1620,7 +1666,7 @@ ORDER BY id DESC
             WHERE collect_job_id = $1",
             )
             .await?;
-        check_update(self.tx.execute(&stmt, &[&collect_job_id]).await?)?;
+        check_single_row_mutation(self.tx.execute(&stmt, &[&collect_job_id]).await?)?;
         Ok(())
     }
 
@@ -1698,7 +1744,7 @@ ORDER BY id DESC
                     AND aggregation_param = $6",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1991,7 +2037,7 @@ ORDER BY id DESC
     }
 }
 
-fn check_update(row_count: u64) -> Result<(), Error> {
+fn check_single_row_mutation(row_count: u64) -> Result<(), Error> {
     match row_count {
         0 => Err(Error::MutationTargetNotFound),
         1 => Ok(()),
@@ -2867,7 +2913,7 @@ pub mod models {
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-util")]
 pub mod test_util {
     use super::{Crypter, Datastore};
     use janus_core::time::Clock;
@@ -2963,6 +3009,19 @@ mod tests {
         let mut want_tasks = HashMap::new();
         for (task_id, vdaf, role) in values {
             let task = new_dummy_task(task_id, vdaf.into(), role);
+            want_tasks.insert(task_id, task.clone());
+
+            let err = ds
+                .run_tx(|tx| Box::pin(async move { tx.delete_task(task_id).await }))
+                .await
+                .unwrap_err();
+            assert_matches!(err, Error::MutationTargetNotFound);
+
+            let retrieved_task = ds
+                .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
+                .await
+                .unwrap();
+            assert_eq!(None, retrieved_task);
 
             ds.run_tx(|tx| {
                 let task = task.clone();
@@ -2976,7 +3035,38 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(Some(&task), retrieved_task.as_ref());
-            want_tasks.insert(task_id, task);
+
+            ds.run_tx(|tx| Box::pin(async move { tx.delete_task(task_id).await }))
+                .await
+                .unwrap();
+
+            let retrieved_task = ds
+                .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
+                .await
+                .unwrap();
+            assert_eq!(None, retrieved_task);
+
+            let err = ds
+                .run_tx(|tx| Box::pin(async move { tx.delete_task(task_id).await }))
+                .await
+                .unwrap_err();
+            assert_matches!(err, Error::MutationTargetNotFound);
+
+            // Rewrite & retrieve the task again, to test that the delete is "clean" in the sense
+            // that it deletes all task-related data (& therefore does not conflict with a later
+            // write to the same task_id).
+            ds.run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
+            let retrieved_task = ds
+                .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
+                .await
+                .unwrap();
+            assert_eq!(Some(&task), retrieved_task.as_ref());
         }
 
         let got_tasks: HashMap<TaskId, Task> = ds

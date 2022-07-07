@@ -11,6 +11,7 @@ tokio-console = ["console-subscriber"]
 jaeger = ["tracing-opentelemetry", "opentelemetry-jaeger"]
 otlp = ["tracing-opentelemetry", "opentelemetry-otlp", "opentelemetry-semantic-conventions", "tonic"]
 prometheus = ["opentelemetry-prometheus", "dep:prometheus"]
+test-util = ["dep:janus_test_util", "dep:lazy_static", "dep:testcontainers"]
 
 [dependencies]
 anyhow = "1"
@@ -28,6 +29,8 @@ http = "0.2.8"
 hyper = "0.14.19"
 itertools = "0.10.3"
 janus_core = { path = "../janus_core", features = ["database"] }
+janus_test_util = { path = "../test_util", optional = true }
+lazy_static = { version = "1", optional = true }
 num_enum = "0.5.6"
 opentelemetry = { version = "0.17.0", features = ["metrics", "rt-tokio"] }
 opentelemetry-jaeger = { version = "0.16.0", optional = true, features = ["rt-tokio"] }
@@ -46,6 +49,7 @@ serde_yaml = "0.8.24"
 signal-hook = "0.3.14"
 signal-hook-tokio = { version = "0.3.1", features = ["futures-v0_3"] }
 structopt = "0.3.26"
+testcontainers = { version = "0.14.0", optional = true }
 thiserror = "1.0"
 tokio = { version = "^1.19", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
@@ -62,13 +66,11 @@ warp = { version = "^0.3", features = ["tls"] }
 assert_matches = "1"
 hex = { version = "0.4.3", features = ["serde"] }
 hyper = "0.14.19"
-janus_test_util = { path = "../test_util" }
-lazy_static = "1"
+janus_server = { path = ".", features = ["test-util"] }
 libc = "0.2.126"
 mockito = "0.31.0"
 serde_test = "1.0.138"
 tempfile = "3.3.0"
-testcontainers = "0.14.0"
 tokio = { version = "*", features = ["test-util"] }
 trycmd = "0.13.4"
 wait-timeout = "0.2.0"

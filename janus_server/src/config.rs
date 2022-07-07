@@ -32,6 +32,8 @@ pub struct DbConfig {
     // TODO(#231): add option for connecting to database over TLS, if necessary
 }
 
+// TODO(#296): move binary-specific configs (& their tests) into the binaries
+
 /// Non-secret configuration options for a Janus aggregator, deserialized from
 /// YAML.
 ///
@@ -229,9 +231,70 @@ impl BinaryConfig for CollectJobDriverConfig {
     }
 }
 
+#[cfg(feature = "test-util")]
+pub mod test_util {
+    use super::DbConfig;
+    use crate::{
+        metrics::{MetricsConfiguration, MetricsExporterConfiguration},
+        trace::{
+            OpenTelemetryTraceConfiguration, OtlpTraceConfiguration, TokioConsoleConfiguration,
+            TraceConfiguration,
+        },
+    };
+    use reqwest::Url;
+    use serde::{de::DeserializeOwned, Serialize};
+    use std::{collections::HashMap, fmt::Debug};
+
+    pub fn roundtrip_encoding<T: Serialize + DeserializeOwned + Debug + Eq>(value: T) {
+        let encoded = serde_yaml::to_string(&value).unwrap();
+        let decoded = serde_yaml::from_str(&encoded).unwrap();
+        assert_eq!(value, decoded);
+    }
+
+    pub fn generate_db_config() -> DbConfig {
+        DbConfig {
+            url: Url::parse("postgres://postgres:postgres@localhost:5432/postgres").unwrap(),
+        }
+    }
+
+    pub fn generate_trace_config() -> TraceConfiguration {
+        TraceConfiguration {
+            use_test_writer: true,
+            force_json_output: false,
+            tokio_console_config: TokioConsoleConfiguration {
+                enabled: true,
+                listen_address: Some("127.0.0.1:6667".parse().unwrap()),
+            },
+            open_telemetry_config: Some(OpenTelemetryTraceConfiguration::Otlp(
+                OtlpTraceConfiguration {
+                    endpoint: "127.0.0.1:6668".to_string(),
+                    metadata: HashMap::from([
+                        ("metadata_key_0".to_string(), "metadata_value_0".to_string()),
+                        ("metadata_key_1".to_string(), "metadata_value_1".to_string()),
+                    ]),
+                },
+            )),
+        }
+    }
+
+    pub fn generate_metrics_config() -> MetricsConfiguration {
+        MetricsConfiguration {
+            exporter: Some(MetricsExporterConfiguration::Prometheus {
+                host: Some("prometheus_host".to_string()),
+                port: Some(6669),
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        test_util::{
+            generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
+        },
+        *,
+    };
     use crate::{
         metrics::{MetricsExporterConfiguration, OtlpExporterConfiguration},
         trace::{
@@ -243,18 +306,6 @@ mod tests {
         net::{IpAddr, Ipv4Addr},
     };
 
-    fn roundtrip_encoding<T: Serialize + DeserializeOwned + Debug + Eq>(value: T) {
-        let encoded = serde_yaml::to_string(&value).unwrap();
-        let decoded = serde_yaml::from_str(&encoded).unwrap();
-        assert_eq!(value, decoded);
-    }
-
-    fn generate_db_config() -> DbConfig {
-        DbConfig {
-            url: Url::parse("postgres://postgres:postgres@localhost:5432/postgres").unwrap(),
-        }
-    }
-
     #[test]
     fn roundtrip_db_config() {
         roundtrip_encoding(generate_db_config())
@@ -264,8 +315,8 @@ mod tests {
     fn roundtrip_common_config() {
         roundtrip_encoding(CommonConfig {
             database: generate_db_config(),
-            logging_config: TraceConfiguration::default(),
-            metrics_config: MetricsConfiguration::default(),
+            logging_config: generate_trace_config(),
+            metrics_config: generate_metrics_config(),
         })
     }
 
@@ -275,8 +326,8 @@ mod tests {
             listen_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
             common_config: CommonConfig {
                 database: generate_db_config(),
-                logging_config: TraceConfiguration::default(),
-                metrics_config: MetricsConfiguration::default(),
+                logging_config: generate_trace_config(),
+                metrics_config: generate_metrics_config(),
             },
         })
     }
@@ -286,8 +337,8 @@ mod tests {
         roundtrip_encoding(AggregationJobCreatorConfig {
             common_config: CommonConfig {
                 database: generate_db_config(),
-                logging_config: TraceConfiguration::default(),
-                metrics_config: MetricsConfiguration::default(),
+                logging_config: generate_trace_config(),
+                metrics_config: generate_metrics_config(),
             },
             tasks_update_frequency_secs: 3600,
             aggregation_job_creation_interval_secs: 60,
@@ -313,8 +364,8 @@ mod tests {
         roundtrip_encoding(AggregationJobDriverConfig {
             common_config: CommonConfig {
                 database: generate_db_config(),
-                logging_config: TraceConfiguration::default(),
-                metrics_config: MetricsConfiguration::default(),
+                logging_config: generate_trace_config(),
+                metrics_config: generate_metrics_config(),
             },
             job_driver_config: JobDriverConfig {
                 min_job_discovery_delay_secs: 10,
@@ -332,8 +383,8 @@ mod tests {
         roundtrip_encoding(CollectJobDriverConfig {
             common_config: CommonConfig {
                 database: generate_db_config(),
-                logging_config: TraceConfiguration::default(),
-                metrics_config: MetricsConfiguration::default(),
+                logging_config: generate_trace_config(),
+                metrics_config: generate_metrics_config(),
             },
             job_driver_config: JobDriverConfig {
                 min_job_discovery_delay_secs: 10,

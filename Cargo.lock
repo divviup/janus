@@ -1336,6 +1336,7 @@ dependencies = [
  "hyper",
  "itertools",
  "janus_core",
+ "janus_server",
  "janus_test_util",
  "lazy_static",
  "libc",

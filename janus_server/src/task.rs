@@ -1,12 +1,13 @@
 //! Shared parameters for a PPM task.
 
+use base64::URL_SAFE_NO_PAD;
 use derivative::Derivative;
 use janus_core::{
     hpke::HpkePrivateKey,
     message::{Duration, HpkeConfig, HpkeConfigId, Interval, Role, TaskId},
 };
 use ring::constant_time;
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use url::Url;
 
@@ -301,6 +302,130 @@ impl Task {
     }
 }
 
+/// SerializedTask is an intermediate representation for tasks being serialized via the Serialize &
+/// Deserialize traits.
+#[derive(Serialize, Deserialize)]
+struct SerializedTask {
+    id: String, // in unpadded base64url
+    aggregator_endpoints: Vec<Url>,
+    vdaf: VdafInstance,
+    role: Role,
+    vdaf_verify_keys: Vec<String>, // in unpadded base64url
+    max_batch_lifetime: u64,
+    min_batch_size: u64,
+    min_batch_duration: Duration,
+    tolerable_clock_skew: Duration,
+    collector_hpke_config: HpkeConfig,
+    agg_auth_tokens: Vec<String>,         // in unpadded base64url
+    hpke_keys: Vec<(HpkeConfig, String)>, // values in unpadded base64url
+}
+
+impl Serialize for Task {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let id = base64::encode_config(self.id.as_bytes(), URL_SAFE_NO_PAD);
+        let vdaf_verify_keys: Vec<_> = self
+            .vdaf_verify_keys
+            .iter()
+            .map(|key| base64::encode_config(key, URL_SAFE_NO_PAD))
+            .collect();
+        let agg_auth_tokens: Vec<_> = self
+            .agg_auth_tokens
+            .iter()
+            .map(|token| base64::encode_config(token.as_bytes(), URL_SAFE_NO_PAD))
+            .collect();
+        let hpke_keys = self
+            .hpke_keys
+            .values()
+            .map(|(cfg, priv_key)| {
+                (
+                    cfg.clone(),
+                    base64::encode_config(priv_key.as_ref(), URL_SAFE_NO_PAD),
+                )
+            })
+            .collect();
+
+        SerializedTask {
+            id,
+            aggregator_endpoints: self.aggregator_endpoints.clone(),
+            vdaf: self.vdaf.clone(),
+            role: self.role,
+            vdaf_verify_keys,
+            max_batch_lifetime: self.max_batch_lifetime,
+            min_batch_size: self.min_batch_size,
+            min_batch_duration: self.min_batch_duration,
+            tolerable_clock_skew: self.tolerable_clock_skew,
+            collector_hpke_config: self.collector_hpke_config.clone(),
+            agg_auth_tokens,
+            hpke_keys,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Task {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Deserialize into intermediate representation.
+        let serialized_task = SerializedTask::deserialize(deserializer)?;
+
+        // task_id
+        let task_id_bytes =
+            base64::decode_config(serialized_task.id, URL_SAFE_NO_PAD).map_err(D::Error::custom)?;
+        let task_id = TaskId::new(
+            task_id_bytes
+                .try_into()
+                .map_err(|_| D::Error::custom("task_id length incorrect"))?,
+        );
+
+        // vdaf_verify_keys
+        let vdaf_verify_keys: Vec<_> = serialized_task
+            .vdaf_verify_keys
+            .into_iter()
+            .map(|key| base64::decode_config(key, URL_SAFE_NO_PAD).map_err(D::Error::custom))
+            .collect::<Result<_, _>>()?;
+
+        // agg_auth_tokens
+        let agg_auth_tokens: Vec<_> = serialized_task
+            .agg_auth_tokens
+            .into_iter()
+            .map(|token| {
+                let token_bytes =
+                    base64::decode_config(token, URL_SAFE_NO_PAD).map_err(D::Error::custom)?;
+                Ok(AggregatorAuthenticationToken::from(token_bytes))
+            })
+            .collect::<Result<_, _>>()?;
+
+        // hpke_keys
+        let hpke_keys: HashMap<_, _> = serialized_task
+            .hpke_keys
+            .into_iter()
+            .map(|(hpke_config, hpke_private_key)| {
+                let hpke_private_key_bytes =
+                    base64::decode_config(hpke_private_key, URL_SAFE_NO_PAD)
+                        .map_err(D::Error::custom)?;
+                Ok((
+                    hpke_config.id(),
+                    (hpke_config, HpkePrivateKey::new(hpke_private_key_bytes)),
+                ))
+            })
+            .collect::<Result<_, _>>()?;
+
+        Ok(Task {
+            id: task_id,
+            aggregator_endpoints: serialized_task.aggregator_endpoints,
+            vdaf: serialized_task.vdaf,
+            role: serialized_task.role,
+            vdaf_verify_keys,
+            max_batch_lifetime: serialized_task.max_batch_lifetime,
+            min_batch_size: serialized_task.min_batch_size,
+            min_batch_duration: serialized_task.min_batch_duration,
+            tolerable_clock_skew: serialized_task.tolerable_clock_skew,
+            collector_hpke_config: serialized_task.collector_hpke_config,
+            agg_auth_tokens,
+            hpke_keys,
+        })
+    }
+}
+
 // This is public to allow use in integration tests.
 #[doc(hidden)]
 pub mod test_util {
@@ -371,6 +496,8 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::test_util::roundtrip_encoding;
+
     use super::test_util::new_dummy_task;
     use super::*;
     use janus_core::message::{Duration, TaskId, Time};
@@ -524,5 +651,14 @@ mod tests {
                 variant: "FakeFailsPrepStep",
             }],
         );
+    }
+
+    #[test]
+    fn task_serialization() {
+        roundtrip_encoding(new_dummy_task(
+            TaskId::random(),
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
+            Role::Leader,
+        ));
     }
 }

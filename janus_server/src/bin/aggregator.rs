@@ -59,24 +59,21 @@ fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    janus_main::<Options, _, _, _, _>(
-        RealClock::default(),
-        |clock, config: AggregatorConfig, datastore| async move {
-            let shutdown_signal =
-                setup_signal_handler().context("failed to register SIGTERM signal handler")?;
+    janus_main::<Options, _, AggregatorConfig, _, _>(RealClock::default(), |ctx| async move {
+        let shutdown_signal =
+            setup_signal_handler().context("failed to register SIGTERM signal handler")?;
 
-            let (bound_address, server) = aggregator_server(
-                Arc::new(datastore),
-                clock,
-                config.listen_address,
-                shutdown_signal,
-            )
-            .context("failed to create aggregator server")?;
-            info!(?bound_address, "running aggregator");
+        let (bound_address, server) = aggregator_server(
+            Arc::new(ctx.datastore),
+            ctx.clock,
+            ctx.config.listen_address,
+            shutdown_signal,
+        )
+        .context("failed to create aggregator server")?;
+        info!(?bound_address, "running aggregator");
 
-            server.await;
-            Ok(())
-        },
-    )
+        server.await;
+        Ok(())
+    })
     .await
 }
