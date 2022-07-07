@@ -225,8 +225,9 @@ mod tests {
     use assert_matches::assert_matches;
     use janus_core::{
         hpke::test_util::generate_hpke_config_and_private_key,
-        message::{TaskId, Time},
-        test_util::{install_test_trace_subscriber, MockClock},
+        test_util::install_test_trace_subscriber,
+        time::test_util::MockClock,
+        {message::TaskId, Time},
     };
     use mockito::mock;
     use prio::vdaf::prio3::Prio3;

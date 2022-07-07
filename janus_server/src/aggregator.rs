@@ -2091,7 +2091,8 @@ mod tests {
             HpkePrivateKey, Label,
         },
         message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
-        test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, MockClock},
+        test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
+        time::test_util::MockClock,
     };
     use prio::{
         codec::Decode,

@@ -31,3 +31,50 @@ impl Debug for RealClock {
         write!(f, "{:?}", self.now())
     }
 }
+
+#[cfg(feature = "test-util")]
+pub mod test_util {
+    use crate::{
+        message::{Duration, Time},
+        time::Clock,
+    };
+    use std::sync::{Arc, Mutex};
+
+    /// A mock clock for use in testing. Clones are identical: all clones of a given MockClock will
+    /// be controlled by a controller retrieved from any of the clones.
+    #[derive(Clone, Debug)]
+    #[non_exhaustive]
+    pub struct MockClock {
+        /// The time that this clock will return from [`Self::now`].
+        current_time: Arc<Mutex<Time>>,
+    }
+
+    impl MockClock {
+        pub fn new(when: Time) -> MockClock {
+            MockClock {
+                current_time: Arc::new(Mutex::new(when)),
+            }
+        }
+
+        pub fn advance(&self, dur: Duration) {
+            let mut current_time = self.current_time.lock().unwrap();
+            *current_time = current_time.add(dur).unwrap();
+        }
+    }
+
+    impl Clock for MockClock {
+        fn now(&self) -> Time {
+            let current_time = self.current_time.lock().unwrap();
+            *current_time
+        }
+    }
+
+    impl Default for MockClock {
+        fn default() -> Self {
+            Self {
+                // Sunday, September 9, 2001 1:46:40 AM UTC
+                current_time: Arc::new(Mutex::new(Time::from_seconds_since_epoch(1000000000))),
+            }
+        }
+    }
+}

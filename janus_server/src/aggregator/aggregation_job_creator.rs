@@ -412,10 +412,8 @@ mod tests {
     use janus_core::{
         message::{Interval, Nonce, Report, Role, TaskId, Time},
         task::VdafInstance,
-        test_util::{
-            dummy_vdaf::VdafWithAggregationParameter, install_test_trace_subscriber, MockClock,
-        },
-        time::Clock,
+        test_util::{dummy_vdaf::VdafWithAggregationParameter, install_test_trace_subscriber},
+        time::{test_util::MockClock, Clock},
     };
     use prio::{
         codec::ParameterizedDecode,

@@ -2940,8 +2940,9 @@ mod tests {
         message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
         test_util::{
             dummy_vdaf::{self, VdafWithAggregationParameter},
-            generate_aead_key, install_test_trace_subscriber, MockClock,
+            generate_aead_key, install_test_trace_subscriber,
         },
+        time::test_util::MockClock,
     };
     use prio::{
         field::{Field128, Field64},

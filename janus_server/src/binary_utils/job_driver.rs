@@ -202,7 +202,8 @@ mod tests {
     use crate::{message::AggregationJobId, task::VdafInstance};
     use janus_core::{
         message::TaskId,
-        test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager, MockClock},
+        test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
+        time::test_util::MockClock,
     };
     use tokio::sync::Mutex;
 

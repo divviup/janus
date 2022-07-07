@@ -1,7 +1,4 @@
-use crate::{
-    message::{Duration, Nonce, Time},
-    time::Clock,
-};
+use crate::message::Nonce;
 use assert_matches::assert_matches;
 use prio::{
     codec::Encode,
@@ -9,7 +6,7 @@ use prio::{
 };
 use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::Once;
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 
@@ -199,44 +196,6 @@ pub fn generate_aead_key_bytes() -> Vec<u8> {
 pub fn generate_aead_key() -> LessSafeKey {
     let unbound_key = UnboundKey::new(&AES_128_GCM, &generate_aead_key_bytes()).unwrap();
     LessSafeKey::new(unbound_key)
-}
-
-/// A mock clock for use in testing. Clones are identical: all clones of a given MockClock will
-/// be controlled by a controller retrieved from any of the clones.
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub struct MockClock {
-    /// The time that this clock will return from [`Self::now`].
-    current_time: Arc<Mutex<Time>>,
-}
-
-impl MockClock {
-    pub fn new(when: Time) -> MockClock {
-        MockClock {
-            current_time: Arc::new(Mutex::new(when)),
-        }
-    }
-
-    pub fn advance(&self, dur: Duration) {
-        let mut current_time = self.current_time.lock().unwrap();
-        *current_time = current_time.add(dur).unwrap();
-    }
-}
-
-impl Clock for MockClock {
-    fn now(&self) -> Time {
-        let current_time = self.current_time.lock().unwrap();
-        *current_time
-    }
-}
-
-impl Default for MockClock {
-    fn default() -> Self {
-        Self {
-            // Sunday, September 9, 2001 1:46:40 AM UTC
-            current_time: Arc::new(Mutex::new(Time::from_seconds_since_epoch(1000000000))),
-        }
-    }
 }
 
 /// A transcript of a VDAF run. All fields are indexed by natural role index (i.e., index 0 =

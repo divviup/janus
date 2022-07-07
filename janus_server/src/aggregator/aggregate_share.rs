@@ -442,8 +442,8 @@ mod tests {
             dummy_vdaf::{AggregateShare, OutputShare, VdafWithAggregationParameter},
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
-            MockClock,
         },
+        time::test_util::MockClock,
         Runtime,
     };
     use mockito::mock;

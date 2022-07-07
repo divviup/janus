@@ -803,9 +803,8 @@ mod tests {
         },
         message::{Duration, HpkeConfig, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
         task::VdafInstance,
-        test_util::{
-            install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager, MockClock,
-        },
+        test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
+        time::test_util::MockClock,
         Runtime,
     };
     use mockito::mock;
