@@ -48,22 +48,6 @@ impl From<janus_core::task::VdafInstance> for VdafInstance {
     }
 }
 
-impl VdafInstance {
-    /// Returns the expected length of a VDAF verification key for a VDAF of this type.
-    fn verify_key_length(&self) -> usize {
-        match self {
-            // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
-            // not yet done being specified, so choosing 16 bytes is fine for testing.)
-            VdafInstance::Real(_) => PRIO3_AES128_VERIFY_KEY_LENGTH,
-
-            #[cfg(test)]
-            VdafInstance::Fake
-            | VdafInstance::FakeFailsPrepInit
-            | VdafInstance::FakeFailsPrepStep => 0,
-        }
-    }
-}
-
 /// The length of the verify key parameter for Prio3 AES-128 VDAF instantiations.
 pub const PRIO3_AES128_VERIFY_KEY_LENGTH: usize = 16;
 
@@ -431,12 +415,30 @@ impl<'de> Deserialize<'de> for Task {
 pub mod test_util {
     use std::iter;
 
-    use super::{AggregatorAuthenticationToken, Task, VdafInstance};
+    use super::{
+        AggregatorAuthenticationToken, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH,
+    };
     use janus_core::{
         hpke::test_util::generate_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
     };
     use rand::{thread_rng, Rng};
+
+    impl VdafInstance {
+        /// Returns the expected length of a VDAF verification key for a VDAF of this type.
+        fn verify_key_length(&self) -> usize {
+            match self {
+                // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
+                // not yet done being specified, so choosing 16 bytes is fine for testing.)
+                VdafInstance::Real(_) => PRIO3_AES128_VERIFY_KEY_LENGTH,
+
+                #[cfg(test)]
+                VdafInstance::Fake
+                | VdafInstance::FakeFailsPrepInit
+                | VdafInstance::FakeFailsPrepStep => 0,
+            }
+        }
+    }
 
     /// Create a dummy [`Task`] from the provided [`TaskId`], with
     /// dummy values for the other fields. This is pub because it is needed for

@@ -139,7 +139,6 @@ pub struct Transaction<'a, C: Clock> {
 
 impl<C: Clock> Transaction<'_, C> {
     /// Writes a task into the datastore.
-    #[cfg(feature = "test-util")]
     #[tracing::instrument(skip(self), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
         let aggregator_role = AggregatorRole::from_role(task.role)?;
