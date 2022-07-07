@@ -3,7 +3,7 @@ name = "monolithic_integration_test"
 version = "0.1.0"
 edition = "2021"
 license = "MPL-2.0"
-rust-version = "1.58"
+rust-version = "1.60"
 publish = false
 
 [dev-dependencies]

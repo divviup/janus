@@ -7,11 +7,20 @@ documentation = "https://docs.rs/janus_core"
 homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
-rust-version = "1.58"
+rust-version = "1.60"
 
 [features]
-database = ["bytes", "postgres-protocol", "postgres-types"]
-test-util = ["assert_matches", "serde_json", "futures", "tracing", "tracing-log", "tracing-subscriber", "tokio/macros", "tokio/sync"]
+database = ["dep:bytes", "dep:postgres-protocol", "dep:postgres-types"]
+test-util = [
+    "dep:assert_matches",
+    "dep:serde_json",
+    "dep:futures",
+    "dep:tracing",
+    "dep:tracing-log",
+    "dep:tracing-subscriber",
+    "tokio/macros",
+    "tokio/sync"
+]
 
 [dependencies]
 anyhow = "1"

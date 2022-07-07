@@ -58,7 +58,7 @@ macro_rules! define_ephemeral_datastore {
             /// Write the Janus schema into the datastore.
             pub async fn write_schema(&self) {
                 let client = self.pool().get().await.unwrap();
-                client.batch_execute(::janus_test_util::SCHEMA).await.unwrap();
+                client.batch_execute(::janus_core::test_util::SCHEMA).await.unwrap();
             }
 
             /// Get a PostgreSQL connection string to connect to the temporary database.
