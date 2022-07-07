@@ -16,7 +16,7 @@ use janus_server::{
         aggregation_job_driver::AggregationJobDriver, aggregator_server,
     },
     binary_utils::job_driver::JobDriver,
-    datastore::{Crypter, Datastore},
+    datastore::test_util::{ephemeral_datastore, DbHandle},
     message::{CollectReq, CollectResp},
     task::{test_util::generate_aggregator_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
@@ -45,8 +45,6 @@ use tokio::{
     try_join,
 };
 use url::Url;
-
-janus_core::define_ephemeral_datastore!();
 
 #[tokio::test(flavor = "multi_thread")]
 async fn end_to_end() {

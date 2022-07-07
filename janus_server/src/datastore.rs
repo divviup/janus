@@ -2915,9 +2915,204 @@ pub mod models {
 #[cfg(feature = "test-util")]
 pub mod test_util {
     use super::{Crypter, Datastore};
+    use deadpool_postgres::{Manager, Pool};
     use janus_core::time::Clock;
+    use lazy_static::lazy_static;
+    use rand::{thread_rng, Rng};
+    use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
+    use std::{
+        env::{self, VarError},
+        process::Command,
+        str::FromStr,
+    };
+    use testcontainers::{images::postgres::Postgres, Container, RunnableImage};
+    use tokio_postgres::{Config, NoTls};
+    use tracing::trace;
 
-    janus_core::define_ephemeral_datastore!();
+    /// The Janus database schema.
+    pub const SCHEMA: &str = include_str!("../../db/schema.sql");
+
+    lazy_static! {
+        static ref CONTAINER_CLIENT: testcontainers::clients::Cli =
+            testcontainers::clients::Cli::default();
+    }
+
+    /// DbHandle represents a handle to a running (ephemeral) database. Dropping this value
+    /// causes the database to be shut down & cleaned up.
+    pub struct DbHandle {
+        _db_container: Container<'static, Postgres>,
+        connection_string: String,
+        port_number: u16,
+        datastore_key_bytes: Vec<u8>,
+    }
+
+    impl DbHandle {
+        /// Retrieve a datastore attached to the ephemeral database.
+        pub fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
+            // Create a crypter based on the generated key bytes.
+            let datastore_key =
+                LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &self.datastore_key_bytes).unwrap());
+            let crypter = Crypter::new(vec![datastore_key]);
+
+            Datastore::new(self.pool(), crypter, clock)
+        }
+
+        /// Retrieve a Postgres connection pool attached to the ephemeral database.
+        pub fn pool(&self) -> Pool {
+            let cfg = Config::from_str(&self.connection_string).unwrap();
+            let conn_mgr = Manager::new(cfg, NoTls);
+            Pool::builder(conn_mgr).build().unwrap()
+        }
+
+        /// Write the Janus schema into the datastore.
+        pub async fn write_schema(&self) {
+            let client = self.pool().get().await.unwrap();
+            client.batch_execute(SCHEMA).await.unwrap();
+        }
+
+        /// Get a PostgreSQL connection string to connect to the temporary database.
+        pub fn connection_string(&self) -> &str {
+            &self.connection_string
+        }
+
+        /// Get the bytes of the key used to encrypt sensitive datastore values.
+        pub fn datastore_key_bytes(&self) -> &[u8] {
+            &self.datastore_key_bytes
+        }
+
+        /// Get the port number that the temporary database is exposed on, via the 127.0.0.1
+        /// loopback interface.
+        pub fn port_number(&self) -> u16 {
+            self.port_number
+        }
+
+        /// Open an interactive terminal to the database in a new terminal window, and block
+        /// until the user exits from the terminal. This is intended to be used while
+        /// debugging tests.
+        ///
+        /// By default, this will invoke `gnome-terminal`, which is readily available on
+        /// GNOME-based Linux distributions. To use a different terminal, set the environment
+        /// variable `JANUS_SHELL_CMD` to a shell command that will open a new terminal window
+        /// of your choice. This command line should include a "{}" in the position appropriate
+        /// for what command the terminal should run when it opens. A `psql` invocation will
+        /// be substituted in place of the "{}". Note that this shell command must not exit
+        /// immediately once the terminal is spawned; it should continue running as long as the
+        /// terminal is open. If the command provided exits too soon, then the test will
+        /// continue running without intervention, leading to the test's database shutting
+        /// down.
+        ///
+        /// # Example
+        ///
+        /// ```text
+        /// JANUS_SHELL_CMD='xterm -e {}' cargo test
+        /// ```
+        pub fn interactive_db_terminal(&self) {
+            let mut command = match env::var("JANUS_SHELL_CMD") {
+                Ok(shell_cmd) => {
+                    if !shell_cmd.contains("{}") {
+                        panic!("JANUS_SHELL_CMD should contain a \"{{}}\" to denote where the database command should be substituted");
+                    }
+
+                    #[cfg(not(windows))]
+                    let mut command = {
+                        let mut command = Command::new("sh");
+                        command.arg("-c");
+                        command
+                    };
+
+                    #[cfg(windows)]
+                    let mut command = {
+                        let mut command = Command::new("cmd.exe");
+                        command.arg("/c");
+                        command
+                    };
+
+                    let psql_command = format!(
+                        "psql --host=127.0.0.1 --user=postgres -p {}",
+                        self.port_number(),
+                    );
+                    command.arg(shell_cmd.replacen("{}", &psql_command, 1));
+                    command
+                }
+
+                Err(VarError::NotPresent) => {
+                    let mut command = Command::new("gnome-terminal");
+                    command.args([
+                        "--wait",
+                        "--",
+                        "psql",
+                        "--host=127.0.0.1",
+                        "--user=postgres",
+                        "-p",
+                    ]);
+                    command.arg(format!("{}", self.port_number()));
+                    command
+                }
+
+                Err(VarError::NotUnicode(_)) => {
+                    panic!("JANUS_SHELL_CMD contains invalid unicode data");
+                }
+            };
+            command.spawn().unwrap().wait().unwrap();
+        }
+    }
+
+    impl Drop for DbHandle {
+        fn drop(&mut self) {
+            trace!(connection_string = %self.connection_string, "Dropping ephemeral Postgres container");
+        }
+    }
+
+    /// ephemeral_db_handle creates a new ephemeral database which has no schema & is empty.
+    /// Dropping the return value causes the database to be shut down & cleaned up.
+    ///
+    /// Most users will want to call ephemeral_datastore() instead, which applies the Janus
+    /// schema and creates a datastore.
+    pub fn ephemeral_db_handle() -> DbHandle {
+        // Start an instance of Postgres running in a container.
+        let db_container =
+            CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
+
+        // Compute the Postgres connection string.
+        const POSTGRES_DEFAULT_PORT: u16 = 5432;
+        let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
+        let connection_string = format!(
+            "postgres://postgres:postgres@127.0.0.1:{}/postgres",
+            port_number,
+        );
+        trace!("Postgres container is up with URL {}", connection_string);
+
+        // Create a random (ephemeral) key.
+        let datastore_key_bytes = generate_aead_key_bytes();
+
+        DbHandle {
+            _db_container: db_container,
+            connection_string,
+            port_number,
+            datastore_key_bytes,
+        }
+    }
+
+    /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database
+    /// which has the Janus schema applied but is otherwise empty.
+    ///
+    /// Dropping the second return value causes the database to be shut down & cleaned up.
+    pub async fn ephemeral_datastore<C: Clock>(clock: C) -> (Datastore<C>, DbHandle) {
+        let db_handle = ephemeral_db_handle();
+        db_handle.write_schema().await;
+        (db_handle.datastore(clock), db_handle)
+    }
+
+    pub fn generate_aead_key_bytes() -> Vec<u8> {
+        let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
+        thread_rng().fill(&mut key_bytes[..]);
+        key_bytes
+    }
+
+    pub fn generate_aead_key() -> LessSafeKey {
+        let unbound_key = UnboundKey::new(&AES_128_GCM, &generate_aead_key_bytes()).unwrap();
+        LessSafeKey::new(unbound_key)
+    }
 }
 
 #[cfg(test)]
@@ -2926,7 +3121,7 @@ mod tests {
     use crate::{
         datastore::{
             models::{AggregationJobState, CollectJobState},
-            test_util::ephemeral_datastore,
+            test_util::{ephemeral_datastore, generate_aead_key},
         },
         message::{test_util::new_dummy_report, ReportShareError},
         task::{test_util::new_dummy_task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
@@ -2939,7 +3134,7 @@ mod tests {
         message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
         test_util::{
             dummy_vdaf::{self, VdafWithAggregationParameter},
-            generate_aead_key, install_test_trace_subscriber,
+            install_test_trace_subscriber,
         },
         time::test_util::MockClock,
     };
