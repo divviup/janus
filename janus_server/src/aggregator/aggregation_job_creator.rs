@@ -35,7 +35,10 @@ pub trait VdafHasAggregationParameter: private::Sealed {}
 impl<I, P, const L: usize> VdafHasAggregationParameter for prio::vdaf::poplar1::Poplar1<I, P, L> {}
 
 #[cfg(test)]
-impl VdafHasAggregationParameter for janus_test_util::dummy_vdaf::VdafWithAggregationParameter<u8> {}
+impl VdafHasAggregationParameter
+    for janus_core::test_util::dummy_vdaf::VdafWithAggregationParameter<u8>
+{
+}
 
 mod private {
     pub trait Sealed {}
@@ -43,7 +46,7 @@ mod private {
     impl<I, P, const L: usize> Sealed for prio::vdaf::poplar1::Poplar1<I, P, L> {}
 
     #[cfg(test)]
-    impl Sealed for janus_test_util::dummy_vdaf::VdafWithAggregationParameter<u8> {}
+    impl Sealed for janus_core::test_util::dummy_vdaf::VdafWithAggregationParameter<u8> {}
 }
 
 pub struct AggregationJobCreator<C: Clock> {
@@ -409,10 +412,8 @@ mod tests {
     use janus_core::{
         message::{Interval, Nonce, Report, Role, TaskId, Time},
         task::VdafInstance,
-        time::Clock,
-    };
-    use janus_test_util::{
-        dummy_vdaf::VdafWithAggregationParameter, install_test_trace_subscriber, MockClock,
+        test_util::{dummy_vdaf::VdafWithAggregationParameter, install_test_trace_subscriber},
+        time::{test_util::MockClock, Clock},
     };
     use prio::{
         codec::ParameterizedDecode,

@@ -803,10 +803,9 @@ mod tests {
         },
         message::{Duration, HpkeConfig, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
         task::VdafInstance,
+        test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
+        time::test_util::MockClock,
         Runtime,
-    };
-    use janus_test_util::{
-        install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager, MockClock,
     };
     use mockito::mock;
     use prio::{

@@ -6,6 +6,7 @@ use janus_core::{
     },
     message::{Duration, HpkeConfig, Interval, Role, TaskId},
     task::VdafInstance,
+    test_util::install_test_trace_subscriber,
     time::{Clock, RealClock},
     TokioRuntime,
 };
@@ -19,7 +20,6 @@ use janus_server::{
     message::{CollectReq, CollectResp},
     task::{test_util::generate_aggregator_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
-use janus_test_util::install_test_trace_subscriber;
 use prio::{
     codec::{Decode, Encode},
     field::Field64,
@@ -46,7 +46,7 @@ use tokio::{
 };
 use url::Url;
 
-janus_test_util::define_ephemeral_datastore!();
+janus_core::define_ephemeral_datastore!();
 
 #[tokio::test(flavor = "multi_thread")]
 async fn end_to_end() {

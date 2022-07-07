@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2021"
 license = "MPL-2.0"
 publish = false
-rust-version = "1.58"
+rust-version = "1.60"
 
 [features]
-tokio-console = ["console-subscriber"]
-jaeger = ["tracing-opentelemetry", "opentelemetry-jaeger"]
-otlp = ["tracing-opentelemetry", "opentelemetry-otlp", "opentelemetry-semantic-conventions", "tonic"]
-prometheus = ["opentelemetry-prometheus", "dep:prometheus"]
-test-util = ["dep:janus_test_util", "dep:lazy_static", "dep:testcontainers"]
+tokio-console = ["dep:console-subscriber"]
+jaeger = ["dep:tracing-opentelemetry", "dep:opentelemetry-jaeger"]
+otlp = ["dep:tracing-opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions", "dep:tonic"]
+prometheus = ["dep:opentelemetry-prometheus", "dep:prometheus"]
+test-util = ["janus_core/test-util", "dep:lazy_static", "dep:testcontainers"]
 
 [dependencies]
 anyhow = "1"
@@ -29,7 +29,6 @@ http = "0.2.8"
 hyper = "0.14.19"
 itertools = "0.10.3"
 janus_core = { path = "../janus_core", features = ["database"] }
-janus_test_util = { path = "../test_util", optional = true }
 lazy_static = { version = "1", optional = true }
 num_enum = "0.5.6"
 opentelemetry = { version = "0.17.0", features = ["metrics", "rt-tokio"] }

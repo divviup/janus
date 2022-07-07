@@ -200,8 +200,11 @@ where
 mod tests {
     use super::*;
     use crate::{message::AggregationJobId, task::VdafInstance};
-    use janus_core::message::TaskId;
-    use janus_test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager, MockClock};
+    use janus_core::{
+        message::TaskId,
+        test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
+        time::test_util::MockClock,
+    };
     use tokio::sync::Mutex;
 
     #[tokio::test]

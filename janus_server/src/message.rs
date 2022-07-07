@@ -456,7 +456,7 @@ impl Decode for CollectResp {
     }
 }
 
-#[doc(hidden)]
+#[cfg(feature = "test-util")]
 pub mod test_util {
     use super::{Nonce, TaskId};
     use janus_core::message::{Report, Time};

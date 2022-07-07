@@ -70,7 +70,7 @@ use warp::{
 };
 
 #[cfg(test)]
-use janus_test_util::dummy_vdaf;
+use janus_core::test_util::dummy_vdaf;
 #[cfg(test)]
 use prio::vdaf::VdafError;
 
@@ -2091,8 +2091,9 @@ mod tests {
             HpkePrivateKey, Label,
         },
         message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
+        test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
+        time::test_util::MockClock,
     };
-    use janus_test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf, MockClock};
     use prio::{
         codec::Decode,
         field::Field64,

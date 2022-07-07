@@ -863,10 +863,9 @@ impl<C: Clock> Transaction<'_, C> {
             .transpose()
     }
 
-    /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID. It is
-    /// intended for use in tests.
+    /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID.
+    #[cfg(feature = "test-util")]
     #[tracing::instrument(skip(self), err)]
-    #[doc(hidden)]
     pub async fn get_aggregation_jobs_for_task_id<const L: usize, A: vdaf::Aggregator<L>>(
         &self,
         task_id: TaskId,
@@ -2918,7 +2917,7 @@ pub mod test_util {
     use super::{Crypter, Datastore};
     use janus_core::time::Clock;
 
-    janus_test_util::define_ephemeral_datastore!();
+    janus_core::define_ephemeral_datastore!();
 }
 
 #[cfg(test)]
@@ -2938,10 +2937,11 @@ mod tests {
     use janus_core::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
         message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
-    };
-    use janus_test_util::{
-        dummy_vdaf::{self, VdafWithAggregationParameter},
-        generate_aead_key, install_test_trace_subscriber, MockClock,
+        test_util::{
+            dummy_vdaf::{self, VdafWithAggregationParameter},
+            generate_aead_key, install_test_trace_subscriber,
+        },
+        time::test_util::MockClock,
     };
     use prio::{
         field::{Field128, Field64},

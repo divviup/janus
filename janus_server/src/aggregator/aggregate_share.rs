@@ -85,7 +85,7 @@ impl CollectJobDriver {
 
             #[cfg(test)]
             VdafInstance::Fake => {
-                type FakeVdaf = janus_test_util::dummy_vdaf::VdafWithAggregationParameter<u8>;
+                type FakeVdaf = janus_core::test_util::dummy_vdaf::VdafWithAggregationParameter<u8>;
                 const VERIFY_KEY_LENGTH: usize = FakeVdaf::VERIFY_KEY_LENGTH;
                 self.step_collect_job_generic::<VERIFY_KEY_LENGTH, C, FakeVdaf>(
                     datastore,
@@ -438,13 +438,13 @@ mod tests {
     use assert_matches::assert_matches;
     use janus_core::{
         message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId},
+        test_util::{
+            dummy_vdaf::{AggregateShare, OutputShare, VdafWithAggregationParameter},
+            install_test_trace_subscriber,
+            runtime::TestRuntimeManager,
+        },
+        time::test_util::MockClock,
         Runtime,
-    };
-    use janus_test_util::{
-        dummy_vdaf::{AggregateShare, OutputShare, VdafWithAggregationParameter},
-        install_test_trace_subscriber,
-        runtime::TestRuntimeManager,
-        MockClock,
     };
     use mockito::mock;
     use std::str;

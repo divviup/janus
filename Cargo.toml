@@ -1,2 +1,3 @@
 [workspace]
-members = ["janus_core", "janus_client", "janus_server", "monolithic_integration_test", "test_util"]
+members = ["janus_core", "janus_client", "janus_server", "monolithic_integration_test"]
+resolver = "2"
