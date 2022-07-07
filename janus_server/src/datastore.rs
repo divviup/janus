@@ -327,7 +327,7 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached("DELETE FROM tasks WHERE task_id = $1")
             .await?;
-        self.tx.execute(&stmt, params).await?;
+        check_single_row_mutation(self.tx.execute(&stmt, params).await?)?;
         Ok(())
     }
 
@@ -394,8 +394,6 @@ impl<C: Clock> Transaction<'_, C> {
     /// Fetch all the tasks in the database.
     #[tracing::instrument(skip(self), err)]
     pub async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
-        use std::collections::HashMap;
-
         let stmt = self
             .tx
             .prepare_cached(
@@ -1003,7 +1001,7 @@ impl<C: Clock> Transaction<'_, C> {
                   AND aggregation_jobs.lease_token = $4",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1062,7 +1060,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE aggregation_job_id = $3 AND task_id = (SELECT id FROM tasks WHERE task_id = $4)",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1242,7 +1240,7 @@ impl<C: Clock> Transaction<'_, C> {
                     WHERE task_id = (SELECT id FROM tasks WHERE task_id = $8)
                     AND nonce_time = $9 AND nonce_rand = $10)")
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1598,7 +1596,7 @@ ORDER BY id DESC
                   AND collect_jobs.lease_token = $4",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1639,7 +1637,7 @@ ORDER BY id DESC
                 WHERE collect_job_id = $3",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -1668,7 +1666,7 @@ ORDER BY id DESC
             WHERE collect_job_id = $1",
             )
             .await?;
-        check_update(self.tx.execute(&stmt, &[&collect_job_id]).await?)?;
+        check_single_row_mutation(self.tx.execute(&stmt, &[&collect_job_id]).await?)?;
         Ok(())
     }
 
@@ -1746,7 +1744,7 @@ ORDER BY id DESC
                     AND aggregation_param = $6",
             )
             .await?;
-        check_update(
+        check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
@@ -2039,7 +2037,7 @@ ORDER BY id DESC
     }
 }
 
-fn check_update(row_count: u64) -> Result<(), Error> {
+fn check_single_row_mutation(row_count: u64) -> Result<(), Error> {
     match row_count {
         0 => Err(Error::MutationTargetNotFound),
         1 => Ok(()),
@@ -3013,6 +3011,12 @@ mod tests {
             let task = new_dummy_task(task_id, vdaf.into(), role);
             want_tasks.insert(task_id, task.clone());
 
+            let err = ds
+                .run_tx(|tx| Box::pin(async move { tx.delete_task(task_id).await }))
+                .await
+                .unwrap_err();
+            assert_matches!(err, Error::MutationTargetNotFound);
+
             let retrieved_task = ds
                 .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
                 .await
@@ -3041,6 +3045,12 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(None, retrieved_task);
+
+            let err = ds
+                .run_tx(|tx| Box::pin(async move { tx.delete_task(task_id).await }))
+                .await
+                .unwrap_err();
+            assert_matches!(err, Error::MutationTargetNotFound);
 
             // Rewrite & retrieve the task again, to test that the delete is "clean" in the sense
             // that it deletes all task-related data (& therefore does not conflict with a later
