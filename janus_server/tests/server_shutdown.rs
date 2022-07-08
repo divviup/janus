@@ -6,10 +6,10 @@
 use janus_core::{
     message::{Role, TaskId},
     task::VdafInstance,
-    time::{Clock, RealClock},
+    time::RealClock,
 };
 use janus_server::{
-    datastore::{Crypter, Datastore},
+    datastore::test_util::ephemeral_datastore,
     task::test_util::new_dummy_task,
     trace::{install_trace_subscriber, TraceConfiguration},
 };
@@ -20,8 +20,6 @@ use std::{
     process::{Command, Stdio},
 };
 use wait_timeout::ChildExt;
-
-janus_core::define_ephemeral_datastore!();
 
 /// Try to find an open port by binding to an ephemeral port, saving the port
 /// number, and closing the listening socket. This may still fail due to race
