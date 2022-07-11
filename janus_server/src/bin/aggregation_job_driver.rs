@@ -45,9 +45,9 @@ async fn main() -> anyhow::Result<()> {
                     .worker_lease_clock_skew_allowance_secs,
             ),
             aggregation_job_driver
-                .make_incomplete_job_acquirer_callback(&datastore, lease_duration),
+                .make_incomplete_job_acquirer_callback(Arc::clone(&datastore), lease_duration),
             aggregation_job_driver.make_job_stepper_callback(
-                &datastore,
+                Arc::clone(&datastore),
                 ctx.config.job_driver_config.maximum_attempts_before_failure,
             ),
         ))

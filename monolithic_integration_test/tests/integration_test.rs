@@ -295,9 +295,11 @@ impl TestCase {
             Duration::from_seconds(1),
             10,
             Duration::ZERO,
-            aggregation_job_driver
-                .make_incomplete_job_acquirer_callback(&datastore, Duration::from_seconds(10)),
-            aggregation_job_driver.make_job_stepper_callback(&datastore, 3),
+            aggregation_job_driver.make_incomplete_job_acquirer_callback(
+                Arc::clone(&datastore),
+                Duration::from_seconds(10),
+            ),
+            aggregation_job_driver.make_job_stepper_callback(Arc::clone(&datastore), 3),
         ));
         let aggregation_job_driver_handle = task::spawn(async move {
             select! {
@@ -310,20 +312,24 @@ impl TestCase {
         let (collect_job_driver_shutdown_sender, mut collect_job_driver_shutdown_receiver) =
             oneshot::channel();
         let datastore = Arc::new(_leader_db_handle.datastore(RealClock::default()));
+        let collect_job_driver_meter = meter("collect_job_driver");
         let collect_job_driver = Arc::new(CollectJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            &collect_job_driver_meter,
         ));
         let collect_job_driver = Arc::new(JobDriver::new(
             RealClock::default(),
             TokioRuntime,
-            meter("collect_job_driver"),
+            collect_job_driver_meter,
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
             Duration::ZERO,
-            collect_job_driver
-                .make_incomplete_job_acquirer_callback(&datastore, Duration::from_seconds(10)),
-            collect_job_driver.make_job_stepper_callback(&datastore, 3),
+            collect_job_driver.make_incomplete_job_acquirer_callback(
+                Arc::clone(&datastore),
+                Duration::from_seconds(10),
+            ),
+            collect_job_driver.make_job_stepper_callback(Arc::clone(&datastore), 3),
         ));
         let collect_job_driver_handle = task::spawn(async move {
             select! {

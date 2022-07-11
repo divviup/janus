@@ -1140,7 +1140,8 @@ impl VdafOps {
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx(|tx| {
-                let (vdaf, prep_steps, aggregate_step_failure_counter) = (Arc::clone(&vdaf), Arc::clone(&prep_steps), Arc::clone(&aggregate_step_failure_counter)); // XXX: wrap
+                let (vdaf, prep_steps, aggregate_step_failure_counter) =
+                    (Arc::clone(&vdaf), Arc::clone(&prep_steps), Arc::clone(&aggregate_step_failure_counter));
 
                 Box::pin(async move {
                     // Read existing state.

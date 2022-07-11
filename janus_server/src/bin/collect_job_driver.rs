@@ -26,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
                 .user_agent(CLIENT_USER_AGENT)
                 .build()
                 .context("couldn't create HTTP client")?,
+            &meter,
         ));
         let lease_duration =
             Duration::from_seconds(ctx.config.job_driver_config.worker_lease_duration_secs);
@@ -43,9 +44,10 @@ async fn main() -> anyhow::Result<()> {
                     .job_driver_config
                     .worker_lease_clock_skew_allowance_secs,
             ),
-            collect_job_driver.make_incomplete_job_acquirer_callback(&datastore, lease_duration),
+            collect_job_driver
+                .make_incomplete_job_acquirer_callback(Arc::clone(&datastore), lease_duration),
             collect_job_driver.make_job_stepper_callback(
-                &datastore,
+                Arc::clone(&datastore),
                 ctx.config.job_driver_config.maximum_attempts_before_failure,
             ),
         ))
