@@ -6,8 +6,15 @@ use janus_core::{
     time::Clock,
     Runtime,
 };
+use opentelemetry::{
+    metrics::{Meter, Unit},
+    KeyValue,
+};
 use std::{fmt::Debug, future::Future, sync::Arc};
-use tokio::{sync::Semaphore, time};
+use tokio::{
+    sync::Semaphore,
+    time::{self, Instant},
+};
 use tracing::{debug, error, info, info_span, Instrument};
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
@@ -16,6 +23,8 @@ pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
     clock: C,
     /// Runtime object used to spawn asynchronous tasks.
     runtime: R,
+    /// Meter used to process metric values.
+    meter: Meter,
 
     // Configuration values.
     /// Minimum delay between datastore job discovery passes.
@@ -59,6 +68,7 @@ where
     pub fn new(
         clock: C,
         runtime: R,
+        meter: Meter,
         min_job_discovery_delay: Duration,
         max_job_discovery_delay: Duration,
         max_concurrent_job_workers: usize,
@@ -69,6 +79,7 @@ where
         Self {
             clock,
             runtime,
+            meter,
             min_job_discovery_delay,
             max_job_discovery_delay,
             max_concurrent_job_workers,
@@ -81,6 +92,21 @@ where
     /// Run this job driver, periodically seeking incomplete jobs and stepping them.
     #[tracing::instrument(skip(self))]
     pub async fn run(self: Arc<Self>) -> ! {
+        // Create metric recorders.
+        let job_acquire_time_recorder = self
+            .meter
+            .f64_value_recorder("job_acquire_time")
+            .with_description("Time spent acquiring jobs.")
+            .with_unit(Unit::new("seconds"))
+            .init();
+        let job_step_time_recorder = self
+            .meter
+            .f64_value_recorder("job_step_time")
+            .with_description("Time spent stepping jobs.")
+            .with_unit(Unit::new("seconds"))
+            .init();
+
+        // Set up state for the job driver run.
         let sem = Arc::new(Semaphore::new(self.max_concurrent_job_workers));
         let mut job_discovery_delay = Duration::ZERO;
 
@@ -106,17 +132,27 @@ where
             // overestimate since this task is the only place that permits are acquired.
             let max_acquire_count = sem.available_permits();
             info!(max_acquire_count, "Acquiring jobs");
+            let start = Instant::now();
             let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
             let leases = match leases {
                 Ok(leases) => leases,
                 Err(err) => {
                     error!(?err, "Couldn't acquire jobs");
+
                     // Go ahead and step job discovery delay in this error case to ensure we don't
                     // tightly loop running transactions that will fail without any delay.
                     job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
+                    job_acquire_time_recorder.record(
+                        start.elapsed().as_secs_f64(),
+                        &[KeyValue::new("status", "error")],
+                    );
                     continue;
                 }
             };
+            job_acquire_time_recorder.record(
+                start.elapsed().as_secs_f64(),
+                &[KeyValue::new("status", "success")],
+            );
             if leases.is_empty() {
                 debug!("No jobs available");
                 job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
@@ -142,12 +178,16 @@ where
                     //
                     // Unwrap safety: we have seen that at least `leases.len()` permits are
                     // available, and this task is the only task that acquires permits.
-                    let permit = Arc::clone(&sem).try_acquire_owned().unwrap();
-                    let this = Arc::clone(&self);
                     let span = info_span!("Job stepper", acquired_job = ?lease.leased());
+                    let (this, permit, job_step_time_recorder) = (
+                        Arc::clone(&self),
+                        Arc::clone(&sem).try_acquire_owned().unwrap(),
+                        job_step_time_recorder.clone(),
+                    );
 
                     async move {
                         info!(lease_expiry = ?lease.lease_expiry_time(), "Stepping job");
+                        let (start, mut status) = (Instant::now(), "success");
                         match time::timeout(
                             this.effective_lease_duration(lease.lease_expiry_time()),
                             (this.job_stepper)(lease),
@@ -155,9 +195,19 @@ where
                         .await
                         {
                             Ok(Ok(_)) => debug!("Job stepped"),
-                            Ok(Err(err)) => error!(?err, "Couldn't step job"),
-                            Err(err) => error!(?err, "Stepping job timed out"),
+                            Ok(Err(err)) => {
+                                error!(?err, "Couldn't step job");
+                                status = "error"
+                            }
+                            Err(err) => {
+                                error!(?err, "Stepping job timed out");
+                                status = "error"
+                            }
                         }
+                        job_step_time_recorder.record(
+                            start.elapsed().as_secs_f64(),
+                            &[KeyValue::new("status", status)],
+                        );
                         drop(permit);
                     }
                     .instrument(span)
@@ -205,6 +255,7 @@ mod tests {
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::test_util::MockClock,
     };
+    use opentelemetry::global::meter;
     use tokio::sync::Mutex;
 
     #[tokio::test]
@@ -285,6 +336,7 @@ mod tests {
         let job_driver = Arc::new(JobDriver::new(
             clock,
             runtime_manager.with_label("stepper"),
+            meter("job_driver_test"),
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,

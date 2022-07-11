@@ -19,6 +19,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     janus_main::<Options, _, Config, _, _>(RealClock::default(), |ctx| async move {
+        let meter = opentelemetry::global::meter("collect_job_driver");
         let datastore = Arc::new(ctx.datastore);
         let collect_job_driver = Arc::new(CollectJobDriver::new(
             reqwest::Client::builder()
@@ -33,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(JobDriver::new(
             ctx.clock,
             TokioRuntime,
+            meter,
             Duration::from_seconds(ctx.config.job_driver_config.min_job_discovery_delay_secs),
             Duration::from_seconds(ctx.config.job_driver_config.max_job_discovery_delay_secs),
             ctx.config.job_driver_config.max_concurrent_job_workers,

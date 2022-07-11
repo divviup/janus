@@ -20,6 +20,7 @@ use janus_server::{
     message::{CollectReq, CollectResp},
     task::{test_util::generate_aggregator_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
+use opentelemetry::global::meter;
 use prio::{
     codec::{Decode, Encode},
     field::Field64,
@@ -281,12 +282,15 @@ impl TestCase {
         let (aggregation_job_driver_shutdown_sender, mut aggregation_job_driver_shutdown_receiver) =
             oneshot::channel();
         let datastore = Arc::new(_leader_db_handle.datastore(RealClock::default()));
+        let aggregation_job_driver_meter = meter("aggregation_job_driver");
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            &aggregation_job_driver_meter,
         ));
         let aggregation_job_driver = Arc::new(JobDriver::new(
             RealClock::default(),
             TokioRuntime,
+            aggregation_job_driver_meter,
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
@@ -312,6 +316,7 @@ impl TestCase {
         let collect_job_driver = Arc::new(JobDriver::new(
             RealClock::default(),
             TokioRuntime,
+            meter("collect_job_driver"),
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,

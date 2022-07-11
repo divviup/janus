@@ -19,12 +19,14 @@ async fn main() -> anyhow::Result<()> {
     );
 
     janus_main::<Options, _, Config, _, _>(RealClock::default(), |ctx| async move {
+        let meter = opentelemetry::global::meter("aggregation_job_driver");
         let datastore = Arc::new(ctx.datastore);
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::builder()
                 .user_agent(CLIENT_USER_AGENT)
                 .build()
                 .context("couldn't create HTTP client")?,
+            &meter,
         ));
         let lease_duration =
             Duration::from_seconds(ctx.config.job_driver_config.worker_lease_duration_secs);
@@ -33,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(JobDriver::new(
             ctx.clock,
             TokioRuntime,
+            meter,
             Duration::from_seconds(ctx.config.job_driver_config.min_job_discovery_delay_secs),
             Duration::from_seconds(ctx.config.job_driver_config.max_job_discovery_delay_secs),
             ctx.config.job_driver_config.max_concurrent_job_workers,

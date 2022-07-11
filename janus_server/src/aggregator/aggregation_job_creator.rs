@@ -13,6 +13,10 @@ use janus_core::{
     message::{Nonce, Role, TaskId, Time},
     time::Clock,
 };
+use opentelemetry::{
+    metrics::{Unit, ValueRecorder},
+    KeyValue,
+};
 use prio::codec::Encode;
 use prio::vdaf;
 use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum};
@@ -90,6 +94,19 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     pub async fn run(self: Arc<Self>) -> ! {
         // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
+        // Create metric recorders.
+        let meter = opentelemetry::global::meter("aggregation_job_creator");
+        let task_update_time_recorder = meter
+            .f64_value_recorder("task_update_time")
+            .with_description("Time spent updating tasks.")
+            .with_unit(Unit::new("seconds"))
+            .init();
+        let job_creation_time_recorder = meter
+            .f64_value_recorder("job_creation_time")
+            .with_description("Time spent creating aggregation jobs.")
+            .with_unit(Unit::new("seconds"))
+            .init();
+
         // Set up an interval to occasionally update our view of tasks in the DB.
         // (This will fire immediately, so we'll immediately load tasks from the DB when we enter
         // the loop.)
@@ -103,6 +120,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         loop {
             tasks_update_ticker.tick().await;
             info!("Updating tasks");
+            let start = Instant::now();
             let tasks = self
                 .datastore
                 .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
@@ -118,6 +136,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                 Err(err) => {
                     error!(?err, "Couldn't update tasks");
+                    task_update_time_recorder.record(
+                        start.elapsed().as_secs_f64(),
+                        &[KeyValue::new("status", "error")],
+                    );
                     continue;
                 }
             };
@@ -142,15 +164,29 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let (tx, rx) = oneshot::channel();
                 job_creation_task_shutdown_handles.insert(task_id, tx);
                 tokio::task::spawn({
-                    let this = self.clone();
-                    async move { this.run_for_task(rx, task).await }
+                    let (this, job_creation_time_recorder) =
+                        (Arc::clone(&self), job_creation_time_recorder.clone());
+                    async move {
+                        this.run_for_task(rx, job_creation_time_recorder, task)
+                            .await
+                    }
                 });
             }
+
+            task_update_time_recorder.record(
+                start.elapsed().as_secs_f64(),
+                &[KeyValue::new("status", "success")],
+            );
         }
     }
 
     #[tracing::instrument(skip(self))]
-    async fn run_for_task(&self, mut shutdown: Receiver<()>, task: Task) {
+    async fn run_for_task(
+        &self,
+        mut shutdown: Receiver<()>,
+        job_creation_time_recorder: ValueRecorder<f64>,
+        task: Task,
+    ) {
         debug!(task_id = ?task.id, "Job creation worker started");
         let first_tick_instant = Instant::now()
             + Duration::from_secs(
@@ -163,9 +199,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             select! {
                 _ = aggregation_job_creation_ticker.tick() => {
                     info!(task_id = ?task.id, "Creating aggregation jobs for task");
+                    let (start, mut status) = (Instant::now(), "success");
                     if let Err(err) = self.create_aggregation_jobs_for_task(&task).await {
-                        error!(task_id = ?task.id, ?err, "Couldn't create aggregation jobs for task")
+                        error!(task_id = ?task.id, ?err, "Couldn't create aggregation jobs for task");
+                        status = "error";
                     }
+                    job_creation_time_recorder.record(start.elapsed().as_secs_f64(), &[KeyValue::new("status", status)]);
                 }
 
                 _ = &mut shutdown => {

@@ -447,6 +447,7 @@ mod tests {
         Runtime,
     };
     use mockito::mock;
+    use opentelemetry::global::meter;
     use std::str;
     use url::Url;
 
@@ -872,6 +873,7 @@ mod tests {
         let job_driver = Arc::new(JobDriver::new(
             clock.clone(),
             runtime_manager.with_label("stepper"),
+            meter("collect_job_driver"),
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
