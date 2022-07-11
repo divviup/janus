@@ -68,7 +68,7 @@ hyper = "0.14.19"
 janus_server = { path = ".", features = ["test-util"] }
 libc = "0.2.126"
 mockito = "0.31.0"
-serde_test = "1.0.138"
+serde_test = "1.0.139"
 tempfile = "3.3.0"
 tokio = { version = "*", features = ["test-util"] }
 trycmd = "0.13.4"
