@@ -37,7 +37,7 @@ use janus_core::{
     time::Clock,
 };
 use opentelemetry::{
-    metrics::{Counter, Unit, ValueRecorder},
+    metrics::{Counter, Meter, Unit, ValueRecorder},
     KeyValue,
 };
 use prio::{
@@ -87,28 +87,28 @@ pub enum Error {
     #[error("invalid message: {0}")]
     Message(#[from] janus_core::message::Error),
     /// Corresponds to `reportTooLate`, §3.1
-    #[error("stale report: {0} {1:?}")]
+    #[error("task {1:?}: stale report: {0}")]
     ReportTooLate(Nonce, TaskId),
     /// Corresponds to `reportTooEarly`, §3.1. A report was rejected becuase the timestamp is too far in the future, §4.3.4.
-    #[error("report from the future: {0} {1:?}")]
+    #[error("task {1:?}: report from the future: {0}")]
     ReportTooEarly(Nonce, TaskId),
     /// Corresponds to `unrecognizedMessage`, §3.1
-    #[error("unrecognized message: {0} {1:?}")]
+    #[error("task {1:?}: unrecognized message: {0}")]
     UnrecognizedMessage(&'static str, Option<TaskId>),
     /// Corresponds to `unrecognizedTask`, §3.1
-    #[error("unrecognized task: {0:?}")]
+    #[error("task {0:?}: unrecognized task")]
     UnrecognizedTask(TaskId),
     /// An attempt was made to act on an unknown aggregation job.
-    #[error("unrecognized aggregation job: {0:?}")]
+    #[error("task {1:?}: unrecognized aggregation job: {0:?}")]
     UnrecognizedAggregationJob(AggregationJobId, TaskId),
     /// An attempt was made to act on an unknown collect job.
     #[error("unrecognized collect job: {0}")]
     UnrecognizedCollectJob(Uuid),
     /// Corresponds to `outdatedHpkeConfig`, §3.1
-    #[error("outdated HPKE config: {0} {1:?}")]
+    #[error("task {1:?}: outdated HPKE config: {0}")]
     OutdatedHpkeConfig(HpkeConfigId, TaskId),
     /// Corresponds to `unauthorizedRequest`, §3.1
-    #[error("unauthorized request: {0:?}")]
+    #[error("task {0:?}: unauthorized request")]
     UnauthorizedRequest(TaskId),
     /// An error from the datastore.
     #[error("datastore error: {0}")]
@@ -117,10 +117,10 @@ pub enum Error {
     #[error("VDAF error: {0}")]
     Vdaf(#[from] vdaf::VdafError),
     /// A collect or aggregate share request was rejected because the interval is valid, per §4.6
-    #[error("invalid batch interval: {0} {1:?}")]
+    #[error("task {1:?}: invalid batch interval: {0}")]
     BatchInvalid(Interval, TaskId),
     /// There are not enough reports in the batch interval to meet the task's minimum batch size.
-    #[error("insufficient number of reports ({0}) for task {1:?}")]
+    #[error("task {1:?}: insufficient number of reports ({0})")]
     InsufficientBatchSize(u64, TaskId),
     #[error("URL parse error: {0}")]
     Url(#[from] url::ParseError),
@@ -138,7 +138,7 @@ peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
         peer_report_count: u64,
     },
     /// Too many queries against a single batch.
-    #[error("maxiumum batch lifetime for task {0:?} exceeded")]
+    #[error("task {0:?}: maxiumum batch lifetime exceeded")]
     BatchLifetimeExceeded(TaskId),
     /// HPKE failure.
     #[error("HPKE error: {0}")]
@@ -179,14 +179,34 @@ pub struct Aggregator<C: Clock> {
     clock: C,
     /// Cache of task aggregators.
     task_aggregators: Mutex<HashMap<TaskId, Arc<TaskAggregator>>>,
+
+    // Metrics.
+    /// Counter tracking the number of failed decryptions while handling the /upload endpoint.
+    upload_decrypt_failure_counter: Counter<u64>,
+    /// Counter tracking the number of failures to step client reports through the aggregation process.
+    aggregate_step_failure_counter: Counter<u64>,
 }
 
 impl<C: Clock> Aggregator<C> {
-    fn new(datastore: Arc<Datastore<C>>, clock: C) -> Self {
+    fn new(datastore: Arc<Datastore<C>>, clock: C, meter: Meter) -> Self {
+        let upload_decrypt_failure_counter = meter
+            .u64_counter("upload_decrypt_failures")
+            .with_description("Number of decryption failures in the /upload endpoint.")
+            .init();
+        let aggregate_step_failure_counter = meter
+            .u64_counter("step_failures")
+            .with_description(concat!(
+                "Failures while stepping aggregation jobs; these failures are ",
+                "related to individual client reports rather than entire aggregation jobs."
+            ))
+            .init();
+
         Self {
             datastore,
             clock,
             task_aggregators: Mutex::new(HashMap::new()),
+            upload_decrypt_failure_counter,
+            aggregate_step_failure_counter,
         }
     }
 
@@ -208,7 +228,12 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(report.task_id()));
         }
         task_aggregator
-            .handle_upload(&self.datastore, &self.clock, report)
+            .handle_upload(
+                &self.datastore,
+                &self.clock,
+                &self.upload_decrypt_failure_counter,
+                report,
+            )
             .await
     }
 
@@ -239,7 +264,7 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(task_id));
         }
         Ok(task_aggregator
-            .handle_aggregate_init(&self.datastore, req)
+            .handle_aggregate_init(&self.datastore, &self.aggregate_step_failure_counter, req)
             .await?
             .get_encoded())
     }
@@ -271,7 +296,11 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnrecognizedTask(task_id));
         }
         Ok(task_aggregator
-            .handle_aggregate_continue(&self.datastore, req)
+            .handle_aggregate_continue(
+                &self.datastore,
+                self.aggregate_step_failure_counter.clone(),
+                req,
+            )
             .await?
             .get_encoded())
     }
@@ -404,7 +433,7 @@ impl TaskAggregator {
                     .clone()
                     .try_into()
                     .map_err(|_| Error::TaskParameters(task::Error::AggregatorAuthKeySize))?;
-                VdafOps::Prio3Aes128Count(vdaf, verify_key)
+                VdafOps::Prio3Aes128Count(Arc::new(vdaf), verify_key)
             }
 
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
@@ -413,7 +442,7 @@ impl TaskAggregator {
                     .clone()
                     .try_into()
                     .map_err(|_| Error::TaskParameters(task::Error::AggregatorAuthKeySize))?;
-                VdafOps::Prio3Aes128Sum(vdaf, verify_key)
+                VdafOps::Prio3Aes128Sum(Arc::new(vdaf), verify_key)
             }
 
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
@@ -424,31 +453,31 @@ impl TaskAggregator {
                     .clone()
                     .try_into()
                     .map_err(|_| Error::TaskParameters(task::Error::AggregatorAuthKeySize))?;
-                VdafOps::Prio3Aes128Histogram(vdaf, verify_key)
+                VdafOps::Prio3Aes128Histogram(Arc::new(vdaf), verify_key)
             }
 
             #[cfg(test)]
-            VdafInstance::Fake => VdafOps::Fake(dummy_vdaf::Vdaf::new()),
+            VdafInstance::Fake => VdafOps::Fake(Arc::new(dummy_vdaf::Vdaf::new())),
 
             #[cfg(test)]
-            VdafInstance::FakeFailsPrepInit => VdafOps::Fake(
+            VdafInstance::FakeFailsPrepInit => VdafOps::Fake(Arc::new(
                 dummy_vdaf::Vdaf::new().with_prep_init_fn(|_| -> Result<(), VdafError> {
                     Err(VdafError::Uncategorized(
                         "FakeFailsPrepInit failed at prep_init".to_string(),
                     ))
                 }),
-            ),
+            )),
 
             #[cfg(test)]
             VdafInstance::FakeFailsPrepStep => {
                 const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                VdafOps::Fake(dummy_vdaf::Vdaf::new().with_prep_step_fn(
+                VdafOps::Fake(Arc::new(dummy_vdaf::Vdaf::new().with_prep_step_fn(
                     || -> Result<PrepareTransition<dummy_vdaf::Vdaf, VERIFY_KEY_LENGTH>, VdafError> {
                         Err(VdafError::Uncategorized(
                             "FakeFailsPrepStep failed at prep_step".to_string(),
                         ))
                     },
-                ))
+                )))
             }
 
             _ => panic!("VDAF {:?} is not yet supported", task.vdaf),
@@ -475,30 +504,39 @@ impl TaskAggregator {
         &self,
         datastore: &Datastore<C>,
         clock: &C,
+        upload_decrypt_failure_counter: &Counter<u64>,
         report: Report,
     ) -> Result<(), Error> {
         self.vdaf_ops
-            .handle_upload(datastore, clock, &self.task, report)
+            .handle_upload(
+                datastore,
+                clock,
+                upload_decrypt_failure_counter,
+                &self.task,
+                report,
+            )
             .await
     }
 
     async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        aggregate_step_failure_counter: &Counter<u64>,
         req: AggregateInitializeReq,
     ) -> Result<AggregateInitializeResp, Error> {
         self.vdaf_ops
-            .handle_aggregate_init(datastore, &self.task, req)
+            .handle_aggregate_init(datastore, aggregate_step_failure_counter, &self.task, req)
             .await
     }
 
     async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        aggregate_step_failure_counter: Counter<u64>,
         req: AggregateContinueReq,
     ) -> Result<AggregateContinueResp, Error> {
         self.vdaf_ops
-            .handle_aggregate_continue(datastore, &self.task, req)
+            .handle_aggregate_continue(datastore, aggregate_step_failure_counter, &self.task, req)
             .await
     }
 
@@ -549,12 +587,15 @@ impl TaskAggregator {
 #[allow(clippy::enum_variant_names)]
 enum VdafOps {
     // For the Prio3 VdafOps, the second parameter is the verify_key.
-    Prio3Aes128Count(Prio3Aes128Count, [u8; PRIO3_AES128_VERIFY_KEY_LENGTH]),
-    Prio3Aes128Sum(Prio3Aes128Sum, [u8; PRIO3_AES128_VERIFY_KEY_LENGTH]),
-    Prio3Aes128Histogram(Prio3Aes128Histogram, [u8; PRIO3_AES128_VERIFY_KEY_LENGTH]),
+    Prio3Aes128Count(Arc<Prio3Aes128Count>, [u8; PRIO3_AES128_VERIFY_KEY_LENGTH]),
+    Prio3Aes128Sum(Arc<Prio3Aes128Sum>, [u8; PRIO3_AES128_VERIFY_KEY_LENGTH]),
+    Prio3Aes128Histogram(
+        Arc<Prio3Aes128Histogram>,
+        [u8; PRIO3_AES128_VERIFY_KEY_LENGTH],
+    ),
 
     #[cfg(test)]
-    Fake(dummy_vdaf::Vdaf),
+    Fake(Arc<dummy_vdaf::Vdaf>),
 }
 
 impl VdafOps {
@@ -562,19 +603,28 @@ impl VdafOps {
         &self,
         datastore: &Datastore<C>,
         clock: &C,
+        upload_decrypt_failure_counter: &Counter<u64>,
         task: &Task,
         report: Report,
     ) -> Result<(), Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
                 Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
-                    datastore, clock, task, report,
+                    datastore,
+                    clock,
+                    upload_decrypt_failure_counter,
+                    task,
+                    report,
                 )
                 .await
             }
             VdafOps::Prio3Aes128Sum(_, _) => {
                 Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum, _>(
-                    datastore, clock, task, report,
+                    datastore,
+                    clock,
+                    upload_decrypt_failure_counter,
+                    task,
+                    report,
                 )
                 .await
             }
@@ -582,14 +632,24 @@ impl VdafOps {
                 PRIO3_AES128_VERIFY_KEY_LENGTH,
                 Prio3Aes128Histogram,
                 _,
-            >(datastore, clock, task, report)
+            >(
+                datastore,
+                clock,
+                upload_decrypt_failure_counter,
+                task,
+                report,
+            )
             .await,
 
             #[cfg(test)]
             VdafOps::Fake(_) => {
                 const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
                 Self::handle_upload_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
-                    datastore, clock, task, report,
+                    datastore,
+                    clock,
+                    upload_decrypt_failure_counter,
+                    task,
+                    report,
                 )
                 .await
             }
@@ -601,6 +661,7 @@ impl VdafOps {
     async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        aggregate_step_failure_counter: &Counter<u64>,
         task: &Task,
         req: AggregateInitializeReq,
     ) -> Result<AggregateInitializeResp, Error> {
@@ -610,7 +671,14 @@ impl VdafOps {
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
                     _,
-                >(datastore, vdaf, task, verify_key, req)
+                >(
+                    datastore,
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
+                    verify_key,
+                    req,
+                )
                 .await
             }
             VdafOps::Prio3Aes128Sum(vdaf, verify_key) => {
@@ -618,7 +686,14 @@ impl VdafOps {
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, vdaf, task, verify_key, req)
+                >(
+                    datastore,
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
+                    verify_key,
+                    req,
+                )
                 .await
             }
             VdafOps::Prio3Aes128Histogram(vdaf, verify_key) => {
@@ -626,7 +701,14 @@ impl VdafOps {
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, vdaf, task, verify_key, req)
+                >(
+                    datastore,
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
+                    verify_key,
+                    req,
+                )
                 .await
             }
 
@@ -636,6 +718,7 @@ impl VdafOps {
                 Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
                     datastore,
                     vdaf,
+                    aggregate_step_failure_counter,
                     task,
                     &[],
                     req,
@@ -648,6 +731,7 @@ impl VdafOps {
     async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        aggregate_step_failure_counter: Counter<u64>,
         task: &Task,
         req: AggregateContinueReq,
     ) -> Result<AggregateContinueResp, Error> {
@@ -657,7 +741,13 @@ impl VdafOps {
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
                     _,
-                >(datastore, vdaf, task, req)
+                >(
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counter,
+                    task,
+                    req,
+                )
                 .await
             }
             VdafOps::Prio3Aes128Sum(vdaf, _) => {
@@ -665,7 +755,13 @@ impl VdafOps {
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, vdaf, task, req)
+                >(
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counter,
+                    task,
+                    req,
+                )
                 .await
             }
             VdafOps::Prio3Aes128Histogram(vdaf, _) => {
@@ -673,7 +769,13 @@ impl VdafOps {
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, vdaf, task, req)
+                >(
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counter,
+                    task,
+                    req,
+                )
                 .await
             }
 
@@ -681,7 +783,11 @@ impl VdafOps {
             VdafOps::Fake(vdaf) => {
                 const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
                 Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
-                    datastore, vdaf, task, req,
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counter,
+                    task,
+                    req,
                 )
                 .await
             }
@@ -691,6 +797,7 @@ impl VdafOps {
     async fn handle_upload_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
         datastore: &Datastore<C>,
         clock: &C,
+        upload_decrypt_failure_counter: &Counter<u64>,
         task: &Task,
         report: Report,
     ) -> Result<(), Error>
@@ -702,10 +809,6 @@ impl VdafOps {
     {
         // §4.2.2 The leader's report is the first one
         if report.encrypted_input_shares().len() != 2 {
-            warn!(
-                share_count = report.encrypted_input_shares().len(),
-                "Unexpected number of encrypted shares in report"
-            );
             return Err(Error::UnrecognizedMessage(
                 "unexpected number of encrypted shares in report",
                 Some(report.task_id()),
@@ -718,10 +821,6 @@ impl VdafOps {
             .hpke_keys
             .get(&leader_report.config_id())
             .ok_or_else(|| {
-                warn!(
-                    config_id = ?leader_report.config_id(),
-                    "Unknown HPKE config ID"
-                );
                 Error::OutdatedHpkeConfig(leader_report.config_id(), report.task_id())
             })?;
 
@@ -729,7 +828,6 @@ impl VdafOps {
 
         // §4.2.4: reject reports from too far in the future
         if report.nonce().time().is_after(report_deadline) {
-            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report timestamp exceeds tolerable clock skew");
             return Err(Error::ReportTooEarly(report.nonce(), report.task_id()));
         }
 
@@ -744,42 +842,45 @@ impl VdafOps {
             leader_report,
             &report.associated_data(),
         ) {
-            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
+            error!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
+            upload_decrypt_failure_counter.add(1, &[]);
             return Ok(());
         }
 
         datastore
-                    .run_tx(|tx| {
-                        let report = report.clone();
-                        Box::pin(async move {
-                            let (existing_client_report, conflicting_collect_jobs) = try_join!(
-                                tx.get_client_report(report.task_id(), report.nonce()),
-                                tx.find_collect_jobs_including_time::<L, A>(report.task_id(), report.nonce().time()),
-                            )?;
+            .run_tx(|tx| {
+                let report = report.clone();
+                Box::pin(async move {
+                    let (existing_client_report, conflicting_collect_jobs) = try_join!(
+                        tx.get_client_report(report.task_id(), report.nonce()),
+                        tx.find_collect_jobs_including_time::<L, A>(
+                            report.task_id(),
+                            report.nonce().time()
+                        ),
+                    )?;
 
-                            // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before.
-                            if existing_client_report.is_some() {
-                                warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), "Report replayed");
-                                // TODO(#34): change this error type.
-                                return Err(datastore::Error::User(
-                                    Error::ReportTooLate(report.nonce(), report.task_id()).into(),
-                                ));
-                            }
+                    // §4.2.2 and 4.3.2.2: reject reports whose nonce has been seen before.
+                    if existing_client_report.is_some() {
+                        // TODO(#34): change this error type.
+                        return Err(datastore::Error::User(
+                            Error::ReportTooLate(report.nonce(), report.task_id()).into(),
+                        ));
+                    }
 
-                            // §4.3.2: reject reports whose timestamps fall into a batch interval
-                            // that has already been collected.
-                            if !conflicting_collect_jobs.is_empty() {
-                                return Err(datastore::Error::User(
-                                    Error::ReportTooLate(report.nonce(), report.task_id()).into(),
-                                ));
-                            }
+                    // §4.3.2: reject reports whose timestamps fall into a batch interval
+                    // that has already been collected.
+                    if !conflicting_collect_jobs.is_empty() {
+                        return Err(datastore::Error::User(
+                            Error::ReportTooLate(report.nonce(), report.task_id()).into(),
+                        ));
+                    }
 
-                            // Store the report.
-                            tx.put_client_report(&report).await?;
-                            Ok(())
-                        })
-                    })
-                    .await?;
+                    // Store the report.
+                    tx.put_client_report(&report).await?;
+                    Ok(())
+                })
+            })
+            .await?;
         Ok(())
     }
 
@@ -788,6 +889,7 @@ impl VdafOps {
     async fn handle_aggregate_init_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
         datastore: &Datastore<C>,
         vdaf: &A,
+        aggregate_step_failure_counter: &Counter<u64>,
         task: &Task,
         verify_key: &[u8; L],
         req: AggregateInitializeReq,
@@ -835,10 +937,12 @@ impl VdafOps {
                 .hpke_keys
                 .get(&report_share.encrypted_input_share.config_id())
                 .ok_or_else(|| {
-                    warn!(
+                    error!(
                         config_id = ?report_share.encrypted_input_share.config_id(),
-                        "Unknown HPKE config ID"
+                        "Helper encrypted input share references unknown HPKE config ID"
                     );
+                    aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
                     ReportShareError::HpkeUnknownConfigId
                 });
 
@@ -852,12 +956,14 @@ impl VdafOps {
                     &report_share.associated_data(task_id),
                 )
                 .map_err(|err| {
-                    warn!(
+                    error!(
                         ?task_id,
                         nonce = %report_share.nonce,
                         %err,
-                        "Couldn't decrypt report share"
+                        "Couldn't decrypt helper's report share"
                     );
+                    aggregate_step_failure_counter
+                        .add(1, &[KeyValue::new("type", "decrypt_failure")]);
                     ReportShareError::HpkeDecryptError
                 })
             });
@@ -870,7 +976,9 @@ impl VdafOps {
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext)
                     .map_err(|err| {
-                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode input share from report share");
+                        error!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode helper's input share");
+                        aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
                         ReportShareError::VdafPrepError
                     })
             });
@@ -888,7 +996,9 @@ impl VdafOps {
                         &input_share,
                     )
                     .map_err(|err| {
-                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_init report share");
+                        error!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_init report share");
+                        aggregate_step_failure_counter
+                            .add(1, &[KeyValue::new("type", "prepare_init_failure")]);
                         ReportShareError::VdafPrepError
                     })
             });
@@ -1003,7 +1113,8 @@ impl VdafOps {
 
     async fn handle_aggregate_continue_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
         datastore: &Datastore<C>,
-        vdaf: &A,
+        vdaf: Arc<A>,
+        aggregate_step_failure_counter: Counter<u64>,
         task: &Task,
         req: AggregateContinueReq,
     ) -> Result<AggregateContinueResp, Error>
@@ -1021,15 +1132,14 @@ impl VdafOps {
     {
         let task_id = task.id;
         let min_batch_duration = task.min_batch_duration;
-        let vdaf = Arc::new(vdaf.clone());
         let prep_steps = Arc::new(req.prepare_steps);
 
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx(|tx| {
-                let vdaf = Arc::clone(&vdaf);
-                let prep_steps = Arc::clone(&prep_steps);
+                let (vdaf, prep_steps, aggregate_step_failure_counter) =
+                    (Arc::clone(&vdaf), Arc::clone(&prep_steps), aggregate_step_failure_counter.clone());
 
                 Box::pin(async move {
                     // Read existing state.
@@ -1055,7 +1165,6 @@ impl VdafOps {
                         // and extract the stored preparation step.
                         let mut report_aggregation = loop {
                             let mut report_agg = report_aggregations.next().ok_or_else(|| {
-                                warn!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, "Leader sent unexpected, duplicate, or out-of-order prepare steps");
                                 datastore::Error::User(Error::UnrecognizedMessage(
                                     "leader sent unexpected, duplicate, or out-of-order prepare steps",
                                     Some(task_id),
@@ -1091,7 +1200,6 @@ impl VdafOps {
                             match report_aggregation.state {
                                 ReportAggregationState::Waiting(prep_state, _) => prep_state,
                                 _ => {
-                                    warn!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, "Leader sent prepare step for non-WAITING report aggregation");
                                     return Err(datastore::Error::User(
                                         Error::UnrecognizedMessage(
                                             "leader sent prepare step for non-WAITING report aggregation",
@@ -1110,7 +1218,6 @@ impl VdafOps {
                                 )?
                             }
                             _ => {
-                                warn!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, "Leader sent non-Continued prepare step");
                                 return Err(datastore::Error::User(
                                     Error::UnrecognizedMessage(
                                         "leader sent non-Continued prepare step",
@@ -1144,7 +1251,9 @@ impl VdafOps {
                             }
 
                             Err(err) => {
-                                warn!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
+                                error!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
+                                aggregate_step_failure_counter
+                                    .add(1, &[KeyValue::new("type", "prepare_step_failure")]);
                                 report_aggregation.state =
                                     ReportAggregationState::Failed(ReportShareError::VdafPrepError);
                                 response_prep_steps.push(PrepareStep {
@@ -1710,8 +1819,8 @@ fn error_handler<R: Reply>(
     ]);
 
     move |result| {
-        if let Err(error) = &result {
-            error!(%error);
+        if let Err(err) = &result {
+            error!(%err, endpoint = name, "Error handling aggregator endpoint");
             bound_counter_error.add(1);
         } else {
             bound_counter_success.add(1);
@@ -1858,8 +1967,6 @@ fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
-    let aggregator = Arc::new(Aggregator::new(datastore, clock));
-
     let meter = opentelemetry::global::meter("janus_server");
     let response_counter = meter
         .u64_counter("aggregator_response")
@@ -1870,6 +1977,8 @@ fn aggregator_filter<C: Clock>(
         .with_description("Elapsed time handling incoming requests.")
         .with_unit(Unit::new("seconds"))
         .init();
+
+    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter));
 
     let hpke_config_routing = warp::path("hpke_config");
     let hpke_config_responding = warp::get()
@@ -2094,6 +2203,7 @@ mod tests {
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
         time::test_util::MockClock,
     };
+    use opentelemetry::global::meter;
     use prio::{
         codec::Decode,
         field::Field64,
@@ -2532,7 +2642,7 @@ mod tests {
         let datastore = Arc::new(datastore);
         let report = setup_report(&task, &datastore, &clock).await;
 
-        let aggregator = Aggregator::new(datastore.clone(), clock);
+        let aggregator = Aggregator::new(datastore.clone(), clock, meter("janus_server"));
 
         (aggregator, task, report, datastore, db_handle)
     }

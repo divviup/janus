@@ -20,6 +20,7 @@ use janus_server::{
     message::{CollectReq, CollectResp},
     task::{test_util::generate_aggregator_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
+use opentelemetry::global::meter;
 use prio::{
     codec::{Decode, Encode},
     field::Field64,
@@ -281,19 +282,24 @@ impl TestCase {
         let (aggregation_job_driver_shutdown_sender, mut aggregation_job_driver_shutdown_receiver) =
             oneshot::channel();
         let datastore = Arc::new(_leader_db_handle.datastore(RealClock::default()));
+        let aggregation_job_driver_meter = meter("aggregation_job_driver");
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            &aggregation_job_driver_meter,
         ));
         let aggregation_job_driver = Arc::new(JobDriver::new(
             RealClock::default(),
             TokioRuntime,
+            aggregation_job_driver_meter,
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
             Duration::ZERO,
-            aggregation_job_driver
-                .make_incomplete_job_acquirer_callback(&datastore, Duration::from_seconds(10)),
-            aggregation_job_driver.make_job_stepper_callback(&datastore, 3),
+            aggregation_job_driver.make_incomplete_job_acquirer_callback(
+                Arc::clone(&datastore),
+                Duration::from_seconds(10),
+            ),
+            aggregation_job_driver.make_job_stepper_callback(Arc::clone(&datastore), 3),
         ));
         let aggregation_job_driver_handle = task::spawn(async move {
             select! {
@@ -306,19 +312,24 @@ impl TestCase {
         let (collect_job_driver_shutdown_sender, mut collect_job_driver_shutdown_receiver) =
             oneshot::channel();
         let datastore = Arc::new(_leader_db_handle.datastore(RealClock::default()));
+        let collect_job_driver_meter = meter("collect_job_driver");
         let collect_job_driver = Arc::new(CollectJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
+            &collect_job_driver_meter,
         ));
         let collect_job_driver = Arc::new(JobDriver::new(
             RealClock::default(),
             TokioRuntime,
+            collect_job_driver_meter,
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
             Duration::ZERO,
-            collect_job_driver
-                .make_incomplete_job_acquirer_callback(&datastore, Duration::from_seconds(10)),
-            collect_job_driver.make_job_stepper_callback(&datastore, 3),
+            collect_job_driver.make_incomplete_job_acquirer_callback(
+                Arc::clone(&datastore),
+                Duration::from_seconds(10),
+            ),
+            collect_job_driver.make_job_stepper_callback(Arc::clone(&datastore), 3),
         ));
         let collect_job_driver_handle = task::spawn(async move {
             select! {

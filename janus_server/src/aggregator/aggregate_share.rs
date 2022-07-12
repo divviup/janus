@@ -18,6 +18,7 @@ use janus_core::{
     message::{Duration, Interval, NonceChecksum, Role},
     time::Clock,
 };
+use opentelemetry::metrics::{Counter, Meter};
 use prio::{
     codec::{Decode, Encode},
     vdaf::{
@@ -33,12 +34,21 @@ use tracing::{debug, error, warn};
 #[derive(Debug)]
 pub struct CollectJobDriver {
     http_client: reqwest::Client,
+    job_cancel_counter: Counter<u64>,
 }
 
 impl CollectJobDriver {
     /// Create a new [`CollectJobDriver`].
-    pub fn new(http_client: reqwest::Client) -> Self {
-        Self { http_client }
+    pub fn new(http_client: reqwest::Client, meter: &Meter) -> Self {
+        let job_cancel_counter = meter
+            .u64_counter("job_cancellations")
+            .with_description("Count of cancelled collect jobs")
+            .init();
+
+        Self {
+            http_client,
+            job_cancel_counter,
+        }
     }
 
     /// Step the provided collect job, for which a lease should have been acquired (though this
@@ -235,11 +245,10 @@ impl CollectJobDriver {
     /// Produce a closure for use as a `[JobDriver::JobAcquirer`].
     pub fn make_incomplete_job_acquirer_callback<C: Clock>(
         &self,
-        datastore: &Arc<Datastore<C>>,
+        datastore: Arc<Datastore<C>>,
         lease_duration: Duration,
     ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectJob>>, datastore::Error>>
     {
-        let datastore = Arc::clone(datastore);
         move |maximum_acquire_count| {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
@@ -260,15 +269,12 @@ impl CollectJobDriver {
 
     /// Produce a closure for use as a `[JobDriver::JobStepper]`.
     pub fn make_job_stepper_callback<C: Clock>(
-        self: &Arc<Self>,
-        datastore: &Arc<Datastore<C>>,
+        self: Arc<Self>,
+        datastore: Arc<Datastore<C>>,
         maximum_attempts_before_failure: usize,
     ) -> impl Fn(Lease<AcquiredCollectJob>) -> BoxFuture<'static, Result<(), super::Error>> {
-        let datastore = Arc::clone(datastore);
-        let driver = Arc::clone(self);
         move |collect_job_lease: Lease<AcquiredCollectJob>| {
-            let datastore = Arc::clone(&datastore);
-            let driver = Arc::clone(&driver);
+            let (this, datastore) = (Arc::clone(&self), Arc::clone(&datastore));
             Box::pin(async move {
                 if collect_job_lease.lease_attempts() > maximum_attempts_before_failure {
                     warn!(
@@ -276,12 +282,11 @@ impl CollectJobDriver {
                         max_attempts = ?maximum_attempts_before_failure,
                         "Canceling job due to too many failed attempts"
                     );
-                    return driver
-                        .cancel_collect_job(datastore, collect_job_lease)
-                        .await;
+                    this.job_cancel_counter.add(1, &[]);
+                    return this.cancel_collect_job(datastore, collect_job_lease).await;
                 }
 
-                driver.step_collect_job(datastore, collect_job_lease).await
+                this.step_collect_job(datastore, collect_job_lease).await
             })
         }
     }
@@ -447,6 +452,7 @@ mod tests {
         Runtime,
     };
     use mockito::mock;
+    use opentelemetry::global::meter;
     use std::str;
     use url::Url;
 
@@ -519,9 +525,10 @@ mod tests {
             .await
             .unwrap();
 
-        let collect_job_driver = CollectJobDriver {
-            http_client: reqwest::Client::builder().build().unwrap(),
-        };
+        let collect_job_driver = CollectJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &meter("collect_job_driver"),
+        );
 
         // No batch unit aggregations inserted yet
         let error = collect_job_driver
@@ -744,9 +751,10 @@ mod tests {
             .await
             .unwrap();
 
-        let collect_job_driver = CollectJobDriver {
-            http_client: reqwest::Client::builder().build().unwrap(),
-        };
+        let collect_job_driver = CollectJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &meter("collect_job_driver"),
+        );
 
         // Run: cancel the collect job.
         collect_job_driver
@@ -868,17 +876,21 @@ mod tests {
             .unwrap();
 
         // Set up the collect job driver
-        let collect_job_driver = Arc::new(CollectJobDriver::new(reqwest::Client::new()));
+        let meter = meter("collect_job_driver");
+        let collect_job_driver = Arc::new(CollectJobDriver::new(reqwest::Client::new(), &meter));
         let job_driver = Arc::new(JobDriver::new(
             clock.clone(),
             runtime_manager.with_label("stepper"),
+            meter,
             Duration::from_seconds(1),
             Duration::from_seconds(1),
             10,
             Duration::from_seconds(60),
-            collect_job_driver
-                .make_incomplete_job_acquirer_callback(&ds, Duration::from_seconds(600)),
-            collect_job_driver.make_job_stepper_callback(&ds, 3),
+            collect_job_driver.make_incomplete_job_acquirer_callback(
+                Arc::clone(&ds),
+                Duration::from_seconds(600),
+            ),
+            collect_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
         ));
 
         // Set up three error responses from our mock helper. These will cause errors in the

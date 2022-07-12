@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
             shutdown_signal,
         )
         .context("failed to create aggregator server")?;
-        info!(?bound_address, "running aggregator");
+        info!(?bound_address, "Running aggregator");
 
         server.await;
         Ok(())
