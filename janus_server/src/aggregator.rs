@@ -184,7 +184,7 @@ pub struct Aggregator<C: Clock> {
     /// Counter tracking the number of failed decryptions while handling the /upload endpoint.
     upload_decrypt_failure_counter: Counter<u64>,
     /// Counter tracking the number of failures to step client reports through the aggregation process.
-    aggregate_step_failure_counter: Arc<Counter<u64>>,
+    aggregate_step_failure_counter: Counter<u64>,
 }
 
 impl<C: Clock> Aggregator<C> {
@@ -193,15 +193,13 @@ impl<C: Clock> Aggregator<C> {
             .u64_counter("upload_decrypt_failures")
             .with_description("Number of decryption failures in the /upload endpoint.")
             .init();
-        let aggregate_step_failure_counter = Arc::new(
-            meter
-                .u64_counter("step_failures")
-                .with_description(concat!(
-                    "Failures while stepping aggregation jobs; these failures are ",
-                    "related to individual client reports rather than entire aggregation jobs."
-                ))
-                .init(),
-        );
+        let aggregate_step_failure_counter = meter
+            .u64_counter("step_failures")
+            .with_description(concat!(
+                "Failures while stepping aggregation jobs; these failures are ",
+                "related to individual client reports rather than entire aggregation jobs."
+            ))
+            .init();
 
         Self {
             datastore,
@@ -300,7 +298,7 @@ impl<C: Clock> Aggregator<C> {
         Ok(task_aggregator
             .handle_aggregate_continue(
                 &self.datastore,
-                Arc::clone(&self.aggregate_step_failure_counter),
+                self.aggregate_step_failure_counter.clone(),
                 req,
             )
             .await?
@@ -534,7 +532,7 @@ impl TaskAggregator {
     async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counter: Arc<Counter<u64>>,
+        aggregate_step_failure_counter: Counter<u64>,
         req: AggregateContinueReq,
     ) -> Result<AggregateContinueResp, Error> {
         self.vdaf_ops
@@ -733,7 +731,7 @@ impl VdafOps {
     async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counter: Arc<Counter<u64>>,
+        aggregate_step_failure_counter: Counter<u64>,
         task: &Task,
         req: AggregateContinueReq,
     ) -> Result<AggregateContinueResp, Error> {
@@ -1116,7 +1114,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
-        aggregate_step_failure_counter: Arc<Counter<u64>>,
+        aggregate_step_failure_counter: Counter<u64>,
         task: &Task,
         req: AggregateContinueReq,
     ) -> Result<AggregateContinueResp, Error>
@@ -1141,7 +1139,7 @@ impl VdafOps {
         Ok(datastore
             .run_tx(|tx| {
                 let (vdaf, prep_steps, aggregate_step_failure_counter) =
-                    (Arc::clone(&vdaf), Arc::clone(&prep_steps), Arc::clone(&aggregate_step_failure_counter));
+                    (Arc::clone(&vdaf), Arc::clone(&prep_steps), aggregate_step_failure_counter.clone());
 
                 Box::pin(async move {
                     // Read existing state.
