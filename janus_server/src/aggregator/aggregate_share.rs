@@ -421,7 +421,11 @@ where
             task_id = ?task.id, ?collect_interval,
             "Batch lifetime has been consumed more times than task allows"
         );
-        panic!("Batch lifetime has been consumed more times than task allows");
+
+        // We return an internal error since this should be impossible.
+        return Err(datastore::Error::User(
+            Error::Internal("batch lifetime overconsumed".into_string()).into(),
+        ));
     }
     Ok(())
 }
