@@ -380,7 +380,7 @@ impl<C: Clock> Aggregator<C> {
         }
 
         let resp = task_aggregator
-            .handle_aggregate_share(&self.datastore, &req)
+            .handle_aggregate_share(&self.datastore, req)
             .await?;
         Ok(resp.get_encoded())
     }
@@ -417,7 +417,7 @@ impl<C: Clock> Aggregator<C> {
 // Aggregate requests) using a parallelized library like Rayon.
 pub struct TaskAggregator {
     /// The task being aggregated.
-    task: Task,
+    task: Arc<Task>,
     /// VDAF-specific operations.
     vdaf_ops: VdafOps,
 }
@@ -484,7 +484,10 @@ impl TaskAggregator {
             _ => panic!("VDAF {:?} is not yet supported", task.vdaf),
         };
 
-        Ok(Self { task, vdaf_ops })
+        Ok(Self {
+            task: Arc::new(task),
+            vdaf_ops,
+        })
     }
 
     fn handle_hpke_config(&self) -> HpkeConfig {
@@ -571,7 +574,7 @@ impl TaskAggregator {
     async fn handle_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        req: &AggregateShareReq,
+        req: AggregateShareReq,
     ) -> Result<AggregateShareResp, Error> {
         // §4.4.4.3: check that the batch interval meets the requirements from §4.6
         if !self.task.validate_batch_interval(req.batch_interval) {
@@ -579,7 +582,7 @@ impl TaskAggregator {
         }
 
         self.vdaf_ops
-            .handle_aggregate_share(datastore, &self.task, req)
+            .handle_aggregate_share(datastore, Arc::clone(&self.task), req)
             .await
     }
 }
@@ -1516,8 +1519,8 @@ impl VdafOps {
     async fn handle_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        task: &Task,
-        aggregate_share_req: &AggregateShareReq,
+        task: Arc<Task>,
+        aggregate_share_req: AggregateShareReq,
     ) -> Result<AggregateShareResp, Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
@@ -1560,8 +1563,8 @@ impl VdafOps {
 
     async fn handle_aggregate_share_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
         datastore: &Datastore<C>,
-        task: &Task,
-        aggregate_share_req: &AggregateShareReq,
+        task: Arc<Task>,
+        aggregate_share_req: AggregateShareReq,
     ) -> Result<AggregateShareResp, Error>
     where
         A::AggregationParam: Send + Sync,
@@ -1569,10 +1572,11 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     {
+        let aggregate_share_req = Arc::new(aggregate_share_req);
         let aggregate_share_job = datastore
-            .run_tx(move |tx| {
-                let task = task.clone();
-                let aggregate_share_req = aggregate_share_req.clone();
+            .run_tx(|tx| {
+                let (task, aggregate_share_req) =
+                    (Arc::clone(&task), Arc::clone(&aggregate_share_req));
                 Box::pin(async move {
                     // Check if we have already serviced an aggregate share request with these
                     // parameters and serve the cached results if so.
@@ -1628,34 +1632,30 @@ impl VdafOps {
                         }
                     };
 
+                    // §4.4.4.3: verify total report count and the checksum we computed against those reported
+                    // by the leader.
+                    if aggregate_share_job.report_count != aggregate_share_req.report_count
+                        || aggregate_share_job.checksum != aggregate_share_req.checksum
+                    {
+                        return Err(datastore::Error::User(
+                            Error::BatchMismatch {
+                                task_id: aggregate_share_req.task_id,
+                                own_checksum: aggregate_share_job.checksum,
+                                own_report_count: aggregate_share_job.report_count,
+                                peer_checksum: aggregate_share_req.checksum,
+                                peer_report_count: aggregate_share_req.report_count,
+                            }
+                            .into(),
+                        ));
+                    }
+
                     Ok(aggregate_share_job)
                 })
             })
             .await?;
 
-        // §4.4.4.3: verify total report count and the checksum we computed against those reported
-        // by the leader.
-        //
-        // We check these *after* consuming batch lifetime by recording the aggregate share jobs
-        // because the leader could retry the AggregateShareReq with corrected report count and
-        // checksum, in which case we want to service that new request from cache. It may also be
-        // helpful to have a record in the helper's datastore of failed requests for debugging. But
-        // we may only wish to consider batch lifetime to be consumed once the an aggregate share
-        // leaves the helper.
-        if aggregate_share_job.report_count != aggregate_share_req.report_count
-            || aggregate_share_job.checksum != aggregate_share_req.checksum
-        {
-            return Err(Error::BatchMismatch {
-                task_id: aggregate_share_req.task_id,
-                own_checksum: aggregate_share_job.checksum,
-                own_report_count: aggregate_share_job.report_count,
-                peer_checksum: aggregate_share_req.checksum,
-                peer_report_count: aggregate_share_req.report_count,
-            });
-        }
-
         // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store *unencrypted* aggregate
-        // shares in the datastore so that we can encrypt cached results to the  collector HPKE
+        // shares in the datastore so that we can encrypt cached results to the collector HPKE
         // config valid when the current AggregateShareReq was made, and not whatever was valid at
         // the time the aggregate share was first computed.
         let encrypted_aggregate_share = hpke::seal(
@@ -1684,7 +1684,7 @@ where
 enum DapProblemType {
     UnrecognizedMessage,
     UnrecognizedTask,
-    UnrecognizedAggregationJob, // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/270): standardize this value
+    UnrecognizedAggregationJob,
     OutdatedConfig,
     ReportTooLate,
     ReportTooEarly,
@@ -5490,8 +5490,7 @@ mod tests {
             })
         );
 
-        // Make requests that will fail because the checksum or report counts don't match. Note that
-        // while these requests fail, they *do* consume batch lifetime.
+        // Make requests that will fail because the checksum or report counts don't match.
         for misaligned_request in [
             // Interval is big enough, but checksum doesn't match.
             AggregateShareReq {
@@ -5549,48 +5548,8 @@ mod tests {
             );
         }
 
-        // Requests for collection intervals that overlap with but are not identical to previous
-        // collection intervals fail.
-        let all_batch_unit_request = AggregateShareReq {
-            task_id,
-            batch_interval: Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(4000),
-            )
-            .unwrap(),
-            aggregation_param: AggregationParam(0).get_encoded(),
-            report_count: 20,
-            checksum: NonceChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
-        };
-        let mut resp = warp::test::request()
-            .method("POST")
-            .path("/aggregate_share")
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregateShareReq::MEDIA_TYPE)
-            .body(all_batch_unit_request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(resp.body_mut()).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
-                "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
-                "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
-                "instance": "..",
-                "taskid": format!("{}", task_id),
-            }),
-        );
-
         // Valid requests: intervals are big enough, do not overlap, checksum and report count are
-        // good. Note that these are served "from cache" and not recomputed.
+        // good.
         for (label, request, expected_result) in [
             (
                 "first and second batch units",
@@ -5678,6 +5637,47 @@ mod tests {
                 );
             }
         }
+
+        // Requests for collection intervals that overlap with but are not identical to previous
+        // collection intervals fail.
+        let all_batch_unit_request = AggregateShareReq {
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(4000),
+            )
+            .unwrap(),
+            aggregation_param: AggregationParam(0).get_encoded(),
+            report_count: 20,
+            checksum: NonceChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
+        };
+        let mut resp = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, AggregateShareReq::MEDIA_TYPE)
+            .body(all_batch_unit_request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(resp.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
+                "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            }),
+        );
 
         // Previous sequence of aggregate share requests should have consumed the batch lifetime for
         // all the batch units. Further requests for any batch units will cause batch lifetime
