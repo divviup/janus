@@ -14,6 +14,8 @@ use crate::{
 };
 use futures::{future::BoxFuture, try_join};
 use http::header::CONTENT_TYPE;
+#[cfg(test)]
+use janus_core::test_util::dummy_vdaf;
 use janus_core::{
     message::{Duration, Interval, NonceChecksum, Role},
     time::Clock,
@@ -95,9 +97,8 @@ impl CollectJobDriver {
 
             #[cfg(test)]
             VdafInstance::Fake => {
-                type FakeVdaf = janus_core::test_util::dummy_vdaf::VdafWithAggregationParameter<u8>;
-                const VERIFY_KEY_LENGTH: usize = FakeVdaf::VERIFY_KEY_LENGTH;
-                self.step_collect_job_generic::<VERIFY_KEY_LENGTH, C, FakeVdaf>(
+                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+                self.step_collect_job_generic::<VERIFY_KEY_LENGTH, C, dummy_vdaf::Vdaf>(
                     datastore,
                     lease,
                 )
@@ -357,71 +358,71 @@ where
     Ok((total_aggregate_share, total_report_count, total_checksum))
 }
 
-/// Check whether any member of `batch_unit_aggregations` has been included in enough collect
-/// jobs (for `task.role` == [`Role::Leader`]) or aggregate share jobs (for `task.role` ==
-/// [`Role::Helper`]) to violate the task's maximum batch lifetime.
-pub(crate) async fn validate_batch_lifetime_for_unit_aggregations<
+/// Check whether this collect interval has been included in enough collect jobs (for `task.role` ==
+/// [`Role::Leader`]) or aggregate share jobs (for `task.role` == [`Role::Helper`]) to violate the
+/// task's maximum batch lifetime, and that this collect interval does not partially overlap with
+/// an already-observed collect interval.
+pub(crate) async fn validate_batch_lifetime_for_collect<
     const L: usize,
     C: Clock,
     A: vdaf::Aggregator<L>,
 >(
     tx: &Transaction<'_, C>,
     task: &Task,
-    batch_unit_aggregations: &[BatchUnitAggregation<L, A>],
+    collect_interval: Interval,
 ) -> Result<(), datastore::Error>
 where
-    Vec<u8>: for<'a> From<&'a A::AggregateShare>,
     for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
-    // Check how many rows in the relevant table have a batch interval that includes each batch
-    // unit. Each such row consumes one unit of batch lifetime (§4.6).
-    //
-    // We have to check each batch unit interval separately rather than checking how many times
-    // aggregate_share_req.batch_interval overlaps with any row. Suppose we had:
-    //
-    //   * task.max_batch_lifetime = 2,
-    //   * an AggregateShareReq.batch interval that spans two batch units,
-    //   * and that each of those batch units has been collected once before.
-    //
-    // A further AggregateShareReq including either or both of the units is permissible, but
-    // if we queried how many rows overlap with that interval, we would get 2 and refuse the
-    // request. We must check the unit intervals individually to notice that each has enough
-    // remaining lifetime to permit the share request.
+    // Check how many rows in the relevant table have an intersecting batch interval.
+    // Each such row consumes one unit of batch lifetime (§4.6).
+    let intersecting_intervals: Vec<_> = match task.role {
+        Role::Leader => tx
+            .find_collect_jobs_jobs_intersecting_interval::<L, A>(task.id, collect_interval)
+            .await?
+            .into_iter()
+            .map(|job| job.batch_interval)
+            .collect(),
 
-    // TODO(#149): We believe this to be a correct implementation of currently specified batch
-    // parameter validation, but we also know it to be inadequate. This should work for interop
-    // experiments, but we should do better before we allow any real user data to be processed.
-    let intervals: Vec<_> = batch_unit_aggregations
+        Role::Helper => tx
+            .find_aggregate_share_jobs_intersecting_interval::<L, A>(task.id, collect_interval)
+            .await?
+            .into_iter()
+            .map(|job| job.batch_interval)
+            .collect(),
+
+        _ => panic!("Unexpected task role {:?}", task.role),
+    };
+
+    // Check that all intersecting collect intervals are equal to this collect interval.
+    if intersecting_intervals
         .iter()
-        .map(|v| {
-            Interval::new(v.unit_interval_start, task.min_batch_duration)
-                .map_err(|e| datastore::Error::User(e.into()))
-        })
-        .collect::<Result<_, datastore::Error>>()?;
-
-    let overlaps = tx
-        .get_aggregate_share_job_counts_for_intervals(task.id, task.role, &intervals)
-        .await?;
-
-    for (unit_interval, consumed_batch_lifetime) in overlaps {
-        if consumed_batch_lifetime == task.max_batch_lifetime {
-            debug!(
-                ?task.id, ?unit_interval,
-                "refusing aggregate share request because lifetime for batch unit has been consumed"
-            );
-            return Err(datastore::Error::User(
-                Error::BatchLifetimeExceeded(task.id).into(),
-            ));
-        }
-        if consumed_batch_lifetime > task.max_batch_lifetime {
-            error!(
-                ?task.id, ?unit_interval,
-                "batch unit lifetime has been consumed more times than task allows"
-            );
-            panic!("batch unit lifetime has already been consumed more times than task allows");
-        }
+        .any(|interval| interval != &collect_interval)
+    {
+        return Err(datastore::Error::User(
+            Error::BatchInvalid(collect_interval, task.id).into(),
+        ));
     }
 
+    // Check that the batch lifetime is being consumed appropriately.
+    let max_batch_lifetime: usize = task.max_batch_lifetime.try_into()?;
+    if intersecting_intervals.len() == max_batch_lifetime {
+        debug!(
+            task_id = ?task.id, ?collect_interval,
+            "Refusing aggregate share request because batch lifetime has been consumed"
+        );
+        return Err(datastore::Error::User(
+            Error::BatchLifetimeExceeded(task.id).into(),
+        ));
+    }
+    if intersecting_intervals.len() > max_batch_lifetime {
+        error!(
+            task_id = ?task.id, ?collect_interval,
+            "Batch lifetime has been consumed more times than task allows"
+        );
+        panic!("Batch lifetime has been consumed more times than task allows");
+    }
     Ok(())
 }
 
@@ -444,7 +445,7 @@ mod tests {
     use janus_core::{
         message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId},
         test_util::{
-            dummy_vdaf::{AggregateShare, OutputShare, VdafWithAggregationParameter},
+            dummy_vdaf::{AggregateShare, AggregationParam, OutputShare},
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
         },
@@ -456,8 +457,6 @@ mod tests {
     use std::str;
     use url::Url;
 
-    type FakeVdaf = VdafWithAggregationParameter<u8>;
-
     #[tokio::test]
     async fn drive_collect_job() {
         install_test_trace_subscriber();
@@ -465,8 +464,7 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        type FakeVdaf = VdafWithAggregationParameter<u8>;
-        const VERIFY_KEY_LENGTH: usize = FakeVdaf::VERIFY_KEY_LENGTH;
+        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
@@ -478,7 +476,7 @@ mod tests {
         task.min_batch_size = 10;
         let agg_auth_token = task.primary_aggregator_auth_token();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
-        let aggregation_param = 0u8;
+        let aggregation_param = AggregationParam(0);
 
         let (collect_job_id, lease) = ds
             .run_tx(|tx| {
@@ -492,19 +490,24 @@ mod tests {
                         .await?;
 
                     let aggregation_job_id = AggregationJobId::random();
-                    tx.put_aggregation_job(&AggregationJob::<VERIFY_KEY_LENGTH, FakeVdaf> {
-                        aggregation_job_id,
-                        task_id,
-                        aggregation_param,
-                        state: AggregationJobState::Finished,
-                    })
+                    tx.put_aggregation_job(
+                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
+                            aggregation_job_id,
+                            task_id,
+                            aggregation_param,
+                            state: AggregationJobState::Finished,
+                        },
+                    )
                     .await?;
 
                     let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
                     tx.put_client_report(&Report::new(task_id, nonce, Vec::new(), Vec::new()))
                         .await?;
 
-                    tx.put_report_aggregation(&ReportAggregation::<VERIFY_KEY_LENGTH, FakeVdaf> {
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    > {
                         aggregation_job_id,
                         task_id,
                         nonce,
@@ -543,28 +546,30 @@ mod tests {
         ds.run_tx(|tx| {
             let clock = clock.clone();
             Box::pin(async move {
-                tx.put_batch_unit_aggregation(
-                    &BatchUnitAggregation::<VERIFY_KEY_LENGTH, FakeVdaf> {
-                        task_id,
-                        unit_interval_start: clock.now(),
-                        aggregation_param,
-                        aggregate_share: AggregateShare(),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
-                    },
-                )
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                    VERIFY_KEY_LENGTH,
+                    dummy_vdaf::Vdaf,
+                > {
+                    task_id,
+                    unit_interval_start: clock.now(),
+                    aggregation_param,
+                    aggregate_share: AggregateShare(0),
+                    report_count: 5,
+                    checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
+                })
                 .await?;
 
-                tx.put_batch_unit_aggregation(
-                    &BatchUnitAggregation::<VERIFY_KEY_LENGTH, FakeVdaf> {
-                        task_id,
-                        unit_interval_start: clock.now().add(Duration::from_seconds(1000)).unwrap(),
-                        aggregation_param,
-                        aggregate_share: AggregateShare(),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
-                    },
-                )
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                    VERIFY_KEY_LENGTH,
+                    dummy_vdaf::Vdaf,
+                > {
+                    task_id,
+                    unit_interval_start: clock.now().add(Duration::from_seconds(1000)).unwrap(),
+                    aggregation_param,
+                    aggregate_share: AggregateShare(0),
+                    report_count: 5,
+                    checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
+                })
                 .await?;
 
                 Ok(())
@@ -603,7 +608,7 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<VERIFY_KEY_LENGTH, FakeVdaf>(collect_job_id)
+                    .get_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -643,7 +648,7 @@ mod tests {
             let helper_aggregate_share = helper_response.encrypted_aggregate_share.clone();
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<VERIFY_KEY_LENGTH, FakeVdaf>(collect_job_id)
+                    .get_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -678,8 +683,8 @@ mod tests {
         task.min_batch_duration = Duration::from_seconds(500);
         task.min_batch_size = 10;
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
-        let aggregation_param = 0u8;
-        const VERIFY_KEY_LENGTH: usize = FakeVdaf::VERIFY_KEY_LENGTH;
+        let aggregation_param = AggregationParam(0);
+        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
         let (collect_job_id, lease) = ds
             .run_tx(|tx| {
@@ -693,19 +698,24 @@ mod tests {
                         .await?;
 
                     let aggregation_job_id = AggregationJobId::random();
-                    tx.put_aggregation_job(&AggregationJob::<VERIFY_KEY_LENGTH, FakeVdaf> {
-                        aggregation_job_id,
-                        task_id,
-                        aggregation_param,
-                        state: AggregationJobState::Finished,
-                    })
+                    tx.put_aggregation_job(
+                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
+                            aggregation_job_id,
+                            task_id,
+                            aggregation_param,
+                            state: AggregationJobState::Finished,
+                        },
+                    )
                     .await?;
 
                     let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
                     tx.put_client_report(&Report::new(task_id, nonce, Vec::new(), Vec::new()))
                         .await?;
 
-                    tx.put_report_aggregation(&ReportAggregation::<VERIFY_KEY_LENGTH, FakeVdaf> {
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    > {
                         aggregation_job_id,
                         task_id,
                         nonce,
@@ -716,24 +726,24 @@ mod tests {
 
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
                         VERIFY_KEY_LENGTH,
-                        FakeVdaf,
+                        dummy_vdaf::Vdaf,
                     > {
                         task_id,
                         unit_interval_start: clock.now(),
                         aggregation_param,
-                        aggregate_share: AggregateShare(),
+                        aggregate_share: AggregateShare(0),
                         report_count: 5,
                         checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
                     })
                     .await?;
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
                         VERIFY_KEY_LENGTH,
-                        FakeVdaf,
+                        dummy_vdaf::Vdaf,
                     > {
                         task_id,
                         unit_interval_start: clock.now().add(Duration::from_seconds(1000)).unwrap(),
                         aggregation_param,
-                        aggregate_share: AggregateShare(),
+                        aggregate_share: AggregateShare(0),
                         report_count: 5,
                         checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
                     })
@@ -767,7 +777,7 @@ mod tests {
             .run_tx(|tx| {
                 Box::pin(async move {
                     let collect_job = tx
-                        .get_collect_job::<VERIFY_KEY_LENGTH, FakeVdaf>(collect_job_id)
+                        .get_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
                         .await?
                         .unwrap();
 
@@ -801,8 +811,7 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        type FakeVdaf = VdafWithAggregationParameter<u8>;
-        const VERIFY_KEY_LENGTH: usize = FakeVdaf::VERIFY_KEY_LENGTH;
+        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
         let task_id = TaskId::random();
         let mut task = new_dummy_task(task_id, VdafInstance::Fake, Role::Leader);
@@ -814,7 +823,7 @@ mod tests {
         task.min_batch_size = 10;
         let agg_auth_token = task.primary_aggregator_auth_token();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
-        let aggregation_param = 0u8;
+        let aggregation_param = AggregationParam(0);
 
         // Set up the database with enough test fixtures to run a collect job.
         let collect_job_id = ds
@@ -829,12 +838,14 @@ mod tests {
                         .await?;
 
                     let aggregation_job_id = AggregationJobId::random();
-                    tx.put_aggregation_job(&AggregationJob::<VERIFY_KEY_LENGTH, FakeVdaf> {
-                        aggregation_job_id,
-                        task_id,
-                        aggregation_param,
-                        state: AggregationJobState::Finished,
-                    })
+                    tx.put_aggregation_job(
+                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
+                            aggregation_job_id,
+                            task_id,
+                            aggregation_param,
+                            state: AggregationJobState::Finished,
+                        },
+                    )
                     .await?;
 
                     // We need to have some report aggregations present, so that our collect job
@@ -845,7 +856,7 @@ mod tests {
                             .await?;
                         tx.put_report_aggregation(&ReportAggregation::<
                             VERIFY_KEY_LENGTH,
-                            FakeVdaf,
+                            dummy_vdaf::Vdaf,
                         > {
                             aggregation_job_id,
                             task_id,
@@ -858,12 +869,12 @@ mod tests {
 
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
                         VERIFY_KEY_LENGTH,
-                        FakeVdaf,
+                        dummy_vdaf::Vdaf,
                     > {
                         task_id,
                         unit_interval_start: clock.now(),
                         aggregation_param,
-                        aggregate_share: AggregateShare(),
+                        aggregate_share: AggregateShare(0),
                         report_count: 10,
                         checksum: NonceChecksum::get_decoded(&[0xff; 32]).unwrap(),
                     })
@@ -943,7 +954,7 @@ mod tests {
         let collect_job_after = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_collect_job::<VERIFY_KEY_LENGTH, FakeVdaf>(collect_job_id)
+                    tx.get_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
                         .await
                 })
             })
