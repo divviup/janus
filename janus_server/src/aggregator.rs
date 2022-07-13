@@ -873,7 +873,7 @@ impl VdafOps {
             leader_report,
             &report.associated_data(),
         ) {
-            error!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
+            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
             upload_decrypt_failure_counter.add(1, &[]);
             return Ok(());
         }
@@ -968,7 +968,7 @@ impl VdafOps {
                 .hpke_keys
                 .get(&report_share.encrypted_input_share.config_id())
                 .ok_or_else(|| {
-                    error!(
+                    warn!(
                         config_id = ?report_share.encrypted_input_share.config_id(),
                         "Helper encrypted input share references unknown HPKE config ID"
                     );
@@ -987,7 +987,7 @@ impl VdafOps {
                     &report_share.associated_data(task_id),
                 )
                 .map_err(|err| {
-                    error!(
+                    warn!(
                         ?task_id,
                         nonce = %report_share.nonce,
                         %err,
@@ -1007,7 +1007,7 @@ impl VdafOps {
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext)
                     .map_err(|err| {
-                        error!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode helper's input share");
+                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode helper's input share");
                         aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
                         ReportShareError::VdafPrepError
@@ -1027,7 +1027,7 @@ impl VdafOps {
                         &input_share,
                     )
                     .map_err(|err| {
-                        error!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_init report share");
+                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_init report share");
                         aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "prepare_init_failure")]);
                         ReportShareError::VdafPrepError
@@ -1282,7 +1282,7 @@ impl VdafOps {
                             }
 
                             Err(err) => {
-                                error!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
+                                warn!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "prepare_step_failure")]);
                                 report_aggregation.state =
@@ -1834,7 +1834,7 @@ where
             .and(filter)
             .map(move |start: Instant, result: Result<T, Error>| {
                 let error_code = if let Err(err) = &result {
-                    error!(%err, endpoint = name, "Error handling aggregator endpoint");
+                    warn!(%err, endpoint = name, "Error handling aggregator endpoint");
                     err.error_code()
                 } else {
                     ""

@@ -41,7 +41,7 @@ use std::{
     fmt::{self, Debug},
     sync::Arc,
 };
-use tracing::{error, warn};
+use tracing::warn;
 
 #[derive(Debug)]
 pub struct AggregationJobDriver {
@@ -282,7 +282,7 @@ impl AggregationJobDriver {
             {
                 Some(leader_encrypted_input_share) => leader_encrypted_input_share,
                 None => {
-                    error!(report_nonce = %report_aggregation.nonce, "Client report missing leader encrypted input share");
+                    warn!(report_nonce = %report_aggregation.nonce, "Client report missing leader encrypted input share");
                     self.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "missing_leader_input_share")]);
                     report_aggregation.state = ReportAggregationState::Invalid;
@@ -297,7 +297,7 @@ impl AggregationJobDriver {
             {
                 Some(helper_encrypted_input_share) => helper_encrypted_input_share,
                 None => {
-                    error!(report_nonce = %report_aggregation.nonce, "Client report missing helper encrypted input share");
+                    warn!(report_nonce = %report_aggregation.nonce, "Client report missing helper encrypted input share");
                     self.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "missing_client_input_share")]);
                     report_aggregation.state = ReportAggregationState::Invalid;
@@ -313,7 +313,7 @@ impl AggregationJobDriver {
             {
                 Some((hpke_config, hpke_private_key)) => (hpke_config, hpke_private_key),
                 None => {
-                    error!(report_nonce = %report_aggregation.nonce, hpke_config_id = %leader_encrypted_input_share.config_id(), "Leader encrypted input share references unknown HPKE config ID");
+                    warn!(report_nonce = %report_aggregation.nonce, hpke_config_id = %leader_encrypted_input_share.config_id(), "Leader encrypted input share references unknown HPKE config ID");
                     self.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "unknown_hpke_config_id")]);
                     report_aggregation.state =
@@ -335,7 +335,7 @@ impl AggregationJobDriver {
             ) {
                 Ok(leader_input_share_bytes) => leader_input_share_bytes,
                 Err(err) => {
-                    error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decrypt leader's encrypted input share");
+                    warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decrypt leader's encrypted input share");
                     self.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "decrypt_failure")]);
                     report_aggregation.state =
@@ -351,7 +351,7 @@ impl AggregationJobDriver {
                 Ok(leader_input_share) => leader_input_share,
                 Err(err) => {
                     // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): is moving to Invalid on a decoding error appropriate?
-                    error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decode leader's input share");
+                    warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decode leader's input share");
                     self.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
                     report_aggregation.state = ReportAggregationState::Invalid;
@@ -370,7 +370,7 @@ impl AggregationJobDriver {
             ) {
                 Ok(prep_state_and_share) => prep_state_and_share,
                 Err(err) => {
-                    error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
+                    warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
                     self.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "prepare_init_failure")]);
                     report_aggregation.state =
@@ -469,7 +469,7 @@ impl AggregationJobDriver {
                 {
                     Ok(leader_transition) => leader_transition,
                     Err(err) => {
-                        error!(report_nonce = %report_aggregation.nonce, ?err, "Prepare step failed");
+                        warn!(report_nonce = %report_aggregation.nonce, ?err, "Prepare step failed");
                         self.aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "prepare_step_failure")]);
                         report_aggregation.state =
@@ -592,14 +592,14 @@ impl AggregationJobDriver {
                                 ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg))
                             }
                             Err(err) => {
-                                error!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute prepare message");
+                                warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute prepare message");
                                 self.aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "prepare_message_failure")]);
                                 ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                             }
                         }
                     } else {
-                        error!(report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper continued but leader did not");
+                        warn!(report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper continued but leader did not");
                         self.aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "continue_mismatch")]);
                         report_aggregation.state = ReportAggregationState::Invalid;
@@ -616,7 +616,7 @@ impl AggregationJobDriver {
                                     ReportAggregationState::Finished(out_share)
                             }
                             Err(err) => {
-                                error!(report_nonce = %report_aggregation.nonce, ?err, "Could not update batch unit aggregation");
+                                warn!(report_nonce = %report_aggregation.nonce, ?err, "Could not update batch unit aggregation");
                                 self.aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "accumulate_failure")]);
                                 report_aggregation.state =
@@ -624,7 +624,7 @@ impl AggregationJobDriver {
                             }
                         }
                     } else {
-                        error!(report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper finished but leader did not");
+                        warn!(report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper finished but leader did not");
                         self.aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "finish_mismatch")]);
                         report_aggregation.state = ReportAggregationState::Invalid;
@@ -634,7 +634,7 @@ impl AggregationJobDriver {
                 PrepareStepResult::Failed(err) => {
                     // If the helper failed, we move to FAILED immediately.
                     // TODO(#236): is it correct to just record the transition error that the helper reports?
-                    error!(report_nonce = %report_aggregation.nonce, helper_err = ?err, "Helper couldn't step report aggregation");
+                    warn!(report_nonce = %report_aggregation.nonce, helper_err = ?err, "Helper couldn't step report aggregation");
                     self.aggregate_step_failure_counter
                         .add(1, &[KeyValue::new("type", "helper_step_failure")]);
                     report_aggregation.state = ReportAggregationState::Failed(err);

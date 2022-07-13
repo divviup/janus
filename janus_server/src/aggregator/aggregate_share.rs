@@ -424,7 +424,7 @@ where
 
         // We return an internal error since this should be impossible.
         return Err(datastore::Error::User(
-            Error::Internal("batch lifetime overconsumed".into_string()).into(),
+            Error::Internal("batch lifetime overconsumed".to_string()).into(),
         ));
     }
     Ok(())
