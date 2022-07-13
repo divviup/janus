@@ -5957,7 +5957,7 @@ mod tests {
                     .await
                     .unwrap()
                     .is_none());
-                
+
                 let want_aggregate_share_jobs = Vec::from([aggregate_share_job]);
 
                 let got_aggregate_share_jobs = tx.find_aggregate_share_jobs_including_time::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(

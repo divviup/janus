@@ -5395,7 +5395,7 @@ mod tests {
                         > {
                             task_id,
                             unit_interval_start: Time::from_seconds_since_epoch(500),
-                            aggregation_param: aggregation_param,
+                            aggregation_param,
                             aggregate_share: AggregateShare(64),
                             report_count: 5,
                             checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
@@ -5408,7 +5408,7 @@ mod tests {
                         > {
                             task_id,
                             unit_interval_start: Time::from_seconds_since_epoch(1500),
-                            aggregation_param: aggregation_param,
+                            aggregation_param,
                             aggregate_share: AggregateShare(128),
                             report_count: 5,
                             checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
@@ -5421,7 +5421,7 @@ mod tests {
                         > {
                             task_id,
                             unit_interval_start: Time::from_seconds_since_epoch(2000),
-                            aggregation_param: aggregation_param,
+                            aggregation_param,
                             aggregate_share: AggregateShare(256),
                             report_count: 5,
                             checksum: NonceChecksum::get_decoded(&[4; 32]).unwrap(),
@@ -5434,7 +5434,7 @@ mod tests {
                         > {
                             task_id,
                             unit_interval_start: Time::from_seconds_since_epoch(2500),
-                            aggregation_param: aggregation_param,
+                            aggregation_param,
                             aggregate_share: AggregateShare(512),
                             report_count: 5,
                             checksum: NonceChecksum::get_decoded(&[8; 32]).unwrap(),
@@ -5682,17 +5682,30 @@ mod tests {
         // Previous sequence of aggregate share requests should have consumed the batch lifetime for
         // all the batch units. Further requests for any batch units will cause batch lifetime
         // violations.
-        for batch_lifetime_violation_request in [AggregateShareReq {
-            task_id,
-            batch_interval: Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(2000),
-            )
-            .unwrap(),
-            aggregation_param: AggregationParam(1).get_encoded(),
-            report_count: 10,
-            checksum: NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
-        }] {
+        for batch_lifetime_violation_request in [
+            AggregateShareReq {
+                task_id,
+                batch_interval: Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_seconds(2000),
+                )
+                .unwrap(),
+                aggregation_param: AggregationParam(1).get_encoded(),
+                report_count: 10,
+                checksum: NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
+            },
+            AggregateShareReq {
+                task_id,
+                batch_interval: Interval::new(
+                    Time::from_seconds_since_epoch(2000),
+                    Duration::from_seconds(2000),
+                )
+                .unwrap(),
+                aggregation_param: AggregationParam(1).get_encoded(),
+                report_count: 10,
+                checksum: NonceChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
+            },
+        ] {
             let mut resp = warp::test::request()
                 .method("POST")
                 .path("/aggregate_share")
