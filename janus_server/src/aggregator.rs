@@ -8,7 +8,7 @@ pub mod aggregation_job_driver;
 use crate::{
     aggregator::{
         accumulator::Accumulator,
-        aggregate_share::{compute_aggregate_share, validate_batch_lifetime_for_unit_aggregations},
+        aggregate_share::{compute_aggregate_share, validate_batch_lifetime_for_collect},
     },
     datastore::{
         self,
@@ -48,6 +48,7 @@ use prio::{
         PrepareTransition,
     },
 };
+use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     convert::Infallible,
@@ -116,7 +117,7 @@ pub enum Error {
     /// An error from the underlying VDAF library.
     #[error("VDAF error: {0}")]
     Vdaf(#[from] vdaf::VdafError),
-    /// A collect or aggregate share request was rejected because the interval is valid, per §4.6
+    /// A collect or aggregate share request was rejected because the interval is invalid, per §4.6
     #[error("task {1:?}: invalid batch interval: {0}")]
     BatchInvalid(Interval, TaskId),
     /// There are not enough reports in the batch interval to meet the task's minimum batch size.
@@ -1376,21 +1377,8 @@ impl VdafOps {
                     }
 
                     debug!(collect_request = ?req, "Cache miss, creating new collect job UUID");
-                    let aggregation_param = A::AggregationParam::get_decoded(&req.agg_param)?;
-                    let batch_unit_aggregations = tx
-                        .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
-                            task.id,
-                            req.batch_interval,
-                            &aggregation_param,
-                        )
+                    validate_batch_lifetime_for_collect::<L, _, A>(tx, &task, req.batch_interval)
                         .await?;
-                    validate_batch_lifetime_for_unit_aggregations(
-                        tx,
-                        &task,
-                        &batch_unit_aggregations,
-                    )
-                    .await?;
-
                     tx.put_collect_job(req.task_id, req.batch_interval, &req.agg_param)
                         .await
                 })
@@ -1607,20 +1595,18 @@ impl VdafOps {
                             let aggregation_param = A::AggregationParam::get_decoded(
                                 &aggregate_share_req.aggregation_param,
                             )?;
-                            let batch_unit_aggregations = tx
-                                .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
+                            let (batch_unit_aggregations, _) = try_join!(
+                                tx.get_batch_unit_aggregations_for_task_in_interval::<L, A>(
                                     task.id,
                                     aggregate_share_req.batch_interval,
                                     &aggregation_param,
+                                ),
+                                validate_batch_lifetime_for_collect::<L, _, A>(
+                                    tx,
+                                    &task,
+                                    aggregate_share_req.batch_interval,
                                 )
-                                .await?;
-
-                            validate_batch_lifetime_for_unit_aggregations(
-                                tx,
-                                &task,
-                                &batch_unit_aggregations,
-                            )
-                            .await?;
+                            )?;
 
                             let (helper_aggregate_share, report_count, checksum) =
                                 compute_aggregate_share::<L, A>(&task, &batch_unit_aggregations)
@@ -1637,9 +1623,7 @@ impl VdafOps {
                                 report_count,
                                 checksum,
                             };
-
                             tx.put_aggregate_share_job(&aggregate_share_job).await?;
-
                             aggregate_share_job
                         }
                     };
@@ -1782,7 +1766,7 @@ fn build_problem_details_response(error_type: DapProblemType, task_id: Option<Ta
     let status = StatusCode::BAD_REQUEST;
     warp::reply::with_status(
         warp::reply::with_header(
-            warp::reply::json(&serde_json::json!({
+            warp::reply::json(&json!({
                 "type": error_type.type_uri(),
                 "title": error_type.description(),
                 "status": status.as_u16(),
@@ -2200,7 +2184,10 @@ mod tests {
             HpkePrivateKey, Label,
         },
         message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
-        test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
+        test_util::{
+            dummy_vdaf::{self, AggregationParam},
+            install_test_trace_subscriber, run_vdaf,
+        },
         time::test_util::MockClock,
     };
     use opentelemetry::global::meter;
@@ -2210,6 +2197,7 @@ mod tests {
         vdaf::{prio3::Prio3Aes128Count, AggregateShare, Aggregator as _},
     };
     use rand::{thread_rng, Rng};
+    use serde_json::json;
     use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
     use warp::{cors::CorsForbidden, reply::Reply, Rejection};
@@ -2413,7 +2401,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:reportTooLate",
                 "title": "Report could not be processed because it arrived too late.",
@@ -2439,7 +2427,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
@@ -2475,7 +2463,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:outdatedConfig",
                 "title": "The message was generated using an outdated configuration.",
@@ -2507,7 +2495,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:reportTooEarly",
                 "title": "Report could not be processed because it arrived too early.",
@@ -2604,7 +2592,7 @@ mod tests {
         let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": 400,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
@@ -2896,7 +2884,7 @@ mod tests {
         let problem_details: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": 400,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
@@ -2982,7 +2970,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": want_status,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
@@ -3009,7 +2997,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": want_status,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
@@ -3262,7 +3250,7 @@ mod tests {
         let request = AggregateInitializeReq {
             task_id,
             job_id: AggregationJobId::random(),
-            agg_param: Vec::new(),
+            agg_param: AggregationParam(0).get_encoded(),
             report_shares: vec![report_share.clone()],
         };
 
@@ -3329,7 +3317,7 @@ mod tests {
         let request = AggregateInitializeReq {
             task_id,
             job_id: AggregationJobId::random(),
-            agg_param: Vec::new(),
+            agg_param: AggregationParam(0).get_encoded(),
             report_shares: vec![report_share.clone()],
         };
 
@@ -3402,7 +3390,7 @@ mod tests {
         let request = AggregateInitializeReq {
             task_id,
             job_id: AggregationJobId::random(),
-            agg_param: Vec::new(),
+            agg_param: AggregationParam(0).get_encoded(),
             report_shares: vec![report_share.clone(), report_share],
         };
 
@@ -3428,7 +3416,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": want_status,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
@@ -4216,7 +4204,7 @@ mod tests {
                         &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                             aggregation_job_id,
                             task_id,
-                            aggregation_param: (),
+                            aggregation_param: AggregationParam(0),
                             state: AggregationJobState::InProgress,
                         },
                     )
@@ -4270,7 +4258,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
@@ -4324,7 +4312,7 @@ mod tests {
                         &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                             aggregation_job_id,
                             task_id,
-                            aggregation_param: (),
+                            aggregation_param: AggregationParam(0),
                             state: AggregationJobState::InProgress,
                         },
                     )
@@ -4420,7 +4408,7 @@ mod tests {
             Some(AggregationJob {
                 aggregation_job_id,
                 task_id,
-                aggregation_param: (),
+                aggregation_param: AggregationParam(0),
                 state: AggregationJobState::Finished,
             })
         );
@@ -4478,7 +4466,7 @@ mod tests {
                         &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                             aggregation_job_id,
                             task_id,
-                            aggregation_param: (),
+                            aggregation_param: AggregationParam(0),
                             state: AggregationJobState::InProgress,
                         },
                     )
@@ -4535,7 +4523,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
@@ -4608,7 +4596,7 @@ mod tests {
                         &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                             aggregation_job_id,
                             task_id,
-                            aggregation_param: (),
+                            aggregation_param: AggregationParam(0),
                             state: AggregationJobState::InProgress,
                         },
                     )
@@ -4681,7 +4669,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
@@ -4735,7 +4723,7 @@ mod tests {
                         &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                             aggregation_job_id,
                             task_id,
-                            aggregation_param: (),
+                            aggregation_param: AggregationParam(0),
                             state: AggregationJobState::InProgress,
                         },
                     )
@@ -4792,7 +4780,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
@@ -4851,7 +4839,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
@@ -4911,7 +4899,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
                 "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
@@ -5118,8 +5106,8 @@ mod tests {
                     > {
                         task_id: task.id,
                         unit_interval_start: Time::from_seconds_since_epoch(0),
-                        aggregation_param: (),
-                        aggregate_share: dummy_vdaf::AggregateShare(),
+                        aggregation_param: AggregationParam(0),
+                        aggregate_share: dummy_vdaf::AggregateShare(0),
                         report_count: 10,
                         checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
                     })
@@ -5139,7 +5127,7 @@ mod tests {
                 task.min_batch_duration,
             )
             .unwrap(),
-            agg_param: vec![],
+            agg_param: AggregationParam(0).get_encoded(),
         };
 
         let response = warp::test::request()
@@ -5154,14 +5142,15 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
+        // This request will not be allowed due to the batch lifetime already being consumed.
         let invalid_request = CollectReq {
             task_id,
             batch_interval: Interval::new(
                 Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(task.min_batch_duration.as_seconds() * 2),
+                task.min_batch_duration,
             )
             .unwrap(),
-            agg_param: vec![],
+            agg_param: AggregationParam(1).get_encoded(),
         };
 
         let (parts, body) = warp::test::request()
@@ -5179,7 +5168,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchLifetimeExceeded",
                 "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
@@ -5243,7 +5232,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
@@ -5308,7 +5297,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
                 "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
@@ -5327,12 +5316,8 @@ mod tests {
         let (collector_hpke_config, collector_hpke_recipient) =
             generate_hpke_config_and_private_key();
 
-        let mut task = new_dummy_task(
-            task_id,
-            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
-            Role::Helper,
-        );
-        task.max_batch_lifetime = 3;
+        let mut task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
+        task.max_batch_lifetime = 1;
         task.min_batch_duration = Duration::from_seconds(500);
         task.min_batch_size = 10;
         task.collector_hpke_config = collector_hpke_config.clone();
@@ -5340,6 +5325,8 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
+
+        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
         datastore
             .run_tx(|tx| {
@@ -5360,7 +5347,7 @@ mod tests {
                 task.min_batch_duration,
             )
             .unwrap(),
-            aggregation_param: vec![],
+            aggregation_param: AggregationParam(0).get_encoded(),
             report_count: 0,
             checksum: NonceChecksum::default(),
         };
@@ -5385,7 +5372,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:insufficientBatchSize",
                 "title": "There are not enough reports in the batch interval.",
@@ -5395,61 +5382,65 @@ mod tests {
             })
         );
 
-        // Put some batch unit aggregations in the DB
+        use dummy_vdaf::AggregateShare;
+
+        // Put some batch unit aggregations in the DB.
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        Prio3Aes128Count,
-                    > {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(500),
-                        aggregation_param: (),
-                        aggregate_share: AggregateShare::from(vec![Field64::from(64)]),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
-                    })
-                    .await?;
+                    for aggregation_param in [AggregationParam(0), AggregationParam(1)] {
+                        tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                            VERIFY_KEY_LENGTH,
+                            dummy_vdaf::Vdaf,
+                        > {
+                            task_id,
+                            unit_interval_start: Time::from_seconds_since_epoch(500),
+                            aggregation_param,
+                            aggregate_share: AggregateShare(64),
+                            report_count: 5,
+                            checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
+                        })
+                        .await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        Prio3Aes128Count,
-                    > {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(1500),
-                        aggregation_param: (),
-                        aggregate_share: AggregateShare::from(vec![Field64::from(128)]),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
-                    })
-                    .await?;
+                        tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                            VERIFY_KEY_LENGTH,
+                            dummy_vdaf::Vdaf,
+                        > {
+                            task_id,
+                            unit_interval_start: Time::from_seconds_since_epoch(1500),
+                            aggregation_param,
+                            aggregate_share: AggregateShare(128),
+                            report_count: 5,
+                            checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
+                        })
+                        .await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        Prio3Aes128Count,
-                    > {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(2000),
-                        aggregation_param: (),
-                        aggregate_share: AggregateShare::from(vec![Field64::from(256)]),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[4; 32]).unwrap(),
-                    })
-                    .await?;
+                        tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                            VERIFY_KEY_LENGTH,
+                            dummy_vdaf::Vdaf,
+                        > {
+                            task_id,
+                            unit_interval_start: Time::from_seconds_since_epoch(2000),
+                            aggregation_param,
+                            aggregate_share: AggregateShare(256),
+                            report_count: 5,
+                            checksum: NonceChecksum::get_decoded(&[4; 32]).unwrap(),
+                        })
+                        .await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        Prio3Aes128Count,
-                    > {
-                        task_id,
-                        unit_interval_start: Time::from_seconds_since_epoch(2500),
-                        aggregation_param: (),
-                        aggregate_share: AggregateShare::from(vec![Field64::from(512)]),
-                        report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[8; 32]).unwrap(),
-                    })
-                    .await?;
+                        tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                            VERIFY_KEY_LENGTH,
+                            dummy_vdaf::Vdaf,
+                        > {
+                            task_id,
+                            unit_interval_start: Time::from_seconds_since_epoch(2500),
+                            aggregation_param,
+                            aggregate_share: AggregateShare(512),
+                            report_count: 5,
+                            checksum: NonceChecksum::get_decoded(&[8; 32]).unwrap(),
+                        })
+                        .await?;
+                    }
 
                     Ok(())
                 })
@@ -5457,7 +5448,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Specified interval includes too few reports
+        // Specified interval includes too few reports.
         let request = AggregateShareReq {
             task_id,
             batch_interval: Interval::new(
@@ -5465,11 +5456,10 @@ mod tests {
                 Duration::from_seconds(1000),
             )
             .unwrap(),
-            aggregation_param: vec![],
+            aggregation_param: AggregationParam(0).get_encoded(),
             report_count: 5,
             checksum: NonceChecksum::default(),
         };
-
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate_share")
@@ -5490,7 +5480,7 @@ mod tests {
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
-            serde_json::json!({
+            json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:insufficientBatchSize",
                 "title": "There are not enough reports in the batch interval.",
@@ -5502,33 +5492,32 @@ mod tests {
 
         // Make requests that will fail because the checksum or report counts don't match. Note that
         // while these requests fail, they *do* consume batch lifetime.
-        let misaligned_requests = [
-            // Interval is big enough, but checksum doesn't match
+        for misaligned_request in [
+            // Interval is big enough, but checksum doesn't match.
             AggregateShareReq {
                 task_id,
                 batch_interval: Interval::new(
                     Time::from_seconds_since_epoch(0),
-                    Duration::from_seconds(2500),
+                    Duration::from_seconds(2000),
                 )
                 .unwrap(),
-                aggregation_param: vec![],
+                aggregation_param: AggregationParam(0).get_encoded(),
                 report_count: 10,
                 checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
-            }, // Interval is big enough, but report count doesn't match
+            },
+            // Interval is big enough, but report count doesn't match.
             AggregateShareReq {
                 task_id,
                 batch_interval: Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_seconds(2500),
+                    Time::from_seconds_since_epoch(2000),
+                    Duration::from_seconds(2000),
                 )
                 .unwrap(),
-                aggregation_param: vec![],
+                aggregation_param: AggregationParam(0).get_encoded(),
                 report_count: 20,
-                checksum: NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
+                checksum: NonceChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             },
-        ];
-
-        for misaligned_request in misaligned_requests {
+        ] {
             let (parts, body) = warp::test::request()
                 .method("POST")
                 .path("/aggregate_share")
@@ -5549,7 +5538,7 @@ mod tests {
                 serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
             assert_eq!(
                 problem_details,
-                serde_json::json!({
+                json!({
                     "status": StatusCode::BAD_REQUEST.as_u16(),
                     "type": "urn:ietf:params:ppm:dap:error:batchMismatch",
                     "title": "Leader and helper disagree on reports aggregated in a batch.",
@@ -5560,8 +5549,49 @@ mod tests {
             );
         }
 
-        // Intervals are big enough, do not overlap, checksum and report count are good
-        let valid_requests = [
+        // Requests for collection intervals that overlap with but are not identical to previous
+        // collection intervals fail.
+        let all_batch_unit_request = AggregateShareReq {
+            task_id,
+            batch_interval: Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(4000),
+            )
+            .unwrap(),
+            aggregation_param: AggregationParam(0).get_encoded(),
+            report_count: 20,
+            checksum: NonceChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
+        };
+        let mut resp = warp::test::request()
+            .method("POST")
+            .path("/aggregate_share")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, AggregateShareReq::MEDIA_TYPE)
+            .body(all_batch_unit_request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(resp.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
+                "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            }),
+        );
+
+        // Valid requests: intervals are big enough, do not overlap, checksum and report count are
+        // good. Note that these are served "from cache" and not recomputed.
+        for (label, request, expected_result) in [
             (
                 "first and second batch units",
                 AggregateShareReq {
@@ -5571,11 +5601,11 @@ mod tests {
                         Duration::from_seconds(2000),
                     )
                     .unwrap(),
-                    aggregation_param: vec![],
+                    aggregation_param: AggregationParam(0).get_encoded(),
                     report_count: 10,
                     checksum: NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
                 },
-                Field64::from(64 + 128),
+                AggregateShare(64 + 128),
             ),
             (
                 "third and fourth batch units",
@@ -5586,35 +5616,16 @@ mod tests {
                         Duration::from_seconds(2000),
                     )
                     .unwrap(),
-                    aggregation_param: vec![],
+                    aggregation_param: AggregationParam(0).get_encoded(),
                     report_count: 10,
                     checksum: NonceChecksum::get_decoded(&[8 ^ 4; 32]).unwrap(),
                 },
                 // Should get sum over the third and fourth batch units
-                Field64::from(256 + 512),
+                AggregateShare(256 + 512),
             ),
-            (
-                "first, second, third, fourth batch units",
-                AggregateShareReq {
-                    task_id,
-                    batch_interval: Interval::new(
-                        Time::from_seconds_since_epoch(0),
-                        Duration::from_seconds(4000),
-                    )
-                    .unwrap(),
-                    aggregation_param: vec![],
-                    report_count: 20,
-                    checksum: NonceChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
-                },
-                // Should get sum over the third and fourth batch units
-                Field64::from(64 + 128 + 256 + 512),
-            ),
-        ];
-
-        for (label, request, expected_result) in valid_requests {
+        ] {
             // Request the aggregate share multiple times. If the request parameters don't change,
-            // then there is no batch lifetime violation and all requests should succeed, being
-            // served from cache after the first time.
+            // then there is no batch lifetime violation and all requests should succeed.
             for iteration in 0..3 {
                 let (parts, body) = warp::test::request()
                     .method("POST")
@@ -5634,14 +5645,14 @@ mod tests {
                 assert_eq!(
                     parts.status,
                     StatusCode::OK,
-                    "test case: {} iteration: {}",
+                    "test case: {:?}, iteration: {}",
                     label,
                     iteration
                 );
                 assert_eq!(
                     parts.headers.get(CONTENT_TYPE).unwrap(),
                     AggregateShareResp::MEDIA_TYPE,
-                    "test case: {} iteration: {}",
+                    "test case: {:?}, iteration: {}",
                     label,
                     iteration
                 );
@@ -5659,13 +5670,11 @@ mod tests {
 
                 // Should get the sum over the first and second aggregate shares
                 let decoded_aggregate_share =
-                    <AggregateShare<Field64>>::try_from(aggregate_share.as_ref()).unwrap();
+                    AggregateShare::try_from(aggregate_share.as_ref()).unwrap();
                 assert_eq!(
-                    decoded_aggregate_share,
-                    AggregateShare::from(vec![expected_result]),
-                    "test case: {} iteration: {}",
-                    label,
-                    iteration
+                    decoded_aggregate_share, expected_result,
+                    "test case: {:?}, iteration: {}",
+                    label, iteration
                 );
             }
         }
@@ -5673,45 +5682,58 @@ mod tests {
         // Previous sequence of aggregate share requests should have consumed the batch lifetime for
         // all the batch units. Further requests for any batch units will cause batch lifetime
         // violations.
-        let batch_lifetime_violation_request = AggregateShareReq {
-            task_id,
-            batch_interval: Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(3000),
-            )
-            .unwrap(),
-            aggregation_param: vec![],
-            report_count: 10,
-            checksum: NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
-        };
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path("/aggregate_share")
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, AggregateShareReq::MEDIA_TYPE)
-            .body(batch_lifetime_violation_request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response()
-            .into_parts();
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            serde_json::json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:batchLifetimeExceeded",
-                "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
-                "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
-                "instance": "..",
-                "taskid": format!("{}", task_id),
-            })
-        );
+        for batch_lifetime_violation_request in [
+            AggregateShareReq {
+                task_id,
+                batch_interval: Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_seconds(2000),
+                )
+                .unwrap(),
+                aggregation_param: AggregationParam(1).get_encoded(),
+                report_count: 10,
+                checksum: NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
+            },
+            AggregateShareReq {
+                task_id,
+                batch_interval: Interval::new(
+                    Time::from_seconds_since_epoch(2000),
+                    Duration::from_seconds(2000),
+                )
+                .unwrap(),
+                aggregation_param: AggregationParam(1).get_encoded(),
+                report_count: 10,
+                checksum: NonceChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
+            },
+        ] {
+            let mut resp = warp::test::request()
+                .method("POST")
+                .path("/aggregate_share")
+                .header(
+                    "DAP-Auth-Token",
+                    task.primary_aggregator_auth_token().as_bytes(),
+                )
+                .header(CONTENT_TYPE, AggregateShareReq::MEDIA_TYPE)
+                .body(batch_lifetime_violation_request.get_encoded())
+                .filter(&filter)
+                .await
+                .unwrap()
+                .into_response();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+            let problem_details: serde_json::Value =
+                serde_json::from_slice(&body::to_bytes(resp.body_mut()).await.unwrap()).unwrap();
+            assert_eq!(
+                problem_details,
+                json!({
+                    "status": StatusCode::BAD_REQUEST.as_u16(),
+                    "type": "urn:ietf:params:ppm:dap:error:batchLifetimeExceeded",
+                    "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                    "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                    "instance": "..",
+                    "taskid": format!("{}", task_id),
+                })
+            );
+        }
     }
 
     fn current_hpke_key(

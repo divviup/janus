@@ -1,23 +1,21 @@
 //! Implements a lightweight dummy VDAF for use in tests.
 
 use prio::{
-    codec::{Decode, Encode},
+    codec::{CodecError, Decode, Encode},
     vdaf::{self, Aggregatable, PrepareTransition, VdafError},
 };
-use std::convert::Infallible;
 use std::fmt::Debug;
 use std::sync::Arc;
-
-pub type Vdaf = VdafWithAggregationParameter<()>;
+use std::{convert::Infallible, io::Cursor};
 
 #[derive(Clone)]
-pub struct VdafWithAggregationParameter<A: Clone + Debug + Encode + Decode> {
-    prep_init_fn: Arc<dyn Fn(&A) -> Result<(), VdafError> + 'static + Send + Sync>,
+pub struct Vdaf {
+    prep_init_fn: Arc<dyn Fn(&AggregationParam) -> Result<(), VdafError> + 'static + Send + Sync>,
     prep_step_fn:
         Arc<dyn Fn() -> Result<PrepareTransition<Self, 0>, VdafError> + 'static + Send + Sync>,
 }
 
-impl<A: Clone + Debug + Encode + Decode> Debug for VdafWithAggregationParameter<A> {
+impl Debug for Vdaf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Vdaf")
             .field("prep_init_result", &"[omitted]")
@@ -26,7 +24,7 @@ impl<A: Clone + Debug + Encode + Decode> Debug for VdafWithAggregationParameter<
     }
 }
 
-impl<A: Clone + Debug + Encode + Decode> VdafWithAggregationParameter<A> {
+impl Vdaf {
     /// The length of the verify key parameter for fake VDAF instantiations.
     pub const VERIFY_KEY_LENGTH: usize = 0;
 
@@ -39,7 +37,10 @@ impl<A: Clone + Debug + Encode + Decode> VdafWithAggregationParameter<A> {
         }
     }
 
-    pub fn with_prep_init_fn<F: Fn(&A) -> Result<(), VdafError>>(mut self, f: F) -> Self
+    pub fn with_prep_init_fn<F: Fn(&AggregationParam) -> Result<(), VdafError>>(
+        mut self,
+        f: F,
+    ) -> Self
     where
         F: 'static + Send + Sync,
     {
@@ -59,16 +60,16 @@ impl<A: Clone + Debug + Encode + Decode> VdafWithAggregationParameter<A> {
     }
 }
 
-impl<A: Clone + Debug + Encode + Decode> Default for VdafWithAggregationParameter<A> {
+impl Default for Vdaf {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<A: Clone + Debug + Encode + Decode> vdaf::Vdaf for VdafWithAggregationParameter<A> {
+impl vdaf::Vdaf for Vdaf {
     type Measurement = ();
     type AggregateResult = ();
-    type AggregationParam = A;
+    type AggregationParam = AggregationParam;
     type InputShare = ();
     type OutputShare = OutputShare;
     type AggregateShare = AggregateShare;
@@ -78,7 +79,7 @@ impl<A: Clone + Debug + Encode + Decode> vdaf::Vdaf for VdafWithAggregationParam
     }
 }
 
-impl<A: Clone + Debug + Encode + Decode> vdaf::Aggregator<0> for VdafWithAggregationParameter<A> {
+impl vdaf::Aggregator<0> for Vdaf {
     type PrepareState = ();
     type PrepareShare = ();
     type PrepareMessage = ();
@@ -113,15 +114,34 @@ impl<A: Clone + Debug + Encode + Decode> vdaf::Aggregator<0> for VdafWithAggrega
     fn aggregate<M: IntoIterator<Item = Self::OutputShare>>(
         &self,
         _: &Self::AggregationParam,
-        _: M,
+        output_shares: M,
     ) -> Result<Self::AggregateShare, VdafError> {
-        Ok(AggregateShare())
+        let mut aggregate_share = AggregateShare(0);
+        for output_share in output_shares {
+            aggregate_share.accumulate(&output_share)?;
+        }
+        Ok(aggregate_share)
     }
 }
 
-impl<A: Clone + Debug + Encode + Decode> vdaf::Client for VdafWithAggregationParameter<A> {
+impl vdaf::Client for Vdaf {
     fn shard(&self, _: &Self::Measurement) -> Result<Vec<Self::InputShare>, VdafError> {
         Ok(vec![(), ()])
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AggregationParam(pub u8);
+
+impl Encode for AggregationParam {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.0.encode(bytes);
+    }
+}
+
+impl Decode for AggregationParam {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self(u8::decode(bytes)?))
     }
 }
 
@@ -143,36 +163,39 @@ impl From<&OutputShare> for Vec<u8> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateShare();
+pub struct AggregateShare(pub u64);
 
 impl Aggregatable for AggregateShare {
     type OutputShare = OutputShare;
 
-    fn merge(&mut self, _: &Self) -> Result<(), VdafError> {
+    fn merge(&mut self, other: &Self) -> Result<(), VdafError> {
+        self.0 += other.0;
         Ok(())
     }
 
     fn accumulate(&mut self, _: &Self::OutputShare) -> Result<(), VdafError> {
+        self.0 += 1;
         Ok(())
     }
 }
 
 impl From<OutputShare> for AggregateShare {
     fn from(_: OutputShare) -> Self {
-        Self()
+        Self(1)
     }
 }
 
 impl TryFrom<&[u8]> for AggregateShare {
-    type Error = Infallible;
+    type Error = CodecError;
 
-    fn try_from(_: &[u8]) -> Result<Self, Self::Error> {
-        Ok(Self())
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let val = u64::get_decoded(bytes)?;
+        Ok(Self(val))
     }
 }
 
 impl From<&AggregateShare> for Vec<u8> {
-    fn from(_: &AggregateShare) -> Self {
-        Self::new()
+    fn from(aggregate_share: &AggregateShare) -> Self {
+        aggregate_share.0.get_encoded()
     }
 }

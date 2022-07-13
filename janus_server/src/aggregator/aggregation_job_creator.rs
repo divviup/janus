@@ -39,10 +39,7 @@ pub trait VdafHasAggregationParameter: private::Sealed {}
 impl<I, P, const L: usize> VdafHasAggregationParameter for prio::vdaf::poplar1::Poplar1<I, P, L> {}
 
 #[cfg(test)]
-impl VdafHasAggregationParameter
-    for janus_core::test_util::dummy_vdaf::VdafWithAggregationParameter<u8>
-{
-}
+impl VdafHasAggregationParameter for janus_core::test_util::dummy_vdaf::Vdaf {}
 
 mod private {
     pub trait Sealed {}
@@ -50,7 +47,7 @@ mod private {
     impl<I, P, const L: usize> Sealed for prio::vdaf::poplar1::Poplar1<I, P, L> {}
 
     #[cfg(test)]
-    impl Sealed for janus_core::test_util::dummy_vdaf::VdafWithAggregationParameter<u8> {}
+    impl Sealed for janus_core::test_util::dummy_vdaf::Vdaf {}
 }
 
 pub struct AggregationJobCreator<C: Clock> {
@@ -451,7 +448,10 @@ mod tests {
     use janus_core::{
         message::{Interval, Nonce, Report, Role, TaskId, Time},
         task::VdafInstance,
-        test_util::{dummy_vdaf::VdafWithAggregationParameter, install_test_trace_subscriber},
+        test_util::{
+            dummy_vdaf::{self, AggregationParam},
+            install_test_trace_subscriber,
+        },
         time::{test_util::MockClock, Clock},
     };
     use prio::{
@@ -799,9 +799,8 @@ mod tests {
         // more reports are accepted for a time interval after that interval already has a collect
         // job.
 
-        type FakeVdaf = VdafWithAggregationParameter<u8>;
-        const VERIFY_KEY_LENGTH: usize = FakeVdaf::VERIFY_KEY_LENGTH;
-        let vdaf = FakeVdaf::new();
+        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+        let vdaf = dummy_vdaf::Vdaf::new();
 
         let task_id = TaskId::random();
         let task = new_dummy_task(task_id, crate::task::VdafInstance::Fake, Role::Leader);
@@ -851,29 +850,30 @@ mod tests {
             max_aggregation_job_size: MAX_AGGREGATION_JOB_SIZE,
         };
         job_creator
-            .create_aggregation_jobs_for_task_with_param::<VERIFY_KEY_LENGTH, FakeVdaf>(&task)
+            .create_aggregation_jobs_for_task_with_param::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
+                &task,
+            )
             .await
             .unwrap();
 
         // Verify, there should be no aggregation jobs yet, because there are no collect jobs to
         // provide aggregation parameters.
-        let agg_jobs =
-            job_creator
-                .datastore
-                .run_tx(|tx| {
-                    let vdaf = vdaf.clone();
-                    Box::pin(async move {
-                        Ok(read_aggregate_jobs_for_task_generic::<
-                            VERIFY_KEY_LENGTH,
-                            FakeVdaf,
-                            Vec<_>,
-                            _,
-                        >(tx, task_id, vdaf)
-                        .await)
-                    })
+        let agg_jobs = job_creator
+            .datastore
+            .run_tx(|tx| {
+                let vdaf = vdaf.clone();
+                Box::pin(async move {
+                    Ok(read_aggregate_jobs_for_task_generic::<
+                        VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                        Vec<_>,
+                        _,
+                    >(tx, task_id, vdaf)
+                    .await)
                 })
-                .await
-                .unwrap();
+            })
+            .await
+            .unwrap();
         assert!(agg_jobs.count() == 0);
 
         job_creator
@@ -908,33 +908,34 @@ mod tests {
 
         // Run again, this time it should create some aggregation jobs.
         job_creator
-            .create_aggregation_jobs_for_task_with_param::<VERIFY_KEY_LENGTH, FakeVdaf>(&task)
+            .create_aggregation_jobs_for_task_with_param::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
+                &task,
+            )
             .await
             .unwrap();
 
         // Verify.
-        let agg_jobs =
-            job_creator
-                .datastore
-                .run_tx(|tx| {
-                    let vdaf = vdaf.clone();
-                    Box::pin(async move {
-                        Ok(read_aggregate_jobs_for_task_generic::<
-                            VERIFY_KEY_LENGTH,
-                            FakeVdaf,
-                            Vec<_>,
-                            _,
-                        >(tx, task_id, vdaf)
-                        .await)
-                    })
+        let agg_jobs = job_creator
+            .datastore
+            .run_tx(|tx| {
+                let vdaf = vdaf.clone();
+                Box::pin(async move {
+                    Ok(read_aggregate_jobs_for_task_generic::<
+                        VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                        Vec<_>,
+                        _,
+                    >(tx, task_id, vdaf)
+                    .await)
                 })
-                .await
-                .unwrap()
-                .collect::<Vec<(
-                    AggregationJobId,
-                    Vec<Nonce>,
-                    <FakeVdaf as Vdaf>::AggregationParam,
-                )>>();
+            })
+            .await
+            .unwrap()
+            .collect::<Vec<(
+                AggregationJobId,
+                Vec<Nonce>,
+                <dummy_vdaf::Vdaf as Vdaf>::AggregationParam,
+            )>>();
 
         let mut seen_pairs = Vec::new();
         let mut aggregation_jobs_per_aggregation_param = HashMap::new();
@@ -964,15 +965,15 @@ mod tests {
         assert_eq!(agg_jobs.len(), 5);
         assert_eq!(
             aggregation_jobs_per_aggregation_param,
-            HashMap::from([(7u8, 2usize), (11u8, 3usize)])
+            HashMap::from([(AggregationParam(7), 2), (AggregationParam(11), 3)])
         );
         let mut expected_pairs = Vec::with_capacity(MAX_AGGREGATION_JOB_SIZE * 3 + 2);
         for report in batch_1_reports.iter() {
-            expected_pairs.push((report.nonce(), 11u8));
+            expected_pairs.push((report.nonce(), AggregationParam(11)));
         }
         for report in batch_2_reports.iter() {
-            expected_pairs.push((report.nonce(), 7u8));
-            expected_pairs.push((report.nonce(), 11u8));
+            expected_pairs.push((report.nonce(), AggregationParam(7)));
+            expected_pairs.push((report.nonce(), AggregationParam(11)));
         }
         seen_pairs.sort();
         expected_pairs.sort();
@@ -981,30 +982,31 @@ mod tests {
         // Run once more, and confirm that no further aggregation jobs are created.
         // Run again, this time it should create some aggregation jobs.
         job_creator
-            .create_aggregation_jobs_for_task_with_param::<VERIFY_KEY_LENGTH, FakeVdaf>(&task)
+            .create_aggregation_jobs_for_task_with_param::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
+                &task,
+            )
             .await
             .unwrap();
 
         // We should see the same aggregation jobs as before, because the newly created aggregation
         // jobs should have satisfied all the collect jobs.
-        let mut quiescent_check_agg_jobs =
-            job_creator
-                .datastore
-                .run_tx(|tx| {
-                    let vdaf = vdaf.clone();
-                    Box::pin(async move {
-                        Ok(read_aggregate_jobs_for_task_generic::<
-                            VERIFY_KEY_LENGTH,
-                            FakeVdaf,
-                            Vec<_>,
-                            _,
-                        >(tx, task_id, vdaf)
-                        .await)
-                    })
+        let mut quiescent_check_agg_jobs = job_creator
+            .datastore
+            .run_tx(|tx| {
+                let vdaf = vdaf.clone();
+                Box::pin(async move {
+                    Ok(read_aggregate_jobs_for_task_generic::<
+                        VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                        Vec<_>,
+                        _,
+                    >(tx, task_id, vdaf)
+                    .await)
                 })
-                .await
-                .unwrap()
-                .collect::<Vec<_>>();
+            })
+            .await
+            .unwrap()
+            .collect::<Vec<_>>();
         assert_eq!(agg_jobs.len(), quiescent_check_agg_jobs.len());
         let mut agg_jobs = agg_jobs;
         agg_jobs.sort();
