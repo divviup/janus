@@ -158,7 +158,7 @@ peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
 
 impl Error {
     /// Provides a human-readable error code identifying the error type.
-    fn error_code(self: &Self) -> &'static str {
+    fn error_code(&self) -> &'static str {
         match self {
             Error::InvalidConfiguration(_) => "invalid_configuration",
             Error::MessageDecode(_) => "message_decode",
@@ -2149,7 +2149,7 @@ fn aggregator_filter<C: Clock>(
         aggregate_share_routing,
         aggregate_share_responding,
         warp::cors().build(),
-        response_time_recorder.clone(),
+        response_time_recorder,
         "aggregate_share",
     );
 
