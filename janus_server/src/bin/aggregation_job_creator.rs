@@ -9,7 +9,7 @@ use structopt::StructOpt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    janus_main::<Options, _, Config, _, _>(RealClock::default(), |ctx| async move {
+    janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
         // Start creating aggregation jobs.
         Arc::new(AggregationJobCreator::new(
             ctx.datastore,

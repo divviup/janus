@@ -13,7 +13,7 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    janus_main::<Options, _, Config, _, _>(RealClock::default(), |ctx| async move {
+    janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
         let shutdown_signal =
             setup_signal_handler().context("failed to register SIGTERM signal handler")?;
 
