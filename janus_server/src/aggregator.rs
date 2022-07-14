@@ -156,6 +156,36 @@ peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
     Internal(String),
 }
 
+impl Error {
+    /// Provides a human-readable error code identifying the error type.
+    fn error_code(&self) -> &'static str {
+        match self {
+            Error::InvalidConfiguration(_) => "invalid_configuration",
+            Error::MessageDecode(_) => "message_decode",
+            Error::Message(_) => "message",
+            Error::ReportTooLate(_, _) => "report_too_late",
+            Error::ReportTooEarly(_, _) => "report_too_early",
+            Error::UnrecognizedMessage(_, _) => "unrecognized_message",
+            Error::UnrecognizedTask(_) => "unrecognized_task",
+            Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",
+            Error::UnrecognizedCollectJob(_) => "unrecognized_collect_job",
+            Error::OutdatedHpkeConfig(_, _) => "outdated_hpke_config",
+            Error::UnauthorizedRequest(_) => "unauthorized_request",
+            Error::Datastore(_) => "datastore",
+            Error::Vdaf(_) => "vdaf",
+            Error::BatchInvalid(_, _) => "batch_invalid",
+            Error::InsufficientBatchSize(_, _) => "insufficient_batch_size",
+            Error::Url(_) => "url",
+            Error::BatchMismatch { .. } => "batch_mismatch",
+            Error::BatchLifetimeExceeded(_) => "batch_lifetime_exceeded",
+            Error::Hpke(_) => "hpke",
+            Error::TaskParameters(_) => "task_parameters",
+            Error::HttpClient(_) => "http_client",
+            Error::Internal(_) => "internal",
+        }
+    }
+}
+
 // This From implementation ensures that we don't end up with e.g.
 // Error::Datastore(datastore::Error::User(Error::...)) by automatically unwrapping to the internal
 // aggregator error if converting a datastore::Error::User that contains an Error. Other
@@ -846,7 +876,7 @@ impl VdafOps {
             leader_report,
             &report.associated_data(),
         ) {
-            error!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
+            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
             upload_decrypt_failure_counter.add(1, &[]);
             return Ok(());
         }
@@ -941,7 +971,7 @@ impl VdafOps {
                 .hpke_keys
                 .get(&report_share.encrypted_input_share.config_id())
                 .ok_or_else(|| {
-                    error!(
+                    warn!(
                         config_id = ?report_share.encrypted_input_share.config_id(),
                         "Helper encrypted input share references unknown HPKE config ID"
                     );
@@ -960,7 +990,7 @@ impl VdafOps {
                     &report_share.associated_data(task_id),
                 )
                 .map_err(|err| {
-                    error!(
+                    warn!(
                         ?task_id,
                         nonce = %report_share.nonce,
                         %err,
@@ -980,7 +1010,7 @@ impl VdafOps {
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext)
                     .map_err(|err| {
-                        error!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode helper's input share");
+                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode helper's input share");
                         aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "input_share_decode_failure")]);
                         ReportShareError::VdafPrepError
@@ -1000,7 +1030,7 @@ impl VdafOps {
                         &input_share,
                     )
                     .map_err(|err| {
-                        error!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_init report share");
+                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_init report share");
                         aggregate_step_failure_counter
                             .add(1, &[KeyValue::new("type", "prepare_init_failure")]);
                         ReportShareError::VdafPrepError
@@ -1255,7 +1285,7 @@ impl VdafOps {
                             }
 
                             Err(err) => {
-                                error!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
+                                warn!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
                                 aggregate_step_failure_counter
                                     .add(1, &[KeyValue::new("type", "prepare_step_failure")]);
                                 report_aggregation.state =
@@ -1787,103 +1817,100 @@ fn build_problem_details_response(error_type: DapProblemType, task_id: Option<Ta
 }
 
 /// Produces a closure that will transform applicable errors into a problem details JSON object
-/// (See RFC 7807) and update a metrics counter. The returned closure is meant to be used in a warp
-/// `map` filter.
-fn error_handler<R: Reply>(
-    request_status_counter: &Counter<u64>,
+/// (see RFC 7807) and update a metrics counter tracking the error status of the result as well as
+/// timing information. The returned closure is meant to be used in a warp `with` filter.
+fn error_handler<F, T>(
+    response_time_recorder: ValueRecorder<f64>,
     name: &'static str,
-) -> impl Fn(Result<R, Error>) -> warp::reply::Response + Clone {
-    let bound_counter_success = request_status_counter.bind(&[
-        KeyValue::new("endpoint", name),
-        KeyValue::new("status", "success"),
-    ]);
-    let bound_counter_error = request_status_counter.bind(&[
-        KeyValue::new("endpoint", name),
-        KeyValue::new("status", "error"),
-    ]);
-
-    move |result| {
-        if let Err(err) = &result {
-            error!(%err, endpoint = name, "Error handling aggregator endpoint");
-            bound_counter_error.add(1);
-        } else {
-            bound_counter_success.add(1);
-        }
-        match result {
-            Ok(reply) => reply.into_response(),
-            Err(Error::InvalidConfiguration(_)) => {
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
-            }
-            Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
-            Err(Error::ReportTooLate(_, task_id)) => {
-                build_problem_details_response(DapProblemType::ReportTooLate, Some(task_id))
-            }
-            Err(Error::UnrecognizedMessage(_, task_id)) => {
-                build_problem_details_response(DapProblemType::UnrecognizedMessage, task_id)
-            }
-            Err(Error::UnrecognizedTask(task_id)) => {
-                // TODO(#237): ensure that a helper returns HTTP 404 or 403 when this happens.
-                build_problem_details_response(DapProblemType::UnrecognizedTask, Some(task_id))
-            }
-            Err(Error::UnrecognizedAggregationJob(_, task_id)) => build_problem_details_response(
-                DapProblemType::UnrecognizedAggregationJob,
-                Some(task_id),
-            ),
-            Err(Error::UnrecognizedCollectJob(_)) => StatusCode::NOT_FOUND.into_response(),
-            Err(Error::OutdatedHpkeConfig(_, task_id)) => {
-                build_problem_details_response(DapProblemType::OutdatedConfig, Some(task_id))
-            }
-            Err(Error::ReportTooEarly(_, task_id)) => {
-                build_problem_details_response(DapProblemType::ReportTooEarly, Some(task_id))
-            }
-            Err(Error::UnauthorizedRequest(task_id)) => {
-                build_problem_details_response(DapProblemType::UnauthorizedRequest, Some(task_id))
-            }
-            Err(Error::BatchInvalid(_, task_id)) => {
-                build_problem_details_response(DapProblemType::BatchInvalid, Some(task_id))
-            }
-            Err(Error::InsufficientBatchSize(_, task_id)) => {
-                build_problem_details_response(DapProblemType::InsufficientBatchSize, Some(task_id))
-            }
-            Err(Error::BatchMismatch { task_id, .. }) => {
-                build_problem_details_response(DapProblemType::BatchMismatch, Some(task_id))
-            }
-            Err(Error::BatchLifetimeExceeded(task_id)) => {
-                build_problem_details_response(DapProblemType::BatchLifetimeExceeded, Some(task_id))
-            }
-            Err(Error::Hpke(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Err(Error::HttpClient(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            Err(Error::TaskParameters(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        }
-    }
-}
-
-/// Factory that produces a closure that will wrap a `warp::Filter`, measuring the time that it
-/// takes to run, and recording it in metrics.
-fn timing_wrapper<F, T>(
-    value_recorder: &ValueRecorder<f64>,
-    name: &'static str,
-) -> impl Fn(F) -> BoxedFilter<(T,)>
+) -> impl Fn(F) -> BoxedFilter<(Response,)>
 where
-    F: Filter<Extract = (T,), Error = Rejection> + Clone + Send + Sync + 'static,
+    F: Filter<Extract = (Result<T, Error>,), Error = Rejection> + Clone + Send + Sync + 'static,
     T: Reply,
 {
-    let bound_value_recorder = value_recorder.bind(&[KeyValue::new("endpoint", name)]);
     move |filter| {
+        let response_time_recorder = response_time_recorder.clone();
         warp::any()
             .map(Instant::now)
             .and(filter)
-            .map({
-                let bound_value_recorder = bound_value_recorder.clone();
-                move |start: Instant, reply| {
-                    let elapsed = start.elapsed().as_secs_f64();
-                    bound_value_recorder.record(elapsed);
-                    reply
+            .map(move |start: Instant, result: Result<T, Error>| {
+                let error_code = if let Err(err) = &result {
+                    warn!(%err, endpoint = name, "Error handling aggregator endpoint");
+                    err.error_code()
+                } else {
+                    ""
+                };
+                response_time_recorder.record(
+                    start.elapsed().as_secs_f64(),
+                    &[
+                        KeyValue::new("endpoint", name),
+                        KeyValue::new("error_code", error_code),
+                    ],
+                );
+
+                match result {
+                    Ok(reply) => reply.into_response(),
+                    Err(Error::InvalidConfiguration(_)) => {
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                    }
+                    Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
+                    Err(Error::ReportTooLate(_, task_id)) => {
+                        build_problem_details_response(DapProblemType::ReportTooLate, Some(task_id))
+                    }
+                    Err(Error::UnrecognizedMessage(_, task_id)) => {
+                        build_problem_details_response(DapProblemType::UnrecognizedMessage, task_id)
+                    }
+                    Err(Error::UnrecognizedTask(task_id)) => {
+                        // TODO(#237): ensure that a helper returns HTTP 404 or 403 when this happens.
+                        build_problem_details_response(
+                            DapProblemType::UnrecognizedTask,
+                            Some(task_id),
+                        )
+                    }
+                    Err(Error::UnrecognizedAggregationJob(_, task_id)) => {
+                        build_problem_details_response(
+                            DapProblemType::UnrecognizedAggregationJob,
+                            Some(task_id),
+                        )
+                    }
+                    Err(Error::UnrecognizedCollectJob(_)) => StatusCode::NOT_FOUND.into_response(),
+                    Err(Error::OutdatedHpkeConfig(_, task_id)) => build_problem_details_response(
+                        DapProblemType::OutdatedConfig,
+                        Some(task_id),
+                    ),
+                    Err(Error::ReportTooEarly(_, task_id)) => build_problem_details_response(
+                        DapProblemType::ReportTooEarly,
+                        Some(task_id),
+                    ),
+                    Err(Error::UnauthorizedRequest(task_id)) => build_problem_details_response(
+                        DapProblemType::UnauthorizedRequest,
+                        Some(task_id),
+                    ),
+                    Err(Error::BatchInvalid(_, task_id)) => {
+                        build_problem_details_response(DapProblemType::BatchInvalid, Some(task_id))
+                    }
+                    Err(Error::InsufficientBatchSize(_, task_id)) => {
+                        build_problem_details_response(
+                            DapProblemType::InsufficientBatchSize,
+                            Some(task_id),
+                        )
+                    }
+                    Err(Error::BatchMismatch { task_id, .. }) => {
+                        build_problem_details_response(DapProblemType::BatchMismatch, Some(task_id))
+                    }
+                    Err(Error::BatchLifetimeExceeded(task_id)) => build_problem_details_response(
+                        DapProblemType::BatchLifetimeExceeded,
+                        Some(task_id),
+                    ),
+                    Err(Error::Hpke(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::HttpClient(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::TaskParameters(_)) => {
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                    }
                 }
             })
             .boxed()
@@ -1919,8 +1946,7 @@ fn compose_common_wrappers<F1, F2, T>(
     route_filter: F1,
     response_filter: F2,
     cors: Cors,
-    response_counter: &Counter<u64>,
-    timing_value_recorder: &ValueRecorder<f64>,
+    response_time_recorder: ValueRecorder<f64>,
     name: &'static str,
 ) -> BoxedFilter<(impl Reply,)>
 where
@@ -1931,9 +1957,8 @@ where
     route_filter
         .and(
             response_filter
-                .map(error_handler(response_counter, name))
+                .with(warp::wrap_fn(error_handler(response_time_recorder, name)))
                 .with(cors)
-                .with(warp::wrap_fn(timing_wrapper(timing_value_recorder, name)))
                 .with(trace::named(name)),
         )
         .boxed()
@@ -1952,13 +1977,9 @@ fn aggregator_filter<C: Clock>(
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
     let meter = opentelemetry::global::meter("janus_server");
-    let response_counter = meter
-        .u64_counter("aggregator_response")
-        .with_description("Success and failure responses to incoming requests.")
-        .init();
-    let time_value_recorder = meter
+    let response_time_recorder = meter
         .f64_value_recorder("aggregator_response_time")
-        .with_description("Elapsed time handling incoming requests.")
+        .with_description("Elapsed time handling incoming requests, by endpoint & status.")
         .with_unit(Unit::new("seconds"))
         .init();
 
@@ -1989,8 +2010,7 @@ fn aggregator_filter<C: Clock>(
             .allow_method("GET")
             .max_age(CORS_PREFLIGHT_CACHE_AGE)
             .build(),
-        &response_counter,
-        &time_value_recorder,
+        response_time_recorder.clone(),
         "hpke_config",
     );
 
@@ -2015,8 +2035,7 @@ fn aggregator_filter<C: Clock>(
             .allow_header("content-type")
             .max_age(CORS_PREFLIGHT_CACHE_AGE)
             .build(),
-        &response_counter,
-        &time_value_recorder,
+        response_time_recorder.clone(),
         "upload",
     );
 
@@ -2053,8 +2072,7 @@ fn aggregator_filter<C: Clock>(
         aggregate_routing,
         aggregate_responding,
         warp::cors().build(),
-        &response_counter,
-        &time_value_recorder,
+        response_time_recorder.clone(),
         "aggregate",
     );
 
@@ -2078,8 +2096,7 @@ fn aggregator_filter<C: Clock>(
         collect_routing,
         collect_responding,
         warp::cors().build(),
-        &response_counter,
-        &time_value_recorder,
+        response_time_recorder.clone(),
         "collect",
     );
 
@@ -2105,8 +2122,7 @@ fn aggregator_filter<C: Clock>(
         collect_jobs_routing,
         collect_jobs_responding,
         warp::cors().build(),
-        &response_counter,
-        &time_value_recorder,
+        response_time_recorder.clone(),
         "collect_jobs",
     );
 
@@ -2133,8 +2149,7 @@ fn aggregator_filter<C: Clock>(
         aggregate_share_routing,
         aggregate_share_responding,
         warp::cors().build(),
-        &response_counter,
-        &time_value_recorder,
+        response_time_recorder,
         "aggregate_share",
     );
 
