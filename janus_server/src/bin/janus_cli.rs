@@ -82,6 +82,7 @@ async fn create_datastore_key(
     k8s_namespace: &str,
     k8s_secret_name: &str,
 ) -> Result<()> {
+    info!("Creating datastore key");
     let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client, k8s_namespace);
 
     // Generate a random datastore key & encode it into unpadded base64 as will be expected by
