@@ -1,6 +1,6 @@
 FROM rust:1.62.0-alpine as builder
 ARG BINARY=aggregator
-RUN apk add libc-dev openssl-dev
+RUN apk add libc-dev
 
 WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
