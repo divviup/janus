@@ -16,6 +16,7 @@ test-util = [
     "dep:futures",
     "dep:kube",
     "dep:serde_json",
+    "dep:tempfile",
     "dep:tracing",
     "dep:tracing-log",
     "dep:tracing-subscriber",
@@ -45,6 +46,7 @@ tokio = { version = "^1.19", features = ["rt"] }
 assert_matches = { version = "1", optional = true }
 serde_json = { version = "1.0.82", optional = true }
 futures = { version = "0.3.21", optional = true }
+tempfile = { version = "3", optional = true }
 tracing = { version = "0.1.34", optional = true }
 tracing-log = { version = "0.1.3", optional = true }
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"], optional = true }
