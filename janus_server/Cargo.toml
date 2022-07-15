@@ -26,7 +26,7 @@ futures = "0.3.21"
 hex = "0.4.3"
 hpke-dispatch = "0.3.0"
 http = "0.2.8"
-hyper = "0.14.19"
+hyper = "0.14.20"
 itertools = "0.10.3"
 janus_core = { path = "../janus_core", features = ["database"] }
 lazy_static = { version = "1", optional = true }
@@ -64,7 +64,7 @@ warp = { version = "^0.3", features = ["tls"] }
 [dev-dependencies]
 assert_matches = "1"
 hex = { version = "0.4.3", features = ["serde"] }
-hyper = "0.14.19"
+hyper = "0.14.20"
 janus_server = { path = ".", features = ["test-util"] }
 libc = "0.2.126"
 mockito = "0.31.0"
