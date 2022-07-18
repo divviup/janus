@@ -161,23 +161,24 @@ fn parse_metadata_entry(input: &str) -> Result<(String, String)> {
 }
 
 /// BinaryContext provides contextual objects related to a Janus binary.
-pub struct BinaryContext<C: Clock, Config: BinaryConfig> {
+pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig> {
     pub clock: C,
+    pub options: Options,
     pub config: Config,
     pub datastore: Datastore<C>,
     pub pool: Pool,
 }
 
-pub async fn janus_main<O, C, Config, F, Fut>(clock: C, f: F) -> anyhow::Result<()>
+pub async fn janus_main<C, Options, Config, F, Fut>(clock: C, f: F) -> anyhow::Result<()>
 where
-    O: BinaryOptions,
     C: Clock,
+    Options: BinaryOptions,
     Config: BinaryConfig,
-    F: FnOnce(BinaryContext<C, Config>) -> Fut,
+    F: FnOnce(BinaryContext<C, Options, Config>) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
     // Read arguments, read & parse config.
-    let options = O::from_args();
+    let options = Options::from_args();
     let common_options = options.common_options();
     let mut config = {
         let config_content =
@@ -228,6 +229,7 @@ where
 
     f(BinaryContext {
         clock,
+        options,
         config,
         datastore,
         pool,

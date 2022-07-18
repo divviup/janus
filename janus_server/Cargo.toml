@@ -7,11 +7,14 @@ publish = false
 rust-version = "1.60"
 
 [features]
+default = ["kube-rustls"]
 tokio-console = ["dep:console-subscriber"]
 jaeger = ["dep:tracing-opentelemetry", "dep:opentelemetry-jaeger"]
 otlp = ["dep:tracing-opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions", "dep:tonic"]
 prometheus = ["dep:opentelemetry-prometheus", "dep:prometheus"]
 test-util = ["janus_core/test-util", "dep:lazy_static", "dep:testcontainers"]
+kube-rustls = ["kube/rustls-tls"]
+kube-openssl = ["kube/openssl-tls"]
 
 [dependencies]
 anyhow = "1"
@@ -29,6 +32,8 @@ http = "0.2.8"
 hyper = "0.14.20"
 itertools = "0.10.3"
 janus_core = { path = "../janus_core", features = ["database"] }
+k8s-openapi = { version = "*", features = ["v1_20"] }
+kube = { version = "0.65.0", default-features = false, features = ["client"] }
 lazy_static = { version = "1", optional = true }
 num_enum = "0.5.6"
 opentelemetry = { version = "0.17.0", features = ["metrics", "rt-tokio"] }
@@ -65,7 +70,7 @@ warp = { version = "^0.3", features = ["tls"] }
 assert_matches = "1"
 hex = { version = "0.4.3", features = ["serde"] }
 hyper = "0.14.20"
-janus_server = { path = ".", features = ["test-util"] }
+janus_server = { path = ".", default-features = false, features = ["kube-openssl", "test-util"] }
 libc = "0.2.126"
 mockito = "0.31.0"
 serde_test = "1.0.139"

@@ -3007,12 +3007,6 @@ pub mod test_util {
             Pool::builder(conn_mgr).build().unwrap()
         }
 
-        /// Write the Janus schema into the datastore.
-        pub async fn write_schema(&self) {
-            let client = self.pool().get().await.unwrap();
-            client.batch_execute(SCHEMA).await.unwrap();
-        }
-
         /// Get a PostgreSQL connection string to connect to the temporary database.
         pub fn connection_string(&self) -> &str {
             &self.connection_string
@@ -3142,7 +3136,8 @@ pub mod test_util {
     /// Dropping the second return value causes the database to be shut down & cleaned up.
     pub async fn ephemeral_datastore<C: Clock>(clock: C) -> (Datastore<C>, DbHandle) {
         let db_handle = ephemeral_db_handle();
-        db_handle.write_schema().await;
+        let client = db_handle.pool().get().await.unwrap();
+        client.batch_execute(SCHEMA).await.unwrap();
         (db_handle.datastore(clock), db_handle)
     }
 

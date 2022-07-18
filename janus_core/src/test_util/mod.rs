@@ -9,6 +9,7 @@ use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 
 pub mod dummy_vdaf;
+pub mod kubernetes;
 pub mod runtime;
 
 /// A transcript of a VDAF run. All fields are indexed by natural role index (i.e., index 0 =

@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
         "/collect_job_driver"
     );
 
-    janus_main::<Options, _, Config, _, _>(RealClock::default(), |ctx| async move {
+    janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
         let meter = opentelemetry::global::meter("collect_job_driver");
         let datastore = Arc::new(ctx.datastore);
         let collect_job_driver = Arc::new(CollectJobDriver::new(

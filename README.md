@@ -5,7 +5,7 @@
 [actions]: https://github.com/divviup/janus/actions?query=branch%3Amain
 
 Janus is an experimental implementation of the
-[Privacy Preserving Measurement (PPM) specification](https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap).
+[Distributed Aggregation Protocol (DAP) specification](https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap).
 
 It is currently in active development.
 
@@ -19,7 +19,11 @@ aggregator --config-file <config-file> --role <role>
 
 ## Running tests
 
-To run janus tests, ensure docker is running locally and execute `cargo test`.
+Tests require that [docker](https://www.docker.com) & [kind](https://kind.sigs.k8s.io) be installed
+on the machine running the tests and in the `PATH` of the test-runner's environment. The docker
+daemon must be running.
+
+To run janus tests, execute `cargo test`.
 
 ## Container image
 
