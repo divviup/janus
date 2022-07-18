@@ -16,7 +16,7 @@ prio = "0.8.2"
 reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls"] }
 thiserror = "1.0"
 tokio = { version = "^1.19", features = ["full"] }
-tracing = "0.1.34"
+tracing = "0.1.35"
 url = "2.2.2"
 
 [dev-dependencies]
