@@ -128,6 +128,15 @@ impl<C: Clock> Datastore<C> {
         tx.tx.commit().await?;
         Ok(rslt)
     }
+
+    /// Attempt to fetch a connection from the connection pool, to check if
+    /// the database is accessible. This will either create a new database
+    /// connection or recycle an existing one, and then return the connection
+    /// back to the pool.
+    pub async fn check_connection_pool(&self) -> Result<(), Error> {
+        let _client = self.pool.get().await?;
+        Ok(())
+    }
 }
 
 /// Transaction represents an ongoing datastore transaction.
