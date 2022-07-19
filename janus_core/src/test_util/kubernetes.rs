@@ -23,7 +23,11 @@ impl EphemeralCluster {
         thread_rng().fill(&mut randomness);
         let cluster_name = format!("janus-ephemeral-{}", hex::encode(&randomness));
 
-        // Use kind to start the cluster.
+        // Use kind to start the cluster, with the node image from kind v0.14.0 for Kubernetes 1.22,
+        // matching current regular GKE release channel. This image version should be bumped in
+        // lockstep with the version of kind installed by the ci-build workflow.
+        // https://github.com/kubernetes-sigs/kind/releases/tag/v0.14.0
+        // https://cloud.google.com/kubernetes-engine/docs/release-notes#regular-channel
         assert!(Command::new("kind")
             .args([
                 "create",
@@ -32,6 +36,8 @@ impl EphemeralCluster {
                 &kubeconfig_path.to_string_lossy(),
                 "--name",
                 &cluster_name,
+                "--image",
+                "kindest/node:v1.22.9@sha256:8135260b959dfe320206eb36b3aeda9cffcb262f4b44cda6b33f7bb73f453105",
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
