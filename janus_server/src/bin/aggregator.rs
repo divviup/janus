@@ -154,6 +154,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
     logging_config:
         tokio_console_config:
             enabled: true
@@ -179,6 +180,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
     logging_config:
         open_telemetry_config:
             jaeger:
@@ -197,6 +199,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
     logging_config:
         open_telemetry_config:
             otlp:
@@ -226,6 +229,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
     metrics_config:
         exporter:
             prometheus:
@@ -249,6 +253,7 @@ mod tests {
     listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
     metrics_config:
         exporter:
             otlp:

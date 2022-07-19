@@ -12,6 +12,9 @@ use crate::{
     task::{self, AggregatorAuthenticationToken, Task, VdafInstance},
 };
 use anyhow::anyhow;
+use backoff::{future::retry, ExponentialBackoff};
+use deadpool::managed::TimeoutType;
+use deadpool_postgres::PoolError;
 use futures::try_join;
 use janus_core::{
     hpke::HpkePrivateKey,
@@ -31,7 +34,7 @@ use rand::{thread_rng, Rng};
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{
     collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
-    pin::Pin,
+    pin::Pin, time::Duration as StdDuration,
 };
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
@@ -43,6 +46,7 @@ use uuid::Uuid;
 /// In practice, Datastore instances are currently backed by a PostgreSQL database.
 pub struct Datastore<C: Clock> {
     pool: deadpool_postgres::Pool,
+    connection_pool_timeout: StdDuration,
     crypter: Crypter,
     clock: C,
     transaction_status_counter: Counter<u64>,
@@ -51,7 +55,12 @@ pub struct Datastore<C: Clock> {
 impl<C: Clock> Datastore<C> {
     /// new creates a new Datastore using the given Client for backing storage. It is assumed that
     /// the Client is connected to a database with a compatible version of the Janus database schema.
-    pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter, clock: C) -> Datastore<C> {
+    pub fn new(
+        pool: deadpool_postgres::Pool,
+        connection_pool_timeout: StdDuration,
+        crypter: Crypter,
+        clock: C,
+    ) -> Datastore<C> {
         let meter = opentelemetry::global::meter("janus_server");
         let transaction_status_counter = meter
             .u64_counter("aggregator_database_transactions_total")
@@ -59,6 +68,7 @@ impl<C: Clock> Datastore<C> {
             .init();
         Self {
             pool,
+            connection_pool_timeout,
             crypter,
             clock,
             transaction_status_counter,
@@ -134,7 +144,28 @@ impl<C: Clock> Datastore<C> {
     /// connection or recycle an existing one, and then return the connection
     /// back to the pool.
     pub async fn check_connection_pool(&self) -> Result<(), Error> {
-        let _client = self.pool.get().await?;
+        let backoff = ExponentialBackoff {
+            initial_interval: StdDuration::from_secs(1),
+            max_interval: StdDuration::from_secs(30),
+            multiplier: 2.0,
+            max_elapsed_time: Some(self.connection_pool_timeout),
+            ..Default::default()
+        };
+
+        // Retrying if we encounter timeouts when creating a connection or connection refused errors
+        // (which occur if the Cloud SQL Proxy hasn't started yet and manifest as
+        // `PoolError::Backend`)
+        let _client = retry(backoff, || async {
+            self.pool.get().await.map_err(|error| match error {
+                PoolError::Timeout(TimeoutType::Create) | PoolError::Backend(_) => {
+                    tracing::info!(?error, "transient error connecting to database");
+                    backoff::Error::transient(error)
+                }
+                _ => backoff::Error::permanent(error),
+            })
+        })
+        .await?;
+
         Ok(())
     }
 }
@@ -2976,6 +3007,7 @@ pub mod test_util {
         env::{self, VarError},
         process::Command,
         str::FromStr,
+        time::Duration,
     };
     use testcontainers::{images::postgres::Postgres, Container, RunnableImage};
     use tokio_postgres::{Config, NoTls};
@@ -3006,7 +3038,7 @@ pub mod test_util {
                 LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &self.datastore_key_bytes).unwrap());
             let crypter = Crypter::new(vec![datastore_key]);
 
-            Datastore::new(self.pool(), crypter, clock)
+            Datastore::new(self.pool(), Duration::from_secs(10), crypter, clock)
         }
 
         /// Retrieve a Postgres connection pool attached to the ephemeral database.

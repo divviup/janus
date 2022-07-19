@@ -9,7 +9,7 @@ use crate::{
     trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
 use anyhow::{anyhow, Context, Result};
-use deadpool_postgres::{Manager, Pool};
+use deadpool_postgres::{Manager, Pool, Runtime, Timeouts};
 use janus_core::time::Clock;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
@@ -18,6 +18,7 @@ use std::{
     future::Future,
     path::PathBuf,
     str::FromStr,
+    time::Duration,
 };
 use structopt::StructOpt;
 use tokio_postgres::NoTls;
@@ -52,8 +53,16 @@ pub fn datastore<C: Clock>(
         database_config.password(pass);
     }
 
+    let connection_pool_timeout = Duration::from_secs(db_config.connection_pool_timeouts_secs);
+
     let conn_mgr = Manager::new(database_config, NoTls);
     let pool = Pool::builder(conn_mgr)
+        .runtime(Runtime::Tokio1)
+        .timeouts(Timeouts {
+            wait: Some(connection_pool_timeout),
+            create: Some(connection_pool_timeout),
+            recycle: Some(connection_pool_timeout),
+        })
         .build()
         .context("failed to create database connection pool")?;
     let ds_keys = ds_keys
@@ -73,8 +82,14 @@ pub fn datastore<C: Clock>(
     if ds_keys.is_empty() {
         return Err(anyhow!("ds_keys is empty"));
     }
+
     Ok((
-        Datastore::new(pool.clone(), Crypter::new(ds_keys), clock),
+        Datastore::new(
+            pool.clone(),
+            connection_pool_timeout,
+            Crypter::new(ds_keys),
+            clock,
+        ),
         pool,
     ))
 }
@@ -223,7 +238,11 @@ where
         &common_options.database_password,
         &common_options.datastore_keys,
     )
-    .context("couldn't connect to database")?;
+    .context("couldn't create database connection pool")?;
+    datastore
+        .check_connection_pool()
+        .await
+        .context("couldn't connect to database")?;
 
     let logging_config = config.common_config().logging_config.clone();
 
