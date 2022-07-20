@@ -1,6 +1,6 @@
 ```
 $ aggregator --help
-janus-aggregator 0.1.0
+janus-aggregator [..]
 PPM aggregator server
 
 USAGE:

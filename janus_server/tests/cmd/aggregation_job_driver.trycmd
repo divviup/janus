@@ -1,6 +1,6 @@
 ```
 $ aggregation_job_driver --help
-janus-aggregation-job-driver 0.1.0
+janus-aggregation-job-driver [..]
 Janus aggregation job driver
 
 USAGE:
