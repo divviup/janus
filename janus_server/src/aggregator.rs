@@ -424,7 +424,7 @@ impl<C: Clock> Aggregator<C> {
         {
             let task_aggs = self.task_aggregators.lock().await;
             if let Some(task_agg) = task_aggs.get(&task_id) {
-                return Ok(task_agg.clone());
+                return Ok(Arc::clone(task_agg));
             }
         }
 
@@ -437,7 +437,7 @@ impl<C: Clock> Aggregator<C> {
         let task_agg = Arc::new(TaskAggregator::new(task)?);
         {
             let mut task_aggs = self.task_aggregators.lock().await;
-            Ok(task_aggs.entry(task_id).or_insert(task_agg).clone())
+            Ok(Arc::clone(task_aggs.entry(task_id).or_insert(task_agg)))
         }
     }
 }
@@ -1070,8 +1070,8 @@ impl VdafOps {
         let report_share_data = Arc::new(report_share_data);
         let prep_steps = datastore
             .run_tx(|tx| {
-                let aggregation_job = aggregation_job.clone();
-                let report_share_data = report_share_data.clone();
+                let aggregation_job = Arc::clone(&aggregation_job);
+                let report_share_data = Arc::clone(&report_share_data);
 
                 Box::pin(async move {
                     // Write aggregation job.
@@ -1987,7 +1987,7 @@ fn aggregator_filter<C: Clock>(
 
     let hpke_config_routing = warp::path("hpke_config");
     let hpke_config_responding = warp::get()
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::query::<HashMap<String, String>>())
         .then(
             |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
@@ -2020,7 +2020,7 @@ fn aggregator_filter<C: Clock>(
             CONTENT_TYPE.as_str(),
             Report::MEDIA_TYPE,
         ))
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
         .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
             aggregator.handle_upload(&body).await?;
@@ -2041,7 +2041,7 @@ fn aggregator_filter<C: Clock>(
 
     let aggregate_routing = warp::path("aggregate");
     let aggregate_responding = warp::post()
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
         .and(warp::header(CONTENT_TYPE.as_str()))
         .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
@@ -2082,7 +2082,7 @@ fn aggregator_filter<C: Clock>(
             CONTENT_TYPE.as_str(),
             CollectReq::MEDIA_TYPE,
         ))
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
         .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
             let collect_uri = aggregator.handle_collect(&body).await?;
@@ -2103,7 +2103,7 @@ fn aggregator_filter<C: Clock>(
     let collect_jobs_routing = warp::path("collect_jobs");
     let collect_jobs_responding = warp::get()
         .and(warp::path::param())
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .then(
             |collect_job_id: Uuid, aggregator: Arc<Aggregator<C>>| async move {
                 let resp_bytes = aggregator.handle_collect_job(collect_job_id).await?;
@@ -2132,7 +2132,7 @@ fn aggregator_filter<C: Clock>(
             CONTENT_TYPE.as_str(),
             AggregateShareReq::MEDIA_TYPE,
         ))
-        .and(with_cloned_value(aggregator))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
         .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
         .then(
@@ -2149,8 +2149,43 @@ fn aggregator_filter<C: Clock>(
         aggregate_share_routing,
         aggregate_share_responding,
         warp::cors().build(),
-        response_time_recorder,
+        response_time_recorder.clone(),
         "aggregate_share",
+    );
+
+    let health_check_live_routing = warp::path("healthz").and(warp::path::end());
+    let health_check_live_responding = warp::get().map(|| {
+        http::Response::builder()
+            .status(StatusCode::OK)
+            .body(&[0u8; 0][..])
+            .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+    });
+    let health_check_live_endpoint = compose_common_wrappers(
+        health_check_live_routing,
+        health_check_live_responding,
+        warp::cors().build(),
+        response_time_recorder.clone(),
+        "health_check_live",
+    );
+
+    let health_check_startup_routing = warp::path("healthz")
+        .and(warp::path("startup"))
+        .and(warp::path::end());
+    let health_check_startup_responding = warp::get().and(with_cloned_value(aggregator)).then(
+        |aggregator: Arc<Aggregator<C>>| async move {
+            aggregator.datastore.check_connection_pool().await?;
+            http::Response::builder()
+                .status(StatusCode::OK)
+                .body(&[0u8; 0][..])
+                .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+        },
+    );
+    let health_check_startup_endpoint = compose_common_wrappers(
+        health_check_startup_routing,
+        health_check_startup_responding,
+        warp::cors().build(),
+        response_time_recorder,
+        "health_check_startup",
     );
 
     Ok(hpke_config_endpoint
@@ -2159,6 +2194,8 @@ fn aggregator_filter<C: Clock>(
         .or(collect_endpoint)
         .or(collect_jobs_endpoint)
         .or(aggregate_share_endpoint)
+        .or(health_check_live_endpoint)
+        .or(health_check_startup_endpoint)
         .boxed())
 }
 
@@ -2182,7 +2219,8 @@ mod tests {
     use crate::{
         datastore::{
             models::BatchUnitAggregation,
-            test_util::{ephemeral_datastore, DbHandle},
+            test_util::{ephemeral_datastore, generate_aead_key, DbHandle},
+            Crypter,
         },
         task::{
             test_util::{generate_aggregator_auth_token, new_dummy_task},
@@ -2190,6 +2228,7 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
+    use deadpool_postgres::{Manager, Pool};
     use http::Method;
     use hyper::body;
     use janus_core::{
@@ -2213,7 +2252,13 @@ mod tests {
     };
     use rand::{thread_rng, Rng};
     use serde_json::json;
-    use std::{collections::HashMap, io::Cursor};
+    use std::{
+        collections::HashMap,
+        io::Cursor,
+        net::{Ipv4Addr, SocketAddrV4},
+    };
+    use tokio::{io::AsyncWriteExt, net::TcpListener};
+    use tokio_postgres::{Config, NoTls};
     use uuid::Uuid;
     use warp::{cors::CorsForbidden, reply::Reply, Rejection};
 
@@ -5795,5 +5840,79 @@ mod tests {
             )
             .unwrap(),
         }
+    }
+
+    #[tokio::test]
+    async fn health_check() {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let good_filter = aggregator_filter(Arc::new(datastore), clock.clone()).unwrap();
+
+        let liveness_response = warp::test::request()
+            .method("GET")
+            .path("/healthz")
+            .filter(&good_filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(liveness_response.status(), 200);
+
+        let good_response = warp::test::request()
+            .method("GET")
+            .path("/healthz/startup")
+            .filter(&good_filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(good_response.status(), 200);
+
+        // Set up a server that immediately closes all connections, try to connect to it as the
+        // database server, and confirm that the health check endpoint returns an error.
+        let listener = TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(127, 0, 0, 1),
+            0,
+        )))
+        .await
+        .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            loop {
+                let (mut tcp_stream, _) = listener.accept().await.unwrap();
+                tcp_stream.shutdown().await.unwrap();
+            }
+        });
+
+        let mut bad_db_config = Config::new();
+        // We know this address is unroutable, so creating a connection should fail.
+        bad_db_config.host(&format!("127.0.0.1:{}", port));
+        let bad_pool = Pool::builder(Manager::new(bad_db_config, NoTls))
+            .build()
+            .unwrap();
+        let crypter = Crypter::new(vec![generate_aead_key()]);
+        let bad_datastore = Datastore::new(bad_pool, crypter, clock.clone());
+        let bad_filter = aggregator_filter(Arc::new(bad_datastore), clock).unwrap();
+
+        let bad_response = warp::test::request()
+            .method("GET")
+            .path("/healthz/startup")
+            .filter(&bad_filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(bad_response.status(), 500);
+
+        let liveness_response = warp::test::request()
+            .method("GET")
+            .path("/healthz")
+            .filter(&bad_filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(liveness_response.status(), 200);
+
+        handle.abort();
     }
 }
