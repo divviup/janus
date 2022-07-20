@@ -1,6 +1,6 @@
 ```
 $ aggregation_job_creator --help
-janus-aggregation-job-creator 0.1.0
+janus-aggregation-job-creator [..]
 Janus aggregation job creator
 
 USAGE:
