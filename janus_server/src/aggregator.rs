@@ -2153,22 +2153,39 @@ fn aggregator_filter<C: Clock>(
         "aggregate_share",
     );
 
-    let health_check_routing = warp::path("_health_check");
-    let health_check_responding = warp::get().and(with_cloned_value(aggregator)).then(
+    let health_check_live_routing = warp::path("healthz").and(warp::path::end());
+    let health_check_live_responding = warp::get().map(|| {
+        http::Response::builder()
+            .status(StatusCode::OK)
+            .body(&[0u8; 0][..])
+            .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+    });
+    let health_check_live_endpoint = compose_common_wrappers(
+        health_check_live_routing,
+        health_check_live_responding,
+        warp::cors().build(),
+        response_time_recorder.clone(),
+        "health_check_live",
+    );
+
+    let health_check_startup_routing = warp::path("healthz")
+        .and(warp::path("startup"))
+        .and(warp::path::end());
+    let health_check_startup_responding = warp::get().and(with_cloned_value(aggregator)).then(
         |aggregator: Arc<Aggregator<C>>| async move {
             aggregator.datastore.check_connection_pool().await?;
             http::Response::builder()
                 .status(StatusCode::OK)
-                .body(Vec::new())
+                .body(&[0u8; 0][..])
                 .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
         },
     );
-    let health_check_endpoint = compose_common_wrappers(
-        health_check_routing,
-        health_check_responding,
+    let health_check_startup_endpoint = compose_common_wrappers(
+        health_check_startup_routing,
+        health_check_startup_responding,
         warp::cors().build(),
         response_time_recorder,
-        "health_check",
+        "health_check_startup",
     );
 
     Ok(hpke_config_endpoint
@@ -2177,7 +2194,8 @@ fn aggregator_filter<C: Clock>(
         .or(collect_endpoint)
         .or(collect_jobs_endpoint)
         .or(aggregate_share_endpoint)
-        .or(health_check_endpoint)
+        .or(health_check_live_endpoint)
+        .or(health_check_startup_endpoint)
         .boxed())
 }
 
@@ -5833,9 +5851,18 @@ mod tests {
 
         let good_filter = aggregator_filter(Arc::new(datastore), clock.clone()).unwrap();
 
+        let liveness_response = warp::test::request()
+            .method("GET")
+            .path("/healthz")
+            .filter(&good_filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(liveness_response.status(), 200);
+
         let good_response = warp::test::request()
             .method("GET")
-            .path("/_health_check")
+            .path("/healthz/startup")
             .filter(&good_filter)
             .await
             .unwrap()
@@ -5870,12 +5897,21 @@ mod tests {
 
         let bad_response = warp::test::request()
             .method("GET")
-            .path("/_health_check")
+            .path("/healthz/startup")
             .filter(&bad_filter)
             .await
             .unwrap()
             .into_response();
         assert_eq!(bad_response.status(), 500);
+
+        let liveness_response = warp::test::request()
+            .method("GET")
+            .path("/healthz")
+            .filter(&bad_filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(liveness_response.status(), 200);
 
         handle.abort();
     }
