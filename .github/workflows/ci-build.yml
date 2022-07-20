@@ -24,6 +24,11 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install latest version of Kind
+      # We should always make sure that the `kind` CLI we install is from the
+      # same release as the node image version used by
+      # `janus_core::test_util::kubernetes::EphemeralCluster`
+      run: go install sigs.k8s.io/kind@v0.14.0
     - name: lint
       run: cargo fmt --message-format human -- --check
     - name: clippy
@@ -35,7 +40,8 @@ jobs:
     - name: test
       env:
         RUST_LOG: trace
-      run: cargo test --verbose
+      # set PATH to ensure we use go binaries installed above
+      run: PATH=$(go env GOPATH)/bin:$PATH cargo test --verbose
     - name: document
       env:
         CARGO_TARGET_DIR: "target/doc-deny"
