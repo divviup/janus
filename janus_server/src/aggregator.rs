@@ -424,7 +424,7 @@ impl<C: Clock> Aggregator<C> {
         {
             let task_aggs = self.task_aggregators.lock().await;
             if let Some(task_agg) = task_aggs.get(&task_id) {
-                return Ok(task_agg.clone());
+                return Ok(Arc::clone(task_agg));
             }
         }
 
@@ -437,7 +437,7 @@ impl<C: Clock> Aggregator<C> {
         let task_agg = Arc::new(TaskAggregator::new(task)?);
         {
             let mut task_aggs = self.task_aggregators.lock().await;
-            Ok(task_aggs.entry(task_id).or_insert(task_agg).clone())
+            Ok(Arc::clone(task_aggs.entry(task_id).or_insert(task_agg)))
         }
     }
 }
@@ -1070,8 +1070,8 @@ impl VdafOps {
         let report_share_data = Arc::new(report_share_data);
         let prep_steps = datastore
             .run_tx(|tx| {
-                let aggregation_job = aggregation_job.clone();
-                let report_share_data = report_share_data.clone();
+                let aggregation_job = Arc::clone(&aggregation_job);
+                let report_share_data = Arc::clone(&report_share_data);
 
                 Box::pin(async move {
                     // Write aggregation job.
@@ -1987,7 +1987,7 @@ fn aggregator_filter<C: Clock>(
 
     let hpke_config_routing = warp::path("hpke_config");
     let hpke_config_responding = warp::get()
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::query::<HashMap<String, String>>())
         .then(
             |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
@@ -2020,7 +2020,7 @@ fn aggregator_filter<C: Clock>(
             CONTENT_TYPE.as_str(),
             Report::MEDIA_TYPE,
         ))
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
         .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
             aggregator.handle_upload(&body).await?;
@@ -2041,7 +2041,7 @@ fn aggregator_filter<C: Clock>(
 
     let aggregate_routing = warp::path("aggregate");
     let aggregate_responding = warp::post()
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
         .and(warp::header(CONTENT_TYPE.as_str()))
         .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
@@ -2082,7 +2082,7 @@ fn aggregator_filter<C: Clock>(
             CONTENT_TYPE.as_str(),
             CollectReq::MEDIA_TYPE,
         ))
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
         .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
             let collect_uri = aggregator.handle_collect(&body).await?;
@@ -2103,7 +2103,7 @@ fn aggregator_filter<C: Clock>(
     let collect_jobs_routing = warp::path("collect_jobs");
     let collect_jobs_responding = warp::get()
         .and(warp::path::param())
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .then(
             |collect_job_id: Uuid, aggregator: Arc<Aggregator<C>>| async move {
                 let resp_bytes = aggregator.handle_collect_job(collect_job_id).await?;
@@ -2132,7 +2132,7 @@ fn aggregator_filter<C: Clock>(
             CONTENT_TYPE.as_str(),
             AggregateShareReq::MEDIA_TYPE,
         ))
-        .and(with_cloned_value(aggregator.clone()))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
         .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
         .then(
