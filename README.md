@@ -23,6 +23,19 @@ Tests require that [`docker`](https://www.docker.com) & [`kind`](https://kind.si
 
 To run janus tests, execute `cargo test`.
 
+### inotify limits
+
+If you experience issues with tests using Kind on Linux, you may need to adjust the `fs.inotify.max_user_instances` sysctl. Both systemd and Kubernetes inside each Kind cluster make use of inotify. When combined with other services and desktop applications, they may exhaust this per-user limit.
+
+Check the sysctl with either of the following commands. On Ubuntu 20.04, it is set to 128 by default.
+
+```bash
+cat /proc/sys/fs/inotify/max_user_instances
+sysctl fs.inotify.max_user_instances
+```
+
+To temporarily raise the limit, run `sudo sysctl -w fs.inotify.max_user_instances=512`. To permanently raise the limit, create or edit the file `/etc/sysctl.d/local.conf`, and insert `fs.inotify.max_user_instances=512`, then run `sudo service procps restart` to apply the configuration file immediately.
+
 ## Container image
 
 To build a container image, run the following command.
