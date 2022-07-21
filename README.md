@@ -23,6 +23,10 @@ Tests require that [`docker`](https://www.docker.com) & [`kind`](https://kind.si
 
 To run janus tests, execute `cargo test`.
 
+### inotify limits
+
+If you experience issues with tests using Kind on Linux, you may need to [adjust inotify sysctls](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files). Both systemd and Kubernetes inside each Kind node make use of inotify. When combined with other services and desktop applications, they may exhaust per-user limits.
+
 ## Container image
 
 To build a container image, run the following command.
