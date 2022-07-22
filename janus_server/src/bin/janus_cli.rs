@@ -3,10 +3,12 @@ use base64::STANDARD_NO_PAD;
 use deadpool_postgres::Pool;
 use janus_core::time::{Clock, RealClock};
 use janus_server::{
-    binary_utils::{janus_main, BinaryContext, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{database_pool, datastore, read_config, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
     datastore::{self, Datastore},
+    metrics::install_metrics_exporter,
     task::Task,
+    trace::install_trace_subscriber,
 };
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
@@ -26,10 +28,84 @@ static SCHEMA: &str = include_str!("../../../db/schema.sql");
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        ctx.options.cmd.execute(&ctx).await
-    })
-    .await
+    // Parse options, then read & parse config.
+    let options = Options::from_args();
+    let config: Config = read_config(&options)?;
+
+    // Install tracing/metrics handlers.
+    install_trace_subscriber(&config.common_config.logging_config)
+        .context("couldn't install tracing subscriber")?;
+    let _metrics_exporter = install_metrics_exporter(&config.common_config.metrics_config)
+        .context("failed to install metrics exporter")?;
+
+    info!(common_options = ?options.common_options(), ?config, "Starting up");
+
+    options.cmd.execute(&options, &config).await
+}
+
+#[derive(Debug, StructOpt)]
+enum Command {
+    /// Write the Janus database schema to the database.
+    WriteSchema,
+
+    /// Write a set of tasks identified in a file to the datastore.
+    ProvisionTasks {
+        /// A YAML file containing a list of tasks to be written. Existing tasks (matching by task
+        /// ID) will be overwritten.
+        tasks_file: PathBuf,
+    },
+
+    /// Create a datastore key and write it to a Kubernetes secret.
+    CreateDatastoreKey {
+        /// The Kubernetes namespace to create the datastore key secret in.
+        k8s_namespace: String,
+
+        /// The name of the Kubernetes secret to place the datastore key in.
+        k8s_secret_name: String,
+    },
+}
+
+impl Command {
+    async fn execute(&self, options: &Options, config: &Config) -> Result<()> {
+        // Note: to keep this function reasonably-readable, individual command handlers should
+        // generally create the command's dependencies based on options/config, then call another
+        // function with the main command logic.
+        match self {
+            Command::WriteSchema => {
+                let pool = database_pool(
+                    &config.common_config.database,
+                    &options.common.database_password,
+                )
+                .await?;
+                write_schema(&pool).await
+            }
+
+            Command::ProvisionTasks { tasks_file } => {
+                let pool = database_pool(
+                    &config.common_config.database,
+                    &options.common.database_password,
+                )
+                .await?;
+                let datastore =
+                    datastore(pool, RealClock::default(), &options.common.datastore_keys)?;
+                provision_tasks(&datastore, tasks_file).await
+            }
+
+            Command::CreateDatastoreKey {
+                k8s_namespace,
+                k8s_secret_name,
+            } => {
+                create_datastore_key(
+                    kube::Client::try_default()
+                        .await
+                        .context("couldn't connect to Kubernetes environment")?,
+                    k8s_namespace,
+                    k8s_secret_name,
+                )
+                .await
+            }
+        }
+    }
 }
 
 async fn write_schema(pool: &Pool) -> Result<()> {
@@ -134,52 +210,6 @@ impl BinaryOptions for Options {
     }
 }
 
-#[derive(Debug, StructOpt)]
-enum Command {
-    /// Write the Janus database schema to the database.
-    WriteSchema,
-
-    /// Write a set of tasks identified in a file to the datastore.
-    ProvisionTasks {
-        /// A YAML file containing a list of tasks to be written. Existing tasks (matching by task
-        /// ID) will be overwritten.
-        tasks_file: PathBuf,
-    },
-
-    /// Create a datastore key and write it to a Kubernetes secret.
-    CreateDatastoreKey {
-        /// The Kubernetes namespace to create the datastore key secret in.
-        k8s_namespace: String,
-
-        /// The name of the Kubernetes secret to place the datastore key in.
-        k8s_secret_name: String,
-    },
-}
-
-impl Command {
-    async fn execute<C: Clock>(&self, ctx: &BinaryContext<C, Options, Config>) -> Result<()> {
-        match self {
-            Command::WriteSchema => write_schema(&ctx.pool).await,
-            Command::ProvisionTasks { tasks_file } => {
-                provision_tasks(&ctx.datastore, tasks_file).await
-            }
-            Command::CreateDatastoreKey {
-                k8s_namespace,
-                k8s_secret_name,
-            } => {
-                create_datastore_key(
-                    kube::Client::try_default()
-                        .await
-                        .context("couldn't connect to Kubernetes environment")?,
-                    k8s_namespace,
-                    k8s_secret_name,
-                )
-                .await
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Config {
     #[serde(flatten)]
@@ -187,7 +217,11 @@ struct Config {
 }
 
 impl BinaryConfig for Config {
-    fn common_config(&mut self) -> &mut CommonConfig {
+    fn common_config(&self) -> &CommonConfig {
+        &self.common_config
+    }
+
+    fn common_config_mut(&mut self) -> &mut CommonConfig {
         &mut self.common_config
     }
 }

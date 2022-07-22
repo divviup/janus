@@ -2168,26 +2168,6 @@ fn aggregator_filter<C: Clock>(
         "health_check_live",
     );
 
-    let health_check_startup_routing = warp::path("healthz")
-        .and(warp::path("startup"))
-        .and(warp::path::end());
-    let health_check_startup_responding = warp::get().and(with_cloned_value(aggregator)).then(
-        |aggregator: Arc<Aggregator<C>>| async move {
-            aggregator.datastore.check_connection_pool().await?;
-            http::Response::builder()
-                .status(StatusCode::OK)
-                .body(&[0u8; 0][..])
-                .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
-        },
-    );
-    let health_check_startup_endpoint = compose_common_wrappers(
-        health_check_startup_routing,
-        health_check_startup_responding,
-        warp::cors().build(),
-        response_time_recorder,
-        "health_check_startup",
-    );
-
     Ok(hpke_config_endpoint
         .or(upload_endpoint)
         .or(aggregate_endpoint)
@@ -2195,7 +2175,6 @@ fn aggregator_filter<C: Clock>(
         .or(collect_jobs_endpoint)
         .or(aggregate_share_endpoint)
         .or(health_check_live_endpoint)
-        .or(health_check_startup_endpoint)
         .boxed())
 }
 
@@ -5861,15 +5840,6 @@ mod tests {
             .into_response();
         assert_eq!(liveness_response.status(), 200);
 
-        let good_response = warp::test::request()
-            .method("GET")
-            .path("/healthz/startup")
-            .filter(&good_filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(good_response.status(), 200);
-
         // Set up a server that immediately closes all connections, try to connect to it as the
         // database server, and confirm that the health check endpoint returns an error.
         let listener = TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(
@@ -5893,18 +5863,8 @@ mod tests {
             .build()
             .unwrap();
         let crypter = Crypter::new(vec![generate_aead_key()]);
-        let bad_datastore =
-            Datastore::new(bad_pool, StdDuration::from_secs(1), crypter, clock.clone());
+        let bad_datastore = Datastore::new(bad_pool, crypter, clock.clone());
         let bad_filter = aggregator_filter(Arc::new(bad_datastore), clock).unwrap();
-
-        let bad_response = warp::test::request()
-            .method("GET")
-            .path("/healthz/startup")
-            .filter(&bad_filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(bad_response.status(), 500);
 
         let liveness_response = warp::test::request()
             .method("GET")

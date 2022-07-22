@@ -9,7 +9,10 @@ use crate::{
     trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
 use anyhow::{anyhow, Context, Result};
-use deadpool_postgres::{Manager, Pool, Runtime, Timeouts};
+use backoff::{future::retry, ExponentialBackoff};
+use base64::STANDARD_NO_PAD;
+use deadpool::managed::TimeoutType;
+use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use janus_core::time::Clock;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
@@ -24,19 +27,55 @@ use structopt::StructOpt;
 use tokio_postgres::NoTls;
 use tracing::info;
 
-/// Connects to a datastore, given a config for the underlying database. `db_password` is mutually
-/// exclusive with the database password specified in the connection URL in `db_config`. `ds_keys`
-/// are a list of AES-128-GCM keys, encoded in base64 with no padding, used to protect secret values
-/// stored in the datastore; it must not be empty.
-///
-/// Returns both the datastore as well as the connection pool underlying the datastore. In most
-/// cases, callers will only care about the datastore.
-pub fn datastore<C: Clock>(
-    clock: C,
-    db_config: &DbConfig,
-    db_password: &Option<String>,
-    ds_keys: &[String],
-) -> Result<(Datastore<C>, Pool)> {
+/// Reads, parses, and returns the config referenced by the given options.
+pub fn read_config<Options: BinaryOptions, Config: BinaryConfig>(
+    options: &Options,
+) -> Result<Config> {
+    let config_content =
+        fs::read_to_string(&options.common_options().config_file).with_context(|| {
+            format!(
+                "couldn't read config file {:?}",
+                options.common_options().config_file
+            )
+        })?;
+    let mut config: Config = serde_yaml::from_str(&config_content).with_context(|| {
+        format!(
+            "couldn't parse config file {:?}",
+            options.common_options().config_file
+        )
+    })?;
+
+    if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) = &mut config
+        .common_config_mut()
+        .logging_config
+        .open_telemetry_config
+    {
+        otlp_config.metadata.extend(
+            options
+                .common_options()
+                .otlp_tracing_metadata
+                .iter()
+                .cloned(),
+        );
+    }
+    if let Some(MetricsExporterConfiguration::Otlp(otlp_config)) =
+        &mut config.common_config_mut().metrics_config.exporter
+    {
+        otlp_config.metadata.extend(
+            options
+                .common_options()
+                .otlp_metrics_metadata
+                .iter()
+                .cloned(),
+        );
+    }
+
+    Ok(config)
+}
+
+/// Connects to a databsae, given a config. `db_password` is mutually exclusive with the database
+/// password specified in the connection URL in `db_config`.
+pub async fn database_pool(db_config: &DbConfig, db_password: &Option<String>) -> Result<Pool> {
     let mut database_config = tokio_postgres::Config::from_str(db_config.url.as_str())
         .with_context(|| {
             format!(
@@ -46,7 +85,7 @@ pub fn datastore<C: Clock>(
         })?;
     if database_config.get_password().is_some() && db_password.is_some() {
         return Err(anyhow!(
-            "Database config & password override are both specified"
+            "database config & password override are both specified"
         ));
     }
     if let Some(pass) = db_password {
@@ -65,11 +104,50 @@ pub fn datastore<C: Clock>(
         })
         .build()
         .context("failed to create database connection pool")?;
-    let ds_keys = ds_keys
+
+    // Attempt to fetch a connection from the connection pool, to check that the database is
+    // accessible. This will either create a new database connection or recycle an existing one, and
+    // then return the connection back to the pool.
+    //
+    // Retrying if we encounter timeouts when creating a connection or connection refused errors
+    // (which occur if the Cloud SQL Proxy hasn't started yet and manifest as `PoolError::Backend`)
+    let _ = retry(
+        ExponentialBackoff {
+            initial_interval: Duration::from_secs(1),
+            max_interval: connection_pool_timeout,
+            multiplier: 2.0,
+            max_elapsed_time: Some(connection_pool_timeout),
+            ..Default::default()
+        },
+        || async {
+            pool.get().await.map_err(|error| match error {
+                PoolError::Timeout(TimeoutType::Create) | PoolError::Backend(_) => {
+                    tracing::info!(?error, "transient error connecting to database");
+                    backoff::Error::transient(error)
+                }
+                _ => backoff::Error::permanent(error),
+            })
+        },
+    )
+    .await
+    .context("couldn't make connection to database")?;
+
+    Ok(pool)
+}
+
+/// Connects to a datastore, given a connection pool to the underlying database. `datastore_keys`
+/// is a list of AES-128-GCM keys, encoded in base64 with no padding, used to protect secret values
+/// stored in the datastore; it must not be empty.
+pub fn datastore<C: Clock>(
+    pool: Pool,
+    clock: C,
+    datastore_keys: &[String],
+) -> Result<Datastore<C>> {
+    let datastore_keys = datastore_keys
         .iter()
         .filter(|k| !k.is_empty())
         .map(|k| {
-            base64::decode_config(k, base64::STANDARD_NO_PAD)
+            base64::decode_config(k, STANDARD_NO_PAD)
                 .context("couldn't base64-decode datastore keys")
                 .and_then(|k| {
                     Ok(LessSafeKey::new(
@@ -79,19 +157,11 @@ pub fn datastore<C: Clock>(
                 })
         })
         .collect::<Result<Vec<LessSafeKey>>>()?;
-    if ds_keys.is_empty() {
-        return Err(anyhow!("ds_keys is empty"));
+    if datastore_keys.is_empty() {
+        return Err(anyhow!("datastore_keys is empty"));
     }
 
-    Ok((
-        Datastore::new(
-            pool.clone(),
-            connection_pool_timeout,
-            Crypter::new(ds_keys),
-            clock,
-        ),
-        pool,
-    ))
+    Ok(Datastore::new(pool, Crypter::new(datastore_keys), clock))
 }
 
 /// Options for Janus binaries.
@@ -117,7 +187,7 @@ pub struct CommonBinaryOptions {
     /// Password for the PostgreSQL database connection. If specified, must not be specified in the
     /// connection string.
     #[structopt(long, env = "PGPASSWORD", help = "PostgreSQL password")]
-    database_password: Option<String>,
+    pub database_password: Option<String>,
 
     /// Datastore encryption keys.
     #[structopt(
@@ -125,10 +195,9 @@ pub struct CommonBinaryOptions {
         env = "DATASTORE_KEYS",
         takes_value = true,
         use_delimiter = true,
-        required(true),
         help = "datastore encryption keys, encoded in base64 then comma-separated"
     )]
-    datastore_keys: Vec<String>,
+    pub datastore_keys: Vec<String>,
 
     /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the logging
     /// configuration sections)
@@ -181,7 +250,6 @@ pub struct BinaryContext<C: Clock, Options: BinaryOptions, Config: BinaryConfig>
     pub options: Options,
     pub config: Config,
     pub datastore: Datastore<C>,
-    pub pool: Pool,
 }
 
 pub async fn janus_main<C, Options, Config, F, Fut>(clock: C, f: F) -> anyhow::Result<()>
@@ -192,57 +260,31 @@ where
     F: FnOnce(BinaryContext<C, Options, Config>) -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
-    // Read arguments, read & parse config.
+    // Parse arguments, then read & parse config.
     let options = Options::from_args();
-    let common_options = options.common_options();
-    let mut config = {
-        let config_content =
-            fs::read_to_string(&common_options.config_file).with_context(|| {
-                format!("couldn't read config file {:?}", common_options.config_file)
-            })?;
-        let mut config: Config = serde_yaml::from_str(&config_content).with_context(|| {
-            format!(
-                "couldn't parse config file {:?}",
-                common_options.config_file
-            )
-        })?;
+    let config: Config = read_config(&options)?;
 
-        if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) =
-            &mut config.common_config().logging_config.open_telemetry_config
-        {
-            otlp_config
-                .metadata
-                .extend(common_options.otlp_tracing_metadata.iter().cloned());
-        }
-        if let Some(MetricsExporterConfiguration::Otlp(otlp_config)) =
-            &mut config.common_config().metrics_config.exporter
-        {
-            otlp_config
-                .metadata
-                .extend(common_options.otlp_metrics_metadata.iter().cloned());
-        }
-
-        config
-    };
+    // Install tracing/metrics handlers.
     install_trace_subscriber(&config.common_config().logging_config)
         .context("couldn't install tracing subscriber")?;
     let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
         .context("failed to install metrics exporter")?;
 
-    info!(?common_options, ?config, "Starting up");
+    info!(common_options = ?options.common_options(), ?config, "Starting up");
 
     // Connect to database.
-    let (datastore, pool) = datastore(
-        clock.clone(),
+    let pool = database_pool(
         &config.common_config().database,
-        &common_options.database_password,
-        &common_options.datastore_keys,
+        &options.common_options().database_password,
     )
+    .await
     .context("couldn't create database connection pool")?;
-    datastore
-        .check_connection_pool()
-        .await
-        .context("couldn't connect to database")?;
+    let datastore = datastore(
+        pool,
+        clock.clone(),
+        &options.common_options().datastore_keys,
+    )
+    .context("couldn't create datastore")?;
 
     let logging_config = config.common_config().logging_config.clone();
 
@@ -251,7 +293,6 @@ where
         options,
         config,
         datastore,
-        pool,
     })
     .await?;
 
