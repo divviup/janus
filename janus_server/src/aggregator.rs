@@ -2164,7 +2164,7 @@ fn aggregator_filter<C: Clock>(
         health_check_live_routing,
         health_check_live_responding,
         warp::cors().build(),
-        response_time_recorder.clone(),
+        response_time_recorder,
         "health_check_live",
     );
 
@@ -2235,7 +2235,6 @@ mod tests {
         collections::HashMap,
         io::Cursor,
         net::{Ipv4Addr, SocketAddrV4},
-        time::Duration as StdDuration,
     };
     use tokio::{io::AsyncWriteExt, net::TcpListener};
     use tokio_postgres::{Config, NoTls};
