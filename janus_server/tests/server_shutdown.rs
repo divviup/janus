@@ -63,6 +63,7 @@ async fn server_shutdown() {
     listen_address: "{}"
     database:
         url: "{}"
+        connection_pool_timeouts_secs: 60
     "#,
         listen_address,
         db_handle.connection_string()

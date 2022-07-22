@@ -2256,6 +2256,7 @@ mod tests {
         collections::HashMap,
         io::Cursor,
         net::{Ipv4Addr, SocketAddrV4},
+        time::Duration as StdDuration,
     };
     use tokio::{io::AsyncWriteExt, net::TcpListener};
     use tokio_postgres::{Config, NoTls};
@@ -5892,7 +5893,8 @@ mod tests {
             .build()
             .unwrap();
         let crypter = Crypter::new(vec![generate_aead_key()]);
-        let bad_datastore = Datastore::new(bad_pool, crypter, clock.clone());
+        let bad_datastore =
+            Datastore::new(bad_pool, StdDuration::from_secs(1), crypter, clock.clone());
         let bad_filter = aggregator_filter(Arc::new(bad_datastore), clock).unwrap();
 
         let bad_response = warp::test::request()

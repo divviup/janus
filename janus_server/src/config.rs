@@ -29,7 +29,18 @@ pub trait BinaryConfig: Debug + DeserializeOwned {
 pub struct DbConfig {
     /// URL at which to connect to the database.
     pub url: Url,
+    /// Timeout in seconds to apply when creating, waiting for, or recycling
+    /// connection pool objects. This value will be used to construct a
+    /// `deadpool_postgres::Timeouts` value.
+    #[serde(default = "DbConfig::default_connection_pool_timeout")]
+    pub connection_pool_timeouts_secs: u64,
     // TODO(#231): add option for connecting to database over TLS, if necessary
+}
+
+impl DbConfig {
+    fn default_connection_pool_timeout() -> u64 {
+        60
+    }
 }
 
 /// Non-secret configuration options for Janus Job Driver jobs.
@@ -98,6 +109,7 @@ pub mod test_util {
     pub fn generate_db_config() -> DbConfig {
         DbConfig {
             url: Url::parse("postgres://postgres:postgres@localhost:5432/postgres").unwrap(),
+            connection_pool_timeouts_secs: 60,
         }
     }
 
@@ -137,12 +149,20 @@ mod tests {
         test_util::{
             generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
         },
-        CommonConfig, JobDriverConfig,
+        CommonConfig, DbConfig, JobDriverConfig,
     };
 
     #[test]
     fn roundtrip_db_config() {
         roundtrip_encoding(generate_db_config())
+    }
+
+    #[test]
+    fn db_config_default_timeout() {
+        let db_config: DbConfig =
+            serde_yaml::from_str("url: \"postgres://postgres:postgres@localhost:5432/postgres\"")
+                .unwrap();
+        assert_eq!(db_config.connection_pool_timeouts_secs, 60);
     }
 
     #[test]
