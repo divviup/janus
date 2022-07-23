@@ -4,7 +4,7 @@ janus-aggregator [..]
 PPM aggregator server
 
 USAGE:
-    aggregator [OPTIONS] --config-file <config-file> --datastore-keys <datastore-keys>...
+    aggregator [OPTIONS] --config-file <config-file>
 
 FLAGS:
     -h, --help       Prints help information

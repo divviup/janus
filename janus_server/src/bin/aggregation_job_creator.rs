@@ -82,7 +82,11 @@ struct Config {
 }
 
 impl BinaryConfig for Config {
-    fn common_config(&mut self) -> &mut CommonConfig {
+    fn common_config(&self) -> &CommonConfig {
+        &self.common_config
+    }
+
+    fn common_config_mut(&mut self) -> &mut CommonConfig {
         &mut self.common_config
     }
 }

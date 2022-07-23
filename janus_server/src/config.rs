@@ -21,7 +21,10 @@ pub struct CommonConfig {
 /// Trait describing configuration structures for various Janus binaries.
 pub trait BinaryConfig: Debug + DeserializeOwned {
     /// Get common configuration.
-    fn common_config(&mut self) -> &mut CommonConfig;
+    fn common_config(&self) -> &CommonConfig;
+
+    /// Get mutable reference to common configuration.
+    fn common_config_mut(&mut self) -> &mut CommonConfig;
 }
 
 /// Configuration for a Janus server using a database.

@@ -4,7 +4,7 @@ janus-aggregation-job-driver [..]
 Janus aggregation job driver
 
 USAGE:
-    aggregation_job_driver [OPTIONS] --config-file <config-file> --datastore-keys <datastore-keys>...
+    aggregation_job_driver [OPTIONS] --config-file <config-file>
 
 FLAGS:
     -h, --help       Prints help information

@@ -4,7 +4,7 @@ janus-aggregation-job-creator [..]
 Janus aggregation job creator
 
 USAGE:
-    aggregation_job_creator [OPTIONS] --config-file <config-file> --datastore-keys <datastore-keys>...
+    aggregation_job_creator [OPTIONS] --config-file <config-file>
 
 FLAGS:
     -h, --help       Prints help information
