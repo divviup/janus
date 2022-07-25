@@ -27,7 +27,7 @@ test-util = [
 [dependencies]
 anyhow = "1"
 base64 = "0.13.0"
-bytes = { version = "1.1.0", optional = true }
+bytes = { version = "1.2.0", optional = true }
 chrono = "0.4"
 hex = "0.4.3"
 hpke-dispatch = "0.3.0"
@@ -38,7 +38,7 @@ postgres-types = { version = "0.2.3", optional = true }
 prio = "0.8.2"
 rand = "0.8"
 ring = "0.16.20"
-serde = { version = "1.0.139", features = ["derive"] }
+serde = { version = "1.0.140", features = ["derive"] }
 thiserror = "1.0"
 tokio = { version = "^1.20", features = ["rt"] }
 
