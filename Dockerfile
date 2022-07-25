@@ -1,4 +1,4 @@
-FROM rust:1.62.0-alpine as builder
+FROM rust:1.62.1-alpine as builder
 ARG BINARY=aggregator
 RUN apk add libc-dev
 
