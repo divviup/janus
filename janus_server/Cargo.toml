@@ -75,7 +75,7 @@ hyper = "0.14.20"
 janus_server = { path = ".", default-features = false, features = ["kube-openssl", "test-util"] }
 libc = "0.2.126"
 mockito = "0.31.0"
-serde_test = "1.0.139"
+serde_test = "1.0.140"
 tempfile = "3.3.0"
 tokio = { version = "*", features = ["test-util"] }
 trycmd = "0.13.4"
