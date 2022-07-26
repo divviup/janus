@@ -1,3 +1,4 @@
+use http::HeaderMap;
 use janus_client::{self, Client, ClientParameters};
 use janus_core::{
     hpke::{
@@ -192,6 +193,7 @@ impl TestCase {
             Arc::clone(&leader_datastore),
             RealClock::default(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+            HeaderMap::new(),
             async move { leader_shutdown_receiver.await.unwrap() },
         )
         .unwrap();
@@ -203,6 +205,7 @@ impl TestCase {
             Arc::clone(&helper_datastore),
             RealClock::default(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
+            HeaderMap::new(),
             async move { helper_shutdown_receiver.await.unwrap() },
         )
         .unwrap();

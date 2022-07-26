@@ -29,7 +29,7 @@ use bytes::Bytes;
 use futures::try_join;
 use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
-    StatusCode,
+    HeaderMap, StatusCode,
 };
 use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
@@ -2186,10 +2186,13 @@ pub fn aggregator_server<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
     listen_address: SocketAddr,
+    response_headers: HeaderMap,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error> {
-    Ok(warp::serve(aggregator_filter(datastore, clock)?)
-        .bind_with_graceful_shutdown(listen_address, shutdown_signal))
+    let filter = aggregator_filter(datastore, clock)?;
+    let wrapped_filter = filter.with(warp::filters::reply::headers(response_headers));
+    let server = warp::serve(wrapped_filter);
+    Ok(server.bind_with_graceful_shutdown(listen_address, shutdown_signal))
 }
 
 #[cfg(test)]

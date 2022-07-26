@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
+use http::HeaderMap;
 use janus_core::time::RealClock;
 use janus_server::{
     aggregator::aggregator_server,
@@ -21,6 +22,9 @@ async fn main() -> Result<()> {
             Arc::new(ctx.datastore),
             ctx.clock,
             ctx.config.listen_address,
+            ctx.config
+                .response_header_map()
+                .context("failed to parse response headers")?,
             shutdown_signal,
         )
         .context("failed to create aggregator server")?;
@@ -79,6 +83,13 @@ impl BinaryOptions for Options {
     }
 }
 
+/// A name-value HTTP header pair, that appears in configuration objects.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeaderEntry {
+    name: String,
+    value: String,
+}
+
 /// Non-secret configuration options for a Janus aggregator, deserialized from YAML.
 ///
 /// # Examples
@@ -87,6 +98,9 @@ impl BinaryOptions for Options {
 /// let yaml_config = r#"
 /// ---
 /// listen_address: "0.0.0.0:8080"
+/// response_headers:
+/// - name: "Example"
+///   value: "header value"
 /// database:
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
 /// logging_config: # logging_config is optional
@@ -104,6 +118,24 @@ struct Config {
     /// API endpoints.
     // TODO(#232): options for terminating TLS, unless that gets handled in a load balancer?
     listen_address: SocketAddr,
+
+    /// Additional headers that will be added to all responses.
+    #[serde(default)]
+    response_headers: Vec<HeaderEntry>,
+}
+
+impl Config {
+    fn response_header_map(&self) -> anyhow::Result<HeaderMap> {
+        self.response_headers
+            .iter()
+            .map(|entry| {
+                Ok((
+                    entry.name.as_str().try_into()?,
+                    entry.value.as_str().try_into()?,
+                ))
+            })
+            .collect()
+    }
 }
 
 impl BinaryConfig for Config {
@@ -118,7 +150,7 @@ impl BinaryConfig for Config {
 
 #[cfg(test)]
 mod tests {
-    use super::Config;
+    use super::{Config, HeaderEntry};
     use janus_server::{
         config::{
             test_util::{
@@ -146,6 +178,10 @@ mod tests {
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
             },
+            response_headers: vec![HeaderEntry {
+                name: "name".to_owned(),
+                value: "value".to_owned(),
+            }],
         })
     }
 

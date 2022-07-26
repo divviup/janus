@@ -1764,6 +1764,7 @@ dependencies = [
  "chrono",
  "deadpool-postgres",
  "futures",
+ "http",
  "janus_client",
  "janus_core",
  "janus_server",
