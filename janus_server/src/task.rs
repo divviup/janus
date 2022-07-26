@@ -4,7 +4,10 @@ use base64::URL_SAFE_NO_PAD;
 use derivative::Derivative;
 use janus_core::{
     hpke::HpkePrivateKey,
-    message::{Duration, HpkeConfig, HpkeConfigId, Interval, Role, TaskId},
+    message::{
+        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
+        Interval, Role, TaskId,
+    },
 };
 use ring::constant_time;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
@@ -299,9 +302,9 @@ struct SerializedTask {
     min_batch_size: u64,
     min_batch_duration: Duration,
     tolerable_clock_skew: Duration,
-    collector_hpke_config: HpkeConfig,
-    agg_auth_tokens: Vec<String>,         // in unpadded base64url
-    hpke_keys: Vec<(HpkeConfig, String)>, // values in unpadded base64url
+    collector_hpke_config: SerializedHpkeConfig,
+    agg_auth_tokens: Vec<String>,          // in unpadded base64url
+    hpke_keys: Vec<SerializedHpkeKeypair>, // in unpadded base64url
 }
 
 impl Serialize for Task {
@@ -320,12 +323,7 @@ impl Serialize for Task {
         let hpke_keys = self
             .hpke_keys
             .values()
-            .map(|(cfg, priv_key)| {
-                (
-                    cfg.clone(),
-                    base64::encode_config(priv_key.as_ref(), URL_SAFE_NO_PAD),
-                )
-            })
+            .map(|keypair| keypair.clone().into())
             .collect();
 
         SerializedTask {
@@ -338,7 +336,7 @@ impl Serialize for Task {
             min_batch_size: self.min_batch_size,
             min_batch_duration: self.min_batch_duration,
             tolerable_clock_skew: self.tolerable_clock_skew,
-            collector_hpke_config: self.collector_hpke_config.clone(),
+            collector_hpke_config: self.collector_hpke_config.clone().into(),
             agg_auth_tokens,
             hpke_keys,
         }
@@ -367,14 +365,20 @@ impl<'de> Deserialize<'de> for Task {
             .map(|key| base64::decode_config(key, URL_SAFE_NO_PAD).map_err(D::Error::custom))
             .collect::<Result<_, _>>()?;
 
+        // collector_hpke_config
+        let collector_hpke_config = serialized_task
+            .collector_hpke_config
+            .try_into()
+            .map_err(D::Error::custom)?;
+
         // agg_auth_tokens
         let agg_auth_tokens: Vec<_> = serialized_task
             .agg_auth_tokens
             .into_iter()
             .map(|token| {
-                let token_bytes =
-                    base64::decode_config(token, URL_SAFE_NO_PAD).map_err(D::Error::custom)?;
-                Ok(AggregatorAuthenticationToken::from(token_bytes))
+                Ok(AggregatorAuthenticationToken::from(
+                    base64::decode_config(token, URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
+                ))
             })
             .collect::<Result<_, _>>()?;
 
@@ -382,13 +386,10 @@ impl<'de> Deserialize<'de> for Task {
         let hpke_keys: HashMap<_, _> = serialized_task
             .hpke_keys
             .into_iter()
-            .map(|(hpke_config, hpke_private_key)| {
-                let hpke_private_key_bytes =
-                    base64::decode_config(hpke_private_key, URL_SAFE_NO_PAD)
-                        .map_err(D::Error::custom)?;
+            .map(|keypair| {
                 Ok((
-                    hpke_config.id(),
-                    (hpke_config, HpkePrivateKey::new(hpke_private_key_bytes)),
+                    keypair.config.id,
+                    keypair.try_into().map_err(D::Error::custom)?,
                 ))
             })
             .collect::<Result<_, _>>()?;
@@ -403,10 +404,75 @@ impl<'de> Deserialize<'de> for Task {
             min_batch_size: serialized_task.min_batch_size,
             min_batch_duration: serialized_task.min_batch_duration,
             tolerable_clock_skew: serialized_task.tolerable_clock_skew,
-            collector_hpke_config: serialized_task.collector_hpke_config,
+            collector_hpke_config,
             agg_auth_tokens,
             hpke_keys,
         })
+    }
+}
+
+/// This is a serialization-helper type corresponding to an HpkeConfig.
+#[derive(Serialize, Deserialize)]
+struct SerializedHpkeConfig {
+    id: HpkeConfigId,
+    kem_id: HpkeKemId,
+    kdf_id: HpkeKdfId,
+    aead_id: HpkeAeadId,
+    public_key: String, // in unpadded base64url
+}
+
+impl From<HpkeConfig> for SerializedHpkeConfig {
+    fn from(cfg: HpkeConfig) -> Self {
+        Self {
+            id: cfg.id(),
+            kem_id: cfg.kem_id(),
+            kdf_id: cfg.kdf_id(),
+            aead_id: cfg.aead_id(),
+            public_key: base64::encode_config(cfg.public_key().as_bytes(), URL_SAFE_NO_PAD),
+        }
+    }
+}
+
+impl TryFrom<SerializedHpkeConfig> for HpkeConfig {
+    type Error = base64::DecodeError;
+
+    fn try_from(cfg: SerializedHpkeConfig) -> Result<Self, Self::Error> {
+        let public_key =
+            HpkePublicKey::new(base64::decode_config(cfg.public_key, URL_SAFE_NO_PAD)?);
+        Ok(Self::new(
+            cfg.id,
+            cfg.kem_id,
+            cfg.kdf_id,
+            cfg.aead_id,
+            public_key,
+        ))
+    }
+}
+
+/// This is a serialization-helper type corresponding to an (HpkeConfig, HpkePrivateKey).
+#[derive(Serialize, Deserialize)]
+struct SerializedHpkeKeypair {
+    config: SerializedHpkeConfig,
+    private_key: String, // in unpadded base64url
+}
+
+impl From<(HpkeConfig, HpkePrivateKey)> for SerializedHpkeKeypair {
+    fn from(keypair: (HpkeConfig, HpkePrivateKey)) -> Self {
+        Self {
+            config: keypair.0.into(),
+            private_key: base64::encode_config(&keypair.1, URL_SAFE_NO_PAD),
+        }
+    }
+}
+
+impl TryFrom<SerializedHpkeKeypair> for (HpkeConfig, HpkePrivateKey) {
+    type Error = base64::DecodeError;
+
+    fn try_from(keypair: SerializedHpkeKeypair) -> Result<Self, Self::Error> {
+        Ok((
+            keypair.config.try_into()?,
+            HpkePrivateKey::new(base64::decode_config(keypair.private_key, URL_SAFE_NO_PAD)?),
+        ))
     }
 }
 
@@ -498,11 +564,9 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::test_util::roundtrip_encoding;
-
     use super::test_util::new_dummy_task;
-    use super::*;
-    use janus_core::message::{Duration, TaskId, Time};
+    use crate::{config::test_util::roundtrip_encoding, task::VdafInstance};
+    use janus_core::message::{Duration, Interval, Role, TaskId, Time};
     use serde_test::{assert_tokens, Token};
 
     #[test]
