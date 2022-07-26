@@ -1,6 +1,6 @@
 [package]
 name = "janus_core"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Core type definitions and utilities used in various components of Janus."
 documentation = "https://docs.rs/janus_core"
