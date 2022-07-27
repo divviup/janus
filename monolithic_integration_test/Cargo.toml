@@ -17,20 +17,24 @@ janus = [
     "janus_core/test-util",
     "janus_server/test-util"
 ]
+kube-openssl = ["kube/openssl-tls"]
 
 [dependencies]
-backoff = "0.4"
+backoff = { version = "0.4.0", features = ["tokio"] }
 daphne = { git = "https://github.com/cloudflare/daphne", rev = "6301e712df216a0301c42cb3177110dd8217fa84", optional = true }
-futures = "0.3"
+futures = "0.3.23"
 hex = "0.4"
 hpke-dispatch = "0.3"
 http = "0.2"
 itertools = "0.10"
 janus_core = { path = "../janus_core" }
 janus_server = { path = "../janus_server" }
+k8s-openapi = { version = "*", features = ["v1_20"] }
+kube = { version = "0.65.0", default-features = false, features = ["client"] }
 lazy_static = "1"
 nix = { version = "0.25", default-features = false, features = ["signal"], optional = true }
 opentelemetry = { version = "0.17", features = ["metrics", "rt-tokio"] }
+portpicker = "0.1"
 rand = "0.8"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 serde = "1"
@@ -39,18 +43,16 @@ subprocess = { version = "0.2", optional = true }
 tempfile = { version = "3", optional = true }
 tokio = { version = "1", features = ["full", "tracing"] }
 toml = "0.5"
+tracing = "0.1.36"
+url = { version = "2.2.2", features = ["serde"] }
 warp = { version = "0.3", features = ["tls"] }
 
 [dev-dependencies]
-chrono = "0.4.22"
-deadpool-postgres = "0.10.1"
-futures = "0.3.23"
 janus_client = { path = "../janus_client" }
+janus_server = { path = "../janus_server", features = ["test-util"] }
+lazy_static = "1"
 monolithic_integration_test = { path = ".", features = ["daphne", "janus"] }
-portpicker = "0.1"
+opentelemetry = { version = "0.17.0", features = ["metrics", "rt-tokio"] }
 prio = "0.8.2"
 ring = "0.16.20"
 testcontainers = "0.14.0"
-tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
-tracing = "0.1.36"
-url = { version = "2.2.2", features = ["serde"] }

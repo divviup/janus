@@ -214,7 +214,7 @@ async fn main() -> anyhow::Result<()> {
         url: postgres_url,
         connection_pool_timeouts_secs: 30,
     };
-    let pool = database_pool(&db_config, &None).await?;
+    let pool = database_pool(&db_config, None).await?;
     let clock = janus_core::time::RealClock::default();
     let client = pool.get().await?;
     client
@@ -232,7 +232,7 @@ async fn main() -> anyhow::Result<()> {
     let aggregator_future = server.bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, http_port)));
 
     // Run the aggregation job creator.
-    let pool = database_pool(&db_config, &None).await?;
+    let pool = database_pool(&db_config, None).await?;
     let datastore_key = LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &key_bytes).unwrap());
     let crypter = Crypter::new(vec![datastore_key]);
     let aggregation_job_creator = Arc::new(AggregationJobCreator::new(

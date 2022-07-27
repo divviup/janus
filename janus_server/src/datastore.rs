@@ -138,6 +138,16 @@ impl<C: Clock> Datastore<C> {
         tx.tx.commit().await?;
         Ok(rslt)
     }
+
+    /// Write a task into the datastore.
+    #[cfg(feature = "test-util")]
+    pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
+        self.run_tx(|tx| {
+            let task = task.clone();
+            Box::pin(async move { tx.put_task(&task).await })
+        })
+        .await
+    }
 }
 
 /// Transaction represents an ongoing datastore transaction.
