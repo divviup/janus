@@ -23,6 +23,23 @@ Tests require that [`docker`](https://www.docker.com) & [`kind`](https://kind.si
 
 To run janus tests, execute `cargo test`.
 
+## Cargo features
+
+`janus_core` has the following features available.
+
+* `database`: Enables implementations of `postgres_types::ToSql` and `postgres_types::FromSql` on `janus_core::Interval`.
+* `test-util`: Enables miscellaneous test-only APIs. This should not be used outside of tests, and any such APIs do not carry any stability guarantees.
+
+`janus_server` has the following features available.
+
+* `jaeger`: Enables tracing support and a Jaeger exporter; [see below](#jaeger).
+* `kube-rustls`: Sets the `kube/rustls-tls` feature. This is enabled by default. Note that if both `kube/rustls-tls` and `kube/openssl-tls` are set, OpenSSL will take precedence.
+* `kube-openssl`: Sets the `kube/openssl-tls` feature. Note that if both `kube/rustls-tls` and `kube/openssl-tls` are set, OpenSSL will take precedence. Enable this feature if you need to communicate with a Kind cluster, i.e. `cargo run --bin janus_cli --features kube-openssl -- <SUBCOMMAND> ...`. (this works around an issue with rustls and IP addresses as names in certificates)
+* `otlp`: Enables OTLP exporter support for both metrics ([see below](#honeycomb-1)) and tracing ([see below](#honeycomb)).
+* `prometheus`: Enables metrics support and a Prometheus exporter; [see below](#prometheus).
+* `test-util`: Enables miscellaneous test-only APIs. This should not be used outside of tests, and any such APIs do not carry any stability guarantees.
+* `tokio-console`: Enables a tracing subscriber and server to support [`tokio-console`](https://github.com/tokio-rs/console). [See below](#monitoring-with-tokio-console) for additional instructions.
+
 ### inotify limits
 
 If you experience issues with tests using Kind on Linux, you may need to [adjust inotify sysctls](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files). Both systemd and Kubernetes inside each Kind node make use of inotify. When combined with other services and desktop applications, they may exhaust per-user limits.

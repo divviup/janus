@@ -93,12 +93,39 @@ impl Drop for EphemeralCluster {
 #[cfg(test)]
 mod tests {
     use super::EphemeralCluster;
+    use crate::test_util::install_test_trace_subscriber;
+    use k8s_openapi::api::core::v1::Node;
+    use kube::{api::ListParams, Api};
 
-    #[test]
-    fn create_clusters() {
-        // Create a couple of clusters, then drop them, to test that creating multiple clusters
-        // does not lead to collisions in some namespace.
-        let _first_cluster = EphemeralCluster::create();
-        let _second_cluster = EphemeralCluster::create();
+    #[tokio::test]
+    async fn create_clusters() {
+        // Create a couple of clusters, check communication, then drop them, to test that creating
+        // multiple clusters does not lead to collisions in some namespace.
+
+        install_test_trace_subscriber();
+
+        let first_cluster = EphemeralCluster::create();
+        let first_client = first_cluster.client().await;
+        let first_nodes: Api<Node> = Api::all(first_client);
+        assert_eq!(
+            first_nodes
+                .list(&ListParams::default())
+                .await
+                .iter()
+                .count(),
+            1
+        );
+
+        let second_cluster = EphemeralCluster::create();
+        let second_client = second_cluster.client().await;
+        let second_nodes: Api<Node> = Api::all(second_client);
+        assert_eq!(
+            second_nodes
+                .list(&ListParams::default())
+                .await
+                .iter()
+                .count(),
+            1
+        );
     }
 }

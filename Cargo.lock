@@ -1403,6 +1403,8 @@ dependencies = [
  "futures",
  "hex",
  "hpke-dispatch",
+ "janus_core",
+ "k8s-openapi",
  "kube",
  "num_enum",
  "postgres-protocol",
