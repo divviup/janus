@@ -23,5 +23,5 @@ ring = "0.16.20"
 testcontainers = "0.14.0"
 tokio = { version = "^1.20", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
-tracing = "0.1.35"
+tracing = "0.1.36"
 url = { version = "2.2.2", features = ["serde"] }
