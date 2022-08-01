@@ -83,5 +83,5 @@ mockito = "0.31.0"
 serde_test = "1.0.140"
 tempfile = "3.3.0"
 tokio = { version = "*", features = ["test-util"] }
-trycmd = "0.13.4"
+trycmd = "0.13.5"
 wait-timeout = "0.2.0"
