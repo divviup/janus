@@ -21,7 +21,7 @@ anyhow = "1"
 atty = "0.2"
 backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.13.0"
-bytes = "1.2.0"
+bytes = "1.2.1"
 chrono = "0.4"
 console-subscriber = { version = "0.1.6", optional = true }
 deadpool = { version = "0.9.5", features = ["rt_tokio_1"] }
