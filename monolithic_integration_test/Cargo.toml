@@ -6,22 +6,35 @@ license = "MPL-2.0"
 rust-version = "1.60"
 publish = false
 
+[dependencies]
+backoff = "0.4"
+daphne = { git = "https://github.com/cloudflare/daphne", rev = "6301e712df216a0301c42cb3177110dd8217fa84" }
+hex = "0.4"
+hpke-dispatch = "0.3"
+http = "0.2"
+janus_core = { path = "../janus_core", features = ["test-util"] }
+janus_server = { path = "../janus_server", features = ["test-util"] }
+lazy_static = "1"
+nix = { version = "0.24", default-features = false, features = ["signal"] }
+opentelemetry = { version = "0.17", features = ["metrics", "rt-tokio"] }
+rand = "0.8"
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
+serde = "1"
+serde_json = "1"
+subprocess = "0.2"
+tempfile = "3"
+tokio = { version = "1", features = ["full", "tracing"] }
+toml = "0.5"
+
 [dev-dependencies]
 chrono = "0.4.19"
 deadpool-postgres = "0.10.1"
 futures = "0.3.21"
-http = "0.2.8"
-janus_core = { path = "../janus_core", features = ["test-util"] }
 janus_client = { path = "../janus_client" }
-janus_server = { path = "../janus_server", features = ["test-util"] }
-lazy_static = "1"
-opentelemetry = { version = "0.17.0", features = ["metrics", "rt-tokio"] }
+portpicker = "0.1"
 prio = "0.8.2"
-rand = "0.8"
-reqwest = { version = "0.11.11", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 testcontainers = "0.14.0"
-tokio = { version = "^1.20", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
 tracing = "0.1.35"
 url = { version = "2.2.2", features = ["serde"] }
