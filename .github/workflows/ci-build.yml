@@ -31,7 +31,7 @@ jobs:
       run: go install sigs.k8s.io/kind@v0.14.0
     - name: Install Miniflare
       # Miniflare is used in support of Daphne integration tests.
-      run: npm install -g miniflare
+      run: npm install --location=global miniflare
     - name: lint
       run: cargo fmt --message-format human -- --check
     - name: clippy
