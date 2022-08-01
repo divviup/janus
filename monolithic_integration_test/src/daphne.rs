@@ -1,4 +1,4 @@
-//! Functionality for tests interacting with Daphne (https://github.com/cloudflare/daphne).
+//! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
 use backoff::{retry, ExponentialBackoff};
 use janus_core::message::{HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role};

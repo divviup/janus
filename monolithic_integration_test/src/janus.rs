@@ -1,4 +1,4 @@
-//! Functionality for tests interacting with Janus (https://github.com/cloudflare/daphne).
+//! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
 use http::HeaderMap;
 use janus_core::{message::Duration, time::RealClock, TokioRuntime};
