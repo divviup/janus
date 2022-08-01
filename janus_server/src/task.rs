@@ -137,25 +137,25 @@ enum VdafSerialization {
     FakeFailsPrepStep,
 }
 
-/// An authentication (bearer) token used by aggregators for aggregator-to-aggregator
-/// authentication.
+/// An authentication (bearer) token used by aggregators for aggregator-to-aggregator &
+/// collector-to-aggregator authentication.
 #[derive(Clone)]
-pub struct AggregatorAuthenticationToken(Vec<u8>);
+pub struct AuthenticationToken(Vec<u8>);
 
-impl From<Vec<u8>> for AggregatorAuthenticationToken {
+impl From<Vec<u8>> for AuthenticationToken {
     fn from(token: Vec<u8>) -> Self {
         Self(token)
     }
 }
 
-impl AggregatorAuthenticationToken {
+impl AuthenticationToken {
     /// Returns a view of the aggregator authentication token as a byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }
 
-impl PartialEq for AggregatorAuthenticationToken {
+impl PartialEq for AuthenticationToken {
     fn eq(&self, other: &Self) -> bool {
         // We attempt constant-time comparisons of the token data. Note that this function still
         // leaks whether the lengths of the tokens are equal -- this is acceptable because we expect
@@ -165,7 +165,7 @@ impl PartialEq for AggregatorAuthenticationToken {
     }
 }
 
-impl Eq for AggregatorAuthenticationToken {}
+impl Eq for AuthenticationToken {}
 
 /// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
 #[derive(Clone, Derivative, PartialEq, Eq)]
@@ -195,9 +195,12 @@ pub struct Task {
     pub(crate) tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
     pub(crate) collector_hpke_config: HpkeConfig,
-    /// Tokens used to authenticate messages sent to or received from the other aggregators.
+    /// Tokens used to authenticate messages sent to or received from the other aggregator.
     #[derivative(Debug = "ignore")]
-    pub agg_auth_tokens: Vec<AggregatorAuthenticationToken>,
+    pub aggregator_auth_tokens: Vec<AuthenticationToken>,
+    #[derivative(Debug = "ignore")]
+    /// Tokens used to authenticate messages sent to or received from the collector.
+    pub collector_auth_tokens: Vec<AuthenticationToken>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
     pub hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
@@ -215,7 +218,8 @@ impl Task {
         min_batch_duration: Duration,
         tolerable_clock_skew: Duration,
         collector_hpke_config: HpkeConfig,
-        agg_auth_tokens: Vec<AggregatorAuthenticationToken>,
+        aggregator_auth_tokens: Vec<AuthenticationToken>,
+        collector_auth_tokens: Vec<AuthenticationToken>,
         hpke_keys: I,
     ) -> Result<Self, Error> {
         // PPM currently only supports configurations of exactly two aggregators.
@@ -225,8 +229,11 @@ impl Task {
         if !role.is_aggregator() {
             return Err(Error::InvalidParameter("role"));
         }
-        if agg_auth_tokens.is_empty() {
-            return Err(Error::InvalidParameter("agg_auth_tokens"));
+        if aggregator_auth_tokens.is_empty() {
+            return Err(Error::InvalidParameter("aggregator_auth_tokens"));
+        }
+        if collector_auth_tokens.is_empty() {
+            return Err(Error::InvalidParameter("collector_auth_tokens"));
         }
         if vdaf_verify_keys.is_empty() {
             return Err(Error::InvalidParameter("vdaf_verify_keys"));
@@ -252,7 +259,8 @@ impl Task {
             min_batch_duration,
             tolerable_clock_skew,
             collector_hpke_config,
-            agg_auth_tokens,
+            aggregator_auth_tokens,
+            collector_auth_tokens,
             hpke_keys: hpke_configs,
         })
     }
@@ -273,19 +281,34 @@ impl Task {
         Ok(&self.aggregator_endpoints[index])
     }
 
-    /// Returns the [`AggregatorAuthenticationToken`] currently used by this task to authenticate
-    /// aggregate messages.
-    pub fn primary_aggregator_auth_token(&self) -> &AggregatorAuthenticationToken {
-        self.agg_auth_tokens.iter().rev().next().unwrap()
+    /// Returns the [`AuthenticationToken`] currently used by this aggregator to authenticate itself
+    /// to other aggregators.
+    pub fn primary_aggregator_auth_token(&self) -> &AuthenticationToken {
+        self.aggregator_auth_tokens.iter().rev().next().unwrap()
     }
 
     /// Checks if the given aggregator authentication token is valid (i.e. matches with an
     /// authentication token recognized by this task).
-    pub(crate) fn check_aggregator_auth_token(
-        &self,
-        auth_token: &AggregatorAuthenticationToken,
-    ) -> bool {
-        self.agg_auth_tokens.iter().rev().any(|t| t == auth_token)
+    pub(crate) fn check_aggregator_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
+        self.aggregator_auth_tokens
+            .iter()
+            .rev()
+            .any(|t| t == auth_token)
+    }
+
+    /// Returns the [`AuthenticationToken`] currently used by the collector to authenticate itself
+    /// to the aggregators.
+    pub fn primary_collector_auth_token(&self) -> &AuthenticationToken {
+        self.collector_auth_tokens.iter().rev().next().unwrap()
+    }
+
+    /// Checks if the given collector authentication token is valid (i.e. matches with an
+    /// authentication token recognized by this task).
+    pub(crate) fn check_collector_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
+        self.collector_auth_tokens
+            .iter()
+            .rev()
+            .any(|t| t == auth_token)
     }
 }
 
@@ -303,7 +326,8 @@ struct SerializedTask {
     min_batch_duration: Duration,
     tolerable_clock_skew: Duration,
     collector_hpke_config: SerializedHpkeConfig,
-    agg_auth_tokens: Vec<String>,          // in unpadded base64url
+    aggregator_auth_tokens: Vec<String>, // in unpadded base64url
+    collector_auth_tokens: Vec<String>,  // in unpadded base64url
     hpke_keys: Vec<SerializedHpkeKeypair>, // in unpadded base64url
 }
 
@@ -315,8 +339,13 @@ impl Serialize for Task {
             .iter()
             .map(|key| base64::encode_config(key, URL_SAFE_NO_PAD))
             .collect();
-        let agg_auth_tokens: Vec<_> = self
-            .agg_auth_tokens
+        let aggregator_auth_tokens = self
+            .aggregator_auth_tokens
+            .iter()
+            .map(|token| base64::encode_config(token.as_bytes(), URL_SAFE_NO_PAD))
+            .collect();
+        let collector_auth_tokens = self
+            .collector_auth_tokens
             .iter()
             .map(|token| base64::encode_config(token.as_bytes(), URL_SAFE_NO_PAD))
             .collect();
@@ -337,7 +366,8 @@ impl Serialize for Task {
             min_batch_duration: self.min_batch_duration,
             tolerable_clock_skew: self.tolerable_clock_skew,
             collector_hpke_config: self.collector_hpke_config.clone().into(),
-            agg_auth_tokens,
+            aggregator_auth_tokens,
+            collector_auth_tokens,
             hpke_keys,
         }
         .serialize(serializer)
@@ -371,12 +401,23 @@ impl<'de> Deserialize<'de> for Task {
             .try_into()
             .map_err(D::Error::custom)?;
 
-        // agg_auth_tokens
-        let agg_auth_tokens: Vec<_> = serialized_task
-            .agg_auth_tokens
+        // aggregator_auth_tokens
+        let aggregator_auth_tokens = serialized_task
+            .aggregator_auth_tokens
             .into_iter()
             .map(|token| {
-                Ok(AggregatorAuthenticationToken::from(
+                Ok(AuthenticationToken::from(
+                    base64::decode_config(token, URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
+                ))
+            })
+            .collect::<Result<_, _>>()?;
+
+        // collector_auth_tokens
+        let collector_auth_tokens = serialized_task
+            .collector_auth_tokens
+            .into_iter()
+            .map(|token| {
+                Ok(AuthenticationToken::from(
                     base64::decode_config(token, URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
                 ))
             })
@@ -405,7 +446,8 @@ impl<'de> Deserialize<'de> for Task {
             min_batch_duration: serialized_task.min_batch_duration,
             tolerable_clock_skew: serialized_task.tolerable_clock_skew,
             collector_hpke_config,
-            agg_auth_tokens,
+            aggregator_auth_tokens,
+            collector_auth_tokens,
             hpke_keys,
         })
     }
@@ -481,9 +523,7 @@ impl TryFrom<SerializedHpkeKeypair> for (HpkeConfig, HpkePrivateKey) {
 pub mod test_util {
     use std::iter;
 
-    use super::{
-        AggregatorAuthenticationToken, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH,
-    };
+    use super::{AuthenticationToken, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH};
     use janus_core::{
         hpke::test_util::generate_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
@@ -529,31 +569,29 @@ pub mod test_util {
 
         Task::new(
             task_id,
-            vec![
+            Vec::from([
                 "http://leader_endpoint".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
-            ],
+            ]),
             vdaf,
             role,
-            vec![vdaf_verify_key],
+            Vec::from([vdaf_verify_key]),
             0,
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             collector_config,
-            vec![
-                generate_aggregator_auth_token(),
-                generate_aggregator_auth_token(),
-            ],
-            vec![
+            Vec::from([generate_auth_token(), generate_auth_token()]),
+            Vec::from([generate_auth_token(), generate_auth_token()]),
+            Vec::from([
                 (aggregator_config_0, aggregator_private_key_0),
                 (aggregator_config_1, aggregator_private_key_1),
-            ],
+            ]),
         )
         .unwrap()
     }
 
-    pub fn generate_aggregator_auth_token() -> AggregatorAuthenticationToken {
+    pub fn generate_auth_token() -> AuthenticationToken {
         let mut buf = [0; 16];
         thread_rng().fill(&mut buf);
         base64::encode_config(&buf, base64::URL_SAFE_NO_PAD)
