@@ -246,7 +246,11 @@ mod tests {
     };
     use k8s_openapi::api::core::v1::Secret;
     use ring::aead::{UnboundKey, AES_128_GCM};
-    use std::{collections::HashMap, io::Write};
+    use std::{
+        collections::HashMap,
+        io::Write,
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    };
     use tempfile::NamedTempFile;
 
     #[tokio::test]
@@ -336,6 +340,10 @@ mod tests {
                 database: generate_db_config(),
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
+                health_check_listen_address: SocketAddr::V4(SocketAddrV4::new(
+                    Ipv4Addr::LOCALHOST,
+                    8080,
+                )),
             },
         })
     }

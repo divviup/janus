@@ -56,16 +56,23 @@ async fn server_shutdown() {
     let (datastore, db_handle) = ephemeral_datastore(RealClock::default()).await;
 
     let aggregator_port = select_open_port().unwrap();
-    let listen_address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port));
+    let aggregator_listen_address =
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port));
+    let health_check_port = select_open_port().unwrap();
+    let health_check_listen_address =
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, health_check_port));
+    assert_ne!(aggregator_port, health_check_port);
 
     let config = format!(
         r#"---
     listen_address: "{}"
+    health_check_listen_address: "{}"
     database:
         url: "{}"
         connection_pool_timeouts_secs: 60
     "#,
-        listen_address,
+        aggregator_listen_address,
+        health_check_listen_address,
         db_handle.connection_string()
     );
 
@@ -115,9 +122,15 @@ async fn server_shutdown() {
         }
     });
 
-    // Try to connect to the server in a loop, until it's ready.
-    let listen_address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port));
-    wait_for_server(listen_address).expect("could not connect to server after starting it");
+    // Try to connect to the HTTP servers in a loop, until they are ready.
+    let aggregator_listen_address =
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port));
+    wait_for_server(aggregator_listen_address)
+        .expect("could not connect to aggregator server after starting it");
+    let health_check_listen_address =
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, health_check_port));
+    wait_for_server(health_check_listen_address)
+        .expect("could not connect to health check server after starting it");
 
     // Make a test request to the server.
     // TODO(#220): expand this further once multi-process integration tests are fleshed out, to
@@ -125,9 +138,12 @@ async fn server_shutdown() {
     let client = Client::new();
     let url = Url::parse(&format!(
         "http://{}/hpke_config?task_id={}",
-        listen_address, task_id
+        aggregator_listen_address, task_id
     ))
     .unwrap();
+    assert!(client.get(url).send().await.unwrap().status().is_success());
+
+    let url = Url::parse(&format!("http://{}/healthz", health_check_listen_address,)).unwrap();
     assert!(client.get(url).send().await.unwrap().status().is_success());
 
     // Send SIGTERM to the child process.

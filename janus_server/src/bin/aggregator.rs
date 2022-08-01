@@ -166,7 +166,7 @@ mod tests {
     };
     use std::{
         collections::HashMap,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     };
 
     #[test]
@@ -177,6 +177,10 @@ mod tests {
                 database: generate_db_config(),
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
+                health_check_listen_address: SocketAddr::V4(SocketAddrV4::new(
+                    Ipv4Addr::LOCALHOST,
+                    8080,
+                )),
             },
             response_headers: vec![HeaderEntry {
                 name: "name".to_owned(),
@@ -192,6 +196,7 @@ mod tests {
             serde_yaml::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
+    health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
         connection_pool_timeouts_secs: 60
@@ -218,6 +223,7 @@ mod tests {
             serde_yaml::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
+    health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
         connection_pool_timeouts_secs: 60
@@ -237,6 +243,7 @@ mod tests {
             serde_yaml::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
+    health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
         connection_pool_timeouts_secs: 60
@@ -267,6 +274,7 @@ mod tests {
             serde_yaml::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
+    health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
         connection_pool_timeouts_secs: 60
@@ -291,6 +299,7 @@ mod tests {
             serde_yaml::from_str::<Config>(
                 r#"---
     listen_address: "0.0.0.0:8080"
+    health_check_listen_address: "0.0.0.0:8080"
     database:
         url: "postgres://postgres:postgres@localhost:5432/postgres"
         connection_pool_timeouts_secs: 60

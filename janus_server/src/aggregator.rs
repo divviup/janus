@@ -2149,23 +2149,8 @@ fn aggregator_filter<C: Clock>(
         aggregate_share_routing,
         aggregate_share_responding,
         warp::cors().build(),
-        response_time_recorder.clone(),
-        "aggregate_share",
-    );
-
-    let health_check_live_routing = warp::path("healthz").and(warp::path::end());
-    let health_check_live_responding = warp::get().map(|| {
-        http::Response::builder()
-            .status(StatusCode::OK)
-            .body(&[0u8; 0][..])
-            .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
-    });
-    let health_check_live_endpoint = compose_common_wrappers(
-        health_check_live_routing,
-        health_check_live_responding,
-        warp::cors().build(),
         response_time_recorder,
-        "health_check_live",
+        "aggregate_share",
     );
 
     Ok(hpke_config_endpoint
@@ -2174,7 +2159,6 @@ fn aggregator_filter<C: Clock>(
         .or(collect_endpoint)
         .or(collect_jobs_endpoint)
         .or(aggregate_share_endpoint)
-        .or(health_check_live_endpoint)
         .boxed())
 }
 
@@ -2201,8 +2185,7 @@ mod tests {
     use crate::{
         datastore::{
             models::BatchUnitAggregation,
-            test_util::{ephemeral_datastore, generate_aead_key, DbHandle},
-            Crypter,
+            test_util::{ephemeral_datastore, DbHandle},
         },
         task::{
             test_util::{generate_aggregator_auth_token, new_dummy_task},
@@ -2210,7 +2193,6 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
-    use deadpool_postgres::{Manager, Pool};
     use http::Method;
     use hyper::body;
     use janus_core::{
@@ -2234,13 +2216,7 @@ mod tests {
     };
     use rand::{thread_rng, Rng};
     use serde_json::json;
-    use std::{
-        collections::HashMap,
-        io::Cursor,
-        net::{Ipv4Addr, SocketAddrV4},
-    };
-    use tokio::{io::AsyncWriteExt, net::TcpListener};
-    use tokio_postgres::{Config, NoTls};
+    use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
     use warp::{cors::CorsForbidden, reply::Reply, Rejection};
 
@@ -5822,61 +5798,5 @@ mod tests {
             )
             .unwrap(),
         }
-    }
-
-    #[tokio::test]
-    async fn health_check() {
-        install_test_trace_subscriber();
-
-        let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-
-        let good_filter = aggregator_filter(Arc::new(datastore), clock.clone()).unwrap();
-
-        let liveness_response = warp::test::request()
-            .method("GET")
-            .path("/healthz")
-            .filter(&good_filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(liveness_response.status(), 200);
-
-        // Set up a server that immediately closes all connections, try to connect to it as the
-        // database server, and confirm that the health check endpoint returns an error.
-        let listener = TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(127, 0, 0, 1),
-            0,
-        )))
-        .await
-        .unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let handle = tokio::spawn(async move {
-            loop {
-                let (mut tcp_stream, _) = listener.accept().await.unwrap();
-                tcp_stream.shutdown().await.unwrap();
-            }
-        });
-
-        let mut bad_db_config = Config::new();
-        // We know this address is unroutable, so creating a connection should fail.
-        bad_db_config.host(&format!("127.0.0.1:{}", port));
-        let bad_pool = Pool::builder(Manager::new(bad_db_config, NoTls))
-            .build()
-            .unwrap();
-        let crypter = Crypter::new(vec![generate_aead_key()]);
-        let bad_datastore = Datastore::new(bad_pool, crypter, clock.clone());
-        let bad_filter = aggregator_filter(Arc::new(bad_datastore), clock).unwrap();
-
-        let liveness_response = warp::test::request()
-            .method("GET")
-            .path("/healthz")
-            .filter(&bad_filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(liveness_response.status(), 200);
-
-        handle.abort();
     }
 }
