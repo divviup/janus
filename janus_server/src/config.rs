@@ -2,7 +2,7 @@
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::fmt::Debug;
+use std::{fmt::Debug, net::SocketAddr};
 use url::Url;
 
 /// Configuration options common to all Janus binaries.
@@ -10,12 +10,17 @@ use url::Url;
 pub struct CommonConfig {
     /// The database configuration.
     pub database: DbConfig,
+
     /// Logging configuration.
     #[serde(default)]
     pub logging_config: TraceConfiguration,
+
     /// Application-level metrics configuration
     #[serde(default)]
     pub metrics_config: MetricsConfiguration,
+
+    /// Address to serve HTTP health check requests on.
+    pub health_check_listen_address: SocketAddr,
 }
 
 /// Trait describing configuration structures for various Janus binaries.
@@ -154,6 +159,7 @@ mod tests {
         },
         CommonConfig, DbConfig, JobDriverConfig,
     };
+    use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
     fn roundtrip_db_config() {
@@ -174,6 +180,7 @@ mod tests {
             database: generate_db_config(),
             logging_config: generate_trace_config(),
             metrics_config: generate_metrics_config(),
+            health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
         })
     }
 

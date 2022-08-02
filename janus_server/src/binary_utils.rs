@@ -13,12 +13,14 @@ use backoff::{future::retry, ExponentialBackoff};
 use base64::STANDARD_NO_PAD;
 use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
+use http::StatusCode;
 use janus_core::time::Clock;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},
     fs,
     future::Future,
+    net::SocketAddr,
     path::PathBuf,
     str::FromStr,
     time::Duration,
@@ -26,6 +28,7 @@ use std::{
 use structopt::StructOpt;
 use tokio_postgres::NoTls;
 use tracing::info;
+use warp::Filter;
 
 /// Reads, parses, and returns the config referenced by the given options.
 pub fn read_config<Options: BinaryOptions, Config: BinaryConfig>(
@@ -288,15 +291,34 @@ where
 
     let logging_config = config.common_config().logging_config.clone();
 
-    f(BinaryContext {
+    let health_check_listen_address = config.common_config().health_check_listen_address;
+    let healthz_task_handle =
+        tokio::task::spawn(
+            async move { health_endpoint_server(health_check_listen_address).await },
+        );
+
+    let result = f(BinaryContext {
         clock,
         options,
         config,
         datastore,
     })
-    .await?;
+    .await;
+
+    healthz_task_handle.abort();
 
     cleanup_trace_subscriber(&logging_config);
 
-    Ok(())
+    result
+}
+
+/// Listen for HTTP requests on a given port, and respond to requests for "/healthz" with an empty
+/// body and status code 200. Each Janus component exposes this HTTP server to enable health
+/// checks, and to indicate when it has successfully started up.
+async fn health_endpoint_server(address: SocketAddr) {
+    let filter = warp::path("healthz")
+        .and(warp::get().or(warp::head()).unify())
+        .map(|| warp::reply::with_status(warp::reply::reply(), StatusCode::OK));
+    let server = warp::serve(filter);
+    server.bind(address).await;
 }
