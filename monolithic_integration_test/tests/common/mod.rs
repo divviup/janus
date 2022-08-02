@@ -136,6 +136,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     const NUM_NONZERO_MEASUREMENTS: usize = 23;
     let before_timestamp = clock.now();
     for _ in 0..NUM_NONZERO_MEASUREMENTS {
+        //let _lock = MUTEX.lock().await;
         client.upload(&0).await.unwrap();
         client.upload(&1).await.unwrap();
     }
@@ -164,17 +165,20 @@ pub async fn submit_measurements_and_verify_aggregate(
         batch_interval,
         agg_param: Vec::new(),
     };
-    let collect_resp = http_client
-        .post(collect_url)
-        .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
-        .header(
-            "DAP-Auth-Token",
-            leader_task.primary_aggregator_auth_token().as_bytes(),
-        )
-        .body(collect_req.get_encoded())
-        .send()
-        .await
-        .unwrap();
+    let collect_resp = {
+        //let _lock = MUTEX.lock().await;
+        http_client
+            .post(collect_url)
+            .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
+            .header(
+                "DAP-Auth-Token",
+                leader_task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .body(collect_req.get_encoded())
+            .send()
+            .await
+            .unwrap()
+    };
     assert_eq!(collect_resp.status(), StatusCode::SEE_OTHER);
     let collect_job_url = Url::parse(
         collect_resp
@@ -193,11 +197,14 @@ pub async fn submit_measurements_and_verify_aggregate(
     let mut poll_interval = time::interval(time::Duration::from_millis(500));
     let collect_resp = loop {
         assert!(Instant::now() < collect_job_poll_timeout);
-        let collect_job_resp = http_client
-            .get(collect_job_url.clone())
-            .send()
-            .await
-            .unwrap();
+        let collect_job_resp = {
+            //let _lock = MUTEX.lock().await;
+            http_client
+                .get(collect_job_url.clone())
+                .send()
+                .await
+                .unwrap()
+        };
         let status = collect_job_resp.status();
         assert!(status == StatusCode::OK || status == StatusCode::ACCEPTED);
         if status == StatusCode::ACCEPTED {
