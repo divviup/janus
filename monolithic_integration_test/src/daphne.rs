@@ -63,20 +63,14 @@ impl Daphne {
         // Janus task definition.
 
         // Daphne currently only supports an HPKE config of (X25519HkdfSha256, HkdfSha256,
-        // Aes128Gcm), so we check that the provided keys are of the appropriate type.
+        // Aes128Gcm); this is checked in `DaphneHpkeConfig::from`.
         let dap_hpke_receiver_config_list = serde_json::to_string(
             &task
                 .hpke_keys
                 .values()
-                .map(|(hpke_config, private_key)| {
-                    assert_eq!(hpke_config.kem_id(), HpkeKemId::X25519HkdfSha256);
-                    assert_eq!(hpke_config.kdf_id(), HpkeKdfId::HkdfSha256);
-                    assert_eq!(hpke_config.aead_id(), HpkeAeadId::Aes128Gcm);
-
-                    DaphneHpkeReceiverConfig {
-                        config: DaphneHpkeConfig::from(hpke_config.clone()),
-                        secret_key: hex::encode(private_key.as_ref()),
-                    }
+                .map(|(hpke_config, private_key)| DaphneHpkeReceiverConfig {
+                    config: DaphneHpkeConfig::from(hpke_config.clone()),
+                    secret_key: hex::encode(private_key.as_ref()),
                 })
                 .collect::<Vec<_>>(),
         )
@@ -125,7 +119,13 @@ impl Daphne {
 
             build: WranglerBuildConfig {
                 upload: WranglerBuildUploadConfig {
-                    dir: DAPHNE_CODE_DIR.path().to_str().unwrap().to_string(),
+                    dir: DAPHNE_CODE_DIR
+                        .path()
+                        .canonicalize()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_string(),
                     format: "modules".to_string(),
                     main: "./shim.mjs".to_string(),
 
@@ -222,7 +222,7 @@ impl Daphne {
                 stdin: Redirection::RcFile(dev_null.clone()),
                 stdout: Redirection::RcFile(dev_null.clone()),
                 stderr: Redirection::RcFile(dev_null),
-                cwd: Some(DAPHNE_CODE_DIR.path().into()),
+                cwd: Some(DAPHNE_CODE_DIR.path().canonicalize().unwrap().into()),
                 setpgid: true,
                 ..Default::default()
             },
