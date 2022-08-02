@@ -31,7 +31,18 @@ CREATE TABLE task_aggregator_auth_tokens(
     ord BIGINT NOT NULL,      -- a value used to specify the ordering of the authentication tokens
     token BYTEA NOT NULL,     -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
 
-    CONSTRAINT auth_token_unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT aggregator_auth_token_unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+);
+
+-- The collector authentication tokens used by a given task.
+CREATE TABLE task_collector_auth_tokens(
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
+    task_id BIGINT NOT NULL,  -- task ID the token is associated with
+    ord BIGINT NOT NULL,      -- a value used to specify the ordering of the authentication tokens
+    token BYTEA NOT NULL,     -- bearer token used to authenticate messages from the collector (encrypted)
+
+    CONSTRAINT collector_auth_token_unique_task_id_and_ord UNIQUE(task_id, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 

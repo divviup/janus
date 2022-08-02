@@ -9,7 +9,7 @@ use self::models::{
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
 use crate::{
     message::{AggregateShareReq, AggregationJobId, ReportShare},
-    task::{self, AggregatorAuthenticationToken, Task, VdafInstance},
+    task::{self, AuthenticationToken, Task, VdafInstance},
 };
 use anyhow::anyhow;
 use futures::try_join;
@@ -182,36 +182,67 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
 
         // Aggregator auth tokens.
-        let mut agg_auth_token_ords: Vec<i64> = Vec::new();
-        let mut agg_auth_tokens: Vec<Vec<u8>> = Vec::new();
-        for (ord, token) in task.agg_auth_tokens.iter().enumerate() {
+        let mut aggregator_auth_token_ords = Vec::new();
+        let mut aggregator_auth_tokens = Vec::new();
+        for (ord, token) in task.aggregator_auth_tokens.iter().enumerate() {
             let ord = i64::try_from(ord)?;
 
-            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
+            let mut row_id = [0; TaskId::ENCODED_LEN + size_of::<i64>()];
             row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_bytes());
             row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
 
-            let encrypted_agg_auth_token = self.crypter.encrypt(
+            let encrypted_aggregator_auth_token = self.crypter.encrypt(
                 "task_aggregator_auth_tokens",
                 &row_id,
                 "token",
                 token.as_bytes(),
             )?;
 
-            agg_auth_token_ords.push(ord);
-            agg_auth_tokens.push(encrypted_agg_auth_token);
+            aggregator_auth_token_ords.push(ord);
+            aggregator_auth_tokens.push(encrypted_aggregator_auth_token);
         }
         let stmt = self.tx.prepare_cached(
                 "INSERT INTO task_aggregator_auth_tokens (task_id, ord, token)
                 SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], $3::BYTEA[])"
             )
             .await?;
-        let auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
+        let aggregator_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
             /* task_id */ &task.id.as_bytes(),
-            /* ords */ &agg_auth_token_ords,
-            /* tokens */ &agg_auth_tokens,
+            /* ords */ &aggregator_auth_token_ords,
+            /* tokens */ &aggregator_auth_tokens,
         ];
-        let auth_tokens_future = self.tx.execute(&stmt, auth_tokens_params);
+        let aggregator_auth_tokens_future = self.tx.execute(&stmt, aggregator_auth_tokens_params);
+
+        // Collector auth tokens.
+        let mut collector_auth_token_ords = Vec::new();
+        let mut collector_auth_tokens = Vec::new();
+        for (ord, token) in task.collector_auth_tokens.iter().enumerate() {
+            let ord = i64::try_from(ord)?;
+
+            let mut row_id = [0; TaskId::ENCODED_LEN + size_of::<i64>()];
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_bytes());
+            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
+
+            let encrypted_collector_auth_token = self.crypter.encrypt(
+                "task_collector_auth_tokens",
+                &row_id,
+                "token",
+                token.as_bytes(),
+            )?;
+
+            collector_auth_token_ords.push(ord);
+            collector_auth_tokens.push(encrypted_collector_auth_token);
+        }
+        let stmt = self.tx.prepare_cached(
+            "INSERT INTO task_collector_auth_tokens (task_id, ord, token)
+            SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], $3::BYTEA[])"
+        ).await?;
+        let collector_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
+            /* task_id */ &task.id.as_bytes(),
+            /* ords */ &collector_auth_token_ords,
+            /* tokens */ &collector_auth_tokens,
+        ];
+        let collector_auth_tokens_future = self.tx.execute(&stmt, collector_auth_tokens_params);
 
         // HPKE keys.
         let mut hpke_config_ids: Vec<i16> = Vec::new();
@@ -274,7 +305,8 @@ impl<C: Clock> Transaction<'_, C> {
         let vdaf_verify_keys_future = self.tx.execute(&stmt, vdaf_verify_keys_params);
 
         try_join!(
-            auth_tokens_future,
+            aggregator_auth_tokens_future,
+            collector_auth_tokens_future,
             hpke_configs_future,
             vdaf_verify_keys_future
         )?;
@@ -301,6 +333,15 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
+                "DELETE FROM task_collector_auth_tokens
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        let task_collector_auth_tokens_future = self.tx.execute(&stmt, params);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
                 "DELETE FROM task_hpke_keys
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
@@ -318,6 +359,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         try_join!(
             task_aggregator_auth_tokens_future,
+            task_collector_auth_tokens_future,
             task_hpke_keys_future,
             task_vdaf_verify_keys_future,
         )?;
@@ -352,7 +394,16 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
             )
             .await?;
-        let agg_auth_token_rows = self.tx.query(&stmt, params);
+        let aggregator_auth_token_rows = self.tx.query(&stmt, params);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT ord, token FROM task_collector_auth_tokens
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
+            )
+            .await?;
+        let collector_auth_token_rows = self.tx.query(&stmt, params);
 
         let stmt = self
             .tx
@@ -372,9 +423,16 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
         let vdaf_verify_key_rows = self.tx.query(&stmt, params);
 
-        let (task_row, agg_auth_token_rows, hpke_key_rows, vdaf_verify_key_rows) = try_join!(
+        let (
             task_row,
-            agg_auth_token_rows,
+            aggregator_auth_token_rows,
+            collector_auth_token_rows,
+            hpke_key_rows,
+            vdaf_verify_key_rows,
+        ) = try_join!(
+            task_row,
+            aggregator_auth_token_rows,
+            collector_auth_token_rows,
             hpke_key_rows,
             vdaf_verify_key_rows,
         )?;
@@ -383,7 +441,8 @@ impl<C: Clock> Transaction<'_, C> {
                 self.task_from_rows(
                     task_id,
                     task_row,
-                    agg_auth_token_rows,
+                    aggregator_auth_token_rows,
+                    collector_auth_token_rows,
                     hpke_key_rows,
                     vdaf_verify_key_rows,
                 )
@@ -412,7 +471,16 @@ impl<C: Clock> Transaction<'_, C> {
                 ord, token FROM task_aggregator_auth_tokens ORDER BY ord ASC",
             )
             .await?;
-        let agg_auth_token_rows = self.tx.query(&stmt, &[]);
+        let aggregator_auth_token_rows = self.tx.query(&stmt, &[]);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_collector_auth_tokens.task_id),
+                ord, token FROM task_collector_auth_tokens ORDER BY ord ASC",
+            )
+            .await?;
+        let collector_auth_token_rows = self.tx.query(&stmt, &[]);
 
         let stmt = self
             .tx
@@ -429,9 +497,16 @@ impl<C: Clock> Transaction<'_, C> {
         ).await?;
         let vdaf_verify_key_rows = self.tx.query(&stmt, &[]);
 
-        let (task_rows, agg_auth_token_rows, hpke_config_rows, vdaf_verify_key_rows) = try_join!(
+        let (
             task_rows,
-            agg_auth_token_rows,
+            aggregator_auth_token_rows,
+            collector_auth_token_rows,
+            hpke_config_rows,
+            vdaf_verify_key_rows,
+        ) = try_join!(
+            task_rows,
+            aggregator_auth_token_rows,
+            collector_auth_token_rows,
             hpke_config_rows,
             vdaf_verify_key_rows
         )?;
@@ -442,10 +517,19 @@ impl<C: Clock> Transaction<'_, C> {
             task_row_by_id.push((task_id, row));
         }
 
-        let mut agg_auth_token_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
-        for row in agg_auth_token_rows {
+        let mut aggregator_auth_token_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
+        for row in aggregator_auth_token_rows {
             let task_id = TaskId::get_decoded(row.get("task_id"))?;
-            agg_auth_token_rows_by_task_id
+            aggregator_auth_token_rows_by_task_id
+                .entry(task_id)
+                .or_default()
+                .push(row);
+        }
+
+        let mut collector_auth_token_rows_by_task_id: HashMap<TaskId, Vec<Row>> = HashMap::new();
+        for row in collector_auth_token_rows {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            collector_auth_token_rows_by_task_id
                 .entry(task_id)
                 .or_default()
                 .push(row);
@@ -475,7 +559,10 @@ impl<C: Clock> Transaction<'_, C> {
                 self.task_from_rows(
                     task_id,
                     row,
-                    agg_auth_token_rows_by_task_id
+                    aggregator_auth_token_rows_by_task_id
+                        .remove(&task_id)
+                        .unwrap_or_default(),
+                    collector_auth_token_rows_by_task_id
                         .remove(&task_id)
                         .unwrap_or_default(),
                     hpke_config_rows_by_task_id
@@ -497,7 +584,8 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         task_id: TaskId,
         row: Row,
-        agg_auth_token_rows: Vec<Row>,
+        aggregator_auth_token_rows: Vec<Row>,
+        collector_auth_token_rows: Vec<Row>,
         hpke_key_rows: Vec<Row>,
         vdaf_verify_key_rows: Vec<Row>,
     ) -> Result<Task, Error> {
@@ -518,20 +606,38 @@ impl<C: Clock> Transaction<'_, C> {
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
 
         // Aggregator authentication tokens.
-        let mut agg_auth_tokens = Vec::new();
-        for row in agg_auth_token_rows {
+        let mut aggregator_auth_tokens = Vec::new();
+        for row in aggregator_auth_token_rows {
             let ord: i64 = row.get("ord");
-            let encrypted_agg_auth_token: Vec<u8> = row.get("token");
+            let encrypted_aggregator_auth_token: Vec<u8> = row.get("token");
 
             let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
             row_id[..TaskId::ENCODED_LEN].copy_from_slice(task_id.as_bytes());
             row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
 
-            agg_auth_tokens.push(AggregatorAuthenticationToken::from(self.crypter.decrypt(
+            aggregator_auth_tokens.push(AuthenticationToken::from(self.crypter.decrypt(
                 "task_aggregator_auth_tokens",
                 &row_id,
                 "token",
-                &encrypted_agg_auth_token,
+                &encrypted_aggregator_auth_token,
+            )?));
+        }
+
+        // Collector authentication tokens.
+        let mut collector_auth_tokens = Vec::new();
+        for row in collector_auth_token_rows {
+            let ord: i64 = row.get("ord");
+            let encrypted_collector_auth_token: Vec<u8> = row.get("token");
+
+            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
+            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task_id.as_bytes());
+            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
+
+            collector_auth_tokens.push(AuthenticationToken::from(self.crypter.decrypt(
+                "task_collector_auth_tokens",
+                &row_id,
+                "token",
+                &encrypted_collector_auth_token,
             )?));
         }
 
@@ -556,6 +662,7 @@ impl<C: Clock> Transaction<'_, C> {
             hpke_configs.push((config, private_key));
         }
 
+        // VDAF verify keys.
         let mut vdaf_verify_keys = Vec::new();
         for row in vdaf_verify_key_rows {
             let encrypted_vdaf_verify_key: Vec<u8> = row.get("vdaf_verify_key");
@@ -578,7 +685,8 @@ impl<C: Clock> Transaction<'_, C> {
             min_batch_duration,
             tolerable_clock_skew,
             collector_hpke_config,
-            agg_auth_tokens,
+            aggregator_auth_tokens,
+            collector_auth_tokens,
             hpke_configs,
         )?)
     }

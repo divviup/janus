@@ -19,7 +19,7 @@ use janus_server::{
     binary_utils::job_driver::JobDriver,
     datastore::test_util::{ephemeral_datastore, DbHandle},
     message::{CollectReq, CollectResp},
-    task::{test_util::generate_aggregator_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{test_util::generate_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use opentelemetry::global::meter;
 use prio::{
@@ -90,6 +90,13 @@ async fn end_to_end() {
     };
     let collect_resp = http_client
         .post(collect_url)
+        .header(
+            "DAP-Auth-Token",
+            test_case
+                .leader_task
+                .primary_collector_auth_token()
+                .as_bytes(),
+        )
         .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
         .body(collect_req.get_encoded())
         .send()
@@ -115,6 +122,13 @@ async fn end_to_end() {
         assert!(Instant::now() < collect_job_poll_timeout);
         let collect_job_resp = http_client
             .get(collect_job_url.clone())
+            .header(
+                "DAP-Auth-Token",
+                test_case
+                    .leader_task
+                    .primary_collector_auth_token()
+                    .as_bytes(),
+            )
             .send()
             .await
             .unwrap();
@@ -177,7 +191,8 @@ impl TestCase {
         let mut verify_key = [0u8; PRIO3_AES128_VERIFY_KEY_LENGTH];
         thread_rng().fill(&mut verify_key[..]);
         let (collector_hpke_config, collector_private_key) = generate_hpke_config_and_private_key();
-        let agg_auth_token = generate_aggregator_auth_token();
+        let aggregator_auth_token = generate_auth_token();
+        let collector_auth_token = generate_auth_token();
         let leader_hpke_key = generate_hpke_config_and_private_key();
         let helper_hpke_key = generate_hpke_config_and_private_key();
 
@@ -217,17 +232,18 @@ impl TestCase {
 
         let leader_task = Task::new(
             task_id,
-            vec![leader_endpoint.clone(), helper_endpoint.clone()],
+            Vec::from([leader_endpoint.clone(), helper_endpoint.clone()]),
             VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
-            vec![Vec::from(verify_key)],
+            Vec::from([Vec::from(verify_key)]),
             1,
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             collector_hpke_config.clone(),
-            vec![agg_auth_token.clone()],
-            vec![leader_hpke_key],
+            Vec::from([aggregator_auth_token.clone()]),
+            Vec::from([collector_auth_token.clone()]),
+            Vec::from([leader_hpke_key]),
         )
         .unwrap();
         leader_datastore
@@ -240,17 +256,18 @@ impl TestCase {
 
         let helper_task = Task::new(
             task_id,
-            vec![leader_endpoint.clone(), helper_endpoint.clone()],
+            Vec::from([leader_endpoint.clone(), helper_endpoint.clone()]),
             VdafInstance::Prio3Aes128Count.into(),
             Role::Helper,
-            vec![Vec::from(verify_key)],
+            Vec::from([Vec::from(verify_key)]),
             1,
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             collector_hpke_config.clone(),
-            vec![agg_auth_token],
-            vec![helper_hpke_key],
+            Vec::from([aggregator_auth_token]),
+            Vec::from([collector_auth_token]),
+            Vec::from([helper_hpke_key]),
         )
         .unwrap();
         helper_datastore
@@ -371,7 +388,7 @@ impl TestCase {
         // Create client, retrieving HPKE configs.
         let client_parameters = ClientParameters::new(
             task_id,
-            vec![leader_endpoint.clone(), helper_endpoint.clone()],
+            Vec::from([leader_endpoint.clone(), helper_endpoint.clone()]),
             leader_task.min_batch_duration,
         );
         let http_client = janus_client::default_http_client().unwrap();
