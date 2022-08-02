@@ -100,7 +100,7 @@ mod tests {
         },
         CommonConfig,
     };
-    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
     fn roundtrip_config() {
@@ -109,10 +109,7 @@ mod tests {
                 database: generate_db_config(),
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
-                health_check_listen_address: SocketAddr::V4(SocketAddrV4::new(
-                    Ipv4Addr::LOCALHOST,
-                    8080,
-                )),
+                health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             },
             tasks_update_frequency_secs: 3600,
             aggregation_job_creation_interval_secs: 60,

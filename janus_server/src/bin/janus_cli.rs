@@ -249,7 +249,7 @@ mod tests {
     use std::{
         collections::HashMap,
         io::Write,
-        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+        net::{Ipv4Addr, SocketAddr},
     };
     use tempfile::NamedTempFile;
 
@@ -340,10 +340,7 @@ mod tests {
                 database: generate_db_config(),
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
-                health_check_listen_address: SocketAddr::V4(SocketAddrV4::new(
-                    Ipv4Addr::LOCALHOST,
-                    8080,
-                )),
+                health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             },
         })
     }

@@ -16,7 +16,7 @@ use janus_server::{
 use reqwest::{Client, Url};
 use std::{
     io::{Read, Write},
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream},
+    net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     process::{Command, Stdio},
 };
 use wait_timeout::ChildExt;
@@ -25,7 +25,7 @@ use wait_timeout::ChildExt;
 /// number, and closing the listening socket. This may still fail due to race
 /// conditions if another program grabs the same port number.
 fn select_open_port() -> Result<u16, std::io::Error> {
-    let listener = TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)))?;
+    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
     let address = listener.local_addr()?;
     drop(listener);
     Ok(address.port())
@@ -56,11 +56,9 @@ async fn server_shutdown() {
     let (datastore, db_handle) = ephemeral_datastore(RealClock::default()).await;
 
     let aggregator_port = select_open_port().unwrap();
-    let aggregator_listen_address =
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port));
+    let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
     let health_check_port = select_open_port().unwrap();
-    let health_check_listen_address =
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, health_check_port));
+    let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
     assert_ne!(aggregator_port, health_check_port);
 
     let config = format!(
@@ -123,12 +121,10 @@ async fn server_shutdown() {
     });
 
     // Try to connect to the HTTP servers in a loop, until they are ready.
-    let aggregator_listen_address =
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, aggregator_port));
+    let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
     wait_for_server(aggregator_listen_address)
         .expect("could not connect to aggregator server after starting it");
-    let health_check_listen_address =
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, health_check_port));
+    let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
     wait_for_server(health_check_listen_address)
         .expect("could not connect to health check server after starting it");
 

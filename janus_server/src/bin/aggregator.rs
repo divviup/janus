@@ -166,21 +166,18 @@ mod tests {
     };
     use std::{
         collections::HashMap,
-        net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+        net::{IpAddr, Ipv4Addr, SocketAddr},
     };
 
     #[test]
     fn roundtrip_config() {
         roundtrip_encoding(Config {
-            listen_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
+            listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             common_config: CommonConfig {
                 database: generate_db_config(),
                 logging_config: generate_trace_config(),
                 metrics_config: generate_metrics_config(),
-                health_check_listen_address: SocketAddr::V4(SocketAddrV4::new(
-                    Ipv4Addr::LOCALHOST,
-                    8080,
-                )),
+                health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             },
             response_headers: vec![HeaderEntry {
                 name: "name".to_owned(),
