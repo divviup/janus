@@ -1,6 +1,7 @@
 FROM rust:1.62.1-alpine as builder
 ARG BINARY=aggregator
-RUN apk add libc-dev
+# openssl-dev is required to compile Daphne, which uses OpenSSL for TLS.
+RUN apk add libc-dev openssl-dev
 
 WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml

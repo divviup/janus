@@ -184,17 +184,17 @@ pub struct Task {
     #[derivative(Debug = "ignore")]
     pub vdaf_verify_keys: Vec<Vec<u8>>,
     /// The maximum number of times a given batch may be collected.
-    pub(crate) max_batch_lifetime: u64,
+    pub max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
-    pub(crate) min_batch_size: u64,
+    pub min_batch_size: u64,
     /// The minimum batch interval for a collect request. Batch intervals must
     /// be multiples of this duration.
     pub min_batch_duration: Duration,
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
-    pub(crate) tolerable_clock_skew: Duration,
+    pub tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
-    pub(crate) collector_hpke_config: HpkeConfig,
+    pub collector_hpke_config: HpkeConfig,
     /// Tokens used to authenticate messages sent to or received from the other aggregators.
     #[derivative(Debug = "ignore")]
     pub agg_auth_tokens: Vec<AggregatorAuthenticationToken>,

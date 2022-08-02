@@ -1,1 +1,4 @@
-// This is a test-only crate
+//! This crate contains functionality useful for Janus integration tests.
+
+pub mod daphne;
+pub mod janus;
