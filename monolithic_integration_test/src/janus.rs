@@ -140,8 +140,8 @@ impl Janus {
 
         // Start the "shutdown" task, allowing us to do asynchronous shutdown work in the
         // synchronous drop implementation. (We use an async oneshot channel for "start shutdown"
-        // and a sync mpsc channel for "shutdown complete" to us to do the required operations from
-        // a sync context.)
+        // and a sync mpsc channel for "shutdown complete" to allow us to do the required operations
+        // from a sync context.)
         let (start_shutdown_sender, start_shutdown_receiver) = oneshot::channel();
         let (shutdown_complete_sender, shutdown_complete_receiver) = mpsc::channel();
         task::spawn(async move {
