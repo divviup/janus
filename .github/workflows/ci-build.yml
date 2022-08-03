@@ -24,11 +24,14 @@ jobs:
           ~/.cargo/git/db/
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install latest version of Kind
+    - name: Install Kind
       # We should always make sure that the `kind` CLI we install is from the
       # same release as the node image version used by
       # `janus_core::test_util::kubernetes::EphemeralCluster`
       run: go install sigs.k8s.io/kind@v0.14.0
+    - name: Install Miniflare
+      # Miniflare is used in support of Daphne integration tests.
+      run: npm install --location=global miniflare
     - name: lint
       run: cargo fmt --message-format human -- --check
     - name: clippy
