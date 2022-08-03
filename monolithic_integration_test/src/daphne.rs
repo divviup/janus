@@ -214,6 +214,7 @@ impl Daphne {
         let daphne_process = Popen::create(
             &[
                 "miniflare",
+                "--host=localhost",
                 &format!("--port={}", port),
                 &format!("--wrangler-config={}", wrangler_path.display()),
                 &format!("--env={}", env_path.display()),
