@@ -1972,6 +1972,7 @@ dependencies = [
  "hex",
  "hpke-dispatch",
  "http",
+ "itertools",
  "janus_client",
  "janus_core",
  "janus_server",

@@ -1,7 +1,10 @@
+use std::iter;
+
 use http::{
     header::{CONTENT_TYPE, LOCATION},
     StatusCode,
 };
+use itertools::Itertools;
 use janus_client::{Client, ClientParameters};
 use janus_core::{
     hpke::{
@@ -63,7 +66,7 @@ pub fn create_test_tasks(
         Role::Leader,
         vdaf_verify_keys.clone(),
         1,
-        0,
+        46,
         Duration::from_hours(8).unwrap(),
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
@@ -79,7 +82,7 @@ pub fn create_test_tasks(
         Role::Helper,
         vdaf_verify_keys,
         1,
-        0,
+        46,
         Duration::from_hours(8).unwrap(),
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
@@ -133,12 +136,20 @@ pub async fn submit_measurements_and_verify_aggregate(
 
     // Submit some measurements, recording a timestamp before measurement upload to allow us to
     // determine the correct collect interval.
+    //
+    // We generate exactly one batch's worth of measurement uploads to work around an issue in
+    // Daphne at time of writing.
     let clock = RealClock::default();
-    const NUM_NONZERO_MEASUREMENTS: usize = 23;
+    let total_measurements: usize = leader_task.min_batch_size.try_into().unwrap();
+    let num_nonzero_measurements = total_measurements / 2;
+    let num_zero_measurements = total_measurements - num_nonzero_measurements;
+    assert!(num_nonzero_measurements > 0 && num_zero_measurements > 0);
     let before_timestamp = clock.now();
-    for _ in 0..NUM_NONZERO_MEASUREMENTS {
-        client.upload(&0).await.unwrap();
-        client.upload(&1).await.unwrap();
+    for measurement in iter::repeat(1)
+        .take(num_nonzero_measurements)
+        .interleave(iter::repeat(0).take(num_zero_measurements))
+    {
+        client.upload(&measurement).await.unwrap();
     }
 
     // Send a collect request, recording the collect job URL.
@@ -189,7 +200,7 @@ pub async fn submit_measurements_and_verify_aggregate(
 
     // Poll until the collect job completes.
     let collect_job_poll_timeout = Instant::now()
-        .checked_add(time::Duration::from_secs(20))
+        .checked_add(time::Duration::from_secs(60))
         .unwrap();
     let mut poll_interval = time::interval(time::Duration::from_millis(500));
     let collect_resp = loop {
@@ -235,5 +246,5 @@ pub async fn submit_measurements_and_verify_aggregate(
                 }),
         )
         .unwrap();
-    assert_eq!(aggregate_result, NUM_NONZERO_MEASUREMENTS as u64);
+    assert_eq!(aggregate_result, num_nonzero_measurements as u64);
 }

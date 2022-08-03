@@ -12,6 +12,7 @@ daphne = { git = "https://github.com/cloudflare/daphne", rev = "6301e712df216a03
 hex = "0.4"
 hpke-dispatch = "0.3"
 http = "0.2"
+itertools = "0.10"
 janus_core = { path = "../janus_core", features = ["test-util"] }
 janus_server = { path = "../janus_server", features = ["test-util"] }
 lazy_static = "1"
