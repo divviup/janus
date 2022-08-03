@@ -101,14 +101,13 @@ impl Daphne {
         )]))
         .unwrap();
 
-        // Daphne allows specifying different bearer tokens for aggregator-aggregator vs
-        // aggregator-collector auth. We choose to use the same key for both, since Janus currently
-        // only supports a single bearer token.
-        //
-        // Separately, Daphne currently only supports one auth token per task. Janus supports
-        // multiple tokens per task to support rotation; we supply Daphne with the "primary" token.
-        let bearer_token_list = json!({
-            hex::encode(task.id.as_bytes()): String::from_utf8(task.agg_auth_tokens.first().unwrap().as_bytes().to_vec()).unwrap()
+        // Daphne currently only supports one auth token per task. Janus supports multiple tokens
+        // per task to allow rotation; we supply Daphne with the "primary" token.
+        let aggregator_bearer_token_list = json!({
+            hex::encode(task.id.as_bytes()): String::from_utf8(task.primary_aggregator_auth_token().as_bytes().to_vec()).unwrap()
+        }).to_string();
+        let collector_bearer_token_list = json!({
+            hex::encode(task.id.as_bytes()): String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec()).unwrap()
         }).to_string();
 
         // Write wrangler.toml.
@@ -188,11 +187,11 @@ impl Daphne {
             ("DAP_TASK_LIST".to_string(), dap_task_list),
             (
                 "DAP_LEADER_BEARER_TOKEN_LIST".to_string(),
-                bearer_token_list.clone(),
+                aggregator_bearer_token_list,
             ),
             (
                 "DAP_COLLECTOR_BEARER_TOKEN_LIST".to_string(),
-                bearer_token_list,
+                collector_bearer_token_list,
             ),
         ]));
         let mut env_file = NamedTempFile::new().unwrap();

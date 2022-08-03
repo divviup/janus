@@ -14,7 +14,7 @@ use janus_core::{
 };
 use janus_server::{
     message::{CollectReq, CollectResp},
-    task::{test_util::generate_aggregator_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{test_util::generate_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use portpicker::pick_unused_port;
 use prio::{
@@ -49,12 +49,11 @@ pub fn create_test_tasks(
         Url::parse(&format!("http://localhost:{}", leader_port)).unwrap(),
         Url::parse(&format!("http://localhost:{}", helper_port)).unwrap(),
     ]);
-    let mut verify_key = [0u8; PRIO3_AES128_VERIFY_KEY_LENGTH];
-    thread_rng().fill(&mut verify_key[..]);
-    let verify_key = verify_key.to_vec();
-    let agg_auth_token = generate_aggregator_auth_token();
-    let leader_hpke_key = generate_hpke_config_and_private_key();
-    let helper_hpke_key = generate_hpke_config_and_private_key();
+    let mut vdaf_verify_key = [0u8; PRIO3_AES128_VERIFY_KEY_LENGTH];
+    thread_rng().fill(&mut vdaf_verify_key[..]);
+    let vdaf_verify_keys = Vec::from([vdaf_verify_key.to_vec()]);
+    let aggregator_auth_tokens = Vec::from([generate_auth_token()]);
+    let collector_auth_tokens = Vec::from([generate_auth_token()]);
 
     // Create tasks & return.
     let leader_task = Task::new(
@@ -62,14 +61,15 @@ pub fn create_test_tasks(
         endpoints.clone(),
         VdafInstance::Prio3Aes128Count.into(),
         Role::Leader,
-        Vec::from([verify_key.clone()]),
+        vdaf_verify_keys.clone(),
         1,
         0,
         Duration::from_hours(8).unwrap(),
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
-        Vec::from([agg_auth_token.clone()]),
-        Vec::from([leader_hpke_key]),
+        aggregator_auth_tokens.clone(),
+        collector_auth_tokens.clone(),
+        Vec::from([generate_hpke_config_and_private_key()]),
     )
     .unwrap();
     let helper_task = Task::new(
@@ -77,14 +77,15 @@ pub fn create_test_tasks(
         endpoints,
         VdafInstance::Prio3Aes128Count.into(),
         Role::Helper,
-        Vec::from([verify_key]),
+        vdaf_verify_keys,
         1,
         0,
         Duration::from_hours(8).unwrap(),
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
-        Vec::from([agg_auth_token]),
-        Vec::from([helper_hpke_key]),
+        aggregator_auth_tokens,
+        collector_auth_tokens,
+        Vec::from([generate_hpke_config_and_private_key()]),
     )
     .unwrap();
 
@@ -169,7 +170,7 @@ pub async fn submit_measurements_and_verify_aggregate(
         .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
         .header(
             "DAP-Auth-Token",
-            leader_task.primary_aggregator_auth_token().as_bytes(),
+            leader_task.primary_collector_auth_token().as_bytes(),
         )
         .body(collect_req.get_encoded())
         .send()
@@ -195,6 +196,10 @@ pub async fn submit_measurements_and_verify_aggregate(
         assert!(Instant::now() < collect_job_poll_timeout);
         let collect_job_resp = http_client
             .get(collect_job_url.clone())
+            .header(
+                "DAP-Auth-Token",
+                leader_task.primary_collector_auth_token().as_bytes(),
+            )
             .send()
             .await
             .unwrap();

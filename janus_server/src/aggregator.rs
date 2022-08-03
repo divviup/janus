@@ -339,10 +339,28 @@ impl<C: Clock> Aggregator<C> {
     /// Handle a collect request. Only supported by the leader. `req_bytes` is an encoded
     /// [`CollectReq`]. Returns the URL at which a collector may poll for status of the collect job
     /// corresponding to the `CollectReq`.
-    async fn handle_collect(&self, req_bytes: &[u8]) -> Result<Url, Error> {
-        let collect_req = CollectReq::get_decoded(req_bytes)?;
+    async fn handle_collect(
+        &self,
+        req_bytes: &[u8],
+        auth_token: Option<String>,
+    ) -> Result<Url, Error> {
+        // Parse task ID early to avoid parsing the entire message before performing authentication.
+        // This assumes that the task ID is at the start of the message content.
+        let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
+        let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if !auth_token
+            .map(|t| {
+                task_aggregator
+                    .task
+                    .check_collector_auth_token(&t.into_bytes().into())
+            })
+            .unwrap_or(false)
+        {
+            return Err(Error::UnauthorizedRequest(task_id));
+        }
 
-        let task_aggregator = self.task_aggregator_for(collect_req.task_id).await?;
+        let collect_req = CollectReq::get_decoded(req_bytes)?;
+        assert_eq!(collect_req.task_id, task_id);
 
         // Only the leader supports /collect.
         if task_aggregator.task.role != Role::Leader {
@@ -358,7 +376,11 @@ impl<C: Clock> Aggregator<C> {
     /// collect job parsed out of the request URI. Returns an encoded [`CollectResp`] if the collect
     /// job has been run to completion, `None` if the collect job has not yet run, or an error
     /// otherwise.
-    async fn handle_collect_job(&self, collect_job_id: Uuid) -> Result<Option<Vec<u8>>, Error> {
+    async fn handle_collect_job(
+        &self,
+        collect_job_id: Uuid,
+        auth_token: Option<String>,
+    ) -> Result<Option<Vec<u8>>, Error> {
         let task_id = self
             .datastore
             .run_tx(|tx| Box::pin(async move { tx.get_collect_job_task_id(collect_job_id).await }))
@@ -366,6 +388,16 @@ impl<C: Clock> Aggregator<C> {
             .ok_or(Error::UnrecognizedCollectJob(collect_job_id))?;
 
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if !auth_token
+            .map(|t| {
+                task_aggregator
+                    .task
+                    .check_collector_auth_token(&t.into_bytes().into())
+            })
+            .unwrap_or(false)
+        {
+            return Err(Error::UnauthorizedRequest(task_id));
+        }
 
         // Only the leader handles collect jobs.
         if task_aggregator.task.role != Role::Leader {
@@ -2084,14 +2116,17 @@ fn aggregator_filter<C: Clock>(
         ))
         .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
-        .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
-            let collect_uri = aggregator.handle_collect(&body).await?;
-            // §4.5: Response is an HTTP 303 with the collect URI in a Location header.
-            Ok(reply::with_status(
-                reply::with_header(reply::reply(), LOCATION, collect_uri.as_str()),
-                StatusCode::SEE_OTHER,
-            ))
-        });
+        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+        .then(
+            |aggregator: Arc<Aggregator<C>>, body: Bytes, auth_token: Option<String>| async move {
+                let collect_uri = aggregator.handle_collect(&body, auth_token).await?;
+                // §4.5: Response is an HTTP 303 with the collect URI in a Location header.
+                Ok(reply::with_status(
+                    reply::with_header(reply::reply(), LOCATION, collect_uri.as_str()),
+                    StatusCode::SEE_OTHER,
+                ))
+            },
+        );
     let collect_endpoint = compose_common_wrappers(
         collect_routing,
         collect_responding,
@@ -2101,23 +2136,29 @@ fn aggregator_filter<C: Clock>(
     );
 
     let collect_jobs_routing = warp::path("collect_jobs");
-    let collect_jobs_responding = warp::get()
-        .and(warp::path::param())
-        .and(with_cloned_value(Arc::clone(&aggregator)))
-        .then(
-            |collect_job_id: Uuid, aggregator: Arc<Aggregator<C>>| async move {
-                let resp_bytes = aggregator.handle_collect_job(collect_job_id).await?;
-                match resp_bytes {
-                    Some(resp_bytes) => http::Response::builder()
-                        .header(CONTENT_TYPE, CollectResp::MEDIA_TYPE)
-                        .body(resp_bytes),
-                    None => http::Response::builder()
-                        .status(StatusCode::ACCEPTED)
-                        .body(Vec::new()),
-                }
-                .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
-            },
-        );
+    let collect_jobs_responding =
+        warp::get()
+            .and(with_cloned_value(Arc::clone(&aggregator)))
+            .and(warp::path::param())
+            .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+            .then(
+                |aggregator: Arc<Aggregator<C>>,
+                 collect_job_id: Uuid,
+                 auth_token: Option<String>| async move {
+                    let resp_bytes = aggregator
+                        .handle_collect_job(collect_job_id, auth_token)
+                        .await?;
+                    match resp_bytes {
+                        Some(resp_bytes) => http::Response::builder()
+                            .header(CONTENT_TYPE, CollectResp::MEDIA_TYPE)
+                            .body(resp_bytes),
+                        None => http::Response::builder()
+                            .status(StatusCode::ACCEPTED)
+                            .body(Vec::new()),
+                    }
+                    .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+                },
+            );
     let collect_jobs_endpoint = compose_common_wrappers(
         collect_jobs_routing,
         collect_jobs_responding,
@@ -2149,23 +2190,8 @@ fn aggregator_filter<C: Clock>(
         aggregate_share_routing,
         aggregate_share_responding,
         warp::cors().build(),
-        response_time_recorder.clone(),
-        "aggregate_share",
-    );
-
-    let health_check_live_routing = warp::path("healthz").and(warp::path::end());
-    let health_check_live_responding = warp::get().map(|| {
-        http::Response::builder()
-            .status(StatusCode::OK)
-            .body(&[0u8; 0][..])
-            .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
-    });
-    let health_check_live_endpoint = compose_common_wrappers(
-        health_check_live_routing,
-        health_check_live_responding,
-        warp::cors().build(),
         response_time_recorder,
-        "health_check_live",
+        "aggregate_share",
     );
 
     Ok(hpke_config_endpoint
@@ -2174,7 +2200,6 @@ fn aggregator_filter<C: Clock>(
         .or(collect_endpoint)
         .or(collect_jobs_endpoint)
         .or(aggregate_share_endpoint)
-        .or(health_check_live_endpoint)
         .boxed())
 }
 
@@ -2201,16 +2226,14 @@ mod tests {
     use crate::{
         datastore::{
             models::BatchUnitAggregation,
-            test_util::{ephemeral_datastore, generate_aead_key, DbHandle},
-            Crypter,
+            test_util::{ephemeral_datastore, DbHandle},
         },
         task::{
-            test_util::{generate_aggregator_auth_token, new_dummy_task},
+            test_util::{generate_auth_token, new_dummy_task},
             VdafInstance,
         },
     };
     use assert_matches::assert_matches;
-    use deadpool_postgres::{Manager, Pool};
     use http::Method;
     use hyper::body;
     use janus_core::{
@@ -2234,13 +2257,7 @@ mod tests {
     };
     use rand::{thread_rng, Rng};
     use serde_json::json;
-    use std::{
-        collections::HashMap,
-        io::Cursor,
-        net::{Ipv4Addr, SocketAddrV4},
-    };
-    use tokio::{io::AsyncWriteExt, net::TcpListener};
-    use tokio_postgres::{Config, NoTls};
+    use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
     use warp::{cors::CorsForbidden, reply::Reply, Rejection};
 
@@ -2995,10 +3012,7 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .header(
-                "DAP-Auth-Token",
-                generate_aggregator_auth_token().as_bytes(),
-            )
+            .header("DAP-Auth-Token", generate_auth_token().as_bytes())
             .header(CONTENT_TYPE, AggregateInitializeReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
@@ -4868,6 +4882,10 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
@@ -4928,6 +4946,10 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
@@ -4950,6 +4972,271 @@ mod tests {
                 "taskid": format!("{}", task_id),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn collect_request_unauthenticated() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+        let task = new_dummy_task(
+            task_id,
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        );
+        let batch_interval =
+            Interval::new(Time::from_seconds_since_epoch(0), task.min_batch_duration).unwrap();
+
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
+
+        let req = CollectReq {
+            task_id,
+            batch_interval,
+            agg_param: Vec::new(),
+        };
+
+        // Incorrect authentication token.
+        let mut response = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .header("DAP-Auth-Token", generate_auth_token().as_bytes())
+            .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
+            .body(req.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        let want_status = StatusCode::BAD_REQUEST;
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": want_status.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                "title": "The request's authorization is not valid.",
+                "detail": "The request's authorization is not valid.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
+        assert_eq!(want_status, response.status());
+
+        // Aggregator authentication token.
+        let mut response = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
+            .body(req.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        let want_status = StatusCode::BAD_REQUEST;
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": want_status.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                "title": "The request's authorization is not valid.",
+                "detail": "The request's authorization is not valid.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
+        assert_eq!(want_status, response.status());
+
+        // Missing authentication token.
+        let mut response = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
+            .body(req.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        let want_status = StatusCode::BAD_REQUEST;
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": want_status.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                "title": "The request's authorization is not valid.",
+                "detail": "The request's authorization is not valid.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
+        assert_eq!(want_status, response.status());
+    }
+
+    #[tokio::test]
+    async fn collect_request_unauthenticated_collect_jobs() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = TaskId::random();
+        let mut task = new_dummy_task(
+            task_id,
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        );
+        task.aggregator_endpoints = Vec::from([
+            "https://leader.endpoint".parse().unwrap(),
+            "https://helper.endpoint".parse().unwrap(),
+        ]);
+        task.max_batch_lifetime = 1;
+        let batch_interval =
+            Interval::new(Time::from_seconds_since_epoch(0), task.min_batch_duration).unwrap();
+
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
+
+        let request = CollectReq {
+            task_id,
+            batch_interval,
+            agg_param: Vec::new(),
+        };
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let collect_uri =
+            Url::parse(response.headers().get(LOCATION).unwrap().to_str().unwrap()).unwrap();
+        assert_eq!(collect_uri.scheme(), "https");
+        assert_eq!(collect_uri.host_str().unwrap(), "leader.endpoint");
+        let mut path_segments = collect_uri.path_segments().unwrap();
+        assert_eq!(path_segments.next(), Some("collect_jobs"));
+        let collect_job_id = Uuid::parse_str(path_segments.next().unwrap()).unwrap();
+        assert!(path_segments.next().is_none());
+
+        // Incorrect authentication token.
+        let mut response = warp::test::request()
+            .method("GET")
+            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .header("DAP-Auth-Token", generate_auth_token().as_bytes())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        let want_status = StatusCode::BAD_REQUEST;
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": want_status.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                "title": "The request's authorization is not valid.",
+                "detail": "The request's authorization is not valid.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
+        assert_eq!(want_status, response.status());
+
+        // Aggregator authentication token.
+        let mut response = warp::test::request()
+            .method("GET")
+            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        let want_status = StatusCode::BAD_REQUEST;
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": want_status.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                "title": "The request's authorization is not valid.",
+                "detail": "The request's authorization is not valid.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
+        assert_eq!(want_status, response.status());
+
+        // Missing authentication token.
+        let mut response = warp::test::request()
+            .method("GET")
+            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        let want_status = StatusCode::BAD_REQUEST;
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": want_status.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                "title": "The request's authorization is not valid.",
+                "detail": "The request's authorization is not valid.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
+        assert_eq!(want_status, response.status());
     }
 
     #[tokio::test]
@@ -5001,6 +5288,10 @@ mod tests {
         let response = warp::test::request()
             .method("POST")
             .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
@@ -5021,6 +5312,10 @@ mod tests {
         let collect_job_response = warp::test::request()
             .method("GET")
             .path(&format!("/collect_jobs/{}", collect_job_id))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
             .filter(&filter)
             .await
             .unwrap()
@@ -5063,6 +5358,10 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("GET")
             .path(&format!("/collect_jobs/{}", collect_job_id))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
             .filter(&filter)
             .await
             .unwrap()
@@ -5116,6 +5415,10 @@ mod tests {
         let response = warp::test::request()
             .method("GET")
             .path(&format!("/collect_jobs/{no_such_collect_job_id}"))
+            .header(
+                "DAP-Auth-Token",
+                "this is a fake authentication token since there are no tasks",
+            )
             .filter(&filter)
             .await
             .unwrap()
@@ -5175,6 +5478,10 @@ mod tests {
         let response = warp::test::request()
             .method("POST")
             .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
@@ -5198,6 +5505,10 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(invalid_request.get_encoded())
             .filter(&filter)
@@ -5822,61 +6133,5 @@ mod tests {
             )
             .unwrap(),
         }
-    }
-
-    #[tokio::test]
-    async fn health_check() {
-        install_test_trace_subscriber();
-
-        let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-
-        let good_filter = aggregator_filter(Arc::new(datastore), clock.clone()).unwrap();
-
-        let liveness_response = warp::test::request()
-            .method("GET")
-            .path("/healthz")
-            .filter(&good_filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(liveness_response.status(), 200);
-
-        // Set up a server that immediately closes all connections, try to connect to it as the
-        // database server, and confirm that the health check endpoint returns an error.
-        let listener = TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::new(127, 0, 0, 1),
-            0,
-        )))
-        .await
-        .unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let handle = tokio::spawn(async move {
-            loop {
-                let (mut tcp_stream, _) = listener.accept().await.unwrap();
-                tcp_stream.shutdown().await.unwrap();
-            }
-        });
-
-        let mut bad_db_config = Config::new();
-        // We know this address is unroutable, so creating a connection should fail.
-        bad_db_config.host(&format!("127.0.0.1:{}", port));
-        let bad_pool = Pool::builder(Manager::new(bad_db_config, NoTls))
-            .build()
-            .unwrap();
-        let crypter = Crypter::new(vec![generate_aead_key()]);
-        let bad_datastore = Datastore::new(bad_pool, crypter, clock.clone());
-        let bad_filter = aggregator_filter(Arc::new(bad_datastore), clock).unwrap();
-
-        let liveness_response = warp::test::request()
-            .method("GET")
-            .path("/healthz")
-            .filter(&bad_filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(liveness_response.status(), 200);
-
-        handle.abort();
     }
 }

@@ -36,5 +36,5 @@ prio = "0.8.2"
 ring = "0.16.20"
 testcontainers = "0.14.0"
 tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
-tracing = "0.1.35"
+tracing = "0.1.36"
 url = { version = "2.2.2", features = ["serde"] }
