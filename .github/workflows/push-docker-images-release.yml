@@ -65,3 +65,10 @@ jobs:
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:latest
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }}
+    - run: |-
+        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:latest \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }} \
+          --build-arg BINARY=janus_cli \
+          .
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:latest
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }}
