@@ -58,6 +58,6 @@ hex = { version = "*", features = ["serde"] }
 janus_core = { path = ".", features = ["test-util"] }
 # Enable `kube`'s `openssl-tls` feature (which takes precedence over the
 # `rustls-tls` feature when creating a default client) to work around rustls's
-# lack of support for IP addresses in certificates when connecting to most
+# lack of support for connecting to servers by IP addresses, which affects many
 # Kubernetes clusters.
 kube = { version = "*", features = ["openssl-tls"] }

@@ -1,6 +1,6 @@
 //! This crate contains functionality useful for Janus integration tests.
 
-#[cfg(feature = "test-util")]
+#[cfg(feature = "daphne")]
 pub mod daphne;
-#[cfg(feature = "test-util")]
+#[cfg(feature = "janus")]
 pub mod janus;

@@ -7,11 +7,13 @@ rust-version = "1.60"
 publish = false
 
 [features]
-test-util = [
+daphne = [
     "dep:daphne",
     "dep:nix",
     "dep:subprocess",
     "dep:tempfile",
+]
+janus = [
     "janus_core/test-util",
     "janus_server/test-util"
 ]
@@ -42,7 +44,7 @@ chrono = "0.4.19"
 deadpool-postgres = "0.10.1"
 futures = "0.3.21"
 janus_client = { path = "../janus_client" }
-monolithic_integration_test = { path = ".", features = ["test-util"] }
+monolithic_integration_test = { path = ".", features = ["daphne", "janus"] }
 portpicker = "0.1"
 prio = "0.8.2"
 ring = "0.16.20"
