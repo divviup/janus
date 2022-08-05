@@ -83,8 +83,7 @@ For local testing, start Jaeger by running `docker run -d -p6831:6831/udp -p6832
 
 ```yaml
 logging_config:
-  open_telemetry_config:
-    jaeger:
+  open_telemetry_config: jaeger
 ```
 
 ### Honeycomb

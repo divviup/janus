@@ -225,8 +225,7 @@ mod tests {
         url: "postgres://postgres:postgres@localhost:5432/postgres"
         connection_pool_timeouts_secs: 60
     logging_config:
-        open_telemetry_config:
-            jaeger:
+        open_telemetry_config: jaeger
     "#
             )
             .unwrap()

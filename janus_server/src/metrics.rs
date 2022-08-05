@@ -49,7 +49,7 @@ pub enum Error {
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct MetricsConfiguration {
     /// Configuration for OpenTelemetry metrics, with a choice of exporters.
-    #[serde(default)]
+    #[serde(default, with = "serde_yaml::with::singleton_map")]
     pub exporter: Option<MetricsExporterConfiguration>,
 }
 
