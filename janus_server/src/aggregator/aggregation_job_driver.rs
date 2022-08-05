@@ -53,15 +53,15 @@ pub struct AggregationJobDriver {
 impl AggregationJobDriver {
     pub fn new(http_client: reqwest::Client, meter: &Meter) -> AggregationJobDriver {
         let aggregate_step_failure_counter = meter
-            .u64_counter("step_failures")
+            .u64_counter("janus_step_failures")
             .with_description(concat!(
                 "Failures while stepping aggregation jobs; these failures are ",
                 "related to individual client reports rather than entire aggregation jobs."
             ))
             .init();
         let job_cancel_counter = meter
-            .u64_counter("job_cancellations")
-            .with_description("Count of cancelled aggregation jobs")
+            .u64_counter("janus_job_cancellations")
+            .with_description("Count of cancelled jobs.")
             .init();
 
         AggregationJobDriver {

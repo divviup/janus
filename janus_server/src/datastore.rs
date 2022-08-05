@@ -54,7 +54,7 @@ impl<C: Clock> Datastore<C> {
     pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter, clock: C) -> Datastore<C> {
         let meter = opentelemetry::global::meter("janus_server");
         let transaction_status_counter = meter
-            .u64_counter("aggregator_database_transactions_total")
+            .u64_counter("janus_database_transactions_total")
             .with_description("Count of database transactions run, with their status.")
             .init();
         Self {
