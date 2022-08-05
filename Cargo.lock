@@ -1977,6 +1977,7 @@ dependencies = [
  "janus_core",
  "janus_server",
  "lazy_static",
+ "monolithic_integration_test",
  "nix",
  "opentelemetry",
  "portpicker",

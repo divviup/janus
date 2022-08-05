@@ -74,9 +74,9 @@ hex = { version = "0.4.3", features = ["serde"] }
 hyper = "0.14.20"
 # Enable `kube`'s `openssl-tls` feature (which takes precedence over the
 # `rustls-tls` feature when creating a default client) to work around rustls's
-# lack of support for IP addresses in certificates when connecting to a Kind
-# cluster. Enable the `test-util` feature for various utilities used in unit
-# tests.
+# lack of support for connecting to servers by IP addresses, which affects many
+# Kubernetes clusters. Enable the `test-util` feature for various utilities
+# used in unit tests.
 janus_server = { path = ".", features = ["kube-openssl", "test-util"] }
 libc = "0.2.126"
 mockito = "0.31.0"
