@@ -78,7 +78,7 @@ hyper = "0.14.20"
 # Kubernetes clusters. Enable the `test-util` feature for various utilities
 # used in unit tests.
 janus_server = { path = ".", features = ["kube-openssl", "test-util"] }
-libc = "0.2.126"
+libc = "0.2.127"
 mockito = "0.31.0"
 serde_test = "1.0.141"
 tempfile = "3.3.0"
