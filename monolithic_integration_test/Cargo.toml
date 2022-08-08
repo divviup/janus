@@ -40,7 +40,7 @@ tokio = { version = "1", features = ["full", "tracing"] }
 toml = "0.5"
 
 [dev-dependencies]
-chrono = "0.4.19"
+chrono = "0.4.20"
 deadpool-postgres = "0.10.1"
 futures = "0.3.21"
 janus_client = { path = "../janus_client" }
