@@ -221,11 +221,11 @@ pub struct Aggregator<C: Clock> {
 impl<C: Clock> Aggregator<C> {
     fn new(datastore: Arc<Datastore<C>>, clock: C, meter: Meter) -> Self {
         let upload_decrypt_failure_counter = meter
-            .u64_counter("upload_decrypt_failures")
+            .u64_counter("janus_upload_decrypt_failures")
             .with_description("Number of decryption failures in the /upload endpoint.")
             .init();
         let aggregate_step_failure_counter = meter
-            .u64_counter("step_failures")
+            .u64_counter("janus_step_failures")
             .with_description(concat!(
                 "Failures while stepping aggregation jobs; these failures are ",
                 "related to individual client reports rather than entire aggregation jobs."
@@ -2010,7 +2010,7 @@ fn aggregator_filter<C: Clock>(
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
     let meter = opentelemetry::global::meter("janus_server");
     let response_time_recorder = meter
-        .f64_value_recorder("aggregator_response_time")
+        .f64_value_recorder("janus_aggregator_response_time")
         .with_description("Elapsed time handling incoming requests, by endpoint & status.")
         .with_unit(Unit::new("seconds"))
         .init();

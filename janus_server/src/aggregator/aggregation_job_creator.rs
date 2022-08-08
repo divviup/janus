@@ -94,12 +94,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         // Create metric recorders.
         let meter = opentelemetry::global::meter("aggregation_job_creator");
         let task_update_time_recorder = meter
-            .f64_value_recorder("task_update_time")
+            .f64_value_recorder("janus_task_update_time")
             .with_description("Time spent updating tasks.")
             .with_unit(Unit::new("seconds"))
             .init();
         let job_creation_time_recorder = meter
-            .f64_value_recorder("job_creation_time")
+            .f64_value_recorder("janus_job_creation_time")
             .with_description("Time spent creating aggregation jobs.")
             .with_unit(Unit::new("seconds"))
             .init();

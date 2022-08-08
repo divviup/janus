@@ -43,8 +43,8 @@ impl CollectJobDriver {
     /// Create a new [`CollectJobDriver`].
     pub fn new(http_client: reqwest::Client, meter: &Meter) -> Self {
         let job_cancel_counter = meter
-            .u64_counter("job_cancellations")
-            .with_description("Count of cancelled collect jobs")
+            .u64_counter("janus_job_cancellations")
+            .with_description("Count of cancelled jobs.")
             .init();
 
         Self {

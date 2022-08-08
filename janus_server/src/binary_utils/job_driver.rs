@@ -95,13 +95,13 @@ where
         // Create metric recorders.
         let job_acquire_time_recorder = self
             .meter
-            .f64_value_recorder("job_acquire_time")
+            .f64_value_recorder("janus_job_acquire_time")
             .with_description("Time spent acquiring jobs.")
             .with_unit(Unit::new("seconds"))
             .init();
         let job_step_time_recorder = self
             .meter
-            .f64_value_recorder("job_step_time")
+            .f64_value_recorder("janus_job_step_time")
             .with_description("Time spent stepping jobs.")
             .with_unit(Unit::new("seconds"))
             .init();
