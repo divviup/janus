@@ -42,7 +42,7 @@ jobs:
       run: cargo build --verbose
     - name: test
       env:
-        RUST_LOG: trace
+        RUST_LOG: info
       # set PATH to ensure we use go binaries installed above
       run: PATH=$(go env GOPATH)/bin:$PATH cargo test --verbose
     - name: document
