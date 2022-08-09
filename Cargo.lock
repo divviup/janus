@@ -1570,6 +1570,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e85a1509a128c855368e135cffcde7eac17d8e1083f41e2b98c58bc1a5074be"
 
 [[package]]
+name = "interop_binaries"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap 3.2.16",
+ "hpke-dispatch",
+ "janus_client",
+ "janus_core",
+ "janus_server",
+ "lazy_static",
+ "opentelemetry",
+ "portpicker",
+ "prio",
+ "rand",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "testcontainers",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "url",
+ "warp",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

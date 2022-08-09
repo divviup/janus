@@ -72,3 +72,24 @@ jobs:
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:latest
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }}
+
+    - run: |-
+        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:latest \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }} \
+          --build-arg BINARY=janus_interop_client \
+          -f Dockerfile.interop .
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:latest
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }}
+    - run: |-
+        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:latest \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }} \
+          -f Dockerfile.interop_aggregator .
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:latest
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }}
+    - run: |-
+        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:latest \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }} \
+          --build-arg BINARY=janus_interop_collector \
+          -f Dockerfile.interop .
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:latest
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }}

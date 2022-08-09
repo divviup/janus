@@ -2004,7 +2004,7 @@ where
 const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
-fn aggregator_filter<C: Clock>(
+pub fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {

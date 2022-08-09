@@ -1,3 +1,3 @@
 [workspace]
-members = ["janus_core", "janus_client", "janus_server", "monolithic_integration_test"]
+members = ["interop_binaries", "janus_core", "janus_client", "janus_server", "monolithic_integration_test"]
 resolver = "2"
