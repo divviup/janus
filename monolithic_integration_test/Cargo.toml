@@ -46,7 +46,7 @@ futures = "0.3.21"
 janus_client = { path = "../janus_client" }
 monolithic_integration_test = { path = ".", features = ["daphne", "janus"] }
 portpicker = "0.1"
-prio = "0.8.2"
+prio = "0.8.3"
 ring = "0.16.20"
 testcontainers = "0.14.0"
 tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }

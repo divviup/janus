@@ -12,7 +12,7 @@ rust-version = "1.60"
 [dependencies]
 http = "0.2.8"
 janus_core = { version = "0.1.4", path = "../janus_core" }
-prio = "0.8.2"
+prio = "0.8.3"
 reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls"] }
 thiserror = "1.0"
 tokio = { version = "^1.20", features = ["full"] }

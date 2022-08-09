@@ -2555,19 +2555,16 @@ checksum = "eb9f9e6e233e5c4a35559a617bf40a4ec447db2e84c20b55a6f83167b7e57872"
 
 [[package]]
 name = "prio"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2f508d78fd36a95fbd2b18796d7332c603fb622fa0d0216e09f0836a388767e"
+checksum = "ef630473d14618cbb36e9d9b9f993290183fe448450149e4afd7cec5aeb03f41"
 dependencies = [
  "aes 0.8.1",
- "aes-gcm",
  "base64",
  "byteorder",
- "cipher 0.4.3",
  "cmac",
  "ctr 0.9.1",
  "getrandom",
- "ring",
  "serde",
  "static_assertions",
  "thiserror",
