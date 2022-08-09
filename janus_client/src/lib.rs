@@ -224,7 +224,7 @@ mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use janus_core::{
-        hpke::test_util::generate_hpke_config_and_private_key,
+        hpke::generate_hpke_config_and_private_key,
         message::{TaskId, Time},
         test_util::install_test_trace_subscriber,
         time::test_util::MockClock,

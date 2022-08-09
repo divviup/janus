@@ -841,8 +841,8 @@ mod tests {
     use http::header::CONTENT_TYPE;
     use janus_core::{
         hpke::{
-            self, associated_data_for_report_share,
-            test_util::generate_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+            self, associated_data_for_report_share, generate_hpke_config_and_private_key,
+            HpkeApplicationInfo, Label,
         },
         message::{Duration, HpkeConfig, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
         task::VdafInstance,

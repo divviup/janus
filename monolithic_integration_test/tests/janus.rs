@@ -1,6 +1,6 @@
 use common::{create_test_tasks, pick_two_unused_ports, submit_measurements_and_verify_aggregate};
 use janus_core::{
-    hpke::test_util::generate_hpke_config_and_private_key, test_util::install_test_trace_subscriber,
+    hpke::generate_hpke_config_and_private_key, test_util::install_test_trace_subscriber,
 };
 use monolithic_integration_test::janus::Janus;
 

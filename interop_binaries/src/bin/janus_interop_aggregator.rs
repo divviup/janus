@@ -2,11 +2,12 @@ use anyhow::Context;
 use base64::URL_SAFE_NO_PAD;
 use clap::{Arg, Command};
 use interop_binaries::{
-    generate_hpke_keypair, install_tracing_subscriber,
+    install_tracing_subscriber,
     status::{ERROR, SUCCESS},
     VdafObject,
 };
 use janus_core::{
+    hpke::generate_hpke_config_and_private_key,
     message::{Duration, HpkeConfig, Role, TaskId},
     time::RealClock,
     TokioRuntime,
@@ -134,7 +135,7 @@ async fn handle_add_task(
         _ => return Err(anyhow::anyhow!("Invalid \"aggregator_id\" value")),
     };
 
-    let (hpke_config, private_key) = generate_hpke_keypair();
+    let (hpke_config, private_key) = generate_hpke_config_and_private_key();
 
     let task = Task::new(
         task_id,

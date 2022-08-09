@@ -1576,7 +1576,6 @@ dependencies = [
  "anyhow",
  "base64",
  "clap 3.2.16",
- "hpke-dispatch",
  "janus_client",
  "janus_core",
  "janus_server",

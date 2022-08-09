@@ -2239,7 +2239,7 @@ mod tests {
     use janus_core::{
         hpke::associated_data_for_report_share,
         hpke::{
-            associated_data_for_aggregate_share, test_util::generate_hpke_config_and_private_key,
+            associated_data_for_aggregate_share, generate_hpke_config_and_private_key,
             HpkePrivateKey, Label,
         },
         message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},

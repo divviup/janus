@@ -1,8 +1,12 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::{Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Role, TaskId};
-use hpke_dispatch::HpkeError;
+use crate::message::{
+    Extension, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
+    HpkePublicKey, Interval, Nonce, Role, TaskId,
+};
+use hpke_dispatch::{HpkeError, Kem, Keypair};
 use prio::codec::{encode_u16_items, Encode};
+use rand::{thread_rng, Rng};
 use std::str::FromStr;
 
 #[derive(Debug, thiserror::Error)]
@@ -170,38 +174,28 @@ pub fn open(
         .map_err(Into::into)
 }
 
-#[cfg(feature = "test-util")]
-pub mod test_util {
-    use crate::{
-        hpke::HpkePrivateKey,
-        message::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey},
-    };
-    use hpke_dispatch::{Kem, Keypair};
-    use rand::{thread_rng, Rng};
-
-    /// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
-    /// HpkePrivateKey (private portion).
-    pub fn generate_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
-        let Keypair {
-            private_key,
-            public_key,
-        } = Kem::X25519HkdfSha256.gen_keypair();
-        (
-            HpkeConfig::new(
-                HpkeConfigId::from(thread_rng().gen::<u8>()),
-                HpkeKemId::X25519HkdfSha256,
-                HpkeKdfId::HkdfSha256,
-                HpkeAeadId::Aes128Gcm,
-                HpkePublicKey::new(public_key),
-            ),
-            HpkePrivateKey::new(private_key),
-        )
-    }
+/// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
+/// HpkePrivateKey (private portion).
+pub fn generate_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
+    let Keypair {
+        private_key,
+        public_key,
+    } = Kem::X25519HkdfSha256.gen_keypair();
+    (
+        HpkeConfig::new(
+            HpkeConfigId::from(thread_rng().gen::<u8>()),
+            HpkeKemId::X25519HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
+            HpkePublicKey::new(public_key),
+        ),
+        HpkePrivateKey::new(private_key),
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{test_util::generate_hpke_config_and_private_key, HpkeApplicationInfo, Label};
+    use super::{generate_hpke_config_and_private_key, HpkeApplicationInfo, Label};
     use crate::{
         hpke::{open, seal, HpkePrivateKey},
         message::{

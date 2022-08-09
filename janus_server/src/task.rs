@@ -525,7 +525,7 @@ pub mod test_util {
 
     use super::{AuthenticationToken, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH};
     use janus_core::{
-        hpke::test_util::generate_hpke_config_and_private_key,
+        hpke::generate_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
     };
     use rand::{thread_rng, Rng};

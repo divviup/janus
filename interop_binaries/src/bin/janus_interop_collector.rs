@@ -2,12 +2,15 @@ use anyhow::Context;
 use base64::URL_SAFE_NO_PAD;
 use clap::{Arg, Command};
 use interop_binaries::{
-    generate_hpke_keypair, install_tracing_subscriber,
+    install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
     VdafObject,
 };
 use janus_core::{
-    hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey, Label},
+    hpke::{
+        self, associated_data_for_aggregate_share, generate_hpke_config_and_private_key,
+        HpkeApplicationInfo, HpkePrivateKey, Label,
+    },
     message::{Duration, HpkeConfig, Interval, Role, TaskId, Time},
 };
 use janus_server::message::{CollectReq, CollectResp};
@@ -135,7 +138,7 @@ async fn handle_add_task(
         return Err(anyhow::anyhow!("Cannot add a task with a duplicate ID"));
     }
 
-    let (hpke_config, private_key) = generate_hpke_keypair();
+    let (hpke_config, private_key) = generate_hpke_config_and_private_key();
 
     let leader_url = request
         .leader

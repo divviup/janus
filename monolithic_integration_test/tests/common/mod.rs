@@ -8,7 +8,7 @@ use itertools::Itertools;
 use janus_client::{Client, ClientParameters};
 use janus_core::{
     hpke::{
-        self, associated_data_for_aggregate_share, test_util::generate_hpke_config_and_private_key,
+        self, associated_data_for_aggregate_share, generate_hpke_config_and_private_key,
         HpkeApplicationInfo, HpkePrivateKey, Label,
     },
     message::{Duration, HpkeConfig, Interval, Role, TaskId},
