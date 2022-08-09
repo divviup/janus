@@ -8,8 +8,8 @@ use interop_binaries::{
 };
 use janus_client::ClientParameters;
 use janus_core::{
-    message::{Duration, Role, TaskId},
-    time::RealClock,
+    message::{Duration, Role, TaskId, Time},
+    time::{MockClock, RealClock},
 };
 use prio::{
     codec::Decode,
@@ -76,26 +76,37 @@ where
     .await
     .context("Failed to fetch helper's HPKE configuration")?;
 
-    if request.nonce_time.is_some() {
-        // TODO: Support for nonceTime will require constructing a Client with
-        // MockClock or similar, but I neither want to enable the "test-util"
-        // feature for the entire workspace's normal builds nor write a
-        // substantially complete copy of MockClock just for this.
-        return Err(anyhow::anyhow!("nonceTime is not yet supported"));
+    match request.nonce_time {
+        Some(nonce_time) => {
+            let clock = MockClock::new(Time::from_seconds_since_epoch(nonce_time));
+            let client = janus_client::Client::new(
+                client_parameters,
+                vdaf_client,
+                clock,
+                http_client,
+                leader_hpke_config,
+                helper_hpke_config,
+            );
+            client
+                .upload(&measurement)
+                .await
+                .context("Report generation and upload failed")
+        }
+        None => {
+            let client = janus_client::Client::new(
+                client_parameters,
+                vdaf_client,
+                RealClock::default(),
+                http_client,
+                leader_hpke_config,
+                helper_hpke_config,
+            );
+            client
+                .upload(&measurement)
+                .await
+                .context("Report generation and upload failed")
+        }
     }
-
-    let client = janus_client::Client::new(
-        client_parameters,
-        vdaf_client,
-        RealClock::default(),
-        http_client,
-        leader_hpke_config,
-        helper_hpke_config,
-    );
-    client
-        .upload(&measurement)
-        .await
-        .context("Report generation and upload failed")
 }
 
 async fn handle_upload(

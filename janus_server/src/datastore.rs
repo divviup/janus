@@ -3282,7 +3282,7 @@ mod tests {
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
         },
-        time::test_util::MockClock,
+        time::MockClock,
     };
     use prio::{
         field::{Field128, Field64},

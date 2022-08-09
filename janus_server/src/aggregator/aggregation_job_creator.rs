@@ -452,7 +452,7 @@ mod tests {
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
         },
-        time::{test_util::MockClock, Clock},
+        time::{Clock, MockClock},
     };
     use prio::{
         codec::ParameterizedDecode,

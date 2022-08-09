@@ -2247,7 +2247,7 @@ mod tests {
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber, run_vdaf,
         },
-        time::test_util::MockClock,
+        time::MockClock,
     };
     use opentelemetry::global::meter;
     use prio::{

@@ -253,7 +253,7 @@ mod tests {
     use janus_core::{
         message::TaskId,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
-        time::test_util::MockClock,
+        time::MockClock,
     };
     use opentelemetry::global::meter;
     use tokio::sync::Mutex;
