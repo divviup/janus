@@ -40,7 +40,7 @@ postgres-types = { version = "0.2.3", optional = true }
 prio = "0.8.2"
 rand = "0.8"
 ring = "0.16.20"
-serde = { version = "1.0.141", features = ["derive"] }
+serde = { version = "1.0.143", features = ["derive"] }
 thiserror = "1.0"
 tokio = { version = "^1.20", features = ["rt"] }
 
