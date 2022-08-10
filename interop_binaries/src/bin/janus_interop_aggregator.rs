@@ -84,29 +84,29 @@ async fn handle_add_task(
     request: AddTaskRequest,
 ) -> anyhow::Result<()> {
     let task_id_bytes = base64::decode_config(request.task_id, base64::URL_SAFE_NO_PAD)
-        .context("Invalid base64url content in \"taskId\"")?;
-    let task_id = TaskId::get_decoded(&task_id_bytes).context("Invalid length of TaskId")?;
-    let leader_url = Url::parse(&request.leader).context("Bad leader URL")?;
-    let helper_url = Url::parse(&request.helper).context("Bad helper URL")?;
+        .context("invalid base64url content in \"taskId\"")?;
+    let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
+    let leader_url = Url::parse(&request.leader).context("bad leader URL")?;
+    let helper_url = Url::parse(&request.helper).context("bad helper URL")?;
     let vdaf: janus_core::task::VdafInstance = request.vdaf.into();
     let vdaf: janus_server::task::VdafInstance = vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
     let verify_key = base64::decode_config(request.verify_key, URL_SAFE_NO_PAD)
-        .context("Invalid base64url content in \"verifyKey\"")?;
+        .context("invalid base64url content in \"verifyKey\"")?;
     let min_batch_duration = Duration::from_seconds(request.min_batch_duration);
     let collector_hpke_config_bytes =
         base64::decode_config(request.collector_hpke_config, URL_SAFE_NO_PAD)
-            .context("Invalid base64url content in \"collectorHpkeConfig\"")?;
+            .context("invalid base64url content in \"collectorHpkeConfig\"")?;
     let collector_hpke_config = HpkeConfig::get_decoded(&collector_hpke_config_bytes)
-        .context("Could not parse collector HPKE configuration")?;
+        .context("could not parse collector HPKE configuration")?;
 
     let (role, collector_authentication_tokens) = match (
         request.aggregator_id,
         request.collector_authentication_token,
     ) {
         (0, None) => {
-            return Err(anyhow::anyhow!("Collector authentication is missing"));
+            return Err(anyhow::anyhow!("collector authentication is missing"));
         }
         (0, Some(collector_authentication_token)) => (
             Role::Leader,
@@ -115,7 +115,7 @@ async fn handle_add_task(
             )],
         ),
         (1, _) => (Role::Helper, Vec::new()),
-        _ => return Err(anyhow::anyhow!("Invalid \"aggregator_id\" value")),
+        _ => return Err(anyhow::anyhow!("invalid \"aggregator_id\" value")),
     };
 
     let (hpke_config, private_key) = generate_hpke_config_and_private_key();
@@ -137,7 +137,7 @@ async fn handle_add_task(
         collector_authentication_tokens,
         [(hpke_config, private_key)],
     )
-    .context("Error constructing task")?;
+    .context("error constructing task")?;
 
     datastore
         .run_tx(move |tx| {
@@ -145,7 +145,7 @@ async fn handle_add_task(
             Box::pin(async move { tx.put_task(&task).await })
         })
         .await
-        .context("Error adding task to database")
+        .context("error adding task to database")
 }
 
 fn make_filter(

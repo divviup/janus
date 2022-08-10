@@ -45,7 +45,7 @@ async fn wait_for_tcp_server(port: u16) -> anyhow::Result<()> {
         sleep(StdDuration::from_millis(200)).await;
     }
     Err(anyhow::anyhow!(
-        "Timed out waiting for a server to accept on port {}",
+        "timed out waiting for a server to accept on port {}",
         port,
     ))
 }
@@ -123,10 +123,10 @@ async fn run(
     let helper_postgres_port = helper_db_container.get_host_port_ipv4(5432);
 
     // Pick four ports for HTTP servers.
-    let client_port = pick_unused_port().context("Couldn't pick a port for the client")?;
-    let leader_port = pick_unused_port().context("Couldn't pick a port for the leader")?;
-    let helper_port = pick_unused_port().context("Couldn't pick a port for the helper")?;
-    let collector_port = pick_unused_port().context("Couldn't pick a port for the collector")?;
+    let client_port = pick_unused_port().context("couldn't pick a port for the client")?;
+    let leader_port = pick_unused_port().context("couldn't pick a port for the leader")?;
+    let helper_port = pick_unused_port().context("couldn't pick a port for the helper")?;
+    let collector_port = pick_unused_port().context("couldn't pick a port for the collector")?;
     assert_eq!(
         BTreeSet::from([client_port, leader_port, helper_port, collector_port]).len(),
         4,
@@ -304,18 +304,18 @@ async fn run(
     let collector_add_task_response_body = collector_add_task_response.json::<Value>().await?;
     let collector_add_task_response_object = collector_add_task_response_body
         .as_object()
-        .context("Collector add_task response is not an object")?;
+        .context("collector add_task response is not an object")?;
     assert_eq!(
         collector_add_task_response_object
             .get("status")
-            .context("Collector add_task response is missing \"status\"")?,
+            .context("collector add_task response is missing \"status\"")?,
         "success",
         "error: {:?}",
         collector_add_task_response_object.get("error"),
     );
     let collector_hpke_config_encoded = collector_add_task_response_object
         .get("collectorHpkeConfig")
-        .context("Collector add_task response is missing \"collectorHpkeConfig\"")?
+        .context("collector add_task response is missing \"collectorHpkeConfig\"")?
         .as_str()
         .context("\"collectorHpkeConfig\" value is not a string")?;
 
@@ -353,11 +353,11 @@ async fn run(
     let leader_add_task_response_body = leader_add_task_response.json::<Value>().await?;
     let leader_add_task_response_object = leader_add_task_response_body
         .as_object()
-        .context("Leader add_task response is not an object")?;
+        .context("leader add_task response is not an object")?;
     assert_eq!(
         leader_add_task_response_object
             .get("status")
-            .context("Leader add_task response is missing \"status\"")?,
+            .context("leader add_task response is missing \"status\"")?,
         "success",
         "error: {:?}",
         leader_add_task_response_object.get("error"),
@@ -396,11 +396,11 @@ async fn run(
     let helper_add_task_response_body = helper_add_task_response.json::<Value>().await?;
     let helper_add_task_response_object = helper_add_task_response_body
         .as_object()
-        .context("Helper add_task response is not an object")?;
+        .context("helper add_task response is not an object")?;
     assert_eq!(
         helper_add_task_response_object
             .get("status")
-            .context("Helper add_task response is missing \"status\"")?,
+            .context("helper add_task response is missing \"status\"")?,
         "success",
         "error: {:?}",
         helper_add_task_response_object.get("error"),
@@ -531,11 +531,11 @@ async fn run(
         );
         return collect_poll_response_object
             .get("result")
-            .context("Completed collect_poll response is missing \"result\"")
+            .context("completed collect_poll response is missing \"result\"")
             .cloned();
     }
 
-    Err(anyhow::anyhow!("Timed out fetching aggregation result"))
+    Err(anyhow::anyhow!("timed out fetching aggregation result"))
 }
 
 #[tokio::test]

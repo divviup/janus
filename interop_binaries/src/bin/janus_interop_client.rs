@@ -50,10 +50,10 @@ where
     for<'a> Vec<u8>: From<&'a <V as Vdaf>::AggregateShare>,
 {
     let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
-        .context("Invalid base64url content in \"taskId\"")?;
-    let task_id = TaskId::get_decoded(&task_id_bytes).context("Invalid length of TaskId")?;
-    let leader_url = Url::parse(&request.leader).context("Bad leader URL")?;
-    let helper_url = Url::parse(&request.helper).context("Bad helper URL")?;
+        .context("invalid base64url content in \"taskId\"")?;
+    let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
+    let leader_url = Url::parse(&request.leader).context("bad leader URL")?;
+    let helper_url = Url::parse(&request.helper).context("bad helper URL")?;
     let min_batch_duration = Duration::from_seconds(request.min_batch_duration);
     let client_parameters =
         ClientParameters::new(task_id, vec![leader_url, helper_url], min_batch_duration);
@@ -65,7 +65,7 @@ where
         http_client,
     )
     .await
-    .context("Failed to fetch leader's HPKE configuration")?;
+    .context("failed to fetch leader's HPKE configuration")?;
     let helper_hpke_config = janus_client::aggregator_hpke_config(
         &client_parameters,
         Role::Helper,
@@ -73,7 +73,7 @@ where
         http_client,
     )
     .await
-    .context("Failed to fetch helper's HPKE configuration")?;
+    .context("failed to fetch helper's HPKE configuration")?;
 
     match request.nonce_time {
         Some(nonce_time) => {
@@ -89,7 +89,7 @@ where
             client
                 .upload(&measurement)
                 .await
-                .context("Report generation and upload failed")
+                .context("report generation and upload failed")
         }
         None => {
             let client = janus_client::Client::new(
@@ -103,7 +103,7 @@ where
             client
                 .upload(&measurement)
                 .await
-                .context("Report generation and upload failed")
+                .context("report generation and upload failed")
         }
     }
 }
@@ -116,17 +116,17 @@ async fn handle_upload(
     match request.vdaf {
         VdafObject::Prio3Aes128Count {} => {
             let vdaf_client =
-                Prio3::new_aes128_count(2).context("Failed to construct Prio3Aes128Count VDAF")?;
+                Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
         VdafObject::Prio3Aes128Sum { bits } => {
             let vdaf_client = Prio3::new_aes128_sum(2, bits)
-                .context("Failed to construct Prio3Aes128Sum VDAF")?;
+                .context("failed to construct Prio3Aes128Sum VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement.into()).await?;
         }
         VdafObject::Prio3Aes128Histogram { ref buckets } => {
             let vdaf_client = Prio3::new_aes128_histogram(2, buckets)
-                .context("Failed to construct Prio3Aes128Histogram VDAF")?;
+                .context("failed to construct Prio3Aes128Histogram VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement.into()).await?;
         }
     }
