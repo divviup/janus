@@ -21,16 +21,15 @@ use url::Url;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UploadRequest {
-    #[serde(rename = "taskId")]
     task_id: String,
     leader: String,
     helper: String,
     vdaf: VdafObject,
     measurement: u64,
-    #[serde(default, rename = "nonceTime")]
+    #[serde(default)]
     nonce_time: Option<u64>,
-    #[serde(rename = "minBatchDuration")]
     min_batch_duration: u64,
 }
 

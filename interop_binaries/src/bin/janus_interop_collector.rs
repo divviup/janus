@@ -38,33 +38,29 @@ use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 static DAP_AUTH_TOKEN: &str = "DAP-Auth-Token";
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AddTaskRequest {
-    #[serde(rename = "taskId")]
     task_id: String,
     leader: String,
     vdaf: VdafObject,
-    #[serde(rename = "collectorAuthenticationToken")]
     collector_authentication_token: String,
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AddTaskResponse {
     status: &'static str,
     #[serde(default)]
     error: Option<String>,
-    #[serde(default, rename = "collectorHpkeConfig")]
     collector_hpke_config: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CollectStartRequest {
-    #[serde(rename = "taskId")]
     task_id: String,
-    #[serde(rename = "aggParam")]
     agg_param: String,
-    #[serde(rename = "batchIntervalStart")]
     batch_interval_start: u64,
-    #[serde(rename = "batchIntervalDuration")]
     batch_interval_duration: u64,
 }
 

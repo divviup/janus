@@ -36,12 +36,10 @@ use url::Url;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct EndpointRequest {
-    #[serde(rename = "taskId")]
     _task_id: String,
-    #[serde(rename = "aggregatorId")]
     _aggregator_id: u8,
-    #[serde(rename = "hostnameAndPort")]
     _hostname_and_port: String,
 }
 
@@ -57,27 +55,20 @@ static ENDPOINT_RESPONSE: EndpointResponse = EndpointResponse {
 };
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AddTaskRequest {
-    #[serde(rename = "taskId")]
     task_id: String,
     leader: String,
     helper: String,
     vdaf: VdafObject,
-    #[serde(rename = "leaderAuthenticationToken")]
     leader_authentication_token: String,
-    #[serde(default, rename = "collectorAuthenticationToken")]
+    #[serde(default)]
     collector_authentication_token: Option<String>,
-    #[serde(rename = "aggregatorId")]
     aggregator_id: u8,
-    #[serde(rename = "verifyKey")]
     verify_key: String,
-    #[serde(rename = "maxBatchLifetime")]
     max_batch_lifetime: u64,
-    #[serde(rename = "minBatchSize")]
     min_batch_size: u64,
-    #[serde(rename = "minBatchDuration")]
     min_batch_duration: u64,
-    #[serde(rename = "collectorHpkeConfig")]
     collector_hpke_config: String,
 }
 
