@@ -374,7 +374,6 @@ async fn run(
             "helper": helper_endpoint,
             "vdaf": vdaf_object,
             "leaderAuthenticationToken": aggregator_auth_token,
-            "collectorAuthenticationToken": collector_auth_token,
             "aggregatorId": 1,
             "verifyKey": verify_key_encoded,
             "maxBatchLifetime": 1,
