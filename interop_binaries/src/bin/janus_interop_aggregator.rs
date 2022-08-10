@@ -198,10 +198,10 @@ fn app() -> clap::Command<'static> {
                 .help("Port number to listen on."),
         )
         .arg(
-            Arg::new("postgres-port")
-                .long("postgres-port")
-                .default_value("5432")
-                .help("Port number of PostgreSQL database on localhost."),
+            Arg::new("postgres-url")
+                .long("postgres-url")
+                .default_value("postgres://postgres@127.0.0.1:5432/postgres")
+                .help("PostgreSQL database connection URL."),
         )
 }
 
@@ -210,7 +210,7 @@ async fn main() -> anyhow::Result<()> {
     install_tracing_subscriber()?;
     let matches = app().get_matches();
     let http_port = matches.value_of_t::<u16>("port")?;
-    let postgres_port = matches.value_of_t::<u16>("postgres-port")?;
+    let postgres_url = matches.value_of_t::<Url>("postgres-url")?;
 
     // Make an ephemeral datastore key.
     let mut key_bytes = [0u8; 16];
@@ -220,11 +220,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Connect to database, apply schema, and set up datastore.
     let db_config = DbConfig {
-        url: Url::parse(&format!(
-            "postgres://postgres@127.0.0.1:{}/postgres",
-            postgres_port
-        ))
-        .unwrap(),
+        url: postgres_url,
         connection_pool_timeouts_secs: 30,
     };
     let pool = database_pool(&db_config, &None).await?;

@@ -141,14 +141,16 @@ async fn run(
     client_command.arg("--port").arg(format!("{}", client_port));
     let mut leader_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_aggregator"));
     leader_command.arg("--port").arg(format!("{}", leader_port));
-    leader_command
-        .arg("--postgres-port")
-        .arg(format!("{}", leader_postgres_port));
+    leader_command.arg("--postgres-url").arg(format!(
+        "postgres://postgres@127.0.0.1:{}/postgres",
+        leader_postgres_port
+    ));
     let mut helper_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_aggregator"));
     helper_command.arg("--port").arg(format!("{}", helper_port));
-    helper_command
-        .arg("--postgres-port")
-        .arg(format!("{}", helper_postgres_port));
+    helper_command.arg("--postgres-url").arg(format!(
+        "postgres://postgres@127.0.0.1:{}/postgres",
+        helper_postgres_port
+    ));
     let mut collector_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_collector"));
     collector_command
         .arg("--port")
