@@ -1,6 +1,7 @@
 use common::{create_test_tasks, pick_two_unused_ports, submit_measurements_and_verify_aggregate};
 use janus_core::{
-    hpke::generate_hpke_config_and_private_key, test_util::install_test_trace_subscriber,
+    hpke::test_util::generate_test_hpke_config_and_private_key,
+    test_util::install_test_trace_subscriber,
 };
 use monolithic_integration_test::janus::Janus;
 
@@ -13,7 +14,8 @@ async fn janus_janus() {
 
     // Start servers.
     let (janus_leader_port, janus_helper_port) = pick_two_unused_ports();
-    let (collector_hpke_config, collector_private_key) = generate_hpke_config_and_private_key();
+    let (collector_hpke_config, collector_private_key) =
+        generate_test_hpke_config_and_private_key();
     let (janus_leader_task, janus_helper_task) =
         create_test_tasks(janus_leader_port, janus_helper_port, &collector_hpke_config);
 

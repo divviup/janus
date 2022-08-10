@@ -8,8 +8,9 @@ use itertools::Itertools;
 use janus_client::{Client, ClientParameters};
 use janus_core::{
     hpke::{
-        self, associated_data_for_aggregate_share, generate_hpke_config_and_private_key,
-        HpkeApplicationInfo, HpkePrivateKey, Label,
+        self, associated_data_for_aggregate_share,
+        test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, HpkePrivateKey,
+        Label,
     },
     message::{Duration, HpkeConfig, Interval, Role, TaskId},
     task::VdafInstance,
@@ -72,7 +73,7 @@ pub fn create_test_tasks(
         collector_hpke_config.clone(),
         aggregator_auth_tokens.clone(),
         collector_auth_tokens,
-        Vec::from([generate_hpke_config_and_private_key()]),
+        Vec::from([generate_test_hpke_config_and_private_key()]),
     )
     .unwrap();
     let helper_task = Task::new(
@@ -88,7 +89,7 @@ pub fn create_test_tasks(
         collector_hpke_config.clone(),
         aggregator_auth_tokens,
         Vec::new(),
-        Vec::from([generate_hpke_config_and_private_key()]),
+        Vec::from([generate_test_hpke_config_and_private_key()]),
     )
     .unwrap();
 

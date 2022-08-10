@@ -528,7 +528,7 @@ pub mod test_util {
 
     use super::{AuthenticationToken, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH};
     use janus_core::{
-        hpke::generate_hpke_config_and_private_key,
+        hpke::test_util::generate_test_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
     };
     use rand::{thread_rng, Rng};
@@ -553,11 +553,11 @@ pub mod test_util {
     /// dummy values for the other fields. This is pub because it is needed for
     /// integration tests.
     pub fn new_dummy_task(task_id: TaskId, vdaf: VdafInstance, role: Role) -> Task {
-        let (collector_config, _) = generate_hpke_config_and_private_key();
+        let (collector_config, _) = generate_test_hpke_config_and_private_key();
         let (aggregator_config_0, aggregator_private_key_0) =
-            generate_hpke_config_and_private_key();
+            generate_test_hpke_config_and_private_key();
         let (mut aggregator_config_1, aggregator_private_key_1) =
-            generate_hpke_config_and_private_key();
+            generate_test_hpke_config_and_private_key();
         aggregator_config_1 = HpkeConfig::new(
             HpkeConfigId::from(1),
             aggregator_config_1.kem_id(),

@@ -224,7 +224,7 @@ mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use janus_core::{
-        hpke::generate_hpke_config_and_private_key,
+        hpke::test_util::generate_test_hpke_config_and_private_key,
         message::{TaskId, Time},
         test_util::install_test_trace_subscriber,
         time::MockClock,
@@ -240,8 +240,8 @@ mod tests {
         let task_id = TaskId::random();
 
         let clock = MockClock::default();
-        let (leader_hpke_config, _) = generate_hpke_config_and_private_key();
-        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
+        let (leader_hpke_config, _) = generate_test_hpke_config_and_private_key();
+        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
 
         let server_url = Url::parse(&mockito::server_url()).unwrap();
 
@@ -318,8 +318,8 @@ mod tests {
             Prio3::new_aes128_count(2).unwrap(),
             MockClock::default(),
             &default_http_client().unwrap(),
-            generate_hpke_config_and_private_key().0,
-            generate_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
         );
         let result = client.upload(&1).await;
         assert_matches!(result, Err(Error::InvalidParameter(_)));

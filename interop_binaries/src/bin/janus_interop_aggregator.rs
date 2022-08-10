@@ -8,7 +8,7 @@ use interop_binaries::{
 };
 use janus_core::{
     hpke::generate_hpke_config_and_private_key,
-    message::{Duration, HpkeConfig, Role, TaskId},
+    message::{Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId},
     time::RealClock,
     TokioRuntime,
 };
@@ -118,7 +118,14 @@ async fn handle_add_task(
         _ => return Err(anyhow::anyhow!("invalid \"aggregator_id\" value")),
     };
 
-    let (hpke_config, private_key) = generate_hpke_config_and_private_key();
+    let (hpke_config, private_key) = generate_hpke_config_and_private_key(
+        HpkeConfigId::from(0u8),
+        // These algorithms should be broadly compatible with other DAP implementations, since they
+        // are required by section 6 of draft-ietf-ppm-dap-01.
+        HpkeKemId::X25519HkdfSha256,
+        HpkeKdfId::HkdfSha256,
+        HpkeAeadId::Aes128Gcm,
+    );
 
     let task = Task::new(
         task_id,
