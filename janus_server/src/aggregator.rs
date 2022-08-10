@@ -4882,10 +4882,7 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/collect")
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
+            .header("DAP-Auth-Token", "bogus authentication token")
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
@@ -4894,6 +4891,8 @@ mod tests {
             .into_response()
             .into_parts();
 
+        // This request cannot get past the bearer authentication token check, as helper tasks do
+        // not have collector authentication tokens.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
@@ -4901,9 +4900,9 @@ mod tests {
             problem_details,
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
-                "title": "An endpoint received a message with an unknown task ID.",
-                "detail": "An endpoint received a message with an unknown task ID.",
+                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
+                "title": "The request's authorization is not valid.",
+                "detail": "The request's authorization is not valid.",
                 "instance": "..",
                 "taskid": format!("{}", task_id),
             })
@@ -4948,7 +4947,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                task.primary_collector_auth_token().unwrap().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -5139,7 +5138,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                task.primary_collector_auth_token().unwrap().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -5290,7 +5289,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                task.primary_collector_auth_token().unwrap().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -5314,7 +5313,7 @@ mod tests {
             .path(&format!("/collect_jobs/{}", collect_job_id))
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                task.primary_collector_auth_token().unwrap().as_bytes(),
             )
             .filter(&filter)
             .await
@@ -5360,7 +5359,7 @@ mod tests {
             .path(&format!("/collect_jobs/{}", collect_job_id))
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                task.primary_collector_auth_token().unwrap().as_bytes(),
             )
             .filter(&filter)
             .await
@@ -5480,7 +5479,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                task.primary_collector_auth_token().unwrap().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -5507,7 +5506,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                task.primary_collector_auth_token().unwrap().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(invalid_request.get_encoded())

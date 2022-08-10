@@ -71,7 +71,7 @@ pub fn create_test_tasks(
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
         aggregator_auth_tokens.clone(),
-        collector_auth_tokens.clone(),
+        collector_auth_tokens,
         Vec::from([generate_hpke_config_and_private_key()]),
     )
     .unwrap();
@@ -87,7 +87,7 @@ pub fn create_test_tasks(
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
         aggregator_auth_tokens,
-        collector_auth_tokens,
+        Vec::new(),
         Vec::from([generate_hpke_config_and_private_key()]),
     )
     .unwrap();
@@ -181,7 +181,10 @@ pub async fn submit_measurements_and_verify_aggregate(
         .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
         .header(
             "DAP-Auth-Token",
-            leader_task.primary_collector_auth_token().as_bytes(),
+            leader_task
+                .primary_collector_auth_token()
+                .unwrap()
+                .as_bytes(),
         )
         .body(collect_req.get_encoded())
         .send()
@@ -209,7 +212,10 @@ pub async fn submit_measurements_and_verify_aggregate(
             .get(collect_job_url.clone())
             .header(
                 "DAP-Auth-Token",
-                leader_task.primary_collector_auth_token().as_bytes(),
+                leader_task
+                    .primary_collector_auth_token()
+                    .unwrap()
+                    .as_bytes(),
             )
             .send()
             .await

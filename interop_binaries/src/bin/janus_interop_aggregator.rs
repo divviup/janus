@@ -114,15 +114,7 @@ async fn handle_add_task(
                 collector_authentication_token.into_bytes(),
             )],
         ),
-        (1, _) => (
-            Role::Helper,
-            // TODO(issue #370): Task::new() requires that we have a collector authentication
-            // token, but draft-dcook-ppm-dap-interop-test-design-00 only provides such a token
-            // to the leader.
-            vec![AuthenticationToken::from(
-                b"This is a fake collector authentication token for the helper".to_vec(),
-            )],
-        ),
+        (1, _) => (Role::Helper, Vec::new()),
         _ => return Err(anyhow::anyhow!("Invalid \"aggregator_id\" value")),
     };
 

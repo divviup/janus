@@ -232,7 +232,10 @@ impl Task {
         if aggregator_auth_tokens.is_empty() {
             return Err(Error::InvalidParameter("aggregator_auth_tokens"));
         }
-        if collector_auth_tokens.is_empty() {
+        if role == Role::Leader && collector_auth_tokens.is_empty() {
+            return Err(Error::InvalidParameter("collector_auth_tokens"));
+        }
+        if role == Role::Helper && !collector_auth_tokens.is_empty() {
             return Err(Error::InvalidParameter("collector_auth_tokens"));
         }
         if vdaf_verify_keys.is_empty() {
@@ -298,8 +301,8 @@ impl Task {
 
     /// Returns the [`AuthenticationToken`] currently used by the collector to authenticate itself
     /// to the aggregators.
-    pub fn primary_collector_auth_token(&self) -> &AuthenticationToken {
-        self.collector_auth_tokens.iter().rev().next().unwrap()
+    pub fn primary_collector_auth_token(&self) -> Option<&AuthenticationToken> {
+        self.collector_auth_tokens.iter().rev().next()
     }
 
     /// Checks if the given collector authentication token is valid (i.e. matches with an
@@ -566,6 +569,11 @@ pub mod test_util {
         let vdaf_verify_key = iter::repeat_with(|| thread_rng().gen())
             .take(vdaf.verify_key_length())
             .collect();
+        let collector_auth_tokens = if role == Role::Leader {
+            Vec::from([generate_auth_token(), generate_auth_token()])
+        } else {
+            Vec::new()
+        };
 
         Task::new(
             task_id,
@@ -582,7 +590,7 @@ pub mod test_util {
             Duration::from_minutes(10).unwrap(),
             collector_config,
             Vec::from([generate_auth_token(), generate_auth_token()]),
-            Vec::from([generate_auth_token(), generate_auth_token()]),
+            collector_auth_tokens,
             Vec::from([
                 (aggregator_config_0, aggregator_private_key_0),
                 (aggregator_config_1, aggregator_private_key_1),
