@@ -51,27 +51,13 @@ async fn wait_for_tcp_server(port: u16) -> anyhow::Result<()> {
 }
 
 /// RAII guard to ensure that child processes are cleaned up during test failures.
-struct DropGuard(Vec<Child>);
+struct ChildProcessCleanupDropGuard(Child);
 
-impl Drop for DropGuard {
+impl Drop for ChildProcessCleanupDropGuard {
     fn drop(&mut self) {
-        let mut any_error = false;
-        for mut process in self.0.drain(..) {
-            match process.kill() {
-                Ok(()) => {
-                    if let Err(err) = process.wait() {
-                        eprintln!("{}", err);
-                        any_error = true;
-                    }
-                }
-                Err(err) => {
-                    eprintln!("{}", err);
-                    any_error = true;
-                }
-            }
-        }
-        if any_error {
-            panic!("Encountered errors while terminating child processes")
+        if self.0.try_wait().unwrap().is_none() {
+            self.0.kill().unwrap();
+            self.0.wait().unwrap();
         }
     }
 }
@@ -161,19 +147,21 @@ async fn run(
         helper_command,
         collector_command,
     ];
-    let mut drop_guard = DropGuard(Vec::with_capacity(commands.len()));
+    let mut drop_guards = Vec::with_capacity(commands.len());
     for mut command in commands {
-        let mut process = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let mut drop_guard = ChildProcessCleanupDropGuard(
+            command
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?,
+        );
         tokio::spawn(forward_stdout(ChildStdout::from_std(
-            process.stdout.take().unwrap(),
+            drop_guard.0.stdout.take().unwrap(),
         )?));
         tokio::spawn(forward_stderr(ChildStderr::from_std(
-            process.stderr.take().unwrap(),
+            drop_guard.0.stderr.take().unwrap(),
         )?));
-        drop_guard.0.push(process);
+        drop_guards.push(drop_guard);
     }
 
     // Step 3: Try opening a TCP connection to each container's port, and
