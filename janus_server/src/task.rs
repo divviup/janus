@@ -232,7 +232,9 @@ impl Task {
         if aggregator_auth_tokens.is_empty() {
             return Err(Error::InvalidParameter("aggregator_auth_tokens"));
         }
-        if collector_auth_tokens.is_empty() {
+        if (role == Role::Leader) == (collector_auth_tokens.is_empty()) {
+            // Collector auth tokens are allowed & required if and only if this task is in the
+            // leader role.
             return Err(Error::InvalidParameter("collector_auth_tokens"));
         }
         if vdaf_verify_keys.is_empty() {
@@ -555,7 +557,6 @@ pub mod test_util {
     /// dummy values for the other fields. This is pub because it is needed for
     /// integration tests.
     pub fn new_dummy_task(task_id: TaskId, vdaf: VdafInstance, role: Role) -> Task {
-        let (collector_config, _) = generate_hpke_config_and_private_key();
         let (aggregator_config_0, aggregator_private_key_0) =
             generate_hpke_config_and_private_key();
         let (mut aggregator_config_1, aggregator_private_key_1) =
@@ -572,6 +573,12 @@ pub mod test_util {
             .take(vdaf.verify_key_length())
             .collect();
 
+        let collector_auth_tokens = if role == Role::Leader {
+            Vec::from([generate_auth_token(), generate_auth_token()])
+        } else {
+            Vec::new()
+        };
+
         Task::new(
             task_id,
             Vec::from([
@@ -585,9 +592,9 @@ pub mod test_util {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            collector_config,
+            generate_hpke_config_and_private_key().0,
             Vec::from([generate_auth_token(), generate_auth_token()]),
-            Vec::from([generate_auth_token(), generate_auth_token()]),
+            collector_auth_tokens,
             Vec::from([
                 (aggregator_config_0, aggregator_private_key_0),
                 (aggregator_config_1, aggregator_private_key_1),
@@ -775,6 +782,93 @@ mod tests {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
         ));
+    }
+
+    #[test]
+    fn collector_auth_tokens() {
+        // As leader, we receive an error if no collector auth token is specified.
+        Task::new(
+            TaskId::random(),
+            Vec::from([
+                "http://leader_endpoint".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+            ]),
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
+            Role::Leader,
+            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            0,
+            0,
+            Duration::from_hours(8).unwrap(),
+            Duration::from_minutes(10).unwrap(),
+            generate_hpke_config_and_private_key().0,
+            Vec::from([generate_auth_token()]),
+            Vec::new(),
+            Vec::from([generate_hpke_config_and_private_key()]),
+        )
+        .unwrap_err();
+
+        // As leader, we receive no error if a collector auth token is specified.
+        Task::new(
+            TaskId::random(),
+            Vec::from([
+                "http://leader_endpoint".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+            ]),
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
+            Role::Leader,
+            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            0,
+            0,
+            Duration::from_hours(8).unwrap(),
+            Duration::from_minutes(10).unwrap(),
+            generate_hpke_config_and_private_key().0,
+            Vec::from([generate_auth_token()]),
+            Vec::from([generate_auth_token()]),
+            Vec::from([generate_hpke_config_and_private_key()]),
+        )
+        .unwrap();
+
+        // As helper, we receive no error if no collector auth token is specified.
+        Task::new(
+            TaskId::random(),
+            Vec::from([
+                "http://leader_endpoint".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+            ]),
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
+            Role::Helper,
+            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            0,
+            0,
+            Duration::from_hours(8).unwrap(),
+            Duration::from_minutes(10).unwrap(),
+            generate_hpke_config_and_private_key().0,
+            Vec::from([generate_auth_token()]),
+            Vec::new(),
+            Vec::from([generate_hpke_config_and_private_key()]),
+        )
+        .unwrap();
+
+        // As helper, we receive an error if a collector auth token is specified.
+        Task::new(
+            TaskId::random(),
+            Vec::from([
+                "http://leader_endpoint".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+            ]),
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
+            Role::Helper,
+            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            0,
+            0,
+            Duration::from_hours(8).unwrap(),
+            Duration::from_minutes(10).unwrap(),
+            generate_hpke_config_and_private_key().0,
+            Vec::from([generate_auth_token()]),
+            Vec::from([generate_auth_token()]),
+            Vec::from([generate_hpke_config_and_private_key()]),
+        )
+        .unwrap_err();
     }
 
     #[test]

@@ -321,7 +321,6 @@ impl<C: Clock> Aggregator<C> {
         let report = Report::get_decoded(report_bytes)?;
 
         let task_aggregator = self.task_aggregator_for(report.task_id()).await?;
-        // Only the leader supports upload.
         if task_aggregator.task.role != Role::Leader {
             return Err(Error::UnrecognizedTask(report.task_id()));
         }
@@ -344,6 +343,9 @@ impl<C: Clock> Aggregator<C> {
         // This assumes that the task ID is at the start of the message content.
         let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Helper {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -358,9 +360,6 @@ impl<C: Clock> Aggregator<C> {
         let req = AggregateInitializeReq::get_decoded(req_bytes)?;
         assert_eq!(req.task_id, task_id);
 
-        if task_aggregator.task.role != Role::Helper {
-            return Err(Error::UnrecognizedTask(task_id));
-        }
         Ok(task_aggregator
             .handle_aggregate_init(&self.datastore, &self.aggregate_step_failure_counters, req)
             .await?
@@ -376,6 +375,9 @@ impl<C: Clock> Aggregator<C> {
         // This assumes that the task ID is at the start of the message content.
         let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Helper {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -390,9 +392,6 @@ impl<C: Clock> Aggregator<C> {
         let req = AggregateContinueReq::get_decoded(req_bytes)?;
         assert_eq!(req.task_id, task_id);
 
-        if task_aggregator.task.role != Role::Helper {
-            return Err(Error::UnrecognizedTask(task_id));
-        }
         Ok(task_aggregator
             .handle_aggregate_continue(&self.datastore, &self.aggregate_step_failure_counters, req)
             .await?
@@ -411,6 +410,9 @@ impl<C: Clock> Aggregator<C> {
         // This assumes that the task ID is at the start of the message content.
         let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Leader {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -424,11 +426,6 @@ impl<C: Clock> Aggregator<C> {
 
         let collect_req = CollectReq::get_decoded(req_bytes)?;
         assert_eq!(collect_req.task_id, task_id);
-
-        // Only the leader supports /collect.
-        if task_aggregator.task.role != Role::Leader {
-            return Err(Error::UnrecognizedTask(collect_req.task_id));
-        }
 
         task_aggregator
             .handle_collect(&self.datastore, collect_req)
@@ -451,6 +448,9 @@ impl<C: Clock> Aggregator<C> {
             .ok_or(Error::UnrecognizedCollectJob(collect_job_id))?;
 
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Leader {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -460,11 +460,6 @@ impl<C: Clock> Aggregator<C> {
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(task_id));
-        }
-
-        // Only the leader handles collect jobs.
-        if task_aggregator.task.role != Role::Leader {
-            return Err(Error::UnrecognizedTask(task_id));
         }
 
         Ok(task_aggregator
@@ -485,6 +480,9 @@ impl<C: Clock> Aggregator<C> {
         // This assumes that the task ID is at the start of the message content.
         let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Helper {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -498,11 +496,6 @@ impl<C: Clock> Aggregator<C> {
 
         let req = AggregateShareReq::get_decoded(req_bytes)?;
         assert_eq!(req.task_id, task_id);
-
-        // Only the helper supports /aggregate_share.
-        if task_aggregator.task.role != Role::Helper {
-            return Err(Error::UnrecognizedTask(req.task_id));
-        }
 
         let resp = task_aggregator
             .handle_aggregate_share(&self.datastore, req)
@@ -4943,10 +4936,7 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/collect")
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
+            .header("DAP-Auth-Token", generate_auth_token().as_bytes())
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
