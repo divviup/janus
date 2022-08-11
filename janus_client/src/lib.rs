@@ -211,7 +211,7 @@ where
             .await?;
         let status = upload_response.status();
         if !status.is_success() {
-            // TODO(#233): decode an RFC 7807 problem document once #25 / #31 land
+            // TODO(#233): decode an RFC 7807 problem document
             return Err(Error::Http(status));
         }
 

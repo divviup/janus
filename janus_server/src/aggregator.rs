@@ -144,12 +144,15 @@ peer checksum: {peer_checksum:?} peer report count: {peer_report_count}"
     /// HPKE failure.
     #[error("HPKE error: {0}")]
     Hpke(#[from] janus_core::hpke::Error),
-    /// Error handling task parameters
+    /// Error handling task parameters.
     #[error("invalid task parameters: {0}")]
     TaskParameters(#[from] crate::task::Error),
-    /// Error making an HTTP request
+    /// Error making an HTTP request.
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
+    /// HTTP server returned an error status code.
+    #[error("HTTP response status {0}")]
+    Http(StatusCode),
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
@@ -181,6 +184,7 @@ impl Error {
             Error::Hpke(_) => "hpke",
             Error::TaskParameters(_) => "task_parameters",
             Error::HttpClient(_) => "http_client",
+            Error::Http(_) => "http",
             Error::Internal(_) => "internal",
         }
     }
@@ -1996,6 +2000,7 @@ where
                     Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::HttpClient(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::Http(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::TaskParameters(_)) => {
                         StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }

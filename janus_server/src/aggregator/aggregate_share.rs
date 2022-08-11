@@ -193,6 +193,11 @@ impl CollectJobDriver {
             .body(req.get_encoded())
             .send()
             .await?;
+        let status = response.status();
+        if !status.is_success() {
+            // TODO(#381): Attempt to decode a problem details response.
+            return Err(Error::Http(status));
+        }
         let encrypted_helper_aggregate_share =
             AggregateShareResp::get_decoded(&response.bytes().await?)?.encrypted_aggregate_share;
 
@@ -448,6 +453,7 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
     };
     use assert_matches::assert_matches;
+    use http::StatusCode;
     use janus_core::{
         message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId},
         test_util::{
@@ -603,10 +609,11 @@ mod tests {
             .with_status(500)
             .create();
 
-        collect_job_driver
+        let error = collect_job_driver
             .step_collect_job(ds.clone(), lease.clone())
             .await
             .unwrap_err();
+        assert_matches!(error, Error::Http(StatusCode::INTERNAL_SERVER_ERROR));
 
         mocked_failed_aggregate_share.assert();
 

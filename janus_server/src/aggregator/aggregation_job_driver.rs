@@ -1,5 +1,5 @@
 use crate::{
-    aggregator::{accumulator::Accumulator, AggregateStepFailureCounters},
+    aggregator::{self, accumulator::Accumulator, AggregateStepFailureCounters},
     datastore::{
         self,
         models::{
@@ -409,6 +409,11 @@ impl AggregationJobDriver {
             .body(req.get_encoded())
             .send()
             .await?;
+        let status = response.status();
+        if !status.is_success() {
+            // TODO(#381): Attempt to decode a problem details response.
+            return Err(aggregator::Error::Http(status).into());
+        }
         let resp = AggregateInitializeResp::get_decoded(&response.bytes().await?)?;
 
         self.process_response_from_helper(
@@ -508,6 +513,11 @@ impl AggregationJobDriver {
             .body(req.get_encoded())
             .send()
             .await?;
+        let status = response.status();
+        if !status.is_success() {
+            // TODO(#381): Attempt to decode a problem details response.
+            return Err(aggregator::Error::Http(status).into());
+        }
         let resp = AggregateContinueResp::get_decoded(&response.bytes().await?)?;
 
         self.process_response_from_helper(
@@ -1144,7 +1154,7 @@ mod tests {
         assert_eq!(lease.leased().task_id, task_id);
         assert_eq!(lease.leased().aggregation_job_id, aggregation_job_id);
 
-        // Setup: prepare mocked HTTP response.
+        // Setup: prepare mocked HTTP response. (first an error response, then a success)
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
@@ -1171,7 +1181,8 @@ mod tests {
                 result: PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
             }],
         };
-        let mocked_aggregate = mock("POST", "/aggregate")
+        let mocked_aggregate_failure = mock("POST", "/aggregate").with_status(500).create();
+        let mocked_aggregate_success = mock("POST", "/aggregate")
             .match_header(
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
@@ -1183,17 +1194,23 @@ mod tests {
             .with_body(helper_response.get_encoded())
             .create();
 
-        // Run: create an aggregation job driver & step the aggregation we've created.
+        // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
             AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter);
+        let error = aggregation_job_driver
+            .step_aggregation_job(ds.clone(), lease.clone())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("500 Internal Server Error"));
         aggregation_job_driver
             .step_aggregation_job(ds.clone(), lease)
             .await
             .unwrap();
 
         // Verify.
-        mocked_aggregate.assert();
+        mocked_aggregate_failure.assert();
+        mocked_aggregate_success.assert();
 
         let want_aggregation_job =
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
@@ -1338,7 +1355,7 @@ mod tests {
         assert_eq!(lease.leased().task_id, task_id);
         assert_eq!(lease.leased().aggregation_job_id, aggregation_job_id);
 
-        // Setup: prepare mocked HTTP response.
+        // Setup: prepare mocked HTTP responses. (first an error response, then a success)
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
@@ -1356,7 +1373,8 @@ mod tests {
                 result: PrepareStepResult::Finished,
             }],
         };
-        let mocked_aggregate = mock("POST", "/aggregate")
+        let mocked_aggregate_failure = mock("POST", "/aggregate").with_status(500).create();
+        let mocked_aggregate_success = mock("POST", "/aggregate")
             .match_header(
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
@@ -1368,17 +1386,23 @@ mod tests {
             .with_body(helper_response.get_encoded())
             .create();
 
-        // Run: create an aggregation job driver & step the aggregation we've created.
+        // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
             AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter);
+        let error = aggregation_job_driver
+            .step_aggregation_job(ds.clone(), lease.clone())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("500 Internal Server Error"));
         aggregation_job_driver
             .step_aggregation_job(ds.clone(), lease)
             .await
             .unwrap();
 
         // Verify.
-        mocked_aggregate.assert();
+        mocked_aggregate_failure.assert();
+        mocked_aggregate_success.assert();
 
         let want_aggregation_job =
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
