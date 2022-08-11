@@ -403,7 +403,7 @@ impl AggregationJobDriver {
 
         let response = self
             .http_client
-            .post(task.aggregator_url(Role::Helper)?.join("/aggregate")?)
+            .post(task.aggregator_url(Role::Helper)?.join("aggregate")?)
             .header(CONTENT_TYPE, AggregateInitializeReq::MEDIA_TYPE)
             .header(
                 DAP_AUTH_HEADER,
@@ -501,7 +501,7 @@ impl AggregationJobDriver {
 
         let response = self
             .http_client
-            .post(task.aggregator_url(Role::Helper)?.join("/aggregate")?)
+            .post(task.aggregator_url(Role::Helper)?.join("aggregate")?)
             .header(CONTENT_TYPE, AggregateContinueReq::MEDIA_TYPE)
             .header(
                 DAP_AUTH_HEADER,

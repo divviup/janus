@@ -20,7 +20,7 @@ async fn janus_janus() {
     // Update tasks to serve out of /dap/ prefix.
     for task in [&mut janus_leader_task, &mut janus_helper_task] {
         for url in &mut task.aggregator_endpoints {
-            url.set_path("dap");
+            url.set_path("/dap/");
         }
     }
 
