@@ -161,7 +161,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     let collect_url = leader_task
         .aggregator_url(Role::Leader)
         .unwrap()
-        .join("/collect")
+        .join("collect")
         .unwrap();
     let batch_interval = Interval::new(
         before_timestamp

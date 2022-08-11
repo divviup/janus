@@ -209,7 +209,7 @@ impl Task {
     /// Create a new [`Task`] from the provided values
     pub fn new<I: IntoIterator<Item = (HpkeConfig, HpkePrivateKey)>>(
         task_id: TaskId,
-        aggregator_endpoints: Vec<Url>,
+        mut aggregator_endpoints: Vec<Url>,
         vdaf: VdafInstance,
         role: Role,
         vdaf_verify_keys: Vec<Vec<u8>>,
@@ -240,6 +240,15 @@ impl Task {
         }
         if vdaf_verify_keys.is_empty() {
             return Err(Error::InvalidParameter("vdaf_verify_keys"));
+        }
+
+        // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
+        // path segments into these endpoints & the Url::join implementation is persnickety about
+        // the slash at the end of the path.
+        for url in &mut aggregator_endpoints {
+            if !url.as_str().ends_with('/') {
+                url.set_path(&format!("{}/", url.path()));
+            }
         }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
@@ -427,32 +436,28 @@ impl<'de> Deserialize<'de> for Task {
             .collect::<Result<_, _>>()?;
 
         // hpke_keys
-        let hpke_keys: HashMap<_, _> = serialized_task
+        let hpke_keys: Vec<(_, _)> = serialized_task
             .hpke_keys
             .into_iter()
-            .map(|keypair| {
-                Ok((
-                    keypair.config.id,
-                    keypair.try_into().map_err(D::Error::custom)?,
-                ))
-            })
+            .map(|keypair| keypair.try_into().map_err(D::Error::custom))
             .collect::<Result<_, _>>()?;
 
-        Ok(Task {
-            id: task_id,
-            aggregator_endpoints: serialized_task.aggregator_endpoints,
-            vdaf: serialized_task.vdaf,
-            role: serialized_task.role,
+        Task::new(
+            task_id,
+            serialized_task.aggregator_endpoints,
+            serialized_task.vdaf,
+            serialized_task.role,
             vdaf_verify_keys,
-            max_batch_lifetime: serialized_task.max_batch_lifetime,
-            min_batch_size: serialized_task.min_batch_size,
-            min_batch_duration: serialized_task.min_batch_duration,
-            tolerable_clock_skew: serialized_task.tolerable_clock_skew,
+            serialized_task.max_batch_lifetime,
+            serialized_task.min_batch_size,
+            serialized_task.min_batch_duration,
+            serialized_task.tolerable_clock_skew,
             collector_hpke_config,
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
-        })
+        )
+        .map_err(D::Error::custom)
     }
 }
 
@@ -610,9 +615,15 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::test_util::new_dummy_task;
+    use super::{
+        test_util::{generate_auth_token, new_dummy_task},
+        Task, PRIO3_AES128_VERIFY_KEY_LENGTH,
+    };
     use crate::{config::test_util::roundtrip_encoding, task::VdafInstance};
-    use janus_core::message::{Duration, Interval, Role, TaskId, Time};
+    use janus_core::{
+        hpke::test_util::generate_test_hpke_config_and_private_key,
+        message::{Duration, Interval, Role, TaskId, Time},
+    };
     use serde_test::{assert_tokens, Token};
 
     #[test]
@@ -772,5 +783,36 @@ mod tests {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
         ));
+    }
+
+    #[test]
+    fn aggregator_endpoints_end_in_slash() {
+        let task = Task::new(
+            TaskId::random(),
+            Vec::from([
+                "http://leader_endpoint/foo/bar".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+            ]),
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
+            Role::Leader,
+            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            0,
+            0,
+            Duration::from_hours(8).unwrap(),
+            Duration::from_minutes(10).unwrap(),
+            generate_test_hpke_config_and_private_key().0,
+            Vec::from([generate_auth_token()]),
+            Vec::from([generate_auth_token()]),
+            Vec::from([generate_test_hpke_config_and_private_key()]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            task.aggregator_endpoints,
+            Vec::from([
+                "http://leader_endpoint/foo/bar/".parse().unwrap(),
+                "http://helper_endpoint/".parse().unwrap()
+            ])
+        );
     }
 }

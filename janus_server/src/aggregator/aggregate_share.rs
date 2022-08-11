@@ -20,7 +20,7 @@ use janus_core::{
     message::{Duration, Interval, NonceChecksum, Role},
     time::Clock,
 };
-use opentelemetry::metrics::{Counter, Meter};
+use opentelemetry::metrics::{BoundCounter, Meter};
 use prio::{
     codec::{Decode, Encode},
     vdaf::{
@@ -36,7 +36,7 @@ use tracing::{debug, error, warn};
 #[derive(Debug)]
 pub struct CollectJobDriver {
     http_client: reqwest::Client,
-    job_cancel_counter: Counter<u64>,
+    job_cancel_counter: BoundCounter<u64>,
 }
 
 impl CollectJobDriver {
@@ -45,7 +45,9 @@ impl CollectJobDriver {
         let job_cancel_counter = meter
             .u64_counter("janus_job_cancellations")
             .with_description("Count of cancelled jobs.")
-            .init();
+            .init()
+            .bind(&[]);
+        job_cancel_counter.add(0);
 
         Self {
             http_client,
@@ -179,10 +181,7 @@ impl CollectJobDriver {
 
         let response = self
             .http_client
-            .post(
-                task.aggregator_url(Role::Helper)?
-                    .join("/aggregate_share")?,
-            )
+            .post(task.aggregator_url(Role::Helper)?.join("aggregate_share")?)
             .header(CONTENT_TYPE, AggregateShareReq::MEDIA_TYPE)
             .header(
                 DAP_AUTH_HEADER,
@@ -191,6 +190,11 @@ impl CollectJobDriver {
             .body(req.get_encoded())
             .send()
             .await?;
+        let status = response.status();
+        if !status.is_success() {
+            // TODO(#381): Attempt to decode a problem details response.
+            return Err(Error::Http(status));
+        }
         let encrypted_helper_aggregate_share =
             AggregateShareResp::get_decoded(&response.bytes().await?)?.encrypted_aggregate_share;
 
@@ -283,7 +287,7 @@ impl CollectJobDriver {
                         max_attempts = ?maximum_attempts_before_failure,
                         "Canceling job due to too many failed attempts"
                     );
-                    this.job_cancel_counter.add(1, &[]);
+                    this.job_cancel_counter.add(1);
                     return this.cancel_collect_job(datastore, collect_job_lease).await;
                 }
 
@@ -446,6 +450,7 @@ mod tests {
         task::{test_util::new_dummy_task, VdafInstance},
     };
     use assert_matches::assert_matches;
+    use http::StatusCode;
     use janus_core::{
         message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId},
         test_util::{
@@ -601,10 +606,11 @@ mod tests {
             .with_status(500)
             .create();
 
-        collect_job_driver
+        let error = collect_job_driver
             .step_collect_job(ds.clone(), lease.clone())
             .await
             .unwrap_err();
+        assert_matches!(error, Error::Http(StatusCode::INTERNAL_SERVER_ERROR));
 
         mocked_failed_aggregate_share.assert();
 
