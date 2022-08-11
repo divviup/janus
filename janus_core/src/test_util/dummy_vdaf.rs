@@ -8,11 +8,15 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::{convert::Infallible, io::Cursor};
 
+type ArcPrepInitFn =
+    Arc<dyn Fn(&AggregationParam) -> Result<(), VdafError> + 'static + Send + Sync>;
+type ArcPrepStepFn =
+    Arc<dyn Fn() -> Result<PrepareTransition<Vdaf, 0>, VdafError> + 'static + Send + Sync>;
+
 #[derive(Clone)]
 pub struct Vdaf {
-    prep_init_fn: Arc<dyn Fn(&AggregationParam) -> Result<(), VdafError> + 'static + Send + Sync>,
-    prep_step_fn:
-        Arc<dyn Fn() -> Result<PrepareTransition<Self, 0>, VdafError> + 'static + Send + Sync>,
+    prep_init_fn: ArcPrepInitFn,
+    prep_step_fn: ArcPrepStepFn,
 }
 
 impl Debug for Vdaf {
