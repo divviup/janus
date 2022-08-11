@@ -14,8 +14,15 @@ async fn janus_janus() {
     // Start servers.
     let (janus_leader_port, janus_helper_port) = pick_two_unused_ports();
     let (collector_hpke_config, collector_private_key) = generate_hpke_config_and_private_key();
-    let (janus_leader_task, janus_helper_task) =
+    let (mut janus_leader_task, mut janus_helper_task) =
         create_test_tasks(janus_leader_port, janus_helper_port, &collector_hpke_config);
+
+    // Update tasks to serve out of /dap/ prefix.
+    for task in [&mut janus_leader_task, &mut janus_helper_task] {
+        for url in &mut task.aggregator_endpoints {
+            url.set_path("dap");
+        }
+    }
 
     let _janus_leader = Janus::new(janus_leader_port, &janus_leader_task).await;
     let _janus_helper = Janus::new(janus_helper_port, &janus_helper_task).await;

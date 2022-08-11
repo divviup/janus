@@ -21,6 +21,7 @@ janus = [
 [dependencies]
 backoff = "0.4"
 daphne = { git = "https://github.com/cloudflare/daphne", rev = "6301e712df216a0301c42cb3177110dd8217fa84", optional = true }
+futures = "0.3"
 hex = "0.4"
 hpke-dispatch = "0.3"
 http = "0.2"
@@ -38,6 +39,7 @@ subprocess = { version = "0.2", optional = true }
 tempfile = { version = "3", optional = true }
 tokio = { version = "1", features = ["full", "tracing"] }
 toml = "0.5"
+warp = { version = "0.3", features = ["tls"] }
 
 [dev-dependencies]
 chrono = "0.4.21"
