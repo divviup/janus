@@ -16,7 +16,10 @@ use janus_core::{
         TaskId, Time,
     },
 };
-use janus_server::message::{CollectReq, CollectResp};
+use janus_server::{
+    message::{CollectReq, CollectResp},
+    task::DAP_AUTH_HEADER,
+};
 use prio::{
     codec::{Decode, Encode},
     field::{Field128, Field64},
@@ -38,13 +41,11 @@ use std::{
 use tokio::sync::Mutex;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
-static DAP_AUTH_TOKEN: &str = "DAP-Auth-Token";
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AddTaskRequest {
     task_id: String,
-    leader: String,
+    leader: Url,
     vdaf: VdafObject,
     collector_authentication_token: String,
 }
@@ -146,15 +147,10 @@ async fn handle_add_task(
         HpkeAeadId::Aes128Gcm,
     );
 
-    let leader_url = request
-        .leader
-        .parse()
-        .context("could not parse leader endpoint URL")?;
-
     entry.or_insert(TaskState {
         private_key,
         hpke_config: hpke_config.clone(),
-        leader_url,
+        leader_url: request.leader,
         vdaf: request.vdaf,
         auth_token: request.collector_authentication_token,
     });
@@ -193,7 +189,7 @@ async fn handle_collect_start(
     let response = http_client
         .post(task_state.leader_url.join("collect")?)
         .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
-        .header(DAP_AUTH_TOKEN, &task_state.auth_token)
+        .header(DAP_AUTH_HEADER, &task_state.auth_token)
         .body(dap_collect_request.get_encoded())
         .send()
         .await
@@ -253,7 +249,7 @@ async fn handle_collect_poll(
 
     let response = http_client
         .get(collect_job_state.url.clone())
-        .header(DAP_AUTH_TOKEN, &task_state.auth_token)
+        .header(DAP_AUTH_HEADER, &task_state.auth_token)
         .send()
         .await
         .context("error fetching collect job from leader")?;

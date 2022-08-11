@@ -119,7 +119,7 @@ async fn run(
         "Ports selected for HTTP servers were not unique",
     );
 
-    // Step 1: Create and start containers. (here, we just run the binaries instead)
+    // Create and start containers. (here, we just run the binaries instead)
     // We use std::process instead of tokio::process so that we can kill the child processes from
     // a Drop implementation. tokio::process::Child::kill() is async, and could not be called from
     // there.
@@ -164,14 +164,12 @@ async fn run(
         drop_guards.push(drop_guard);
     }
 
-    // Step 3: Try opening a TCP connection to each container's port, and
-    // retry until it succeeds.
+    // Try opening a TCP connection to each container's port, and retry until it succeeds.
     for port in [client_port, leader_port, helper_port, collector_port] {
         wait_for_tcp_server(port).await?;
     }
 
-    // Step 4: Generate a random TaskId, random authentication tokens, and a
-    // VDAF verification key.
+    // Generate a random TaskId, random authentication tokens, and a VDAF verification key.
     let task_id = TaskId::random();
     let aggregator_auth_token = base64::encode_config(rand::random::<[u8; 16]>(), URL_SAFE_NO_PAD);
     let collector_auth_token = base64::encode_config(rand::random::<[u8; 16]>(), URL_SAFE_NO_PAD);
@@ -184,7 +182,7 @@ async fn run(
 
     let http_client = reqwest::Client::new();
 
-    // Step 5: Send a /internal/test/endpoint_for_task request to the leader.
+    // Send a /internal/test/endpoint_for_task request to the leader.
     let leader_endpoint_response = http_client
         .post(format!(
             "http://127.0.0.1:{}/internal/test/endpoint_for_task",
@@ -225,7 +223,7 @@ async fn run(
         "/",
     );
 
-    // Step 6: Send a /internal/test/endpoint_for_task request to the helper.
+    // Send a /internal/test/endpoint_for_task request to the helper.
     let helper_endpoint_response = http_client
         .post(format!(
             "http://127.0.0.1:{}/internal/test/endpoint_for_task",
@@ -266,7 +264,7 @@ async fn run(
         "/",
     );
 
-    // Step 8: Send a /internal/test/add_task request to the collector.
+    // Send a /internal/test/add_task request to the collector.
     let collector_add_task_response = http_client
         .post(format!(
             "http://127.0.0.1:{}/internal/test/add_task",
@@ -307,7 +305,7 @@ async fn run(
         .as_str()
         .context("\"collectorHpkeConfig\" value is not a string")?;
 
-    // Step 9: Send a /internal/test/add_task request to the leader.
+    // Send a /internal/test/add_task request to the leader.
     let leader_add_task_response = http_client
         .post(format!(
             "http://127.0.0.1:{}/internal/test/add_task",
@@ -351,7 +349,7 @@ async fn run(
         leader_add_task_response_object.get("error"),
     );
 
-    // Step 10: Send a /internal/test/add_task request to the helper.
+    // Send a /internal/test/add_task request to the helper.
     let helper_add_task_response = http_client
         .post(format!(
             "http://127.0.0.1:{}/internal/test/add_task",
@@ -404,7 +402,7 @@ async fn run(
     // measurements spilled over a batch boundary.
     let batch_interval_duration = MIN_BATCH_DURATION * 2;
 
-    // Step 11: Send one or more /internal/test/upload requests to the client.
+    // Send one or more /internal/test/upload requests to the client.
     for measurement in measurements {
         let upload_response = http_client
             .post(format!(
@@ -441,7 +439,7 @@ async fn run(
         );
     }
 
-    // Step 12: Send a /internal/test/collect_start request to the collector.
+    // Send a /internal/test/collect_start request to the collector.
     let collect_start_response = http_client
         .post(format!(
             "http://127.0.0.1:{}/internal/test/collect_start",
@@ -479,8 +477,7 @@ async fn run(
         .as_str()
         .context("\"handle\" value is not a string")?;
 
-    // Step 13: Send /internal/test/collect_poll requests to the collector,
-    // polling until it is completed.
+    // Send /internal/test/collect_poll requests to the collector, polling until it is completed.
     for _ in 0..30 {
         let collect_poll_response = http_client
             .post(format!(

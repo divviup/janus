@@ -35,14 +35,6 @@ use std::{
 use url::Url;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EndpointRequest {
-    _task_id: String,
-    _aggregator_id: u8,
-    _hostname_and_port: String,
-}
-
 #[derive(Debug, Serialize)]
 struct EndpointResponse {
     status: &'static str,
@@ -58,8 +50,8 @@ static ENDPOINT_RESPONSE: EndpointResponse = EndpointResponse {
 #[serde(rename_all = "camelCase")]
 struct AddTaskRequest {
     task_id: String,
-    leader: String,
-    helper: String,
+    leader: Url,
+    helper: Url,
     vdaf: VdafObject,
     leader_authentication_token: String,
     #[serde(default)]
@@ -86,8 +78,6 @@ async fn handle_add_task(
     let task_id_bytes = base64::decode_config(request.task_id, base64::URL_SAFE_NO_PAD)
         .context("invalid base64url content in \"taskId\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
-    let leader_url = Url::parse(&request.leader).context("bad leader URL")?;
-    let helper_url = Url::parse(&request.helper).context("bad helper URL")?;
     let vdaf: janus_core::task::VdafInstance = request.vdaf.into();
     let vdaf: janus_server::task::VdafInstance = vdaf.into();
     let leader_authentication_token =
@@ -129,7 +119,7 @@ async fn handle_add_task(
 
     let task = Task::new(
         task_id,
-        vec![leader_url, helper_url],
+        vec![request.leader, request.helper],
         vdaf,
         role,
         vec![verify_key],
@@ -161,12 +151,10 @@ fn make_filter(
     let clock = janus_core::time::RealClock::default();
     let dap_filter = janus_server::aggregator::aggregator_filter(Arc::clone(&datastore), clock)?;
 
-    let endpoint_filter = warp::path!("endpoint_for_task")
-        .and(warp::body::json())
-        .map(|_request: EndpointRequest| {
-            warp::reply::with_status(warp::reply::json(&ENDPOINT_RESPONSE), StatusCode::OK)
-                .into_response()
-        });
+    let endpoint_filter = warp::path!("endpoint_for_task").map(|| {
+        warp::reply::with_status(warp::reply::json(&ENDPOINT_RESPONSE), StatusCode::OK)
+            .into_response()
+    });
     let add_task_filter =
         warp::path!("add_task")
             .and(warp::body::json())
@@ -236,6 +224,8 @@ async fn main() -> anyhow::Result<()> {
     client
         .batch_execute(include_str!("../../../db/schema.sql"))
         .await?;
+    // Return the database connection we used to deploy the schema back to the pool, so it can be
+    // reused.
     drop(client);
     let datastore = Arc::new(Datastore::new(pool, crypter, clock));
 
