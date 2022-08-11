@@ -57,9 +57,18 @@ impl ClientParameters {
     /// Creates a new set of client task parameters.
     pub fn new(
         task_id: TaskId,
-        aggregator_endpoints: Vec<Url>,
+        mut aggregator_endpoints: Vec<Url>,
         min_batch_duration: Duration,
     ) -> Self {
+        // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
+        // path segments into these endpoints & the Url::join implementation is persnickety about
+        // the slash at the end of the path.
+        for url in &mut aggregator_endpoints {
+            if !url.as_str().ends_with('/') {
+                url.set_path(&format!("{}/", url.path()));
+            }
+        }
+
         Self {
             task_id,
             aggregator_endpoints,
@@ -237,28 +246,39 @@ mod tests {
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let task_id = TaskId::random();
-
-        let clock = MockClock::default();
-        let (leader_hpke_config, _) = generate_hpke_config_and_private_key();
-        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
-
         let server_url = Url::parse(&mockito::server_url()).unwrap();
-
-        let client_parameters = ClientParameters {
-            task_id,
-            aggregator_endpoints: vec![server_url.clone(), server_url],
-            min_batch_duration: Duration::from_seconds(1),
-        };
-
         Client::new(
-            client_parameters,
+            ClientParameters::new(
+                TaskId::random(),
+                Vec::from([server_url.clone(), server_url]),
+                Duration::from_seconds(1),
+            ),
             vdaf_client,
-            clock,
+            MockClock::default(),
             &default_http_client().unwrap(),
-            leader_hpke_config,
-            helper_hpke_config,
+            generate_hpke_config_and_private_key().0,
+            generate_hpke_config_and_private_key().0,
         )
+    }
+
+    #[test]
+    fn aggregator_endpoints_end_in_slash() {
+        let client_parameters = ClientParameters::new(
+            TaskId::random(),
+            Vec::from([
+                "http://leader_endpoint/foo/bar".parse().unwrap(),
+                "http://helper_endpoint".parse().unwrap(),
+            ]),
+            Duration::from_seconds(1),
+        );
+
+        assert_eq!(
+            client_parameters.aggregator_endpoints,
+            Vec::from([
+                "http://leader_endpoint/foo/bar/".parse().unwrap(),
+                "http://helper_endpoint/".parse().unwrap()
+            ])
+        );
     }
 
     #[tokio::test]

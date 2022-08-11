@@ -181,10 +181,7 @@ impl CollectJobDriver {
 
         let response = self
             .http_client
-            .post(
-                task.aggregator_url(Role::Helper)?
-                    .join("/aggregate_share")?,
-            )
+            .post(task.aggregator_url(Role::Helper)?.join("aggregate_share")?)
             .header(CONTENT_TYPE, AggregateShareReq::MEDIA_TYPE)
             .header(
                 DAP_AUTH_HEADER,

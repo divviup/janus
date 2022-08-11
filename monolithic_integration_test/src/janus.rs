@@ -1,11 +1,11 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-use http::HeaderMap;
+use futures::FutureExt;
 use janus_core::{message::Duration, time::RealClock, TokioRuntime};
 use janus_server::{
     aggregator::{
         aggregate_share::CollectJobDriver, aggregation_job_creator::AggregationJobCreator,
-        aggregation_job_driver::AggregationJobDriver, aggregator_server,
+        aggregation_job_driver::AggregationJobDriver, aggregator_filter,
     },
     binary_utils::job_driver::JobDriver,
     datastore::test_util::{ephemeral_datastore, DbHandle},
@@ -18,6 +18,7 @@ use std::{
     time,
 };
 use tokio::{select, sync::oneshot, task, try_join};
+use warp::Filter;
 
 /// Represents a running Janus test instance.
 pub struct Janus {
@@ -48,15 +49,25 @@ impl Janus {
 
         // Start aggregator server.
         let (server_shutdown_sender, server_shutdown_receiver) = oneshot::channel();
-        let (_, leader_server) = aggregator_server(
-            Arc::clone(&datastore),
-            RealClock::default(),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
-            HeaderMap::new(),
-            async move { server_shutdown_receiver.await.unwrap() },
-        )
-        .unwrap();
-        let server_task_handle = task::spawn(leader_server);
+        let aggregator_filter = task
+            .aggregator_url(task.role)
+            .unwrap()
+            .path_segments()
+            .unwrap()
+            .filter_map(|s| (!s.is_empty()).then(|| warp::path(s.to_owned()).boxed()))
+            .reduce(|x, y| x.and(y).boxed())
+            .unwrap_or_else(|| warp::any().boxed())
+            .and(aggregator_filter(datastore, RealClock::default()).unwrap());
+        let server = warp::serve(aggregator_filter);
+        let server_task_handle = task::spawn(async move {
+            server
+                .bind_with_graceful_shutdown(
+                    SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+                    server_shutdown_receiver.map(Result::unwrap),
+                )
+                .1
+                .await
+        });
 
         // Start aggregation job creator.
         let (
