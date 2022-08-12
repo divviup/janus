@@ -106,9 +106,13 @@ impl Daphne {
         let aggregator_bearer_token_list = json!({
             hex::encode(task.id.as_bytes()): String::from_utf8(task.primary_aggregator_auth_token().as_bytes().to_vec()).unwrap()
         }).to_string();
-        let collector_bearer_token_list = json!({
-            hex::encode(task.id.as_bytes()): String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec()).unwrap()
-        }).to_string();
+        let collector_bearer_token_list = if task.role == Role::Leader {
+            json!({
+                hex::encode(task.id.as_bytes()): String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec()).unwrap()
+            }).to_string()
+        } else {
+            String::new()
+        };
 
         // Write wrangler.toml.
         let wrangler_content = toml::to_string(&WranglerConfig {

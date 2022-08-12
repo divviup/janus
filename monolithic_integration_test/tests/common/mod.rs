@@ -56,7 +56,6 @@ pub fn create_test_tasks(
     thread_rng().fill(&mut vdaf_verify_key[..]);
     let vdaf_verify_keys = Vec::from([vdaf_verify_key.to_vec()]);
     let aggregator_auth_tokens = Vec::from([generate_auth_token()]);
-    let collector_auth_tokens = Vec::from([generate_auth_token()]);
 
     // Create tasks & return.
     let leader_task = Task::new(
@@ -71,7 +70,7 @@ pub fn create_test_tasks(
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
         aggregator_auth_tokens.clone(),
-        collector_auth_tokens.clone(),
+        Vec::from([generate_auth_token()]),
         Vec::from([generate_hpke_config_and_private_key()]),
     )
     .unwrap();
@@ -87,7 +86,7 @@ pub fn create_test_tasks(
         Duration::from_minutes(10).unwrap(),
         collector_hpke_config.clone(),
         aggregator_auth_tokens,
-        collector_auth_tokens,
+        Vec::new(),
         Vec::from([generate_hpke_config_and_private_key()]),
     )
     .unwrap();
