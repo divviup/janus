@@ -1620,7 +1620,7 @@ checksum = "1aab8fc367588b89dcee83ab0fd66b72b50b72fa1904d7095045ace2b0c81c35"
 
 [[package]]
 name = "janus_client"
-version = "0.1.4"
+version = "0.1.7"
 dependencies = [
  "assert_matches",
  "http",
@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "janus_core"
-version = "0.1.4"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "janus_server"
-version = "0.1.4"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "assert_matches",

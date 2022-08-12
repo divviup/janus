@@ -218,7 +218,7 @@ impl AggregationJobDriver {
             (false, true, false) => self.step_aggregation_job_aggregate_continue(
                 &datastore, vdaf.as_ref(), lease, task, aggregation_job, report_aggregations).await,
 
-            _ => return Err(anyhow!("unexpected combination of report aggregation states (saw_start = {}, saw_waiting = {}, saw_finished = {})", saw_start, saw_waiting, saw_finished)),
+            _ => Err(anyhow!("unexpected combination of report aggregation states (saw_start = {}, saw_waiting = {}, saw_finished = {})", saw_start, saw_waiting, saw_finished)),
         }
     }
 

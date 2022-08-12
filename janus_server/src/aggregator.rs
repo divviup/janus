@@ -574,7 +574,7 @@ impl TaskAggregator {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
                 buckets,
             }) => {
-                let vdaf = Prio3::new_aes128_histogram(2, &*buckets)?;
+                let vdaf = Prio3::new_aes128_histogram(2, buckets)?;
                 let verify_key = current_vdaf_verify_key
                     .clone()
                     .try_into()
