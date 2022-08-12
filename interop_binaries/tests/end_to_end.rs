@@ -187,7 +187,6 @@ async fn run(
             "http://127.0.0.1:{}/internal/test/endpoint_for_task",
             leader_port,
         ))
-        .header(CONTENT_TYPE, JSON_MEDIA_TYPE)
         .json(&json!({
             "taskId": task_id_encoded,
             "aggregatorId": 0,
@@ -228,7 +227,6 @@ async fn run(
             "http://127.0.0.1:{}/internal/test/endpoint_for_task",
             helper_port,
         ))
-        .header(CONTENT_TYPE, JSON_MEDIA_TYPE)
         .json(&json!({
             "taskId": task_id_encoded,
             "aggregatorId": 1,
@@ -269,7 +267,6 @@ async fn run(
             "http://127.0.0.1:{}/internal/test/add_task",
             collector_port,
         ))
-        .header(CONTENT_TYPE, JSON_MEDIA_TYPE)
         .json(&json!({
             "taskId": task_id_encoded,
             "leader": leader_endpoint,
@@ -310,7 +307,6 @@ async fn run(
             "http://127.0.0.1:{}/internal/test/add_task",
             leader_port,
         ))
-        .header(CONTENT_TYPE, JSON_MEDIA_TYPE)
         .json(&json!({
             "taskId": task_id_encoded,
             "leader": leader_endpoint,
@@ -354,7 +350,6 @@ async fn run(
             "http://127.0.0.1:{}/internal/test/add_task",
             helper_port,
         ))
-        .header(CONTENT_TYPE, JSON_MEDIA_TYPE)
         .json(&json!({
             "taskId": task_id_encoded,
             "leader": leader_endpoint,
@@ -408,7 +403,6 @@ async fn run(
                 "http://127.0.0.1:{}/internal/test/upload",
                 client_port,
             ))
-            .header(CONTENT_TYPE, JSON_MEDIA_TYPE)
             .json(&json!({
                 "taskId": task_id_encoded,
                 "leader": leader_endpoint,
@@ -444,7 +438,6 @@ async fn run(
             "http://127.0.0.1:{}/internal/test/collect_start",
             collector_port,
         ))
-        .header(CONTENT_TYPE, JSON_MEDIA_TYPE)
         .json(&json!({
             "taskId": task_id_encoded,
             "aggParam": base64::encode_config(aggregation_parameter, URL_SAFE_NO_PAD),
@@ -483,7 +476,6 @@ async fn run(
                 "http://127.0.0.1:{}/internal/test/collect_poll",
                 collector_port,
             ))
-            .header(CONTENT_TYPE, JSON_MEDIA_TYPE)
             .json(&json!({
                 "handle": collect_job_handle,
             }))
