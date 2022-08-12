@@ -321,7 +321,6 @@ impl<C: Clock> Aggregator<C> {
         let report = Report::get_decoded(report_bytes)?;
 
         let task_aggregator = self.task_aggregator_for(report.task_id()).await?;
-        // Only the leader supports upload.
         if task_aggregator.task.role != Role::Leader {
             return Err(Error::UnrecognizedTask(report.task_id()));
         }
@@ -344,6 +343,9 @@ impl<C: Clock> Aggregator<C> {
         // This assumes that the task ID is at the start of the message content.
         let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Helper {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -358,9 +360,6 @@ impl<C: Clock> Aggregator<C> {
         let req = AggregateInitializeReq::get_decoded(req_bytes)?;
         assert_eq!(req.task_id, task_id);
 
-        if task_aggregator.task.role != Role::Helper {
-            return Err(Error::UnrecognizedTask(task_id));
-        }
         Ok(task_aggregator
             .handle_aggregate_init(&self.datastore, &self.aggregate_step_failure_counters, req)
             .await?
@@ -376,6 +375,9 @@ impl<C: Clock> Aggregator<C> {
         // This assumes that the task ID is at the start of the message content.
         let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Helper {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -390,9 +392,6 @@ impl<C: Clock> Aggregator<C> {
         let req = AggregateContinueReq::get_decoded(req_bytes)?;
         assert_eq!(req.task_id, task_id);
 
-        if task_aggregator.task.role != Role::Helper {
-            return Err(Error::UnrecognizedTask(task_id));
-        }
         Ok(task_aggregator
             .handle_aggregate_continue(&self.datastore, &self.aggregate_step_failure_counters, req)
             .await?
@@ -411,6 +410,9 @@ impl<C: Clock> Aggregator<C> {
         // This assumes that the task ID is at the start of the message content.
         let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Leader {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -424,11 +426,6 @@ impl<C: Clock> Aggregator<C> {
 
         let collect_req = CollectReq::get_decoded(req_bytes)?;
         assert_eq!(collect_req.task_id, task_id);
-
-        // Only the leader supports /collect.
-        if task_aggregator.task.role != Role::Leader {
-            return Err(Error::UnrecognizedTask(collect_req.task_id));
-        }
 
         task_aggregator
             .handle_collect(&self.datastore, collect_req)
@@ -451,6 +448,9 @@ impl<C: Clock> Aggregator<C> {
             .ok_or(Error::UnrecognizedCollectJob(collect_job_id))?;
 
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Leader {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -460,11 +460,6 @@ impl<C: Clock> Aggregator<C> {
             .unwrap_or(false)
         {
             return Err(Error::UnauthorizedRequest(task_id));
-        }
-
-        // Only the leader handles collect jobs.
-        if task_aggregator.task.role != Role::Leader {
-            return Err(Error::UnrecognizedTask(task_id));
         }
 
         Ok(task_aggregator
@@ -485,6 +480,9 @@ impl<C: Clock> Aggregator<C> {
         // This assumes that the task ID is at the start of the message content.
         let task_id = TaskId::decode(&mut Cursor::new(req_bytes))?;
         let task_aggregator = self.task_aggregator_for(task_id).await?;
+        if task_aggregator.task.role != Role::Helper {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
         if !auth_token
             .map(|t| {
                 task_aggregator
@@ -498,11 +496,6 @@ impl<C: Clock> Aggregator<C> {
 
         let req = AggregateShareReq::get_decoded(req_bytes)?;
         assert_eq!(req.task_id, task_id);
-
-        // Only the helper supports /aggregate_share.
-        if task_aggregator.task.role != Role::Helper {
-            return Err(Error::UnrecognizedTask(req.task_id));
-        }
 
         let resp = task_aggregator
             .handle_aggregate_share(&self.datastore, req)
@@ -4943,7 +4936,7 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/collect")
-            .header("DAP-Auth-Token", "bogus authentication token")
+            .header("DAP-Auth-Token", generate_auth_token().as_bytes())
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
@@ -4952,8 +4945,6 @@ mod tests {
             .into_response()
             .into_parts();
 
-        // This request cannot get past the bearer authentication token check, as helper tasks do
-        // not have collector authentication tokens.
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
@@ -4961,9 +4952,9 @@ mod tests {
             problem_details,
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
-                "title": "The request's authorization is not valid.",
-                "detail": "The request's authorization is not valid.",
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
+                "title": "An endpoint received a message with an unknown task ID.",
+                "detail": "An endpoint received a message with an unknown task ID.",
                 "instance": "..",
                 "taskid": format!("{}", task_id),
             })
@@ -5008,7 +4999,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().unwrap().as_bytes(),
+                task.primary_collector_auth_token().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -5199,7 +5190,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().unwrap().as_bytes(),
+                task.primary_collector_auth_token().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -5350,7 +5341,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().unwrap().as_bytes(),
+                task.primary_collector_auth_token().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -5374,7 +5365,7 @@ mod tests {
             .path(&format!("/collect_jobs/{}", collect_job_id))
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().unwrap().as_bytes(),
+                task.primary_collector_auth_token().as_bytes(),
             )
             .filter(&filter)
             .await
@@ -5420,7 +5411,7 @@ mod tests {
             .path(&format!("/collect_jobs/{}", collect_job_id))
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().unwrap().as_bytes(),
+                task.primary_collector_auth_token().as_bytes(),
             )
             .filter(&filter)
             .await
@@ -5540,7 +5531,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().unwrap().as_bytes(),
+                task.primary_collector_auth_token().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -5567,7 +5558,7 @@ mod tests {
             .path("/collect")
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().unwrap().as_bytes(),
+                task.primary_collector_auth_token().as_bytes(),
             )
             .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
             .body(invalid_request.get_encoded())
