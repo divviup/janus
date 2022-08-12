@@ -57,7 +57,6 @@ impl Drop for ChildProcessCleanupDropGuard {
     fn drop(&mut self) {
         if self.0.try_wait().unwrap().is_none() {
             self.0.kill().unwrap();
-            self.0.wait().unwrap();
         }
     }
 }
