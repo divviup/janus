@@ -1,5 +1,11 @@
-use janus_core::task::VdafInstance;
+use janus_core::{
+    hpke::{generate_hpke_config_and_private_key, HpkePrivateKey},
+    message::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId},
+    task::VdafInstance,
+};
+use rand::{thread_rng, Rng};
 use serde::Deserialize;
+use std::collections::HashMap;
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 
@@ -45,4 +51,40 @@ pub fn install_tracing_subscriber() -> anyhow::Result<()> {
     LogTracer::init()?;
 
     Ok(())
+}
+
+/// This registry lazily generates up to 256 HPKE key pairs, one with each possible
+/// [`HpkeConfigId`].
+#[derive(Default)]
+pub struct HpkeConfigRegistry {
+    keypairs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
+}
+
+impl HpkeConfigRegistry {
+    pub fn new() -> HpkeConfigRegistry {
+        Default::default()
+    }
+
+    /// Get the keypair associated with a given ID.
+    pub fn fetch_keypair(&mut self, id: HpkeConfigId) -> (HpkeConfig, HpkePrivateKey) {
+        self.keypairs
+            .entry(id)
+            .or_insert_with(|| {
+                generate_hpke_config_and_private_key(
+                    id,
+                    // These algorithms should be broadly compatible with other DAP implementations, since they
+                    // are required by section 6 of draft-ietf-ppm-dap-01.
+                    HpkeKemId::X25519HkdfSha256,
+                    HpkeKdfId::HkdfSha256,
+                    HpkeAeadId::Aes128Gcm,
+                )
+            })
+            .clone()
+    }
+
+    /// Choose a random [`HpkeConfigId`], and then get the keypair associated with that ID.
+    pub fn get_random_keypair(&mut self) -> (HpkeConfig, HpkePrivateKey) {
+        let id = HpkeConfigId::from(thread_rng().gen::<u8>());
+        self.fetch_keypair(id)
+    }
 }

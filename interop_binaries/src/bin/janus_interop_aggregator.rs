@@ -4,11 +4,10 @@ use clap::{Arg, Command};
 use interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
-    VdafObject,
+    HpkeConfigRegistry, VdafObject,
 };
 use janus_core::{
-    hpke::generate_hpke_config_and_private_key,
-    message::{Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId},
+    message::{Duration, HpkeConfig, Role, TaskId},
     time::RealClock,
     TokioRuntime,
 };
@@ -32,6 +31,7 @@ use std::{
     sync::Arc,
     time::Duration as StdDuration,
 };
+use tokio::sync::Mutex;
 use url::Url;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
@@ -73,6 +73,7 @@ struct AddTaskResponse {
 
 async fn handle_add_task(
     datastore: &Datastore<RealClock>,
+    keyring: &Mutex<HpkeConfigRegistry>,
     request: AddTaskRequest,
 ) -> anyhow::Result<()> {
     let task_id_bytes = base64::decode_config(request.task_id, base64::URL_SAFE_NO_PAD)
@@ -108,14 +109,7 @@ async fn handle_add_task(
         _ => return Err(anyhow::anyhow!("invalid \"aggregator_id\" value")),
     };
 
-    let (hpke_config, private_key) = generate_hpke_config_and_private_key(
-        HpkeConfigId::from(0u8),
-        // These algorithms should be broadly compatible with other DAP implementations, since they
-        // are required by section 6 of draft-ietf-ppm-dap-01.
-        HpkeKemId::X25519HkdfSha256,
-        HpkeKdfId::HkdfSha256,
-        HpkeAeadId::Aes128Gcm,
-    );
+    let (hpke_config, private_key) = keyring.lock().await.get_random_keypair();
 
     let task = Task::new(
         task_id,
@@ -148,6 +142,7 @@ async fn handle_add_task(
 fn make_filter(
     datastore: Arc<Datastore<RealClock>>,
 ) -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
+    let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
     let clock = janus_core::time::RealClock::default();
     let dap_filter = janus_server::aggregator::aggregator_filter(Arc::clone(&datastore), clock)?;
 
@@ -160,8 +155,9 @@ fn make_filter(
             .and(warp::body::json())
             .then(move |request: AddTaskRequest| {
                 let datastore = Arc::clone(&datastore);
+                let keyring = Arc::clone(&keyring);
                 async move {
-                    let response = match handle_add_task(&datastore, request).await {
+                    let response = match handle_add_task(&datastore, &keyring, request).await {
                         Ok(()) => AddTaskResponse {
                             status: SUCCESS,
                             error: None,

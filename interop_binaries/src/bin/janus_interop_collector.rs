@@ -4,17 +4,11 @@ use clap::{Arg, Command};
 use interop_binaries::{
     install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
-    VdafObject,
+    HpkeConfigRegistry, VdafObject,
 };
 use janus_core::{
-    hpke::{
-        self, associated_data_for_aggregate_share, generate_hpke_config_and_private_key,
-        HpkeApplicationInfo, HpkePrivateKey, Label,
-    },
-    message::{
-        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Interval, Role,
-        TaskId, Time,
-    },
+    hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey, Label},
+    message::{Duration, HpkeConfig, Interval, Role, TaskId, Time},
 };
 use janus_server::{
     message::{CollectReq, CollectResp},
@@ -126,6 +120,7 @@ struct CollectJobState {
 
 async fn handle_add_task(
     tasks: &Mutex<HashMap<TaskId, TaskState>>,
+    keyring: &Mutex<HpkeConfigRegistry>,
     request: AddTaskRequest,
 ) -> anyhow::Result<HpkeConfig> {
     let task_id_bytes = base64::decode_config(request.task_id, base64::URL_SAFE_NO_PAD)
@@ -138,14 +133,7 @@ async fn handle_add_task(
         return Err(anyhow::anyhow!("cannot add a task with a duplicate ID"));
     }
 
-    let (hpke_config, private_key) = generate_hpke_config_and_private_key(
-        HpkeConfigId::from(0u8),
-        // These algorithms should be broadly compatible with other DAP implementations, since they
-        // are required by section 6 of draft-ietf-ppm-dap-01.
-        HpkeKemId::X25519HkdfSha256,
-        HpkeKdfId::HkdfSha256,
-        HpkeAeadId::Aes128Gcm,
-    );
+    let (hpke_config, private_key) = keyring.lock().await.get_random_keypair();
 
     entry.or_insert(TaskState {
         private_key,
@@ -370,13 +358,16 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     let tasks: Arc<Mutex<HashMap<TaskId, TaskState>>> = Arc::new(Mutex::new(HashMap::new()));
     let collect_jobs: Arc<Mutex<HashMap<Handle, CollectJobState>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
 
     let add_task_filter = warp::path!("add_task").and(warp::body::json()).then({
         let tasks = Arc::clone(&tasks);
+        let keyring = Arc::clone(&keyring);
         move |request: AddTaskRequest| {
             let tasks = Arc::clone(&tasks);
+            let keyring = Arc::clone(&keyring);
             async move {
-                let response = match handle_add_task(&tasks, request).await {
+                let response = match handle_add_task(&tasks, &keyring, request).await {
                     Ok(collector_hpke_config) => AddTaskResponse {
                         status: SUCCESS,
                         error: None,
