@@ -12,7 +12,8 @@ use reqwest::{header::CONTENT_TYPE, StatusCode};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
-    env, io,
+    env,
+    io::{self, ErrorKind},
     net::{Ipv4Addr, SocketAddr},
     process::{Child, Command, Stdio},
     time::Duration as StdDuration,
@@ -55,8 +56,10 @@ struct ChildProcessCleanupDropGuard(Child);
 
 impl Drop for ChildProcessCleanupDropGuard {
     fn drop(&mut self) {
-        if self.0.try_wait().unwrap().is_none() {
-            self.0.kill().unwrap();
+        match self.0.kill() {
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::InvalidInput => {}
+            Err(e) => panic!("failed to kill child process: {:?}", e),
         }
     }
 }
