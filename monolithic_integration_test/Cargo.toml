@@ -44,7 +44,7 @@ warp = { version = "0.3", features = ["tls"] }
 [dev-dependencies]
 chrono = "0.4.22"
 deadpool-postgres = "0.10.1"
-futures = "0.3.21"
+futures = "0.3.23"
 janus_client = { path = "../janus_client" }
 monolithic_integration_test = { path = ".", features = ["daphne", "janus"] }
 portpicker = "0.1"
