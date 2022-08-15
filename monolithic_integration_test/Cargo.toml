@@ -29,7 +29,7 @@ itertools = "0.10"
 janus_core = { path = "../janus_core" }
 janus_server = { path = "../janus_server" }
 lazy_static = "1"
-nix = { version = "0.24", default-features = false, features = ["signal"], optional = true }
+nix = { version = "0.25", default-features = false, features = ["signal"], optional = true }
 opentelemetry = { version = "0.17", features = ["metrics", "rt-tokio"] }
 rand = "0.8"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
