@@ -12,7 +12,7 @@ COPY monolithic_integration_test /src/monolithic_integration_test
 COPY db/schema.sql /src/db/schema.sql
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release --bin $BINARY --features=prometheus && cp /src/target/release/$BINARY /$BINARY
 
-FROM alpine:3.16.1
+FROM alpine:3.16.2
 ARG BINARY=aggregator
 COPY --from=builder /src/db/schema.sql /db/schema.sql
 COPY --from=builder /$BINARY /$BINARY
