@@ -51,7 +51,7 @@ reqwest = { version = "0.11.11", default-features = false, features = ["rustls-t
 ring = "0.16.20"
 serde = { version = "1.0.143", features = ["derive"] }
 serde_json = "1.0.83"
-serde_yaml = "0.9.4"
+serde_yaml = "0.9.9"
 signal-hook = "0.3.14"
 signal-hook-tokio = { version = "0.3.1", features = ["futures-v0_3"] }
 structopt = "0.3.26"
@@ -78,7 +78,7 @@ hyper = "0.14.20"
 # Kubernetes clusters. Enable the `test-util` feature for various utilities
 # used in unit tests.
 janus_server = { path = ".", features = ["kube-openssl", "test-util"] }
-libc = "0.2.127"
+libc = "0.2.131"
 mockito = "0.31.0"
 serde_test = "1.0.143"
 tempfile = "3.3.0"
