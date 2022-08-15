@@ -1,22 +1,21 @@
-//! This test starts the aggregator server, waits for it to become ready,
-//! performs one request, and then sends a SIGTERM signal to the process.
-//! The server should promptly shut down, and this test will fail if it times
-//! out waiting for the server to do so.
+//! This test starts each component, waits for it to become ready, according
+//! to its health check endpoint, and then sends a SIGTERM signal to the
+//! process. The process should promptly shut down, and this test will fail if
+//! it times out waiting for the process to do so.
 
 use janus_core::{
     message::{Role, TaskId},
     task::VdafInstance,
+    test_util::install_test_trace_subscriber,
     time::RealClock,
 };
-use janus_server::{
-    datastore::test_util::ephemeral_datastore,
-    task::test_util::new_dummy_task,
-    trace::{install_trace_subscriber, TraceConfiguration},
-};
-use reqwest::{Client, Url};
+use janus_server::{datastore::test_util::ephemeral_datastore, task::test_util::new_dummy_task};
+use reqwest::Url;
+use serde_yaml::Mapping;
 use std::{
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
+    path::Path,
     process::{Command, Stdio},
 };
 use wait_timeout::ChildExt;
@@ -43,35 +42,23 @@ fn wait_for_server(addr: SocketAddr) -> Result<(), ()> {
     Err(())
 }
 
-#[tokio::test]
-async fn server_shutdown() {
-    install_trace_subscriber(&TraceConfiguration {
-        use_test_writer: true,
-        ..Default::default()
-    })
-    .unwrap();
+async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
+    install_test_trace_subscriber();
 
-    // This datastore will be used indirectly by the aggregator process, which
+    // This datastore will be used indirectly by the child process, which
     // will connect to its backing database separately.
     let (datastore, db_handle) = ephemeral_datastore(RealClock::default()).await;
 
-    let aggregator_port = select_open_port().unwrap();
-    let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
     let health_check_port = select_open_port().unwrap();
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
-    assert_ne!(aggregator_port, health_check_port);
 
-    let config = format!(
-        r#"---
-    listen_address: "{}"
-    health_check_listen_address: "{}"
-    database:
-        url: "{}"
-        connection_pool_timeouts_secs: 60
-    "#,
-        aggregator_listen_address,
-        health_check_listen_address,
-        db_handle.connection_string()
+    let mut db_config = Mapping::new();
+    db_config.insert("url".into(), db_handle.connection_string().into());
+    db_config.insert("connection_pool_timeout_secs".into(), "60".into());
+    config.insert("database".into(), db_config.into());
+    config.insert(
+        "health_check_listen_address".into(),
+        format!("{}", health_check_listen_address).into(),
     );
 
     let task_id = TaskId::random();
@@ -85,12 +72,14 @@ async fn server_shutdown() {
         .unwrap();
 
     // Save the above configuration to a temporary file, so that we can pass
-    // the file's path to the aggregator on the command line.
+    // the file's path to the binary under test on the command line.
     let mut config_temp_file = tempfile::NamedTempFile::new().unwrap();
-    config_temp_file.write_all(config.as_ref()).unwrap();
+    config_temp_file
+        .write_all(serde_yaml::to_string(&config).unwrap().as_bytes())
+        .unwrap();
     let config_path = config_temp_file.into_temp_path();
 
-    // Start the server, inside new PID and user namespaces. This will run the server as PID 1,
+    // Start the binary under test, inside new PID and user namespaces. This will run it as PID 1,
     // which better emulates its behavior in a container. Note that PID 1's default signal
     // handling behaviors differ from other PIDs.
     let mut child = Command::new("unshare")
@@ -101,7 +90,7 @@ async fn server_shutdown() {
             "--fork",
             "--kill-child",
         ])
-        .arg(trycmd::cargo::cargo_bin!("aggregator"))
+        .arg(binary)
         .args(["--config-file", config_path.to_str().unwrap()])
         .env("RUSTLOG", "trace")
         .env(
@@ -131,27 +120,13 @@ async fn server_shutdown() {
         }
     });
 
-    // Try to connect to the HTTP servers in a loop, until they are ready.
-    let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
-    wait_for_server(aggregator_listen_address)
-        .expect("could not connect to aggregator server after starting it");
+    // Try to connect to the health check HTTP server in a loop, until it is ready.
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
     wait_for_server(health_check_listen_address)
         .expect("could not connect to health check server after starting it");
 
-    // Make a test request to the server.
-    // TODO(#220): expand this further once multi-process integration tests are fleshed out, to
-    // catch more shutdown interactions throughout the codebase.
-    let client = Client::new();
-    let url = Url::parse(&format!(
-        "http://{}/hpke_config?task_id={}",
-        aggregator_listen_address, task_id
-    ))
-    .unwrap();
-    assert!(client.get(url).send().await.unwrap().status().is_success());
-
     let url = Url::parse(&format!("http://{}/healthz", health_check_listen_address)).unwrap();
-    assert!(client.get(url).send().await.unwrap().status().is_success());
+    assert!(reqwest::get(url).await.unwrap().status().is_success());
 
     // Send SIGTERM to the server process, after entering its new namespaces.
     let unshare_pid: i32 = child.id().try_into().unwrap();
@@ -184,4 +159,64 @@ async fn server_shutdown() {
         println!("===== end =====");
         panic!("Server did not shut down after SIGTERM");
     }
+}
+
+#[tokio::test]
+async fn server_shutdown() {
+    let aggregator_port = select_open_port().unwrap();
+    let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
+
+    let mut config = Mapping::new();
+    config.insert(
+        "listen_address".into(),
+        format!("{}", aggregator_listen_address).into(),
+    );
+
+    graceful_shutdown(trycmd::cargo::cargo_bin!("aggregator"), config).await;
+}
+
+#[tokio::test]
+async fn aggregation_job_creator_shutdown() {
+    let mut config = Mapping::new();
+    config.insert("tasks_update_frequency_secs".into(), 3600u64.into());
+    config.insert(
+        "aggregation_job_creation_interval_secs".into(),
+        60u64.into(),
+    );
+    config.insert("min_aggregation_job_size".into(), 100u64.into());
+    config.insert("max_aggregation_job_size".into(), 100u64.into());
+
+    graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_creator"), config).await;
+}
+
+#[tokio::test]
+async fn aggregation_job_driver_shutdown() {
+    let mut config = Mapping::new();
+    config.insert("min_job_discovery_delay_secs".into(), 10u64.into());
+    config.insert("max_job_discovery_delay_secs".into(), 60u64.into());
+    config.insert("max_concurrent_job_workers".into(), 10u64.into());
+    config.insert("worker_lease_duration_secs".into(), 600u64.into());
+    config.insert(
+        "worker_lease_clock_skew_allowance_secs".into(),
+        60u64.into(),
+    );
+    config.insert("maximum_attempts_before_failure".into(), 5u64.into());
+
+    graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_driver"), config).await;
+}
+
+#[tokio::test]
+async fn collect_job_driver_shutdown() {
+    let mut config = Mapping::new();
+    config.insert("min_job_discovery_delay_secs".into(), 10u64.into());
+    config.insert("max_job_discovery_delay_secs".into(), 60u64.into());
+    config.insert("max_concurrent_job_workers".into(), 10u64.into());
+    config.insert("worker_lease_duration_secs".into(), 600u64.into());
+    config.insert(
+        "worker_lease_clock_skew_allowance_secs".into(),
+        60u64.into(),
+    );
+    config.insert("maximum_attempts_before_failure".into(), 5u64.into());
+
+    graceful_shutdown(trycmd::cargo::cargo_bin!("collect_job_driver"), config).await;
 }
