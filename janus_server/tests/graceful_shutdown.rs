@@ -90,7 +90,18 @@ async fn server_shutdown() {
     config_temp_file.write_all(config.as_ref()).unwrap();
     let config_path = config_temp_file.into_temp_path();
 
-    let mut child = Command::new(trycmd::cargo::cargo_bin!("aggregator"))
+    // Start the server, inside new PID and user namespaces. This will run the server as PID 1,
+    // which better emulates its behavior in a container. Note that PID 1's default signal
+    // handling behaviors differ from other PIDs.
+    let mut child = Command::new("unshare")
+        .args([
+            "--pid",
+            "--user",
+            "--map-root-user",
+            "--fork",
+            "--kill-child",
+        ])
+        .arg(trycmd::cargo::cargo_bin!("aggregator"))
         .args(["--config-file", config_path.to_str().unwrap()])
         .env("RUSTLOG", "trace")
         .env(
@@ -139,20 +150,31 @@ async fn server_shutdown() {
     .unwrap();
     assert!(client.get(url).send().await.unwrap().status().is_success());
 
-    let url = Url::parse(&format!("http://{}/healthz", health_check_listen_address,)).unwrap();
+    let url = Url::parse(&format!("http://{}/healthz", health_check_listen_address)).unwrap();
     assert!(client.get(url).send().await.unwrap().status().is_success());
 
-    // Send SIGTERM to the child process.
-    let pid: i32 = child.id().try_into().unwrap();
-    let status = unsafe { libc::kill(pid, libc::SIGTERM) };
-    assert_eq!(status, 0);
+    // Send SIGTERM to the server process, after entering its new namespaces.
+    let unshare_pid: i32 = child.id().try_into().unwrap();
+    let mut kill = Command::new("nsenter")
+        .arg("--preserve-credentials")
+        .arg("--user")
+        .arg(format!("--pid=/proc/{}/ns/pid_for_children", unshare_pid))
+        .arg("--target")
+        .arg(format!("{}", unshare_pid))
+        .args(["kill", "1"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    assert!(kill.wait().unwrap().success());
 
     // Confirm that the server shuts down promptly.
     let child_exit_status_opt = child
         .wait_timeout(std::time::Duration::from_secs(15))
         .unwrap();
     if child_exit_status_opt.is_none() {
-        // We timed out waiting after sending a SIGTERM. Send a SIGKILL to clean up.
+        // We timed out waiting after sending a SIGTERM. Send a SIGKILL to unshare to clean up.
+        // This will kill the server as well, due to the `--kill-child` flag.
         child.kill().unwrap();
         child.wait().unwrap();
         println!("===== child process stdout =====");
@@ -160,6 +182,6 @@ async fn server_shutdown() {
         println!("===== child process stderr =====");
         println!("{}", stderr_join_handle.await.unwrap());
         println!("===== end =====");
+        panic!("Server did not shut down after SIGTERM");
     }
-    child_exit_status_opt.unwrap();
 }
