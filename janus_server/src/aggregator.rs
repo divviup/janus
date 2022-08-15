@@ -2293,15 +2293,15 @@ mod tests {
     use janus_core::{
         hpke::associated_data_for_report_share,
         hpke::{
-            associated_data_for_aggregate_share, test_util::generate_hpke_config_and_private_key,
-            HpkePrivateKey, Label,
+            associated_data_for_aggregate_share,
+            test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey, Label,
         },
         message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber, run_vdaf,
         },
-        time::test_util::MockClock,
+        time::MockClock,
     };
     use opentelemetry::global::meter;
     use prio::{
@@ -3183,7 +3183,7 @@ mod tests {
         // report_share_3 has an unknown HPKE config ID.
         let nonce_3 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
         let wrong_hpke_config = loop {
-            let hpke_config = generate_hpke_config_and_private_key().0;
+            let hpke_config = generate_test_hpke_config_and_private_key().0;
             if task.hpke_keys.contains_key(&hpke_config.id()) {
                 continue;
             }
@@ -5309,7 +5309,7 @@ mod tests {
         let batch_interval =
             Interval::new(Time::from_seconds_since_epoch(0), task.min_batch_duration).unwrap();
         let (collector_hpke_config, collector_hpke_recipient) =
-            generate_hpke_config_and_private_key();
+            generate_test_hpke_config_and_private_key();
         task.collector_hpke_config = collector_hpke_config;
 
         let leader_aggregate_share = AggregateShare::from(vec![Field64::from(64)]);
@@ -5718,7 +5718,7 @@ mod tests {
 
         let task_id = TaskId::random();
         let (collector_hpke_config, collector_hpke_recipient) =
-            generate_hpke_config_and_private_key();
+            generate_test_hpke_config_and_private_key();
 
         let mut task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
         task.max_batch_lifetime = 1;

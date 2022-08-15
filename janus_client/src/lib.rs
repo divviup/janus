@@ -233,10 +233,10 @@ mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use janus_core::{
-        hpke::test_util::generate_hpke_config_and_private_key,
+        hpke::test_util::generate_test_hpke_config_and_private_key,
         message::{TaskId, Time},
         test_util::install_test_trace_subscriber,
-        time::test_util::MockClock,
+        time::MockClock,
     };
     use mockito::mock;
     use prio::vdaf::prio3::Prio3;
@@ -256,8 +256,8 @@ mod tests {
             vdaf_client,
             MockClock::default(),
             &default_http_client().unwrap(),
-            generate_hpke_config_and_private_key().0,
-            generate_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
         )
     }
 
@@ -338,8 +338,8 @@ mod tests {
             Prio3::new_aes128_count(2).unwrap(),
             MockClock::default(),
             &default_http_client().unwrap(),
-            generate_hpke_config_and_private_key().0,
-            generate_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
         );
         let result = client.upload(&1).await;
         assert_matches!(result, Err(Error::InvalidParameter(_)));

@@ -532,7 +532,7 @@ pub mod test_util {
 
     use super::{AuthenticationToken, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH};
     use janus_core::{
-        hpke::test_util::generate_hpke_config_and_private_key,
+        hpke::test_util::generate_test_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
     };
     use rand::{thread_rng, Rng};
@@ -558,9 +558,9 @@ pub mod test_util {
     /// integration tests.
     pub fn new_dummy_task(task_id: TaskId, vdaf: VdafInstance, role: Role) -> Task {
         let (aggregator_config_0, aggregator_private_key_0) =
-            generate_hpke_config_and_private_key();
+            generate_test_hpke_config_and_private_key();
         let (mut aggregator_config_1, aggregator_private_key_1) =
-            generate_hpke_config_and_private_key();
+            generate_test_hpke_config_and_private_key();
         aggregator_config_1 = HpkeConfig::new(
             HpkeConfigId::from(1),
             aggregator_config_1.kem_id(),
@@ -592,7 +592,7 @@ pub mod test_util {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
             Vec::from([generate_auth_token(), generate_auth_token()]),
             collector_auth_tokens,
             Vec::from([
@@ -620,7 +620,7 @@ mod tests {
     };
     use crate::{config::test_util::roundtrip_encoding, task::VdafInstance};
     use janus_core::{
-        hpke::test_util::generate_hpke_config_and_private_key,
+        hpke::test_util::generate_test_hpke_config_and_private_key,
         message::{Duration, Interval, Role, TaskId, Time},
     };
     use serde_test::{assert_tokens, Token};
@@ -800,10 +800,10 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
             Vec::from([generate_auth_token()]),
             Vec::new(),
-            Vec::from([generate_hpke_config_and_private_key()]),
+            Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap_err();
 
@@ -821,10 +821,10 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
             Vec::from([generate_auth_token()]),
             Vec::from([generate_auth_token()]),
-            Vec::from([generate_hpke_config_and_private_key()]),
+            Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
 
@@ -842,10 +842,10 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
             Vec::from([generate_auth_token()]),
             Vec::new(),
-            Vec::from([generate_hpke_config_and_private_key()]),
+            Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
 
@@ -863,10 +863,10 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
             Vec::from([generate_auth_token()]),
             Vec::from([generate_auth_token()]),
-            Vec::from([generate_hpke_config_and_private_key()]),
+            Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap_err();
     }
@@ -886,10 +886,10 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().0,
             Vec::from([generate_auth_token()]),
             Vec::from([generate_auth_token()]),
-            Vec::from([generate_hpke_config_and_private_key()]),
+            Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
 

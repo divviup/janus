@@ -1,5 +1,5 @@
-FROM rust:1.63.0-alpine as builder
-ARG BINARY=aggregator
+FROM rust:1.62.1-alpine as builder
+ARG BINARY
 RUN apk add libc-dev
 
 WORKDIR /src
@@ -11,13 +11,16 @@ COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test
 COPY interop_binaries /src/interop_binaries
 COPY db/schema.sql /src/db/schema.sql
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release --bin $BINARY --features=prometheus && cp /src/target/release/$BINARY /$BINARY
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release --bin $BINARY && cp /src/target/release/$BINARY /$BINARY
 
-FROM alpine:3.16.2
-ARG BINARY=aggregator
+FROM alpine:3.16.1
+ARG BINARY
+RUN mkdir /logs
 COPY --from=builder /src/db/schema.sql /db/schema.sql
 COPY --from=builder /$BINARY /$BINARY
+EXPOSE 8080
 # Store the build argument in an environment variable so we can reference it
 # from the ENTRYPOINT at runtime.
 ENV BINARY=$BINARY
-ENTRYPOINT ["/bin/sh", "-c", "exec /$BINARY \"$0\" \"$@\""]
+ENV RUST_LOG=info
+ENTRYPOINT ["/bin/sh", "-c", "exec /$BINARY \"$@\" >/logs/stdout.log 2>/logs/stderr.log"]

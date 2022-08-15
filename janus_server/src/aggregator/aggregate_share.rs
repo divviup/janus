@@ -458,7 +458,7 @@ mod tests {
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
         },
-        time::test_util::MockClock,
+        time::MockClock,
         Runtime,
     };
     use mockito::mock;

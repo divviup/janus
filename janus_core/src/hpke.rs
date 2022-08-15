@@ -1,7 +1,10 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::{Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, Role, TaskId};
-use hpke_dispatch::HpkeError;
+use crate::message::{
+    Extension, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
+    HpkePublicKey, Interval, Nonce, Role, TaskId,
+};
+use hpke_dispatch::{HpkeError, Kem, Keypair};
 use prio::codec::{encode_u16_items, Encode};
 use std::str::FromStr;
 
@@ -170,38 +173,52 @@ pub fn open(
         .map_err(Into::into)
 }
 
+/// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
+/// HpkePrivateKey (private portion).
+pub fn generate_hpke_config_and_private_key(
+    hpke_config_id: HpkeConfigId,
+    kem_id: HpkeKemId,
+    kdf_id: HpkeKdfId,
+    aead_id: HpkeAeadId,
+) -> (HpkeConfig, HpkePrivateKey) {
+    let Keypair {
+        private_key,
+        public_key,
+    } = match kem_id {
+        HpkeKemId::X25519HkdfSha256 => Kem::X25519HkdfSha256.gen_keypair(),
+        HpkeKemId::P256HkdfSha256 => Kem::DhP256HkdfSha256.gen_keypair(),
+    };
+    (
+        HpkeConfig::new(
+            hpke_config_id,
+            kem_id,
+            kdf_id,
+            aead_id,
+            HpkePublicKey::new(public_key),
+        ),
+        HpkePrivateKey::new(private_key),
+    )
+}
+
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use crate::{
-        hpke::HpkePrivateKey,
-        message::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey},
-    };
-    use hpke_dispatch::{Kem, Keypair};
+    use super::{generate_hpke_config_and_private_key, HpkePrivateKey};
+    use crate::message::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId};
     use rand::{thread_rng, Rng};
 
-    /// Generate a new HPKE keypair and return it as an HpkeConfig (public portion) and
-    /// HpkePrivateKey (private portion).
-    pub fn generate_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
-        let Keypair {
-            private_key,
-            public_key,
-        } = Kem::X25519HkdfSha256.gen_keypair();
-        (
-            HpkeConfig::new(
-                HpkeConfigId::from(thread_rng().gen::<u8>()),
-                HpkeKemId::X25519HkdfSha256,
-                HpkeKdfId::HkdfSha256,
-                HpkeAeadId::Aes128Gcm,
-                HpkePublicKey::new(public_key),
-            ),
-            HpkePrivateKey::new(private_key),
+    pub fn generate_test_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
+        generate_hpke_config_and_private_key(
+            HpkeConfigId::from(thread_rng().gen::<u8>()),
+            HpkeKemId::X25519HkdfSha256,
+            HpkeKdfId::HkdfSha256,
+            HpkeAeadId::Aes128Gcm,
         )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{test_util::generate_hpke_config_and_private_key, HpkeApplicationInfo, Label};
+    use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
     use crate::{
         hpke::{open, seal, HpkePrivateKey},
         message::{
@@ -215,7 +232,7 @@ mod tests {
 
     #[test]
     fn exchange_message() {
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
         let application_info =
             HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
         let message = b"a message that is secret";
@@ -237,7 +254,7 @@ mod tests {
 
     #[test]
     fn wrong_private_key() {
-        let (hpke_config, _) = generate_hpke_config_and_private_key();
+        let (hpke_config, _) = generate_test_hpke_config_and_private_key();
         let application_info =
             HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
         let message = b"a message that is secret";
@@ -246,7 +263,8 @@ mod tests {
         let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
 
         // Attempt to decrypt with different private key, and verify this fails.
-        let (wrong_hpke_config, wrong_hpke_private_key) = generate_hpke_config_and_private_key();
+        let (wrong_hpke_config, wrong_hpke_private_key) =
+            generate_test_hpke_config_and_private_key();
         open(
             &wrong_hpke_config,
             &wrong_hpke_private_key,
@@ -259,7 +277,7 @@ mod tests {
 
     #[test]
     fn wrong_application_info() {
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
         let application_info =
             HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
         let message = b"a message that is secret";
@@ -281,7 +299,7 @@ mod tests {
 
     #[test]
     fn wrong_associated_data() {
-        let (hpke_config, hpke_private_key) = generate_hpke_config_and_private_key();
+        let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
         let application_info =
             HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
         let message = b"a message that is secret";

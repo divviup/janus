@@ -1,6 +1,7 @@
 use common::{create_test_tasks, pick_two_unused_ports, submit_measurements_and_verify_aggregate};
 use janus_core::{
-    hpke::test_util::generate_hpke_config_and_private_key, test_util::install_test_trace_subscriber,
+    hpke::test_util::generate_test_hpke_config_and_private_key,
+    test_util::install_test_trace_subscriber,
 };
 use monolithic_integration_test::{daphne::Daphne, janus::Janus};
 
@@ -13,7 +14,8 @@ async fn daphne_janus() {
 
     // Start servers.
     let (daphne_port, janus_port) = pick_two_unused_ports();
-    let (collector_hpke_config, collector_private_key) = generate_hpke_config_and_private_key();
+    let (collector_hpke_config, collector_private_key) =
+        generate_test_hpke_config_and_private_key();
     let (daphne_task, janus_task) =
         create_test_tasks(daphne_port, janus_port, &collector_hpke_config);
 
@@ -36,7 +38,8 @@ async fn janus_daphne() {
 
     // Start servers.
     let (janus_port, daphne_port) = pick_two_unused_ports();
-    let (collector_hpke_config, collector_private_key) = generate_hpke_config_and_private_key();
+    let (collector_hpke_config, collector_private_key) =
+        generate_test_hpke_config_and_private_key();
     let (janus_task, daphne_task) =
         create_test_tasks(janus_port, daphne_port, &collector_hpke_config);
 

@@ -853,12 +853,12 @@ mod tests {
     use janus_core::{
         hpke::{
             self, associated_data_for_report_share,
-            test_util::generate_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+            test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         message::{Duration, HpkeConfig, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
-        time::test_util::MockClock,
+        time::MockClock,
         Runtime,
     };
     use mockito::mock;
@@ -908,7 +908,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token().clone();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
-        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
+        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
         let report = generate_report(
             task_id,
             nonce,
@@ -1105,7 +1105,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
-        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
+        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
         let report = generate_report(
             task_id,
             nonce,
@@ -1292,7 +1292,7 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
-        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
+        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
         let report = generate_report(
             task_id,
             nonce,
@@ -1506,7 +1506,7 @@ mod tests {
         let input_shares = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce, &0).input_shares;
 
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
-        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
+        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
         let report = generate_report(
             task_id,
             nonce,
@@ -1656,7 +1656,7 @@ mod tests {
         let verify_key = task.vdaf_verify_keys[0].clone().try_into().unwrap();
 
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
-        let (helper_hpke_config, _) = generate_hpke_config_and_private_key();
+        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
