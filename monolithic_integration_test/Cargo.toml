@@ -42,7 +42,7 @@ toml = "0.5"
 warp = { version = "0.3", features = ["tls"] }
 
 [dev-dependencies]
-chrono = "0.4.21"
+chrono = "0.4.22"
 deadpool-postgres = "0.10.1"
 futures = "0.3.21"
 janus_client = { path = "../janus_client" }
