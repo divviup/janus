@@ -3384,12 +3384,7 @@ mod tests {
                 .unwrap();
             assert_eq!(None, retrieved_task);
 
-            ds.run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+            ds.put_task(&task).await.unwrap();
 
             let retrieved_task = ds
                 .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
@@ -3416,12 +3411,7 @@ mod tests {
             // Rewrite & retrieve the task again, to test that the delete is "clean" in the sense
             // that it deletes all task-related data (& therefore does not conflict with a later
             // write to the same task_id).
-            ds.run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+            ds.put_task(&task).await.unwrap();
 
             let retrieved_task = ds
                 .run_tx(|tx| Box::pin(async move { tx.get_task(task_id).await }))
