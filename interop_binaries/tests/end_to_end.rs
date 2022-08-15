@@ -81,8 +81,8 @@ async fn forward_stdout(stdout: ChildStdout) -> io::Result<()> {
 
 /// Pass output from a child process's stderr pipe to eprint!(), so that it can be captured and
 /// stored by the test harness.
-async fn forward_stderr(stdout: ChildStderr) -> io::Result<()> {
-    let mut reader = BufReader::new(stdout);
+async fn forward_stderr(stderr: ChildStderr) -> io::Result<()> {
+    let mut reader = BufReader::new(stderr);
     let mut line = String::new();
     loop {
         line.clear();
