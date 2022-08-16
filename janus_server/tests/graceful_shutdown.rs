@@ -14,7 +14,7 @@ use reqwest::Url;
 use serde_yaml::Mapping;
 use std::{
     future::Future,
-    io::Write,
+    io::{ErrorKind, Write},
     net::{Ipv4Addr, SocketAddr},
     path::Path,
     process::{Child, Command, Stdio},
@@ -213,7 +213,11 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     if child_exit_status_opt.is_none() {
         // We timed out waiting after sending a SIGTERM. Send a SIGKILL to unshare to clean up.
         // This will kill the server as well, due to the `--kill-child` flag.
-        child.kill().unwrap();
+        match child.kill() {
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::InvalidInput => {}
+            Err(e) => panic!("failed to kill unshare: {:?}", e),
+        }
         child.wait().unwrap();
         binary_io_tasks.await;
         panic!("Binary did not shut down after SIGTERM");
