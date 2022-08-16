@@ -1,14 +1,13 @@
 use anyhow::{Context, Result};
-use futures::StreamExt;
 use http::HeaderMap;
 use janus_core::time::RealClock;
 use janus_server::{
     aggregator::aggregator_server,
-    binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{janus_main, setup_signal_handler, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
 use serde::{Deserialize, Serialize};
-use std::{future::Future, iter::Iterator, net::SocketAddr, sync::Arc};
+use std::{iter::Iterator, net::SocketAddr, sync::Arc};
 use structopt::StructOpt;
 use tracing::info;
 
@@ -34,35 +33,6 @@ async fn main() -> Result<()> {
         Ok(())
     })
     .await
-}
-
-/// Register a signal handler for SIGTERM, and return a future that will become ready when a
-/// SIGTERM signal is received.
-fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error> {
-    let mut signal_stream = signal_hook_tokio::Signals::new([signal_hook::consts::SIGTERM])?;
-    let handle = signal_stream.handle();
-    let (sender, receiver) = futures::channel::oneshot::channel();
-    let mut sender = Some(sender);
-    tokio::spawn(async move {
-        while let Some(signal) = signal_stream.next().await {
-            if signal == signal_hook::consts::SIGTERM {
-                if let Some(sender) = sender.take() {
-                    // This may return Err(()) if the receiver has been dropped already. If
-                    // that is the case, the warp server must be shut down already, so we can
-                    // safely ignore the error case.
-                    let _ = sender.send(());
-                    handle.close();
-                    break;
-                }
-            }
-        }
-    });
-    Ok(async move {
-        // The receiver may return Err(Canceled) if the sender has been dropped. By inspection, the
-        // sender always has a message sent across it before it is dropped, and the async task it
-        // is owned by will not terminate before that happens.
-        receiver.await.unwrap_or_default()
-    })
 }
 
 #[derive(Debug, StructOpt)]

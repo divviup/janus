@@ -2,12 +2,15 @@ use anyhow::Context;
 use janus_core::{message::Duration, time::RealClock, TokioRuntime};
 use janus_server::{
     aggregator::aggregation_job_driver::AggregationJobDriver,
-    binary_utils::{janus_main, job_driver::JobDriver, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{
+        janus_main, job_driver::JobDriver, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
+    },
     config::{BinaryConfig, CommonConfig, JobDriverConfig},
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, sync::Arc};
 use structopt::StructOpt;
+use tokio::select;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -30,9 +33,11 @@ async fn main() -> anyhow::Result<()> {
         ));
         let lease_duration =
             Duration::from_seconds(ctx.config.job_driver_config.worker_lease_duration_secs);
+        let shutdown_signal =
+            setup_signal_handler().context("failed to register SIGTERM signal handler")?;
 
         // Start running.
-        Arc::new(JobDriver::new(
+        let job_driver = Arc::new(JobDriver::new(
             ctx.clock,
             TokioRuntime,
             meter,
@@ -50,9 +55,11 @@ async fn main() -> anyhow::Result<()> {
                 Arc::clone(&datastore),
                 ctx.config.job_driver_config.maximum_attempts_before_failure,
             ),
-        ))
-        .run()
-        .await;
+        ));
+        select! {
+            _ = job_driver.run() => {}
+            _ = shutdown_signal => {}
+        };
 
         Ok(())
     })

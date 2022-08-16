@@ -1,26 +1,35 @@
+use anyhow::Context;
 use janus_core::time::RealClock;
 use janus_server::aggregator::aggregation_job_creator::AggregationJobCreator;
-use janus_server::binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions};
+use janus_server::binary_utils::{
+    janus_main, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
+};
 use janus_server::config::{BinaryConfig, CommonConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use structopt::StructOpt;
+use tokio::select;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
+        let shutdown_signal =
+            setup_signal_handler().context("failed to register SIGTERM signal handler")?;
+
         // Start creating aggregation jobs.
-        Arc::new(AggregationJobCreator::new(
+        let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
             ctx.datastore,
             ctx.clock,
             Duration::from_secs(ctx.config.tasks_update_frequency_secs),
             Duration::from_secs(ctx.config.aggregation_job_creation_interval_secs),
             ctx.config.min_aggregation_job_size,
             ctx.config.max_aggregation_job_size,
-        ))
-        .run()
-        .await;
+        ));
+        select! {
+            _ = aggregation_job_creator.run() => {}
+            _ = shutdown_signal => {}
+        };
 
         Ok(())
     })
