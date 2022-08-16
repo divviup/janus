@@ -13,10 +13,14 @@ use janus_server::{datastore::test_util::ephemeral_datastore, task::test_util::n
 use reqwest::Url;
 use serde_yaml::Mapping;
 use std::{
-    io::{Read, Write},
+    io::Write,
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::Path,
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
+};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::{ChildStderr, ChildStdout},
 };
 use wait_timeout::ChildExt;
 
@@ -40,6 +44,44 @@ fn wait_for_server(addr: SocketAddr) -> Result<(), ()> {
         }
     }
     Err(())
+}
+
+/// Start async tasks to forward a child process's output to `print!()`/`eprint!()`, which the
+/// test harness can capture.
+fn forward_stdout_stderr(process_name: &str, child: &mut Child) {
+    let child_stdout = ChildStdout::from_std(child.stdout.take().unwrap()).unwrap();
+    tokio::task::spawn({
+        let process_name = process_name.to_string();
+        let mut reader = BufReader::new(child_stdout);
+        async move {
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let count = reader.read_line(&mut line).await.unwrap();
+                if count == 0 {
+                    break;
+                }
+                print!("{} stdout: {}", process_name, line);
+            }
+        }
+    });
+
+    let child_stderr = ChildStderr::from_std(child.stderr.take().unwrap()).unwrap();
+    tokio::task::spawn({
+        let process_name = process_name.to_string();
+        let mut reader = BufReader::new(child_stderr);
+        async move {
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let count = reader.read_line(&mut line).await.unwrap();
+                if count == 0 {
+                    break;
+                }
+                eprint!("{} stderr: {}", process_name, line);
+            }
+        }
+    });
 }
 
 async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
@@ -103,22 +145,10 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .unwrap();
 
     // Kick off tasks to read from piped stdout/stderr
-    let stdout_join_handle = tokio::task::spawn_blocking({
-        let mut stdout = child.stdout.take().unwrap();
-        move || {
-            let mut output = String::new();
-            stdout.read_to_string(&mut output).unwrap();
-            output
-        }
-    });
-    let stderr_join_handle = tokio::task::spawn_blocking({
-        let mut stderr = child.stderr.take().unwrap();
-        move || {
-            let mut output = String::new();
-            stderr.read_to_string(&mut output).unwrap();
-            output
-        }
-    });
+    forward_stdout_stderr(
+        &format!("unshare/{}", binary.file_name().unwrap().to_str().unwrap()),
+        &mut child,
+    );
 
     // Try to connect to the health check HTTP server in a loop, until it is ready.
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
@@ -137,10 +167,11 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .arg("--target")
         .arg(format!("{}", unshare_pid))
         .args(["kill", "1"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
+    forward_stdout_stderr("nsenter/kill", &mut kill);
     assert!(kill.wait().unwrap().success());
 
     // Confirm that the server shuts down promptly.
@@ -152,16 +183,11 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         // This will kill the server as well, due to the `--kill-child` flag.
         child.kill().unwrap();
         child.wait().unwrap();
-        println!("===== child process stdout =====");
-        println!("{}", stdout_join_handle.await.unwrap());
-        println!("===== child process stderr =====");
-        println!("{}", stderr_join_handle.await.unwrap());
-        println!("===== end =====");
         panic!("Server did not shut down after SIGTERM");
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn server_shutdown() {
     let aggregator_port = select_open_port().unwrap();
     let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
@@ -175,7 +201,7 @@ async fn server_shutdown() {
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregator"), config).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn aggregation_job_creator_shutdown() {
     let mut config = Mapping::new();
     config.insert("tasks_update_frequency_secs".into(), 3600u64.into());
@@ -189,7 +215,7 @@ async fn aggregation_job_creator_shutdown() {
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_creator"), config).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn aggregation_job_driver_shutdown() {
     let mut config = Mapping::new();
     config.insert("min_job_discovery_delay_secs".into(), 10u64.into());
@@ -205,7 +231,7 @@ async fn aggregation_job_driver_shutdown() {
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_driver"), config).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn collect_job_driver_shutdown() {
     let mut config = Mapping::new();
     config.insert("min_job_discovery_delay_secs".into(), 10u64.into());
