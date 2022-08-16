@@ -13,6 +13,7 @@ use janus_server::{datastore::test_util::ephemeral_datastore, task::test_util::n
 use reqwest::Url;
 use serde_yaml::Mapping;
 use std::{
+    future::Future,
     io::Write,
     net::{Ipv4Addr, SocketAddr},
     path::Path,
@@ -21,6 +22,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
+    join,
     net::{TcpListener, TcpStream},
     process::{ChildStderr, ChildStdout},
     task::spawn_blocking,
@@ -55,10 +57,13 @@ async fn wait_for_server(addr: SocketAddr) -> Result<(), Timeout> {
 }
 
 /// Start async tasks to forward a child process's output to `print!()`/`eprint!()`, which the
-/// test harness can capture.
-fn forward_stdout_stderr(process_name: &str, child: &mut Child) {
+/// test harness can capture. Returns a future that waits for the end of both stdout and stderr.
+fn forward_stdout_stderr(
+    process_name: &str,
+    child: &mut Child,
+) -> impl Future<Output = ()> + 'static {
     let child_stdout = ChildStdout::from_std(child.stdout.take().unwrap()).unwrap();
-    tokio::task::spawn({
+    let handle_stdout = tokio::task::spawn({
         let process_name = process_name.to_string();
         let mut reader = BufReader::new(child_stdout);
         async move {
@@ -75,7 +80,7 @@ fn forward_stdout_stderr(process_name: &str, child: &mut Child) {
     });
 
     let child_stderr = ChildStderr::from_std(child.stderr.take().unwrap()).unwrap();
-    tokio::task::spawn({
+    let handle_stderr = tokio::task::spawn({
         let process_name = process_name.to_string();
         let mut reader = BufReader::new(child_stderr);
         async move {
@@ -90,6 +95,12 @@ fn forward_stdout_stderr(process_name: &str, child: &mut Child) {
             }
         }
     });
+
+    async {
+        let (result_stdout, result_stderr) = join!(handle_stdout, handle_stderr);
+        result_stdout.unwrap();
+        result_stderr.unwrap();
+    }
 }
 
 async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
@@ -158,7 +169,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .unwrap();
 
     // Kick off tasks to read from piped stdout/stderr
-    forward_stdout_stderr(&format!("unshare/{}", binary_name), &mut child);
+    let binary_io_tasks = forward_stdout_stderr(&format!("unshare/{}", binary_name), &mut child);
 
     // Try to connect to the health check HTTP server in a loop, until it is ready.
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
@@ -182,9 +193,12 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    forward_stdout_stderr("nsenter/kill", &mut kill);
+    let kill_io_tasks = forward_stdout_stderr("nsenter/kill", &mut kill);
     let kill_exit_status = spawn_blocking(move || kill.wait()).await.unwrap().unwrap();
-    assert!(kill_exit_status.success());
+    kill_io_tasks.await;
+    if !kill_exit_status.success() {
+        panic!("error executing kill in namespace: {:?}", kill_exit_status);
+    }
 
     // Confirm that the binary under test shuts down promptly.
     let start = Instant::now();
@@ -201,8 +215,10 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         // This will kill the server as well, due to the `--kill-child` flag.
         child.kill().unwrap();
         child.wait().unwrap();
+        binary_io_tasks.await;
         panic!("Binary did not shut down after SIGTERM");
     } else {
+        binary_io_tasks.await;
         let elapsed = end - start;
         info!(?elapsed, binary_name, "Graceful shutdown test succeeded");
     }
