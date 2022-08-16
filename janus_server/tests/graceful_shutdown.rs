@@ -194,11 +194,12 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .spawn()
         .unwrap();
     let kill_io_tasks = forward_stdout_stderr("nsenter/kill", &mut kill);
-    let kill_exit_status = spawn_blocking(move || kill.wait()).await.unwrap().unwrap();
+    // We ignore the exit status of nsenter/kill because there's a chance that the process under
+    // test may receive the SIGTERM and exit before the kill process completes. Once PID 1 in the
+    // PID namespace exits, all other processes in the namespace are sent SIGKILL, which in this
+    // case includes `kill` itself.
+    let _kill_exit_status = spawn_blocking(move || kill.wait()).await.unwrap().unwrap();
     kill_io_tasks.await;
-    if !kill_exit_status.success() {
-        panic!("error executing kill in namespace: {:?}", kill_exit_status);
-    }
 
     // Confirm that the binary under test shuts down promptly.
     let start = Instant::now();
