@@ -14,36 +14,42 @@ use reqwest::Url;
 use serde_yaml::Mapping;
 use std::{
     io::Write,
-    net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
+    net::{Ipv4Addr, SocketAddr},
     path::Path,
     process::{Child, Command, Stdio},
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
+    net::{TcpListener, TcpStream},
     process::{ChildStderr, ChildStdout},
+    task::spawn_blocking,
+    time::sleep,
 };
 use wait_timeout::ChildExt;
 
 /// Try to find an open port by binding to an ephemeral port, saving the port
 /// number, and closing the listening socket. This may still fail due to race
 /// conditions if another program grabs the same port number.
-fn select_open_port() -> Result<u16, std::io::Error> {
-    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
+async fn select_open_port() -> Result<u16, std::io::Error> {
+    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
     let address = listener.local_addr()?;
     drop(listener);
     Ok(address.port())
 }
 
+#[derive(Debug)]
+struct Timeout;
+
 /// Attempt to connect to a server with retries. Returns `Ok(())` if connection
-/// was successful, or `Err(())` if the retries were exhausted.
-fn wait_for_server(addr: SocketAddr) -> Result<(), ()> {
+/// was successful, or `Err(Timeout)` if the retries were exhausted.
+async fn wait_for_server(addr: SocketAddr) -> Result<(), Timeout> {
     for _ in 0..30 {
-        match TcpStream::connect(addr) {
+        match TcpStream::connect(addr).await {
             Ok(_) => return Ok(()),
-            Err(_) => std::thread::sleep(std::time::Duration::from_millis(500)),
+            Err(_) => sleep(std::time::Duration::from_millis(500)).await,
         }
     }
-    Err(())
+    Err(Timeout)
 }
 
 /// Start async tasks to forward a child process's output to `print!()`/`eprint!()`, which the
@@ -91,7 +97,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     // will connect to its backing database separately.
     let (datastore, db_handle) = ephemeral_datastore(RealClock::default()).await;
 
-    let health_check_port = select_open_port().unwrap();
+    let health_check_port = select_open_port().await.unwrap();
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
 
     let mut db_config = Mapping::new();
@@ -115,11 +121,15 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
 
     // Save the above configuration to a temporary file, so that we can pass
     // the file's path to the binary under test on the command line.
-    let mut config_temp_file = tempfile::NamedTempFile::new().unwrap();
-    config_temp_file
-        .write_all(serde_yaml::to_string(&config).unwrap().as_bytes())
-        .unwrap();
-    let config_path = config_temp_file.into_temp_path();
+    let config_path = spawn_blocking(move || {
+        let mut config_temp_file = tempfile::NamedTempFile::new().unwrap();
+        config_temp_file
+            .write_all(serde_yaml::to_string(&config).unwrap().as_bytes())
+            .unwrap();
+        config_temp_file.into_temp_path()
+    })
+    .await
+    .unwrap();
 
     // Start the binary under test, inside new PID and user namespaces. This will run it as PID 1,
     // which better emulates its behavior in a container. Note that PID 1's default signal
@@ -153,6 +163,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     // Try to connect to the health check HTTP server in a loop, until it is ready.
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
     wait_for_server(health_check_listen_address)
+        .await
         .expect("could not connect to health check server after starting it");
 
     let url = Url::parse(&format!("http://{}/healthz", health_check_listen_address)).unwrap();
@@ -172,12 +183,17 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .spawn()
         .unwrap();
     forward_stdout_stderr("nsenter/kill", &mut kill);
-    assert!(kill.wait().unwrap().success());
+    let kill_exit_status = spawn_blocking(move || kill.wait()).await.unwrap().unwrap();
+    assert!(kill_exit_status.success());
 
     // Confirm that the server shuts down promptly.
-    let child_exit_status_opt = child
-        .wait_timeout(std::time::Duration::from_secs(15))
-        .unwrap();
+    let (mut child, child_exit_status_res) = spawn_blocking(move || {
+        let result = child.wait_timeout(std::time::Duration::from_secs(15));
+        (child, result)
+    })
+    .await
+    .unwrap();
+    let child_exit_status_opt = child_exit_status_res.unwrap();
     if child_exit_status_opt.is_none() {
         // We timed out waiting after sending a SIGTERM. Send a SIGKILL to unshare to clean up.
         // This will kill the server as well, due to the `--kill-child` flag.
@@ -189,7 +205,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn server_shutdown() {
-    let aggregator_port = select_open_port().unwrap();
+    let aggregator_port = select_open_port().await.unwrap();
     let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
 
     let mut config = Mapping::new();
