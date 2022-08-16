@@ -204,7 +204,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     // Confirm that the binary under test shuts down promptly.
     let start = Instant::now();
     let (mut child, child_exit_status_res) = spawn_blocking(move || {
-        let result = child.wait_timeout(std::time::Duration::from_secs(60));
+        let result = child.wait_timeout(std::time::Duration::from_secs(15));
         (child, result)
     })
     .await
