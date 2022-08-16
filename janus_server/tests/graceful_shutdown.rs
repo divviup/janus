@@ -17,6 +17,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     path::Path,
     process::{Child, Command, Stdio},
+    time::Instant,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -25,6 +26,7 @@ use tokio::{
     task::spawn_blocking,
     time::sleep,
 };
+use tracing::info;
 use wait_timeout::ChildExt;
 
 /// Try to find an open port by binding to an ephemeral port, saving the port
@@ -91,6 +93,7 @@ fn forward_stdout_stderr(process_name: &str, child: &mut Child) {
 }
 
 async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
+    let binary_name = binary.file_name().unwrap().to_str().unwrap();
     install_test_trace_subscriber();
 
     // This datastore will be used indirectly by the child process, which
@@ -155,10 +158,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .unwrap();
 
     // Kick off tasks to read from piped stdout/stderr
-    forward_stdout_stderr(
-        &format!("unshare/{}", binary.file_name().unwrap().to_str().unwrap()),
-        &mut child,
-    );
+    forward_stdout_stderr(&format!("unshare/{}", binary_name), &mut child);
 
     // Try to connect to the health check HTTP server in a loop, until it is ready.
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
@@ -169,7 +169,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     let url = Url::parse(&format!("http://{}/healthz", health_check_listen_address)).unwrap();
     assert!(reqwest::get(url).await.unwrap().status().is_success());
 
-    // Send SIGTERM to the server process, after entering its new namespaces.
+    // Send SIGTERM to the binary under test, after entering its new namespaces.
     let unshare_pid: i32 = child.id().try_into().unwrap();
     let mut kill = Command::new("nsenter")
         .arg("--preserve-credentials")
@@ -186,20 +186,25 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     let kill_exit_status = spawn_blocking(move || kill.wait()).await.unwrap().unwrap();
     assert!(kill_exit_status.success());
 
-    // Confirm that the server shuts down promptly.
+    // Confirm that the binary under test shuts down promptly.
+    let start = Instant::now();
     let (mut child, child_exit_status_res) = spawn_blocking(move || {
-        let result = child.wait_timeout(std::time::Duration::from_secs(15));
+        let result = child.wait_timeout(std::time::Duration::from_secs(60));
         (child, result)
     })
     .await
     .unwrap();
+    let end = Instant::now();
     let child_exit_status_opt = child_exit_status_res.unwrap();
     if child_exit_status_opt.is_none() {
         // We timed out waiting after sending a SIGTERM. Send a SIGKILL to unshare to clean up.
         // This will kill the server as well, due to the `--kill-child` flag.
         child.kill().unwrap();
         child.wait().unwrap();
-        panic!("Server did not shut down after SIGTERM");
+        panic!("Binary did not shut down after SIGTERM");
+    } else {
+        let elapsed = end - start;
+        info!(?elapsed, binary_name, "Graceful shutdown test succeeded");
     }
 }
 
