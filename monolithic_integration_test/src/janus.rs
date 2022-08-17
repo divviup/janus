@@ -1,51 +1,65 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
 use futures::FutureExt;
-use janus_core::{message::Duration, time::RealClock, TokioRuntime};
+use janus_core::{
+    message::Duration,
+    test_util::kubernetes::{Cluster, PortForward},
+    time::RealClock,
+    TokioRuntime,
+};
 use janus_server::{
     aggregator::{
         aggregate_share::CollectJobDriver, aggregation_job_creator::AggregationJobCreator,
         aggregation_job_driver::AggregationJobDriver, aggregator_filter,
     },
-    binary_utils::job_driver::JobDriver,
+    binary_utils::{database_pool, datastore, job_driver::JobDriver},
+    config::DbConfig,
     datastore::test_util::{ephemeral_datastore, DbHandle},
     task::Task,
 };
+use k8s_openapi::api::core::v1::Secret;
 use opentelemetry::global::meter;
+use portpicker::pick_unused_port;
 use std::{
     net::{Ipv4Addr, SocketAddr},
+    path::Path,
     sync::{mpsc, Arc},
     time,
 };
 use tokio::{select, sync::oneshot, task, try_join};
+use tracing::debug;
+use url::Url;
 use warp::Filter;
 
-/// Represents a running Janus test instance.
-pub struct Janus {
-    // Dependencies.
-    _db_handle: DbHandle,
+/// Represents a running Janus test instance
+#[allow(clippy::large_enum_variant)]
+pub enum Janus {
+    /// Janus components are spawned in-process, and completely destroyed once the test ends.
+    InProcess {
+        // Dependencies.
+        _db_handle: DbHandle,
 
-    // Task lifetime management.
-    start_shutdown_sender: Option<oneshot::Sender<()>>,
-    shutdown_complete_receiver: Option<mpsc::Receiver<()>>,
+        // Task lifetime management.
+        start_shutdown_sender: Option<oneshot::Sender<()>>,
+        shutdown_complete_receiver: Option<mpsc::Receiver<()>>,
+    },
+    /// Janus components are assumed to already be running in the Kubernetes cluster. Running tests
+    /// against the cluster will persistently mutate the Janus deployment, for instance by writing
+    /// new tasks and reports into its datastore.
+    KubernetesCluster { port_forwards: Vec<PortForward> },
 }
 
 impl Janus {
     // Create & start a new hermetic Janus test instance listening on the given port, configured
     // to service the given task.
-    pub async fn new(port: u16, task: &Task) -> Self {
+    pub async fn new_in_process(port: u16, task: &Task) -> Self {
         // Start datastore.
-        let (datastore, _db_handle) = ephemeral_datastore(RealClock::default()).await;
+        let (datastore, db_handle) = ephemeral_datastore(RealClock::default()).await;
         let datastore = Arc::new(datastore);
 
-        // Write task into datastore.
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        // Make sure to do this *before* starting the Janus components so that the task will be
+        // present on startup.
+        datastore.put_task(task).await.unwrap();
 
         // Start aggregator server.
         let (server_shutdown_sender, server_shutdown_receiver) = oneshot::channel();
@@ -75,7 +89,7 @@ impl Janus {
             mut aggregation_job_creator_shutdown_receiver,
         ) = oneshot::channel();
         let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
-            _db_handle.datastore(RealClock::default()),
+            db_handle.datastore(RealClock::default()),
             RealClock::default(),
             time::Duration::from_secs(60),
             time::Duration::from_secs(1),
@@ -92,7 +106,7 @@ impl Janus {
         // Start aggregation job driver.
         let (aggregation_job_driver_shutdown_sender, mut aggregation_job_driver_shutdown_receiver) =
             oneshot::channel();
-        let datastore = Arc::new(_db_handle.datastore(RealClock::default()));
+        let datastore = Arc::new(db_handle.datastore(RealClock::default()));
         let aggregation_job_driver_meter = meter("aggregation_job_driver");
         let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
@@ -122,7 +136,7 @@ impl Janus {
         // Start collect job driver.
         let (collect_job_driver_shutdown_sender, mut collect_job_driver_shutdown_receiver) =
             oneshot::channel();
-        let datastore = Arc::new(_db_handle.datastore(RealClock::default()));
+        let datastore = Arc::new(db_handle.datastore(RealClock::default()));
         let collect_job_driver_meter = meter("collect_job_driver");
         let collect_job_driver = Arc::new(CollectJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
@@ -174,20 +188,109 @@ impl Janus {
             shutdown_complete_sender.send(()).unwrap();
         });
 
-        Janus {
-            _db_handle,
+        Self::InProcess {
+            _db_handle: db_handle,
             start_shutdown_sender: Some(start_shutdown_sender),
             shutdown_complete_receiver: Some(shutdown_complete_receiver),
+        }
+    }
+
+    /// Set up a test case running in a Kubernetes cluster where Janus components and a datastore
+    /// are assumed to already be deployed.
+    pub async fn new_with_kubernetes_cluster<P>(
+        kubeconfig_path: P,
+        kubernetes_context_name: &str,
+        namespace: &str,
+        task: &Task,
+        aggregator_local_port: u16,
+    ) -> Self
+    where
+        P: AsRef<Path>,
+    {
+        let cluster = Cluster::new(kubeconfig_path, kubernetes_context_name);
+
+        // Read the Postgres password and the datastore encryption key from Kubernetes secrets
+        let secrets_api: kube::Api<Secret> =
+            kube::Api::namespaced(cluster.client().await, namespace);
+
+        let database_password_secret = secrets_api.get("postgresql").await.unwrap();
+        let database_password = String::from_utf8(
+            database_password_secret
+                .data
+                .unwrap()
+                .get("postgres-password")
+                .unwrap()
+                .0
+                .clone(),
+        )
+        .unwrap();
+
+        let datastore_key_secret = secrets_api.get("datastore-key").await.unwrap();
+        let datastore_key = String::from_utf8(
+            datastore_key_secret
+                .data
+                .unwrap()
+                .get("datastore_key")
+                .unwrap()
+                .0
+                .clone(),
+        )
+        .unwrap();
+
+        // Forward database port so we can provision the task. We assume here that there is a
+        // service named "postgresql" listening on port 5432. We could instead look up the service
+        // by some label and dynamically discover its port, but being coupled to a label value isn't
+        // much different than being coupled to a service name.
+        let local_db_port = pick_unused_port().unwrap();
+        let _datastore_port_forward = cluster
+            .forward_port(namespace, "postgresql", local_db_port, 5432)
+            .await;
+        debug!("forwarded DB port");
+
+        let pool = database_pool(
+            &DbConfig {
+                url: Url::parse(&format!(
+                    "postgres://postgres:{database_password}@127.0.0.1:{local_db_port}/postgres"
+                ))
+                .unwrap(),
+                connection_pool_timeouts_secs: 60,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Since the Janus components are already running when the task is provisioned, they all
+        // must be configured to frequently poll the datastore for new tasks, or the test that
+        // depends on this task being defined will likely time out or otherwise fail.
+        // This should become more robust in the future when we implement dynamic task provisioning
+        // (#44).
+        datastore(pool, RealClock::default(), &[datastore_key])
+            .unwrap()
+            .put_task(task)
+            .await
+            .unwrap();
+
+        let aggregator_port_forward = cluster
+            .forward_port(namespace, "aggregator", aggregator_local_port, 80)
+            .await;
+
+        Self::KubernetesCluster {
+            port_forwards: vec![aggregator_port_forward],
         }
     }
 }
 
 impl Drop for Janus {
     fn drop(&mut self) {
-        let start_shutdown_sender = self.start_shutdown_sender.take().unwrap();
-        let shutdown_complete_receiver = self.shutdown_complete_receiver.take().unwrap();
-
-        start_shutdown_sender.send(()).unwrap();
-        shutdown_complete_receiver.recv().unwrap();
+        if let Self::InProcess {
+            start_shutdown_sender,
+            shutdown_complete_receiver,
+            ..
+        } = self
+        {
+            start_shutdown_sender.take().unwrap().send(()).unwrap();
+            shutdown_complete_receiver.take().unwrap().recv().unwrap();
+        }
     }
 }

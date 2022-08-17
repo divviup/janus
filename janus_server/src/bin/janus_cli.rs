@@ -74,7 +74,7 @@ impl Command {
             Command::WriteSchema => {
                 let pool = database_pool(
                     &config.common_config.database,
-                    &options.common.database_password,
+                    options.common.database_password.as_deref(),
                 )
                 .await?;
                 write_schema(&pool).await
@@ -83,7 +83,7 @@ impl Command {
             Command::ProvisionTasks { tasks_file } => {
                 let pool = database_pool(
                     &config.common_config.database,
-                    &options.common.database_password,
+                    options.common.database_password.as_deref(),
                 )
                 .await?;
                 let datastore =
@@ -314,7 +314,7 @@ mod tests {
     #[tokio::test]
     async fn create_datastore_key() {
         let k8s_cluster = kubernetes::EphemeralCluster::create();
-        let kube_client = k8s_cluster.client().await;
+        let kube_client = k8s_cluster.cluster().client().await;
 
         // Create a datastore key.
         const NAMESPACE: &str = "default";

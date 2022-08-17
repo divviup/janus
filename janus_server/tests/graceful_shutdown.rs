@@ -125,13 +125,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
 
     let task_id = TaskId::random();
     let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
-    datastore
-        .run_tx(|tx| {
-            let task = task.clone();
-            Box::pin(async move { tx.put_task(&task).await })
-        })
-        .await
-        .unwrap();
+    datastore.put_task(&task).await.unwrap();
 
     // Save the above configuration to a temporary file, so that we can pass
     // the file's path to the binary under test on the command line.

@@ -20,7 +20,7 @@ async fn daphne_janus() {
         create_test_tasks(daphne_port, janus_port, &collector_hpke_config);
 
     let _daphne = Daphne::new(daphne_port, &daphne_task);
-    let _janus = Janus::new(janus_port, &janus_task).await;
+    let _janus = Janus::new_in_process(janus_port, &janus_task).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -43,7 +43,7 @@ async fn janus_daphne() {
     let (janus_task, daphne_task) =
         create_test_tasks(janus_port, daphne_port, &collector_hpke_config);
 
-    let _janus = Janus::new(janus_port, &janus_task).await;
+    let _janus = Janus::new_in_process(janus_port, &janus_task).await;
     let _daphne = Daphne::new(daphne_port, &daphne_task);
 
     // Run the behavioral test.

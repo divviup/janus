@@ -77,9 +77,9 @@ pub fn read_config<Options: BinaryOptions, Config: BinaryConfig>(
     Ok(config)
 }
 
-/// Connects to a databsae, given a config. `db_password` is mutually exclusive with the database
+/// Connects to a database, given a config. `db_password` is mutually exclusive with the database
 /// password specified in the connection URL in `db_config`.
-pub async fn database_pool(db_config: &DbConfig, db_password: &Option<String>) -> Result<Pool> {
+pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> Result<Pool> {
     let mut database_config = tokio_postgres::Config::from_str(db_config.url.as_str())
         .with_context(|| {
             format!(
@@ -126,7 +126,7 @@ pub async fn database_pool(db_config: &DbConfig, db_password: &Option<String>) -
         || async {
             pool.get().await.map_err(|error| match error {
                 PoolError::Timeout(TimeoutType::Create) | PoolError::Backend(_) => {
-                    tracing::info!(?error, "transient error connecting to database");
+                    tracing::debug!(?error, "transient error connecting to database");
                     backoff::Error::transient(error)
                 }
                 _ => backoff::Error::permanent(error),
@@ -279,7 +279,7 @@ where
     // Connect to database.
     let pool = database_pool(
         &config.common_config().database,
-        &options.common_options().database_password,
+        options.common_options().database_password.as_deref(),
     )
     .await
     .context("couldn't create database connection pool")?;

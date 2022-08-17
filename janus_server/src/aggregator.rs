@@ -2328,13 +2328,7 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let want_hpke_key = current_hpke_key(&task.hpke_keys).clone();
 
@@ -2422,13 +2416,7 @@ mod tests {
         datastore: &Datastore<MockClock>,
         clock: &MockClock,
     ) -> Report {
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(task).await.unwrap();
 
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let nonce = Nonce::new(
@@ -2960,13 +2948,7 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let request = AggregateInitializeReq {
             task_id,
@@ -3046,13 +3028,7 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let request = AggregateInitializeReq {
             task_id,
@@ -3343,13 +3319,7 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
@@ -3410,13 +3380,7 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
@@ -3475,13 +3439,7 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let report_share = ReportShare {
             nonce: Nonce::new(
@@ -4912,14 +4870,7 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
@@ -4972,14 +4923,7 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
@@ -5043,13 +4987,7 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
 
@@ -5169,13 +5107,7 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
 
@@ -5319,14 +5251,7 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
 
@@ -5593,14 +5518,7 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
@@ -5657,14 +5575,7 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
@@ -5732,14 +5643,7 @@ mod tests {
 
         const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
-        datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-
-                Box::pin(async move { tx.put_task(&task).await })
-            })
-            .await
-            .unwrap();
+        datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(datastore.clone(), clock).unwrap();
 
