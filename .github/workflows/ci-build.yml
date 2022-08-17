@@ -50,6 +50,7 @@ jobs:
         CARGO_TARGET_DIR: "target/doc-deny"
         RUSTDOCFLAGS: "-Dwarnings"
       run: cargo doc
+
   janus_server_docker:
     runs-on: ubuntu-latest
     env:
@@ -67,6 +68,12 @@ jobs:
     - run: docker run --rm janus_collect_job_driver --help
     - run: docker run --rm janus_cli --help
 
+  janus_interop_docker:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILDKIT: 1
+    steps:
+    - uses: actions/checkout@v3
     - run: docker build --tag janus_interop_client --build-arg BINARY=janus_interop_client -f Dockerfile.interop .
     - run: docker build --tag janus_interop_aggregator -f Dockerfile.interop_aggregator .
     - run: docker build --tag janus_interop_collector --build-arg BINARY=janus_interop_collector -f Dockerfile.interop .
