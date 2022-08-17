@@ -230,6 +230,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(not(target_os = "linux"), ignore)]
 async fn server_shutdown() {
     let aggregator_port = select_open_port().await.unwrap();
     let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
@@ -244,6 +245,7 @@ async fn server_shutdown() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(not(target_os = "linux"), ignore)]
 async fn aggregation_job_creator_shutdown() {
     let mut config = Mapping::new();
     config.insert("tasks_update_frequency_secs".into(), 3600u64.into());
@@ -258,6 +260,7 @@ async fn aggregation_job_creator_shutdown() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(not(target_os = "linux"), ignore)]
 async fn aggregation_job_driver_shutdown() {
     let mut config = Mapping::new();
     config.insert("min_job_discovery_delay_secs".into(), 10u64.into());
@@ -274,6 +277,7 @@ async fn aggregation_job_driver_shutdown() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(not(target_os = "linux"), ignore)]
 async fn collect_job_driver_shutdown() {
     let mut config = Mapping::new();
     config.insert("min_job_discovery_delay_secs".into(), 10u64.into());
