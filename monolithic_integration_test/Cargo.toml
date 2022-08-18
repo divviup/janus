@@ -8,13 +8,14 @@ publish = false
 
 [features]
 daphne = [
+    "dep:build_script_utils",
     "dep:daphne",
     "dep:hex",
     "dep:rand",
-    "dep:regex",
     "dep:serde",
     "dep:serde_json",
     "dep:tokio",
+    "interop_binaries/test-util",
 ]
 kube-openssl = ["kube/openssl-tls"]
 
@@ -31,7 +32,6 @@ kube = { version = "0.65.0", default-features = false, features = ["client"] }
 lazy_static = "1"
 portpicker = "0.1"
 rand = { version = "0.8", optional = true }
-regex = { version = "1", optional = true }
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1", optional = true }
 serde_json = { version = "1", optional = true }
@@ -47,3 +47,6 @@ janus_client = { path = "../janus_client" }
 janus_server = { path = "../janus_server", features = ["test-util"] }
 monolithic_integration_test = { path = ".", features = ["daphne"] }
 prio = "0.8.2"
+
+[build-dependencies]
+build_script_utils = { path = "../build_script_utils", optional = true }

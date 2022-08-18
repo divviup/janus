@@ -1,7 +1,8 @@
 fn main() {
     #[cfg(feature = "daphne")]
     {
-        use std::{env, process::Command};
+        use build_script_utils::save_zstd_compressed_docker_image;
+        use std::{env, fs::File, process::Command};
 
         println!("cargo:rerun-if-changed=Dockerfile.test_daphne");
 
@@ -27,29 +28,21 @@ fn main() {
         let image_id = String::from_utf8(build_output.stdout).unwrap();
         let image_id = image_id.trim();
 
-        let save_output = Command::new("docker")
-            .args([
-                "save",
-                &format!("--output={}/test_daphne.tar", env::var("OUT_DIR").unwrap()),
-                image_id,
-            ])
-            .output()
-            .expect("Failed to execute `docker save` for test Daphne");
-        assert!(
-            save_output.status.success(),
-            "Docker save of test Daphne failed:\n{}",
-            String::from_utf8_lossy(&build_output.stderr)
-        );
+        let image_file = File::create(format!(
+            "{}/test_daphne.tar.zst",
+            env::var("OUT_DIR").unwrap()
+        ))
+        .expect("Couldn't create test Daphne image file");
+        save_zstd_compressed_docker_image(image_id, &image_file);
+        image_file
+            .sync_all()
+            .expect("Couldn't write compressed image file");
+        drop(image_file);
 
         // Make a best-effort attempt to clean up after ourselves.
-        let rmi_output = Command::new("docker")
+        Command::new("docker")
             .args(["rmi", image_id])
-            .output()
+            .status()
             .expect("Failed to execute `docker rmi` for test Daphne");
-        assert!(
-            rmi_output.status.success(),
-            "Docker image removal of test Daphne failed:\n{}",
-            String::from_utf8_lossy(&build_output.stderr)
-        );
     }
 }

@@ -4,7 +4,8 @@ fn main() {
     // package, among other things.)
     #[cfg(feature = "testcontainer")]
     {
-        use std::{env, process::Command};
+        use build_script_utils::save_zstd_compressed_docker_image;
+        use std::{env, fs::File, process::Command};
 
         println!("cargo:rerun-if-changed=../Dockerfile.interop_aggregator");
 
@@ -42,27 +43,21 @@ fn main() {
         let image_id = String::from_utf8(build_output.stdout).unwrap();
         let image_id = image_id.trim();
 
-        let save_output = Command::new("docker")
-            .args([
-                "save",
-                &format!(
-                    "--output={}/interop_aggregator.tar",
-                    env::var("OUT_DIR").unwrap()
-                ),
-                image_id,
-            ])
-            .output()
-            .expect("Failed to execute `docker save` for interop aggregator");
-        assert!(
-            save_output.status.success(),
-            "Docker save of interop_aggregator failed:\n{}",
-            String::from_utf8_lossy(&build_output.stderr)
-        );
+        let image_file = File::create(format!(
+            "{}/interop_aggregator.tar.zst",
+            env::var("OUT_DIR").unwrap()
+        ))
+        .expect("Couldn't create interop aggregator image file");
+        save_zstd_compressed_docker_image(image_id, &image_file);
+        image_file
+            .sync_all()
+            .expect("Couldn't write compressed image file");
+        drop(image_file);
 
         // Make a best-effort attempt to clean up after ourselves.
         Command::new("docker")
             .args(["rmi", image_id])
-            .output()
+            .status()
             .expect("Failed to execute `docker rmi` for interop aggregator");
     }
 }

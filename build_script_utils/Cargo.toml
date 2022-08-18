@@ -1,0 +1,10 @@
+[package]
+name = "build_script_utils"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+rust-version = "1.63"
+publish = false
+
+[dependencies]
+zstd = { version = "0.11" }

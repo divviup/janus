@@ -175,3 +175,54 @@ impl HpkeConfigRegistry {
         self.fetch_keypair(id)
     }
 }
+
+#[cfg(feature = "test-util")]
+lazy_static::lazy_static! {
+    static ref DOCKER_HASH_RE: regex::Regex = regex::Regex::new(r"sha256:([0-9a-f]{64})").unwrap();
+}
+
+/// Loads a given zstd-compressed docker image into Docker. Returns the hash of the loaded image,
+/// e.g. as referenced by `sha256:$HASH`. Panics on failure.
+#[cfg(feature = "test-util")]
+pub fn load_zstd_compressed_docker_image(compressed_image: &[u8]) -> String {
+    use std::{
+        io::{Cursor, Read},
+        process::{Command, Stdio},
+        thread,
+    };
+
+    let mut docker_load_child = Command::new("docker")
+        .args(["load", "--quiet"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to execute `docker load`");
+    let child_stdin = docker_load_child.stdin.take().unwrap();
+    thread::scope(|s| {
+        let writer_handle = s.spawn(|| {
+            // We write in a separate thread as "writing more than a pipe buffer's
+            // worth of input to stdin without also reading stdout and stderr at the
+            // same time may cause a deadlock."
+            zstd::stream::copy_decode(Cursor::new(compressed_image), child_stdin)
+        });
+        let reader_handle = s.spawn(|| {
+            let mut child_stdout = docker_load_child.stdout.take().unwrap();
+            let mut stdout = String::new();
+            child_stdout
+                .read_to_string(&mut stdout)
+                .expect("Couldn't read image ID from docker");
+            let caps = DOCKER_HASH_RE
+                .captures(&stdout)
+                .expect("Couldn't find image ID from `docker load` output");
+            caps.get(1).unwrap().as_str().to_string()
+        });
+
+        // The first `expect` catches panics, the second `expect` catches write errors.
+        writer_handle
+            .join()
+            .expect("Couldn't write image to docker")
+            .expect("Couldn't write image to docker");
+        reader_handle.join().unwrap()
+    })
+}

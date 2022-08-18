@@ -4,12 +4,13 @@ RUN apk add libc-dev
 WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
+COPY build_script_utils /src/build_script_utils
+COPY db /src/db
+COPY interop_binaries /src/interop_binaries
 COPY janus_core /src/janus_core
 COPY janus_client /src/janus_client
 COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test
-COPY interop_binaries /src/interop_binaries
-COPY db/schema.sql /src/db/schema.sql
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build -p interop_binaries --bin janus_interop_aggregator && cp /src/target/debug/janus_interop_aggregator /janus_interop_aggregator
 
 FROM postgres:14-bullseye
