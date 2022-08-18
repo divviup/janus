@@ -2,10 +2,21 @@ fn main() {
     // We only build the container image if the `testcontainer` feature is enabled, in order to
     // avoid infinite recursion in our build process (since building the container image builds this
     // package, among other things.)
-
     #[cfg(feature = "testcontainer")]
     {
         use std::{env, process::Command};
+
+        println!("cargo:rerun-if-changed=../Dockerfile.interop_aggregator");
+
+        // These directives should match the dependencies copied into Dockerfile.interop_aggregator.
+        println!("cargo:rerun-if-changed=../Cargo.lock");
+        println!("cargo:rerun-if-changed=../Cargo.toml");
+        println!("cargo:rerun-if-changed=../db/schema.sql");
+        println!("cargo:rerun-if-changed=../interop_binaries");
+        println!("cargo:rerun-if-changed=../janus_core");
+        println!("cargo:rerun-if-changed=../janus_client");
+        println!("cargo:rerun-if-changed=../janus_server");
+        println!("cargo:rerun-if-changed=../monolithic_integration_test");
 
         // Build & save off a container image for the interop_aggregator.
         // Note: `docker build` has an `--output` flag which writes the output to somewhere, which
@@ -49,14 +60,9 @@ fn main() {
         );
 
         // Make a best-effort attempt to clean up after ourselves.
-        let rmi_output = Command::new("docker")
+        Command::new("docker")
             .args(["rmi", image_id])
             .output()
             .expect("Failed to execute `docker rmi` for interop aggregator");
-        assert!(
-            rmi_output.status.success(),
-            "Docker image removal of interop aggregator failed:\n{}",
-            String::from_utf8_lossy(&build_output.stderr)
-        );
     }
 }

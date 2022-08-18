@@ -3,6 +3,12 @@ fn main() {
     {
         use std::{env, process::Command};
 
+        println!("cargo:rerun-if-changed=Dockerfile.test_daphne");
+
+        // These directives should match the dependencies copied into Dockerfile.test_daphne.
+        println!("cargo:rerun-if-changed=artifacts/wrangler.toml");
+        println!("cargo:rerun-if-changed=artifacts/daphne_compiled/");
+
         // Build & save off a container image for the test Daphne instance.
         // Note: `docker build` has an `--output` flag which writes the output to somewhere, which
         // may be a tarfile. But `docker build --output` only exports the image filesystem, and not

@@ -167,7 +167,7 @@ fn app() -> clap::Command<'static> {
             Arg::new("port")
                 .long("port")
                 .short('p')
-                .default_value("80")
+                .default_value("8080")
                 .help("Port number to listen on."),
         )
         .arg(

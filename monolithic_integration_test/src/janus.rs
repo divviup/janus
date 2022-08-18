@@ -48,7 +48,7 @@ impl Janus {
             .with_container_name(endpoint.host_str().unwrap())
             .with_mapped_port(Port {
                 local: port,
-                internal: 80,
+                internal: 8080,
             });
         let container = CONTAINER_CLIENT.run(runnable_image);
 
@@ -157,7 +157,7 @@ impl Janus {
     /// Returns the port of the aggregator on the host.
     pub fn port(&self) -> u16 {
         match self {
-            Janus::Container { container } => container.get_host_port_ipv4(80),
+            Janus::Container { container } => container.get_host_port_ipv4(8080),
             Janus::KubernetesCluster {
                 aggregator_port_forward,
             } => aggregator_port_forward.local_port(),

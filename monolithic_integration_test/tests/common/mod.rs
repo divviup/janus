@@ -41,8 +41,8 @@ pub fn create_test_tasks(collector_hpke_config: &HpkeConfig) -> (Task, Task) {
     let mut buf = [0; 4];
     thread_rng().fill(&mut buf);
     let endpoints = Vec::from([
-        Url::parse(&format!("http://leader-{}", hex::encode(buf))).unwrap(),
-        Url::parse(&format!("http://helper-{}", hex::encode(buf))).unwrap(),
+        Url::parse(&format!("http://leader-{}:8080/", hex::encode(buf))).unwrap(),
+        Url::parse(&format!("http://helper-{}:8080/", hex::encode(buf))).unwrap(),
     ]);
     let mut vdaf_verify_key = [0u8; PRIO3_AES128_VERIFY_KEY_LENGTH];
     thread_rng().fill(&mut vdaf_verify_key[..]);

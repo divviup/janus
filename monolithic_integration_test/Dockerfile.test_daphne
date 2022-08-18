@@ -5,5 +5,5 @@ RUN mkdir /daphne
 COPY artifacts/wrangler.toml /
 COPY artifacts/daphne_compiled/index.wasm /daphne
 COPY artifacts/daphne_compiled/shim.mjs /daphne
-EXPOSE 80
-ENTRYPOINT ["miniflare", "--port=80", "--wrangler-config=/wrangler.toml"]
+EXPOSE 8080
+ENTRYPOINT ["miniflare", "--port=8080", "--wrangler-config=/wrangler.toml"]

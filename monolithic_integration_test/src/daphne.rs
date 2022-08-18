@@ -171,7 +171,7 @@ impl Daphne {
             .with_container_name(endpoint.host_str().unwrap())
             .with_mapped_port(Port {
                 local: port,
-                internal: 80,
+                internal: 8080,
             });
         let daphne_container = CONTAINER_CLIENT.run(runnable_image);
 
@@ -227,7 +227,7 @@ impl Daphne {
 
     /// Returns the port of the aggregator on the host.
     pub fn port(&self) -> u16 {
-        self.daphne_container.get_host_port_ipv4(80)
+        self.daphne_container.get_host_port_ipv4(8080)
     }
 }
 
