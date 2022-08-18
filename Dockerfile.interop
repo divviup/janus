@@ -11,7 +11,7 @@ COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test
 COPY interop_binaries /src/interop_binaries
 COPY db/schema.sql /src/db/schema.sql
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --bin $BINARY && cp /src/target/debug/$BINARY /$BINARY
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build -p interop_binaries --bin $BINARY && cp /src/target/debug/$BINARY /$BINARY
 
 FROM alpine:3.16.1
 ARG BINARY

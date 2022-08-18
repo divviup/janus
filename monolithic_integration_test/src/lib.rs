@@ -2,10 +2,8 @@
 
 #[cfg(feature = "daphne")]
 pub mod daphne;
-#[cfg(feature = "janus")]
 pub mod janus;
 
-#[cfg(feature = "janus")]
 lazy_static::lazy_static! {
     static ref CONTAINER_CLIENT: testcontainers::clients::Cli =
         testcontainers::clients::Cli::default();
@@ -13,7 +11,6 @@ lazy_static::lazy_static! {
 
 /// Waits a while for the given port to start responding to HTTP requests, panicking if this
 /// doesn't happen soon enough.
-#[cfg(any(feature = "daphne", feature = "janus"))]
 async fn await_http_server(port: u16) {
     use backoff::{future::retry, ExponentialBackoff};
     use futures::TryFutureExt;

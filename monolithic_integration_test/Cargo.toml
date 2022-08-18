@@ -9,56 +9,41 @@ publish = false
 [features]
 daphne = [
     "dep:daphne",
-    "dep:portpicker",
+    "dep:hex",
+    "dep:rand",
     "dep:regex",
-    "dep:tempfile",
-    "dep:testcontainers",
-]
-janus = [
-    "dep:interop_binaries",
-    "dep:portpicker",
-    "dep:testcontainers",
-    "janus_core/test-util",
-    "janus_server/test-util"
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tokio",
 ]
 kube-openssl = ["kube/openssl-tls"]
 
 [dependencies]
-backoff = { version = "0.4.0", features = ["tokio"] }
+backoff = { version = "0.4", features = ["tokio"] }
 daphne = { git = "https://github.com/cloudflare/daphne", rev = "6301e712df216a0301c42cb3177110dd8217fa84", optional = true }
 futures = "0.3.23"
-hex = "0.4"
-hpke-dispatch = "0.3"
-http = "0.2"
-interop_binaries = { path = "../interop_binaries", features = ["testcontainer"], optional = true }
-itertools = "0.10"
-janus_core = { path = "../janus_core" }
-janus_server = { path = "../janus_server" }
-k8s-openapi = { version = "*", features = ["v1_20"] }
+hex = { version = "0.4", optional = true }
+interop_binaries = { path = "../interop_binaries", features = ["testcontainer"] }
+janus_core = { path = "../janus_core", features = ["test-util"] }
+janus_server = { path = "../janus_server", features = ["test-util"] }
+k8s-openapi = { version = "0.13.1", features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.65.0", default-features = false, features = ["client"] }
 lazy_static = "1"
-nix = { version = "0.25", default-features = false, features = ["signal"], optional = true }
-opentelemetry = { version = "0.17", features = ["metrics", "rt-tokio"] }
-portpicker = { version = "0.1", optional = true }
-rand = "0.8"
+portpicker = "0.1"
+rand = { version = "0.8", optional = true }
 regex = { version = "1", optional = true }
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
-serde = "1"
-serde_json = "1"
-tempfile = { version = "3", optional = true }
-testcontainers = { version = "0.14.0", optional = true }
-tokio = { version = "1", features = ["full", "tracing"] }
-toml = "0.5"
+serde = { version = "1", optional = true }
+serde_json = { version = "1", optional = true }
+testcontainers = "0.14.0"
+tokio = { version = "1", features = ["full", "tracing"], optional = true }
 tracing = "0.1.36"
 url = { version = "2.2.2", features = ["serde"] }
-warp = { version = "0.3", features = ["tls"] }
 
 [dev-dependencies]
+http = "0.2"
+itertools = "0.10"
 janus_client = { path = "../janus_client" }
 janus_server = { path = "../janus_server", features = ["test-util"] }
-lazy_static = "1"
-monolithic_integration_test = { path = ".", features = ["daphne", "janus"] }
-opentelemetry = { version = "0.17.0", features = ["metrics", "rt-tokio"] }
+monolithic_integration_test = { path = ".", features = ["daphne"] }
 prio = "0.8.2"
-ring = "0.16.20"
-tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
