@@ -68,7 +68,7 @@ impl Image for Aggregator {
     type Args = ();
 
     fn name(&self) -> String {
-        // This works around a quirk in testconatiners: it will always generated the image name
+        // This works around a quirk in testcontainers: it will always generate the image name
         // it passes to Docker as "$NAME:$TAG". We want a string of the form "sha256:$HASH". So we
         // hardcode the name to be "sha256" and the tag to be the hash we want.
         "sha256".to_string()
