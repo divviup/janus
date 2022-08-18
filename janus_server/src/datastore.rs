@@ -9,7 +9,7 @@ use self::models::{
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
 use crate::{
     message::{AggregateShareReq, AggregationJobId, ReportShare},
-    task::{self, AuthenticationToken, Task, VdafInstance},
+    task::{self, AuthenticationToken, Task, VdafInstance, VerifyKeyDynamicSize},
 };
 use anyhow::anyhow;
 use futures::try_join;
@@ -307,7 +307,7 @@ impl<C: Clock> Transaction<'_, C> {
                 "task_vdaf_verify_keys",
                 task.id.as_bytes(),
                 "vdaf_verify_key",
-                vdaf_verify_key.as_ref(),
+                vdaf_verify_key.as_bytes(),
             )?;
             vdaf_verify_keys.push(encrypted_vdaf_verify_key);
         }
@@ -686,12 +686,12 @@ impl<C: Clock> Transaction<'_, C> {
         let mut vdaf_verify_keys = Vec::new();
         for row in vdaf_verify_key_rows {
             let encrypted_vdaf_verify_key: Vec<u8> = row.get("vdaf_verify_key");
-            vdaf_verify_keys.push(self.crypter.decrypt(
+            vdaf_verify_keys.push(VerifyKeyDynamicSize::new(self.crypter.decrypt(
                 "task_vdaf_verify_keys",
                 task_id.as_bytes(),
                 "vdaf_verify_key",
                 &encrypted_vdaf_verify_key,
-            )?);
+            )?));
         }
 
         Ok(Task::new(

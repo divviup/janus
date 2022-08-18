@@ -11,7 +11,7 @@ use janus_core::{
 };
 use ring::constant_time;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::HashMap;
+use std::{array::TryFromSliceError, collections::HashMap};
 use url::Url;
 
 /// HTTP header where auth tokens are provided in inter-aggregator messages.
@@ -137,6 +137,44 @@ enum VdafSerialization {
     FakeFailsPrepStep,
 }
 
+/// A verification key for a VDAF, with a variable length. It must be kept secret from clients to
+/// maintain robustness, and it must be shared between aggregators.
+#[derive(Clone, PartialEq, Eq)]
+pub struct VerifyKeyDynamicSize(Vec<u8>);
+
+impl VerifyKeyDynamicSize {
+    pub fn new(buf: Vec<u8>) -> VerifyKeyDynamicSize {
+        VerifyKeyDynamicSize(buf)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// A verification key for a VDAF, with a fixed length. It must be kept secret from clients to
+/// maintain robustness, and it must be shared between aggregators.
+pub struct VerifyKeyStaticSize<const L: usize>([u8; L]);
+
+impl<const L: usize> VerifyKeyStaticSize<L> {
+    pub fn new(array: [u8; L]) -> VerifyKeyStaticSize<L> {
+        VerifyKeyStaticSize(array)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; L] {
+        &self.0
+    }
+}
+
+impl<const L: usize> TryFrom<VerifyKeyDynamicSize> for VerifyKeyStaticSize<L> {
+    type Error = TryFromSliceError;
+
+    fn try_from(value: VerifyKeyDynamicSize) -> Result<VerifyKeyStaticSize<L>, TryFromSliceError> {
+        let array = <[u8; L] as TryFrom<&[u8]>>::try_from(&value.0)?;
+        Ok(VerifyKeyStaticSize::new(array))
+    }
+}
+
 /// An authentication (bearer) token used by aggregators for aggregator-to-aggregator &
 /// collector-to-aggregator authentication.
 #[derive(Clone)]
@@ -182,7 +220,7 @@ pub struct Task {
     pub role: Role,
     /// Secret verification keys shared by the aggregators.
     #[derivative(Debug = "ignore")]
-    pub vdaf_verify_keys: Vec<Vec<u8>>,
+    pub vdaf_verify_keys: Vec<VerifyKeyDynamicSize>,
     /// The maximum number of times a given batch may be collected.
     pub max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
@@ -212,7 +250,7 @@ impl Task {
         mut aggregator_endpoints: Vec<Url>,
         vdaf: VdafInstance,
         role: Role,
-        vdaf_verify_keys: Vec<Vec<u8>>,
+        vdaf_verify_keys: Vec<VerifyKeyDynamicSize>,
         max_batch_lifetime: u64,
         min_batch_size: u64,
         min_batch_duration: Duration,
@@ -348,7 +386,7 @@ impl Serialize for Task {
         let vdaf_verify_keys: Vec<_> = self
             .vdaf_verify_keys
             .iter()
-            .map(|key| base64::encode_config(key, URL_SAFE_NO_PAD))
+            .map(|key| base64::encode_config(key.as_bytes(), URL_SAFE_NO_PAD))
             .collect();
         let aggregator_auth_tokens = self
             .aggregator_auth_tokens
@@ -403,7 +441,11 @@ impl<'de> Deserialize<'de> for Task {
         let vdaf_verify_keys: Vec<_> = serialized_task
             .vdaf_verify_keys
             .into_iter()
-            .map(|key| base64::decode_config(key, URL_SAFE_NO_PAD).map_err(D::Error::custom))
+            .map(|key| {
+                Ok(VerifyKeyDynamicSize::new(
+                    base64::decode_config(key, URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
+                ))
+            })
             .collect::<Result<_, _>>()?;
 
         // collector_hpke_config
@@ -530,7 +572,10 @@ impl TryFrom<SerializedHpkeKeypair> for (HpkeConfig, HpkePrivateKey) {
 pub mod test_util {
     use std::iter;
 
-    use super::{AuthenticationToken, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH};
+    use super::{
+        AuthenticationToken, Task, VdafInstance, VerifyKeyDynamicSize,
+        PRIO3_AES128_VERIFY_KEY_LENGTH,
+    };
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
@@ -569,9 +614,11 @@ pub mod test_util {
             aggregator_config_1.public_key().clone(),
         );
 
-        let vdaf_verify_key = iter::repeat_with(|| thread_rng().gen())
-            .take(vdaf.verify_key_length())
-            .collect();
+        let vdaf_verify_key = VerifyKeyDynamicSize::new(
+            iter::repeat_with(|| thread_rng().gen())
+                .take(vdaf.verify_key_length())
+                .collect(),
+        );
 
         let collector_auth_tokens = if role == Role::Leader {
             Vec::from([generate_auth_token(), generate_auth_token()])
@@ -616,7 +663,7 @@ pub mod test_util {
 mod tests {
     use super::{
         test_util::{generate_auth_token, new_dummy_task},
-        Task, PRIO3_AES128_VERIFY_KEY_LENGTH,
+        Task, VerifyKeyDynamicSize, PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
     use crate::{config::test_util::roundtrip_encoding, task::VdafInstance};
     use janus_core::{
@@ -795,7 +842,9 @@ mod tests {
             ]),
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
-            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            Vec::from([VerifyKeyDynamicSize::new(
+                [0; PRIO3_AES128_VERIFY_KEY_LENGTH].into(),
+            )]),
             0,
             0,
             Duration::from_hours(8).unwrap(),
@@ -816,7 +865,9 @@ mod tests {
             ]),
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
-            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            Vec::from([VerifyKeyDynamicSize::new(
+                [0; PRIO3_AES128_VERIFY_KEY_LENGTH].into(),
+            )]),
             0,
             0,
             Duration::from_hours(8).unwrap(),
@@ -837,7 +888,9 @@ mod tests {
             ]),
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Helper,
-            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            Vec::from([VerifyKeyDynamicSize::new(
+                [0; PRIO3_AES128_VERIFY_KEY_LENGTH].into(),
+            )]),
             0,
             0,
             Duration::from_hours(8).unwrap(),
@@ -858,7 +911,9 @@ mod tests {
             ]),
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Helper,
-            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            Vec::from([VerifyKeyDynamicSize::new(
+                [0; PRIO3_AES128_VERIFY_KEY_LENGTH].into(),
+            )]),
             0,
             0,
             Duration::from_hours(8).unwrap(),
@@ -881,7 +936,9 @@ mod tests {
             ]),
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
-            Vec::from([[0; PRIO3_AES128_VERIFY_KEY_LENGTH].into()]),
+            Vec::from([VerifyKeyDynamicSize::new(
+                [0; PRIO3_AES128_VERIFY_KEY_LENGTH].into(),
+            )]),
             0,
             0,
             Duration::from_hours(8).unwrap(),

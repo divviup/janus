@@ -18,7 +18,9 @@ use janus_core::{
 };
 use janus_server::{
     message::{CollectReq, CollectResp},
-    task::{test_util::generate_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{
+        test_util::generate_auth_token, Task, VerifyKeyDynamicSize, PRIO3_AES128_VERIFY_KEY_LENGTH,
+    },
 };
 use portpicker::pick_unused_port;
 use prio::{
@@ -55,7 +57,7 @@ pub fn create_test_tasks(
     ]);
     let mut vdaf_verify_key = [0u8; PRIO3_AES128_VERIFY_KEY_LENGTH];
     thread_rng().fill(&mut vdaf_verify_key[..]);
-    let vdaf_verify_keys = Vec::from([vdaf_verify_key.to_vec()]);
+    let vdaf_verify_keys = Vec::from([VerifyKeyDynamicSize::new(vdaf_verify_key.to_vec())]);
     let aggregator_auth_tokens = Vec::from([generate_auth_token()]);
 
     // Create tasks & return.

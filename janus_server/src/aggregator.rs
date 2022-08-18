@@ -23,7 +23,10 @@ use crate::{
         AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
         CollectReq, CollectResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
-    task::{self, Task, VdafInstance, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{
+        self, Task, VdafInstance, VerifyKeyStaticSize, DAP_AUTH_HEADER,
+        PRIO3_AES128_VERIFY_KEY_LENGTH,
+    },
 };
 use bytes::Bytes;
 use futures::try_join;
@@ -709,11 +712,17 @@ impl TaskAggregator {
 #[allow(clippy::enum_variant_names)]
 enum VdafOps {
     // For the Prio3 VdafOps, the second parameter is the verify_key.
-    Prio3Aes128Count(Arc<Prio3Aes128Count>, [u8; PRIO3_AES128_VERIFY_KEY_LENGTH]),
-    Prio3Aes128Sum(Arc<Prio3Aes128Sum>, [u8; PRIO3_AES128_VERIFY_KEY_LENGTH]),
+    Prio3Aes128Count(
+        Arc<Prio3Aes128Count>,
+        VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+    ),
+    Prio3Aes128Sum(
+        Arc<Prio3Aes128Sum>,
+        VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+    ),
     Prio3Aes128Histogram(
         Arc<Prio3Aes128Histogram>,
-        [u8; PRIO3_AES128_VERIFY_KEY_LENGTH],
+        VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH>,
     ),
 
     #[cfg(test)]
@@ -842,7 +851,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counters,
                     task,
-                    &[],
+                    &VerifyKeyStaticSize::new([]),
                     req,
                 )
                 .await
@@ -1013,7 +1022,7 @@ impl VdafOps {
         vdaf: &A,
         aggregate_step_failure_counters: &AggregateStepFailureCounters,
         task: &Task,
-        verify_key: &[u8; L],
+        verify_key: &VerifyKeyStaticSize<L>,
         req: AggregateInitializeReq,
     ) -> Result<AggregateInitializeResp, Error>
     where
@@ -1110,7 +1119,7 @@ impl VdafOps {
             let init_rslt = input_share.and_then(|input_share| {
                 vdaf
                     .prepare_init(
-                        verify_key,
+                        verify_key.as_bytes(),
                         Role::Helper.index().unwrap(),
                         &agg_param,
                         &report_share.nonce.get_encoded(),
@@ -3110,7 +3119,7 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let verify_key = task
+        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
             .vdaf_verify_keys
             .get(0)
             .unwrap()
@@ -3121,7 +3130,7 @@ mod tests {
 
         // report_share_0 is a "happy path" report.
         let nonce_0 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let input_share = run_vdaf(&vdaf, &verify_key, &(), nonce_0, &0)
+        let input_share = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_0, &0)
             .input_shares
             .remove(1);
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -3174,7 +3183,7 @@ mod tests {
 
         // report_share_4 has already been aggregated.
         let nonce_4 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let input_share = run_vdaf(&vdaf, &verify_key, &(), nonce_4, &0)
+        let input_share = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_4, &0)
             .input_shares
             .remove(1);
         let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -3189,7 +3198,7 @@ mod tests {
             task.min_batch_duration.as_seconds() / 2,
         ));
         let nonce_5 = Nonce::generate(&past_clock, task.min_batch_duration).unwrap();
-        let input_share = run_vdaf(&vdaf, &verify_key, &(), nonce_5, &0)
+        let input_share = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_5, &0)
             .input_shares
             .remove(1);
         let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -3513,7 +3522,7 @@ mod tests {
         let datastore = Arc::new(datastore);
 
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let verify_key = task
+        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
             .vdaf_verify_keys
             .get(0)
             .unwrap()
@@ -3524,7 +3533,7 @@ mod tests {
 
         // report_share_0 is a "happy path" report.
         let nonce_0 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let transcript_0 = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce_0, &0);
+        let transcript_0 = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce_0, &0);
         let prep_state_0 = assert_matches!(&transcript_0.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_0 = assert_matches!(&transcript_0.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
@@ -3537,7 +3546,7 @@ mod tests {
 
         // report_share_1 is omitted by the leader's request.
         let nonce_1 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let transcript_1 = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce_1, &0);
+        let transcript_1 = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce_1, &0);
         let prep_state_1 = assert_matches!(&transcript_1.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
@@ -3551,7 +3560,7 @@ mod tests {
             task.min_batch_duration.as_seconds() / 2,
         ));
         let nonce_2 = Nonce::generate(&past_clock, task.min_batch_duration).unwrap();
-        let transcript_2 = run_vdaf(vdaf.as_ref(), &verify_key, &(), nonce_2, &0);
+        let transcript_2 = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce_2, &0);
         let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -3788,7 +3797,7 @@ mod tests {
         );
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let verify_key = task
+        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
             .vdaf_verify_keys
             .get(0)
             .unwrap()
@@ -3800,7 +3809,7 @@ mod tests {
         // report_share_0 is a "happy path" report.
         let nonce_0 =
             Nonce::generate(&first_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_0 = run_vdaf(&vdaf, &verify_key, &(), nonce_0, &0);
+        let transcript_0 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_0, &0);
         let prep_state_0 = assert_matches!(&transcript_0.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_0 = assert_matches!(&transcript_0.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
@@ -3815,7 +3824,7 @@ mod tests {
         // output shares
         let nonce_1 =
             Nonce::generate(&first_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_1 = run_vdaf(&vdaf, &verify_key, &(), nonce_1, &0);
+        let transcript_1 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_1, &0);
         let prep_state_1 = assert_matches!(&transcript_1.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_1 = assert_matches!(&transcript_1.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_1 = transcript_1.prepare_messages[0].clone();
@@ -3829,7 +3838,7 @@ mod tests {
         // report share 2 aggregates successfully, but into a distinct batch unit aggregation.
         let nonce_2 =
             Nonce::generate(&second_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_2 = run_vdaf(&vdaf, &verify_key, &(), nonce_2, &0);
+        let transcript_2 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_2, &0);
         let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_2 = assert_matches!(&transcript_2.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
@@ -4015,7 +4024,7 @@ mod tests {
         // report_share_3 gets aggreated into the first batch unit interval.
         let nonce_3 =
             Nonce::generate(&first_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_3 = run_vdaf(&vdaf, &verify_key, &(), nonce_3, &0);
+        let transcript_3 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_3, &0);
         let prep_state_3 = assert_matches!(&transcript_3.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_3 = assert_matches!(&transcript_3.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_3 = transcript_3.prepare_messages[0].clone();
@@ -4029,7 +4038,7 @@ mod tests {
         // report_share_4 gets aggregated into the second batch unit interval
         let nonce_4 =
             Nonce::generate(&second_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_4 = run_vdaf(&vdaf, &verify_key, &(), nonce_4, &0);
+        let transcript_4 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_4, &0);
         let prep_state_4 = assert_matches!(&transcript_4.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_4 = assert_matches!(&transcript_4.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_4 = transcript_4.prepare_messages[0].clone();
@@ -4043,7 +4052,7 @@ mod tests {
         // report share 5 also gets aggregated into the second batch unit interval
         let nonce_5 =
             Nonce::generate(&second_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_5 = run_vdaf(&vdaf, &verify_key, &(), nonce_5, &0);
+        let transcript_5 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_5, &0);
         let prep_state_5 = assert_matches!(&transcript_5.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_5 = assert_matches!(&transcript_5.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_5 = transcript_5.prepare_messages[0].clone();
