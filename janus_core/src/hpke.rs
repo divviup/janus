@@ -6,7 +6,10 @@ use crate::message::{
 };
 use hpke_dispatch::{HpkeError, Kem, Keypair};
 use prio::codec::{encode_u16_items, Encode};
-use std::str::FromStr;
+use std::{
+    fmt::{self, Debug, Formatter},
+    str::FromStr,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -96,7 +99,7 @@ impl HpkeApplicationInfo {
 /// An HPKE private key, serialized using the `SerializePrivateKey` function as
 /// described in RFC 9180, §4 and §7.1.2.
 // TODO(#230): refactor HpkePrivateKey to simplify usage
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HpkePrivateKey(Vec<u8>);
 
 impl HpkePrivateKey {
@@ -123,6 +126,12 @@ impl FromStr for HpkePrivateKey {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(HpkePrivateKey(hex::decode(s)?))
+    }
+}
+
+impl Debug for HpkePrivateKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("HpkePrivateKey").finish()
     }
 }
 
