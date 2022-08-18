@@ -125,6 +125,10 @@ async fn run(
     // We use std::process instead of tokio::process so that we can kill the child processes from
     // a Drop implementation. tokio::process::Child::kill() is async, and could not be called from
     // there.
+    //
+    // We set up the helper task to serve out of the `/dap/` prefix. This tests for regression
+    // against a bug where Janus in the leader position would not work with a helper whose endpoint
+    // had a non-`/` path.
     let mut client_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_client"));
     client_command.arg("--port").arg(format!("{}", client_port));
     let mut leader_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_aggregator"));
@@ -139,6 +143,7 @@ async fn run(
         "postgres://postgres@127.0.0.1:{}/postgres",
         helper_postgres_port
     ));
+    helper_command.arg("--dap-serving-prefix=/dap/");
     let mut collector_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_collector"));
     collector_command
         .arg("--port")
@@ -180,7 +185,7 @@ async fn run(
     let task_id_encoded = base64::encode_config(&task_id.get_encoded(), URL_SAFE_NO_PAD);
     let verify_key_encoded = base64::encode_config(&verify_key, URL_SAFE_NO_PAD);
     let leader_endpoint = format!("http://127.0.0.1:{}/", leader_port);
-    let helper_endpoint = format!("http://127.0.0.1:{}/", helper_port);
+    let helper_endpoint = format!("http://127.0.0.1:{}/dap/", helper_port);
 
     let http_client = reqwest::Client::new();
 
@@ -261,7 +266,7 @@ async fn run(
         helper_endpoint_response_object
             .get("endpoint")
             .context("endpoint_for_task response is missing \"endpoint\"")?,
-        "/",
+        "/dap/",
     );
 
     // Send a /internal/test/add_task request to the collector.

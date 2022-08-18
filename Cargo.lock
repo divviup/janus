@@ -1584,6 +1584,7 @@ dependencies = [
  "portpicker",
  "prio",
  "rand",
+ "regex",
  "reqwest",
  "ring",
  "serde",
@@ -2019,6 +2020,7 @@ dependencies = [
  "hex",
  "hpke-dispatch",
  "http",
+ "interop_binaries",
  "itertools",
  "janus_client",
  "janus_core",
@@ -2032,14 +2034,15 @@ dependencies = [
  "portpicker",
  "prio",
  "rand",
+ "regex",
  "reqwest",
  "ring",
  "serde",
  "serde_json",
- "subprocess",
  "tempfile",
  "testcontainers",
  "tokio",
+ "tokio-postgres",
  "toml",
  "tracing",
  "url",
@@ -3447,16 +3450,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "subprocess"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c2e86926081dda636c546d8c5e641661049d7562a68f5488be4a1f7f66f6086"
-dependencies = [
- "libc",
- "winapi",
 ]
 
 [[package]]

@@ -3,23 +3,33 @@ name = "interop_binaries"
 version = "0.1.0"
 edition = "2021"
 license = "MPL-2.0"
-rust-version = "1.60"
+rust-version = "1.63"
 publish = false
+
+[features]
+testcontainer = [
+    "dep:lazy_static",
+    "dep:regex",
+    "dep:testcontainers"
+]
 
 [dependencies]
 anyhow = "1"
 base64 = "0.13.0"
 clap = "3.2.16"
+lazy_static = { version = "1", optional = true }
 janus_client = { path = "../janus_client" }
 janus_core = { path = "../janus_core" }
 janus_server = { path = "../janus_server" }
 opentelemetry = { version = "0.17", features = ["metrics"] }
 prio = "0.8.2"
 rand = "0.8"
+regex = { version = "1", optional = true }
 reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 serde = { version = "1.0.141", features = ["derive"] }
 serde_json = "1.0.82"
+testcontainers = { version = "0.14", optional = true }
 tokio = { version = "^1.20", features = ["full", "tracing"] }
 tracing = "0.1.36"
 tracing-log = "0.1.3"

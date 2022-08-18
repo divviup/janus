@@ -3,18 +3,19 @@
 ## Daphne
 
 The [Daphne](https://github.com/cloudflare/daphne) testing functionality is implemented by running a
-WASM-compiled version of Daphne inside [miniflare](https://miniflare.dev). The compiled artifacts
-are included in `artifacts/daphne_compiled`; they are compiled into test binaries & written to disk
-as necessary.
+WASM-compiled version of Daphne inside [miniflare](https://miniflare.dev), inside a container. The
+compiled artifacts are included in `artifacts/daphne_compiled`; the test container is built by the
+build script & included in necessary test binaries which know how to load the image into Docker
+themselves.
 
 The compiled Daphne is from commit [`6301e712df216a0301c42cb3177110dd8217fa84`](
 https://github.com/cloudflare/daphne/commit/6301e712df216a0301c42cb3177110dd8217fa84).
 
 ### Running Daphne integration tests
 
-Running the Daphne integration tests requires having [miniflare](https://miniflare.dev) installed.
+First, make sure your workstation is set up per the instructions in the repository root's README.md.
 
-Once `miniflare` is installed, simply run `cargo test` to run the Daphne integration tests.
+Once `docker` is installed, simply run `cargo test` to run the Daphne integration tests.
 
 ### Updating the version of Daphne under test
 

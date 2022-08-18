@@ -1,0 +1,9 @@
+FROM alpine:3.16
+RUN apk add --update npm
+RUN npm install -g miniflare
+RUN mkdir /daphne
+COPY artifacts/wrangler.toml /
+COPY artifacts/daphne_compiled/index.wasm /daphne
+COPY artifacts/daphne_compiled/shim.mjs /daphne
+EXPOSE 80
+ENTRYPOINT ["miniflare", "--port=80", "--wrangler-config=/wrangler.toml"]

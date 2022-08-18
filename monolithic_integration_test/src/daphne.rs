@@ -1,54 +1,36 @@
 //! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
-use backoff::{retry, ExponentialBackoff};
+use crate::{await_http_server, CONTAINER_CLIENT};
 use janus_core::message::{HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role};
 use janus_server::task::{Task, VdafInstance};
 use lazy_static::lazy_static;
-use nix::{
-    sys::signal::{killpg, Signal},
-    unistd::{getpgid, Pid},
-};
+use portpicker::pick_unused_port;
 use rand::{thread_rng, Rng};
+use regex::Regex;
 use reqwest::Url;
 use serde::Serialize;
 use serde_json::json;
 use std::{
     collections::HashMap,
-    fmt::Write as _,
-    fs::{self, File},
-    io::Write as _,
-    net::{Ipv4Addr, SocketAddr, TcpStream},
-    rc::Rc,
-    sync::mpsc,
+    io::{Read as _, Write as _},
+    process::{Command, Stdio},
+    sync::{mpsc, Mutex},
+    thread,
     time::Duration,
 };
-use subprocess::{Popen, PopenConfig, Redirection};
-use tempfile::{tempdir, NamedTempFile, TempDir, TempPath};
+use testcontainers::{core::Port, images::generic::GenericImage, Container, RunnableImage};
 use tokio::{select, sync::oneshot, task, time::interval};
 
+const TEST_DAPHNE_IMAGE_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/test_daphne.tar"));
+static TEST_DAPHNE_IMAGE_HASH: Mutex<Option<String>> = Mutex::new(None);
+
 lazy_static! {
-    static ref DAPHNE_CODE_DIR: TempDir = {
-        let code_dir = tempdir().unwrap();
-        fs::write(
-            code_dir.path().join("index.wasm"),
-            include_bytes!("../artifacts/daphne_compiled/index.wasm"),
-        )
-        .unwrap();
-        fs::write(
-            code_dir.path().join("shim.mjs"),
-            include_bytes!("../artifacts/daphne_compiled/shim.mjs"),
-        )
-        .unwrap();
-        code_dir
-    };
+    static ref DOCKER_HASH_RE: Regex = Regex::new(r"sha256:([0-9a-f]{64})").unwrap();
 }
 
 /// Represents a running Daphne test instance.
 pub struct Daphne {
-    // Dependencies.
-    daphne_process: Popen,
-    _wrangler_path: TempPath,
-    _env_path: TempPath,
+    daphne_container: Container<'static, GenericImage>,
 
     // Task lifetime management.
     start_shutdown_sender: Option<oneshot::Sender<()>>,
@@ -56,9 +38,9 @@ pub struct Daphne {
 }
 
 impl Daphne {
-    // Create & start a new hermetic Daphne test instance listening on the given port, configured
-    // to service the given task.
-    pub fn new(port: u16, task: &Task) -> Self {
+    /// Create & start a new hermetic Daphne test instance in the given Docker network, configured
+    /// to service the given task. The aggregator port is also exposed to the host.
+    pub async fn new(network: &str, task: &Task) -> Self {
         // Generate values needed for the Daphne environment configuration based on the provided
         // Janus task definition.
 
@@ -114,66 +96,49 @@ impl Daphne {
             String::new()
         };
 
-        // Write wrangler.toml.
-        let wrangler_content = toml::to_string(&WranglerConfig {
-            workers_dev: true,
-            build_type: "javascript".to_string(),
-            compatibility_date: "2022-01-20".to_string(),
+        // Get the test Daphne docker image hash; if necessary, do one-time setup to write the image
+        // to Docker.
+        let image_hash = {
+            let mut image_hash = TEST_DAPHNE_IMAGE_HASH.lock().unwrap();
+            if image_hash.is_none() {
+                let mut docker_load_child = Command::new("docker")
+                    .args(["load", "--quiet"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .expect("Failed to execute `docker load` for test Daphne");
+                let mut child_stdin = docker_load_child.stdin.take().unwrap();
+                let writer_handle = thread::spawn(move || {
+                    // We write in a separate thread as "writing more than a pipe buffer's
+                    // worth of input to stdin without also reading stdout and stderr at the
+                    // same time may cause a deadlock."
+                    child_stdin.write_all(TEST_DAPHNE_IMAGE_BYTES)
+                });
+                let mut child_stdout = docker_load_child.stdout.take().unwrap();
+                let mut stdout = String::new();
+                child_stdout
+                    .read_to_string(&mut stdout)
+                    .expect("Couldn't read stdout from docker");
+                let caps = DOCKER_HASH_RE
+                    .captures(&stdout)
+                    .expect("Couldn't find image ID from `docker load` output");
+                let hash = caps.get(1).unwrap().as_str().to_string();
+                // The first `expect` catches panics, the second `expect` catches write errors.
+                writer_handle
+                    .join()
+                    .expect("Couldn't write test Daphne image to docker")
+                    .expect("Couldn't write test Daphne image to docker");
+                *image_hash = Some(hash);
+            }
+            image_hash.as_ref().unwrap().clone()
+        };
 
-            build: WranglerBuildConfig {
-                upload: WranglerBuildUploadConfig {
-                    dir: DAPHNE_CODE_DIR
-                        .path()
-                        .canonicalize()
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        .to_string(),
-                    format: "modules".to_string(),
-                    main: "./shim.mjs".to_string(),
+        // Start the Daphne test container running.
+        let port = pick_unused_port().expect("Couldn't pick unused port");
+        let endpoint = task.aggregator_url(task.role).unwrap();
 
-                    rules: Vec::from([WranglerBuildUploadRulesConfig {
-                        globs: Vec::from(["**/*.wasm".to_string()]),
-                        module_type: "CompiledWasm".to_string(),
-                    }]),
-                },
-            },
-            durable_objects: WranglerDurableObjectsConfig {
-                bindings: Vec::from([
-                    WranglerDurableObjectBinding {
-                        name: "DAP_REPORT_STORE".to_string(),
-                        class_name: "ReportStore".to_string(),
-                    },
-                    WranglerDurableObjectBinding {
-                        name: "DAP_AGGREGATE_STORE".to_string(),
-                        class_name: "AggregateStore".to_string(),
-                    },
-                    WranglerDurableObjectBinding {
-                        name: "DAP_LEADER_AGG_JOB_QUEUE".to_string(),
-                        class_name: "LeaderAggregationJobQueue".to_string(),
-                    },
-                    WranglerDurableObjectBinding {
-                        name: "DAP_LEADER_COL_JOB_QUEUE".to_string(),
-                        class_name: "LeaderCollectionJobQueue".to_string(),
-                    },
-                    WranglerDurableObjectBinding {
-                        name: "DAP_HELPER_STATE_STORE".to_string(),
-                        class_name: "HelperStateStore".to_string(),
-                    },
-                ]),
-            },
-            vars: WranglerVarsConfig {
-                workers_rs_version: "0.0.10".to_string(),
-            },
-        })
-        .unwrap();
-        let mut wrangler_file = NamedTempFile::new().unwrap();
-        wrangler_file.write_all(wrangler_content.as_ref()).unwrap();
-        let wrangler_path = wrangler_file.into_temp_path();
-
-        // Write environment file.
-        let env_content = to_env_content(HashMap::from([
-            ("DAP_ENV".to_string(), "dev".to_string()),
+        let args = [
             (
                 "DAP_AGGREGATOR_ROLE".to_string(),
                 task.role.as_str().to_string(),
@@ -197,59 +162,21 @@ impl Daphne {
                 "DAP_COLLECTOR_BEARER_TOKEN_LIST".to_string(),
                 collector_bearer_token_list,
             ),
-        ]));
-        let mut env_file = NamedTempFile::new().unwrap();
-        env_file.write_all(env_content.as_ref()).unwrap();
-        let env_path = env_file.into_temp_path();
+        ]
+        .into_iter()
+        .map(|(env_var, env_val)| format!("--binding={env_var}={env_val}"))
+        .collect();
+        let runnable_image = RunnableImage::from((GenericImage::new("sha256", &image_hash), args))
+            .with_network(network)
+            .with_container_name(endpoint.host_str().unwrap())
+            .with_mapped_port(Port {
+                local: port,
+                internal: 80,
+            });
+        let daphne_container = CONTAINER_CLIENT.run(runnable_image);
 
-        // Start Daphne via miniflare.
-        // We set the current directory as miniflare seems to require the directory specified in the
-        // Wrangler config to be a subdirectory of the current working directory. We set a new
-        // process group ID so that our Drop implementation can kill the process group without
-        // killing the test process itself.
-        let dev_null = Rc::new(
-            File::options()
-                .read(true)
-                .write(true)
-                .open("/dev/null")
-                .unwrap(),
-        );
-        let daphne_process = Popen::create(
-            &[
-                "miniflare",
-                "--host=localhost",
-                &format!("--port={}", port),
-                &format!("--wrangler-config={}", wrangler_path.display()),
-                &format!("--env={}", env_path.display()),
-            ],
-            PopenConfig {
-                stdin: Redirection::RcFile(dev_null.clone()),
-                stdout: Redirection::RcFile(dev_null.clone()),
-                stderr: Redirection::RcFile(dev_null),
-                cwd: Some(DAPHNE_CODE_DIR.path().canonicalize().unwrap().into()),
-                setpgid: true,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        // Wait for Daphne process to begin listening on the port.
-        retry(
-            // (We use ExponentialBackoff as a constant-time backoff as the built-in Constant
-            // backoff will never time out.)
-            ExponentialBackoff {
-                initial_interval: Duration::from_millis(250),
-                max_interval: Duration::from_millis(250),
-                multiplier: 1.0,
-                max_elapsed_time: Some(Duration::from_secs(10)),
-                ..Default::default()
-            },
-            || {
-                TcpStream::connect(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
-                    .map_err(backoff::Error::transient)
-            },
-        )
-        .unwrap();
+        // Wait for Daphne container to begin listening on the port.
+        await_http_server(port).await;
 
         // Set up a task that occasionally hits the /internal/process endpoint, which is required
         // for Daphne to progress aggregations. (this is only required if Daphne is in the Leader
@@ -259,11 +186,14 @@ impl Daphne {
         let (shutdown_complete_sender, shutdown_complete_receiver) = mpsc::channel();
         task::spawn({
             let http_client = reqwest::Client::default();
-            let request_url = task
+            let mut request_url = task
                 .aggregator_url(task.role)
                 .unwrap()
                 .join("/internal/process")
                 .unwrap();
+            request_url.set_host(Some("localhost")).unwrap();
+            request_url.set_port(Some(port)).unwrap();
+
             let mut interval = interval(Duration::from_millis(250));
             async move {
                 loop {
@@ -279,7 +209,7 @@ impl Daphne {
                     let _ = http_client
                         .post(request_url.clone())
                         .json(&json!({
-                            "max_buckets": 2,
+                            "max_buckets": 1000,
                             "max_reports": 1000,
                         }))
                         .send()
@@ -289,12 +219,15 @@ impl Daphne {
         });
 
         Self {
-            daphne_process,
-            _wrangler_path: wrangler_path,
-            _env_path: env_path,
+            daphne_container,
             start_shutdown_sender: Some(start_shutdown_sender),
             shutdown_complete_receiver: Some(shutdown_complete_receiver),
         }
+    }
+
+    /// Returns the port of the aggregator on the host.
+    pub fn port(&self) -> u16 {
+        self.daphne_container.get_host_port_ipv4(80)
     }
 }
 
@@ -304,15 +237,6 @@ impl Drop for Daphne {
         let shutdown_complete_receiver = self.shutdown_complete_receiver.take().unwrap();
         start_shutdown_sender.send(()).unwrap();
         shutdown_complete_receiver.recv().unwrap();
-
-        // We signal the entire process group as miniflare creates child processes that are not
-        // properly cleaned up if we signal only the main process (even if we send e.g. SIGTERM
-        // instead of SIGKILL). Note that the Daphne process was exec'ed in its own process group,
-        // so we aren't killing the test process.
-        if let Some(daphne_pid) = self.daphne_process.pid() {
-            let daphne_pgid = getpgid(Some(Pid::from_raw(daphne_pid.try_into().unwrap()))).unwrap();
-            killpg(daphne_pgid, Signal::SIGKILL).unwrap();
-        }
     }
 }
 
@@ -334,73 +258,6 @@ fn daphne_vdaf_config_from_janus_vdaf(vdaf: &VdafInstance) -> daphne::VdafConfig
 
         _ => panic!("Unsupported VdafInstance: {:?}", vdaf),
     }
-}
-
-// Generates the contents of a "dotenv" file (https://www.dotenv.org) given a map from environment
-// variable name to environment variable value.
-fn to_env_content(env: HashMap<String, String>) -> String {
-    let mut dotenv_content = String::new();
-    for (env_name, env_value) in env {
-        assert!(!env_value.contains('\'')); // vague attempt to avoid quoting issues
-        writeln!(dotenv_content, "{} = '{}'", env_name, env_value).unwrap();
-    }
-    dotenv_content
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-struct WranglerConfig {
-    workers_dev: bool,
-    #[serde(rename = "type")]
-    build_type: String,
-    compatibility_date: String,
-
-    build: WranglerBuildConfig,
-    durable_objects: WranglerDurableObjectsConfig,
-    vars: WranglerVarsConfig,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-struct WranglerBuildConfig {
-    upload: WranglerBuildUploadConfig,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-struct WranglerBuildUploadConfig {
-    dir: String,
-    format: String,
-    main: String,
-
-    rules: Vec<WranglerBuildUploadRulesConfig>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-struct WranglerBuildUploadRulesConfig {
-    globs: Vec<String>,
-    #[serde(rename = "type")]
-    module_type: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-struct WranglerDurableObjectsConfig {
-    bindings: Vec<WranglerDurableObjectBinding>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-struct WranglerDurableObjectBinding {
-    name: String,
-    class_name: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-struct WranglerVarsConfig {
-    workers_rs_version: String,
 }
 
 // Corresponds to Daphne's `HpkeReceiverConfig`. We can't use that type directly as some of the

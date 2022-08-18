@@ -104,7 +104,7 @@ impl Cluster {
         .await
         .expect("timeout waiting for forwarded port to become writable");
 
-        PortForward { child }
+        PortForward { local_port, child }
     }
 }
 
@@ -185,7 +185,15 @@ impl Drop for EphemeralCluster {
 /// A guard on a running `kubectl port-forward` process. The process will be killed and reaped when
 /// the guard is dropped.
 pub struct PortForward {
+    local_port: u16,
     child: Child,
+}
+
+impl PortForward {
+    /// Returns the local port being forwarded into a Kubernetes cluster.
+    pub fn local_port(&self) -> u16 {
+        self.local_port
+    }
 }
 
 impl Drop for PortForward {

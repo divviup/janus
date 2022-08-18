@@ -3,17 +3,21 @@ name = "monolithic_integration_test"
 version = "0.1.0"
 edition = "2021"
 license = "MPL-2.0"
-rust-version = "1.60"
+rust-version = "1.63"
 publish = false
 
 [features]
 daphne = [
     "dep:daphne",
-    "dep:nix",
-    "dep:subprocess",
+    "dep:portpicker",
+    "dep:regex",
     "dep:tempfile",
+    "dep:testcontainers",
 ]
 janus = [
+    "dep:interop_binaries",
+    "dep:portpicker",
+    "dep:testcontainers",
     "janus_core/test-util",
     "janus_server/test-util"
 ]
@@ -26,6 +30,7 @@ futures = "0.3.23"
 hex = "0.4"
 hpke-dispatch = "0.3"
 http = "0.2"
+interop_binaries = { path = "../interop_binaries", features = ["testcontainer"], optional = true }
 itertools = "0.10"
 janus_core = { path = "../janus_core" }
 janus_server = { path = "../janus_server" }
@@ -34,13 +39,14 @@ kube = { version = "0.65.0", default-features = false, features = ["client"] }
 lazy_static = "1"
 nix = { version = "0.25", default-features = false, features = ["signal"], optional = true }
 opentelemetry = { version = "0.17", features = ["metrics", "rt-tokio"] }
-portpicker = "0.1"
+portpicker = { version = "0.1", optional = true }
 rand = "0.8"
+regex = { version = "1", optional = true }
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 serde = "1"
 serde_json = "1"
-subprocess = { version = "0.2", optional = true }
 tempfile = { version = "3", optional = true }
+testcontainers = { version = "0.14.0", optional = true }
 tokio = { version = "1", features = ["full", "tracing"] }
 toml = "0.5"
 tracing = "0.1.36"
@@ -55,4 +61,4 @@ monolithic_integration_test = { path = ".", features = ["daphne", "janus"] }
 opentelemetry = { version = "0.17.0", features = ["metrics", "rt-tokio"] }
 prio = "0.8.2"
 ring = "0.16.20"
-testcontainers = "0.14.0"
+tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
