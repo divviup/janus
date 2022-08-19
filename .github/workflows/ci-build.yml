@@ -36,16 +36,16 @@ jobs:
       run: cargo clippy --workspace --all-targets
     - name: check, all features
       run: cargo check --all-features
+    - name: Document
+      env:
+        CARGO_TARGET_DIR: "/tmp/rustdoc"
+        RUSTDOCFLAGS: "-D warnings"
+      run: cargo doc
     - name: Build
       run: cargo test --no-run --locked
     - name: Test
       # set PATH to ensure we use go binaries installed above
       run: PATH=$(go env GOPATH)/bin:$PATH cargo test
-    - name: document
-      env:
-        CARGO_TARGET_DIR: "target/doc-deny"
-        RUSTDOCFLAGS: "-Dwarnings"
-      run: cargo doc
 
   janus_server_docker:
     runs-on: ubuntu-latest
