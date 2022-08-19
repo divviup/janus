@@ -71,7 +71,7 @@ impl Daphne {
                 min_batch_duration: task.min_batch_duration.as_seconds(),
                 min_batch_size: task.min_batch_size,
                 vdaf: daphne_vdaf_config_from_janus_vdaf(&task.vdaf),
-                vdaf_verify_key: hex::encode(task.vdaf_verify_keys.first().unwrap()),
+                vdaf_verify_key: hex::encode(task.vdaf_verify_keys().first().unwrap().as_bytes()),
                 collector_hpke_config: DaphneHpkeConfig::from(task.collector_hpke_config.clone()),
             },
         )]))

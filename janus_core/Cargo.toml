@@ -30,6 +30,7 @@ anyhow = "1"
 base64 = "0.13.0"
 bytes = { version = "1.2.1", optional = true }
 chrono = "0.4"
+derivative = "2.2.0"
 hex = "0.4"
 hpke-dispatch = "0.3.0"
 kube = { version = "0.65", optional = true, default-features = false, features = ["client", "rustls-tls"] }

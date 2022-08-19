@@ -94,7 +94,7 @@ impl From<Task> for AddTaskRequest {
             task_id: base64::encode_config(task.id.as_bytes(), URL_SAFE_NO_PAD),
             leader: task.aggregator_url(Role::Leader).unwrap().clone(),
             helper: task.aggregator_url(Role::Helper).unwrap().clone(),
-            vdaf: task.vdaf.into(),
+            vdaf: task.vdaf.clone().into(),
             leader_authentication_token: String::from_utf8(
                 task.aggregator_auth_tokens
                     .first()
@@ -109,7 +109,7 @@ impl From<Task> for AddTaskRequest {
                 .map(|t| String::from_utf8(t.as_bytes().to_vec()).unwrap()),
             aggregator_id: task.role.index().unwrap().try_into().unwrap(),
             verify_key: base64::encode_config(
-                task.vdaf_verify_keys.first().unwrap(),
+                task.vdaf_verify_keys().first().unwrap().as_bytes(),
                 URL_SAFE_NO_PAD,
             ),
             max_batch_lifetime: task.max_batch_lifetime,

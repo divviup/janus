@@ -20,6 +20,7 @@ use janus_server::{
     config::DbConfig,
     datastore::{Crypter, Datastore},
     task::{AuthenticationToken, Task},
+    SecretBytes,
 };
 use opentelemetry::global::meter;
 use prio::codec::Decode;
@@ -51,8 +52,10 @@ async fn handle_add_task(
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
-    let verify_key = base64::decode_config(request.verify_key, URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"verifyKey\"")?;
+    let verify_key = SecretBytes::new(
+        base64::decode_config(request.verify_key, URL_SAFE_NO_PAD)
+            .context("invalid base64url content in \"verifyKey\"")?,
+    );
     let min_batch_duration = Duration::from_seconds(request.min_batch_duration);
     let collector_hpke_config_bytes =
         base64::decode_config(request.collector_hpke_config, URL_SAFE_NO_PAD)
