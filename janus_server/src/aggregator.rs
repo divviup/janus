@@ -23,10 +23,7 @@ use crate::{
         AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
         CollectReq, CollectResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
-    task::{
-        self, Task, VdafInstance, VerifyKeyStaticSize, DAP_AUTH_HEADER,
-        PRIO3_AES128_VERIFY_KEY_LENGTH,
-    },
+    task::{Task, VdafInstance, VerifyKey, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use bytes::Bytes;
 use futures::try_join;
@@ -547,23 +544,16 @@ impl TaskAggregator {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
     fn new(task: Task) -> Result<Self, Error> {
-        let current_vdaf_verify_key = task.vdaf_verify_keys.last().unwrap();
         let vdaf_ops = match &task.vdaf {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 let vdaf = Prio3::new_aes128_count(2)?;
-                let verify_key = current_vdaf_verify_key
-                    .clone()
-                    .try_into()
-                    .map_err(|_| Error::TaskParameters(task::Error::AggregatorAuthKeySize))?;
+                let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Aes128Count(Arc::new(vdaf), verify_key)
             }
 
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 let vdaf = Prio3::new_aes128_sum(2, *bits)?;
-                let verify_key = current_vdaf_verify_key
-                    .clone()
-                    .try_into()
-                    .map_err(|_| Error::TaskParameters(task::Error::AggregatorAuthKeySize))?;
+                let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Aes128Sum(Arc::new(vdaf), verify_key)
             }
 
@@ -571,10 +561,7 @@ impl TaskAggregator {
                 buckets,
             }) => {
                 let vdaf = Prio3::new_aes128_histogram(2, buckets)?;
-                let verify_key = current_vdaf_verify_key
-                    .clone()
-                    .try_into()
-                    .map_err(|_| Error::TaskParameters(task::Error::AggregatorAuthKeySize))?;
+                let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Aes128Histogram(Arc::new(vdaf), verify_key)
             }
 
@@ -714,15 +701,15 @@ enum VdafOps {
     // For the Prio3 VdafOps, the second parameter is the verify_key.
     Prio3Aes128Count(
         Arc<Prio3Aes128Count>,
-        VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
     ),
     Prio3Aes128Sum(
         Arc<Prio3Aes128Sum>,
-        VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
     ),
     Prio3Aes128Histogram(
         Arc<Prio3Aes128Histogram>,
-        VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
     ),
 
     #[cfg(test)]
@@ -851,7 +838,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counters,
                     task,
-                    &VerifyKeyStaticSize::new([]),
+                    &VerifyKey::new([]),
                     req,
                 )
                 .await
@@ -1022,7 +1009,7 @@ impl VdafOps {
         vdaf: &A,
         aggregate_step_failure_counters: &AggregateStepFailureCounters,
         task: &Task,
-        verify_key: &VerifyKeyStaticSize<L>,
+        verify_key: &VerifyKey<L>,
         req: AggregateInitializeReq,
     ) -> Result<AggregateInitializeResp, Error>
     where
@@ -3119,13 +3106,8 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
-            .vdaf_verify_keys
-            .get(0)
-            .unwrap()
-            .clone()
-            .try_into()
-            .unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
@@ -3522,13 +3504,8 @@ mod tests {
         let datastore = Arc::new(datastore);
 
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
-            .vdaf_verify_keys
-            .get(0)
-            .unwrap()
-            .clone()
-            .try_into()
-            .unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
@@ -3797,13 +3774,8 @@ mod tests {
         );
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
-            .vdaf_verify_keys
-            .get(0)
-            .unwrap()
-            .clone()
-            .try_into()
-            .unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.

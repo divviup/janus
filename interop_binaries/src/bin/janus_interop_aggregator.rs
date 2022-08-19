@@ -19,7 +19,8 @@ use janus_server::{
     binary_utils::{database_pool, job_driver::JobDriver},
     config::DbConfig,
     datastore::{Crypter, Datastore},
-    task::{AuthenticationToken, Task, VerifyKeyDynamicSize},
+    task::{AuthenticationToken, Task},
+    SecretBytes,
 };
 use opentelemetry::global::meter;
 use prio::codec::Decode;
@@ -83,7 +84,7 @@ async fn handle_add_task(
     let vdaf: janus_server::task::VdafInstance = vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
-    let verify_key = VerifyKeyDynamicSize::new(
+    let verify_key = SecretBytes::new(
         base64::decode_config(request.verify_key, URL_SAFE_NO_PAD)
             .context("invalid base64url content in \"verifyKey\"")?,
     );

@@ -12,9 +12,7 @@ use crate::{
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
-    task::{
-        Task, VdafInstance, VerifyKeyStaticSize, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH,
-    },
+    task::{Task, VdafInstance, VerifyKey, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::{anyhow, Context, Result};
 use futures::{
@@ -123,17 +121,11 @@ impl AggregationJobDriver {
                     let task = tx.get_task(task_id).await?.ok_or_else(|| {
                         datastore::Error::User(anyhow!("couldn't find task {}", task_id).into())
                     })?;
-                    let verify_key = task
-                        .vdaf_verify_keys
-                        .get(0)
-                        .unwrap()
-                        .clone()
-                        .try_into()
-                        .map_err(|_| {
-                            datastore::Error::User(
-                                anyhow!("VDAF verification key has wrong length").into(),
-                            )
-                        })?;
+                    let verify_key = task.primary_vdaf_verify_key().map_err(|_| {
+                        datastore::Error::User(
+                            anyhow!("VDAF verification key has wrong length").into(),
+                        )
+                    })?;
 
                     let aggregation_job_future =
                         tx.get_aggregation_job::<L, A>(task_id, aggregation_job_id);
@@ -234,7 +226,7 @@ impl AggregationJobDriver {
         aggregation_job: AggregationJob<L, A>,
         report_aggregations: Vec<ReportAggregation<L, A>>,
         client_reports: Vec<Report>,
-        verify_key: VerifyKeyStaticSize<L>,
+        verify_key: VerifyKey<L>,
     ) -> Result<()>
     where
         A: 'static,
@@ -848,7 +840,7 @@ mod tests {
             AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
             AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
         },
-        task::{test_util::new_dummy_task, VerifyKeyStaticSize, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{test_util::new_dummy_task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
     use http::header::CONTENT_TYPE;
@@ -898,13 +890,8 @@ mod tests {
             Url::parse(&mockito::server_url()).unwrap(),
         ];
         let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
-            .vdaf_verify_keys
-            .get(0)
-            .unwrap()
-            .clone()
-            .try_into()
-            .unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce, &0);
 
@@ -1095,13 +1082,8 @@ mod tests {
             Url::parse(&mockito::server_url()).unwrap(),
         ];
         let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
-            .vdaf_verify_keys
-            .get(0)
-            .unwrap()
-            .clone()
-            .try_into()
-            .unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce, &0);
 
@@ -1282,13 +1264,8 @@ mod tests {
             Url::parse(&mockito::server_url()).unwrap(),
         ];
         let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
-            .vdaf_verify_keys
-            .get(0)
-            .unwrap()
-            .clone()
-            .try_into()
-            .unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
 
         let transcript = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce, &0);
 
@@ -1497,13 +1474,8 @@ mod tests {
             Url::parse(&mockito::server_url()).unwrap(),
         ];
         let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> = task
-            .vdaf_verify_keys
-            .get(0)
-            .unwrap()
-            .clone()
-            .try_into()
-            .unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
 
         let input_shares =
             run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce, &0).input_shares;
@@ -1656,8 +1628,8 @@ mod tests {
         ];
         let agg_auth_token = task.primary_aggregator_auth_token();
         let aggregation_job_id = AggregationJobId::random();
-        let verify_key: VerifyKeyStaticSize<PRIO3_AES128_VERIFY_KEY_LENGTH> =
-            task.vdaf_verify_keys[0].clone().try_into().unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
 
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
