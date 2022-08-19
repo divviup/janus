@@ -7,9 +7,10 @@ documentation = "https://docs.rs/janus_client"
 homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
-rust-version = "1.60"
+rust-version = "1.63"
 
 [dependencies]
+derivative = "2.2.0"
 http = "0.2.8"
 janus_core = { version = "0.1", path = "../janus_core" }
 prio = "0.8.2"

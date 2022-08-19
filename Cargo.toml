@@ -1,3 +1,12 @@
 [workspace]
-members = ["interop_binaries", "janus_core", "janus_client", "janus_server", "monolithic_integration_test"]
+members = ["build_script_utils", "interop_binaries", "janus_core", "janus_client", "janus_server", "monolithic_integration_test"]
 resolver = "2"
+
+[profile.small]
+# We define a profile intended to minimize the eventual binary size, while still allowing for
+# relatively fast compilation. It is intended for use in size-constrained testing scenarios, e.g.
+# building a binary artifact that ends up embedded in another binary.
+inherits = "dev"
+opt-level = "z"   # Optimize for size.
+debug = false     # Do not generate debug info.
+strip = true      # Strip symbols from binary.

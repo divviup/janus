@@ -1,6 +1,7 @@
 //! Configuration for various Janus binaries.
 
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
+use derivative::Derivative;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, net::SocketAddr};
 use url::Url;
@@ -33,9 +34,11 @@ pub trait BinaryConfig: Debug + DeserializeOwned {
 }
 
 /// Configuration for a Janus server using a database.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Derivative, PartialEq, Eq, Serialize, Deserialize)]
+#[derivative(Debug)]
 pub struct DbConfig {
     /// URL at which to connect to the database.
+    #[derivative(Debug(format_with = "std::fmt::Display::fmt"))]
     pub url: Url,
     /// Timeout in seconds to apply when creating, waiting for, or recycling
     /// connection pool objects. This value will be used to construct a

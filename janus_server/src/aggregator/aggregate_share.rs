@@ -12,6 +12,7 @@ use crate::{
     task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     task::{VdafInstance, DAP_AUTH_HEADER},
 };
+use derivative::Derivative;
 use futures::{future::BoxFuture, try_join};
 use http::header::CONTENT_TYPE;
 #[cfg(test)]
@@ -29,13 +30,15 @@ use prio::{
         Aggregatable,
     },
 };
-use std::{fmt::Debug, sync::Arc};
+use std::sync::Arc;
 use tracing::{debug, error, warn};
 
 /// Drives a collect job.
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct CollectJobDriver {
     http_client: reqwest::Client,
+    #[derivative(Debug = "ignore")]
     job_cancel_counter: BoundCounter<u64>,
 }
 

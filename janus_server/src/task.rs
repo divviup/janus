@@ -12,7 +12,11 @@ use janus_core::{
 };
 use ring::constant_time;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
-use std::{array::TryFromSliceError, collections::HashMap};
+use std::{
+    array::TryFromSliceError,
+    collections::HashMap,
+    fmt::{self, Formatter},
+};
 use url::Url;
 
 /// HTTP header where auth tokens are provided in inter-aggregator messages.
@@ -199,6 +203,7 @@ pub struct Task {
     pub id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
+    #[derivative(Debug(format_with = "fmt_vector_of_urls"))]
     pub aggregator_endpoints: Vec<Url>,
     /// The VDAF this task executes.
     pub vdaf: VdafInstance,
@@ -364,6 +369,14 @@ impl Task {
     pub fn vdaf_verify_keys(&self) -> &[SecretBytes] {
         &self.vdaf_verify_keys
     }
+}
+
+fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
+    let mut list = f.debug_list();
+    for url in urls {
+        list.entry(&format!("{}", url));
+    }
+    list.finish()
 }
 
 /// SerializedTask is an intermediate representation for tasks being serialized via the Serialize &

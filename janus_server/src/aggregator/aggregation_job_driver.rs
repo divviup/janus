@@ -15,6 +15,7 @@ use crate::{
     task::{Task, VdafInstance, VerifyKey, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::{anyhow, Context, Result};
+use derivative::Derivative;
 use futures::{
     future::{try_join_all, BoxFuture, FutureExt},
     try_join,
@@ -34,16 +35,16 @@ use prio::{
         PrepareTransition,
     },
 };
-use std::{
-    fmt::{self, Debug},
-    sync::Arc,
-};
+use std::{fmt, sync::Arc};
 use tracing::warn;
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct AggregationJobDriver {
     http_client: reqwest::Client,
+    #[derivative(Debug = "ignore")]
     aggregate_step_failure_counters: AggregateStepFailureCounters,
+    #[derivative(Debug = "ignore")]
     job_cancel_counter: BoundCounter<u64>,
 }
 

@@ -273,6 +273,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "build_script_utils"
+version = "0.1.0"
+dependencies = [
+ "zstd",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -295,6 +302,9 @@ name = "cc"
 version = "1.0.73"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fff2a6927b3bb87f9595d67196a70493f627687a71d87a0d692242c33f58c11"
+dependencies = [
+ "jobserver",
+]
 
 [[package]]
 name = "cfg-if"
@@ -1575,6 +1585,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "build_script_utils",
  "clap 3.2.16",
  "janus_client",
  "janus_core",
@@ -1584,6 +1595,7 @@ dependencies = [
  "portpicker",
  "prio",
  "rand",
+ "regex",
  "reqwest",
  "ring",
  "serde",
@@ -1595,6 +1607,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "warp",
+ "zstd",
 ]
 
 [[package]]
@@ -1623,6 +1636,7 @@ name = "janus_client"
 version = "0.1.8"
 dependencies = [
  "assert_matches",
+ "derivative",
  "http",
  "janus_core",
  "mockito",
@@ -1729,6 +1743,15 @@ dependencies = [
  "uuid",
  "wait-timeout",
  "warp",
+]
+
+[[package]]
+name = "jobserver"
+version = "0.1.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af25a77299a7f711a01975c35a6a424eb6862092cc2d6c72c4ed6cbc56dfc1fa"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -2015,11 +2038,12 @@ name = "monolithic_integration_test"
 version = "0.1.0"
 dependencies = [
  "backoff",
+ "build_script_utils",
  "daphne",
  "futures",
  "hex",
- "hpke-dispatch",
  "http",
+ "interop_binaries",
  "itertools",
  "janus_client",
  "janus_core",
@@ -2028,23 +2052,16 @@ dependencies = [
  "kube",
  "lazy_static",
  "monolithic_integration_test",
- "nix",
- "opentelemetry",
  "portpicker",
  "prio",
  "rand",
  "reqwest",
- "ring",
  "serde",
  "serde_json",
- "subprocess",
- "tempfile",
  "testcontainers",
  "tokio",
- "toml",
  "tracing",
  "url",
- "warp",
 ]
 
 [[package]]
@@ -2087,18 +2104,6 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
-]
-
-[[package]]
-name = "nix"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e322c04a9e3440c327fca7b6c8a63e6890a32fa2ad689db972425f07e0d22abb"
-dependencies = [
- "autocfg",
- "bitflags",
- "cfg-if 1.0.0",
- "libc",
 ]
 
 [[package]]
@@ -3451,16 +3456,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "subprocess"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c2e86926081dda636c546d8c5e641661049d7562a68f5488be4a1f7f66f6086"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "subtle"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4685,4 +4680,33 @@ dependencies = [
  "quote",
  "syn",
  "synstructure",
+]
+
+[[package]]
+name = "zstd"
+version = "0.11.2+zstd.1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20cc960326ece64f010d2d2107537f26dc589a6573a316bd5b1dba685fa5fde4"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "5.0.2+zstd.1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d2a5585e04f9eea4b2a3d1eca508c4dee9592a89ef6f450c11719da0726f4db"
+dependencies = [
+ "libc",
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.0.1+zstd.1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fd07cbbc53846d9145dbffdf6dd09a7a0aa52be46741825f5c97bdd4f73f12b"
+dependencies = [
+ "cc",
+ "libc",
 ]

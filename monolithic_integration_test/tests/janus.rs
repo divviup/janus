@@ -1,4 +1,4 @@
-use common::{create_test_tasks, pick_two_unused_ports, submit_measurements_and_verify_aggregate};
+use common::{create_test_tasks, generate_network_name, submit_measurements_and_verify_aggregate};
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
     test_util::install_test_trace_subscriber,
@@ -19,9 +19,9 @@ struct JanusPair {
     collector_private_key: HpkePrivateKey,
 
     /// Handle to the leader's resources, which are released on drop.
-    _leader: Janus,
+    leader: Janus,
     /// Handle to the helper's resources, which are released on drop.
-    _helper: Janus,
+    helper: Janus,
 }
 
 impl JanusPair {
@@ -54,23 +54,16 @@ impl JanusPair {
     ///  - `JANUS_E2E_LEADER_NAMESPACE`: The Kubernetes namespace where the DAP leader is deployed.
     ///  - `JANUS_E2E_HELPER_NAMESPACE`: The Kubernetes namespace where the DAP helper is deployed.
     pub async fn new() -> Self {
-        let (leader_port, helper_port) = pick_two_unused_ports();
         let (collector_hpke_config, collector_private_key) =
             generate_test_hpke_config_and_private_key();
-        let (mut leader_task, mut helper_task) =
-            create_test_tasks(leader_port, helper_port, &collector_hpke_config);
-
-        let kubeconfig_path = env::var("JANUS_E2E_KUBE_CONFIG_PATH");
-        let kubectl_context_name = env::var("JANUS_E2E_KUBECTL_CONTEXT_NAME");
-        let leader_namespace = env::var("JANUS_E2E_LEADER_NAMESPACE");
-        let helper_namespace = env::var("JANUS_E2E_HELPER_NAMESPACE");
+        let (mut leader_task, mut helper_task) = create_test_tasks(&collector_hpke_config);
 
         // The environment variables should either all be present, or all be absent
         let (leader, helper) = match (
-            kubeconfig_path,
-            kubectl_context_name,
-            leader_namespace,
-            helper_namespace,
+            env::var("JANUS_E2E_KUBE_CONFIG_PATH"),
+            env::var("JANUS_E2E_KUBECTL_CONTEXT_NAME"),
+            env::var("JANUS_E2E_LEADER_NAMESPACE"),
+            env::var("JANUS_E2E_HELPER_NAMESPACE"),
         ) {
             (
                 Ok(kubeconfig_path),
@@ -84,29 +77,23 @@ impl JanusPair {
                 // and so they need the in-cluster DNS name of the other aggregator. However, since
                 // aggregators use the endpoint URLs in the task to construct collect job URIs, we
                 // must only fix the _peer_ aggregator's endpoint.
-                let mut amended_leader_task = leader_task.clone();
-                amended_leader_task.aggregator_endpoints[1] =
+                leader_task.aggregator_endpoints[1] =
                     Self::in_cluster_aggregator_url(&helper_namespace);
-
                 let leader = Janus::new_with_kubernetes_cluster(
                     &kubeconfig_path,
                     &kubectl_context_name,
                     &leader_namespace,
-                    &amended_leader_task,
-                    leader_port,
+                    &leader_task,
                 )
                 .await;
 
-                let mut amended_helper_task = helper_task.clone();
-                amended_helper_task.aggregator_endpoints[0] =
+                helper_task.aggregator_endpoints[0] =
                     Self::in_cluster_aggregator_url(&leader_namespace);
-
                 let helper = Janus::new_with_kubernetes_cluster(
                     &kubeconfig_path,
                     &kubectl_context_name,
                     &helper_namespace,
-                    &amended_helper_task,
-                    helper_port,
+                    &helper_task,
                 )
                 .await;
 
@@ -122,16 +109,10 @@ impl JanusPair {
                 Err(VarError::NotPresent),
                 Err(VarError::NotPresent),
             ) => {
-                // Update tasks to serve out of /dap/ prefix.
-                for task in [&mut leader_task, &mut helper_task] {
-                    for url in &mut task.aggregator_endpoints {
-                        url.set_path("/dap/");
-                    }
-                }
-
+                let network = generate_network_name();
                 (
-                    Janus::new_in_process(leader_port, &leader_task).await,
-                    Janus::new_in_process(helper_port, &helper_task).await,
+                    Janus::new_in_container(&network, &leader_task).await,
+                    Janus::new_in_container(&network, &helper_task).await,
                 )
             }
             _ => panic!("unexpected environment variables"),
@@ -140,8 +121,8 @@ impl JanusPair {
         Self {
             leader_task,
             collector_private_key,
-            _leader: leader,
-            _helper: helper,
+            leader,
+            helper,
         }
     }
 }
@@ -151,12 +132,13 @@ impl JanusPair {
 async fn janus_janus() {
     install_test_trace_subscriber();
 
+    // Start servers.
     let janus_pair = JanusPair::new().await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
+        (janus_pair.leader.port(), janus_pair.helper.port()),
         &janus_pair.leader_task,
-        &janus_pair.leader_task.collector_hpke_config,
         &janus_pair.collector_private_key,
     )
     .await;
