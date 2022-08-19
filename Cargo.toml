@@ -2,6 +2,11 @@
 members = ["build_script_utils", "interop_binaries", "janus_core", "janus_client", "janus_server", "monolithic_integration_test"]
 resolver = "2"
 
+[profile.dev]
+# Disabling debug info improves build speeds & reduces
+# build artifact sizes (which helps CI caching).
+debug = 0
+
 [profile.small]
 # We define a profile intended to minimize the eventual binary size, while still allowing for
 # relatively fast compilation. It is intended for use in size-constrained testing scenarios, e.g.
