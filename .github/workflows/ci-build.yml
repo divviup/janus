@@ -14,21 +14,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - name: cache
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Install Kind
       # We should always make sure that the `kind` CLI we install is from the
       # same release as the node image version used by
       # `janus_core::test_util::kubernetes::EphemeralCluster`
       run: go install sigs.k8s.io/kind@v0.14.0
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        components: clippy, rustfmt
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
     - name: lint
       run: cargo fmt --message-format human -- --check
     - name: clippy
