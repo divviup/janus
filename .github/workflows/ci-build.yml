@@ -34,8 +34,6 @@ jobs:
       run: cargo fmt --message-format human -- --check
     - name: clippy
       run: cargo clippy --workspace --all-targets
-    - name: check, all features
-      run: cargo check --all-features
     - name: Document
       env:
         CARGO_TARGET_DIR: "/tmp/rustdoc"
