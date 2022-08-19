@@ -40,6 +40,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
+      JANUS_INTEROP_CONTAINER: skip
       RUSTDOCFLAGS: "-D warnings"
       RUSTFLAGS: "-D warnings"
     steps:
