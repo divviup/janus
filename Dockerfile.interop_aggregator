@@ -1,6 +1,8 @@
-FROM rust:1.63-alpine as builder
-RUN apk add libc-dev
+ARG PROFILE=release
 
+FROM rust:1.63-alpine as builder
+ARG PROFILE
+RUN apk add libc-dev
 WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
@@ -11,7 +13,7 @@ COPY janus_core /src/janus_core
 COPY janus_client /src/janus_client
 COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build -p interop_binaries --bin janus_interop_aggregator && cp /src/target/debug/janus_interop_aggregator /janus_interop_aggregator
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --profile $PROFILE -p interop_binaries --bin janus_interop_aggregator && cp /src/target/$PROFILE/janus_interop_aggregator /janus_interop_aggregator
 
 FROM postgres:14-bullseye
 RUN mkdir /logs

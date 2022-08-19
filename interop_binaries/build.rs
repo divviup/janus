@@ -28,6 +28,8 @@ fn main() {
             .args([
                 "build",
                 "--file=Dockerfile.interop_aggregator",
+                "--build-arg",
+                "PROFILE=small",
                 "--quiet",
                 ".",
             ])

@@ -1,7 +1,10 @@
+ARG BINARY
+ARG PROFILE=release
+
 FROM rust:1.63-alpine as builder
 ARG BINARY
+ARG PROFILE
 RUN apk add libc-dev
-
 WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
@@ -12,7 +15,7 @@ COPY janus_core /src/janus_core
 COPY janus_client /src/janus_client
 COPY janus_server /src/janus_server
 COPY monolithic_integration_test /src/monolithic_integration_test
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build -p interop_binaries --bin $BINARY && cp /src/target/debug/$BINARY /$BINARY
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --profile $PROFILE -p interop_binaries --bin $BINARY && cp /src/target/$PROFILE/$BINARY /$BINARY
 
 FROM alpine:3.16.1
 ARG BINARY

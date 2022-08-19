@@ -1,3 +1,11 @@
 [workspace]
 members = ["build_script_utils", "interop_binaries", "janus_core", "janus_client", "janus_server", "monolithic_integration_test"]
 resolver = "2"
+
+[profile.small]
+# We define a profile intended to minimize the eventual binary size, intended for use in
+# size-constrained scenarios, e.g. including in a container image that is embedded in a binary.
+inherits = "dev"
+opt-level = "z"   # Optimize for size.
+debug = false     # Do not generate debug info.
+strip = true      # Strip symbols from binary.
