@@ -15,6 +15,8 @@ jobs:
       RUSTFLAGS: "-D warnings"
     steps:
     - uses: actions/checkout@v3
+    - name: Setup Go toolchain
+      uses: actions/setup-go@v3
     - name: Install Kind
       # We should always make sure that the `kind` CLI we install is from the
       # same release as the node image version used by
@@ -31,8 +33,7 @@ jobs:
     - name: Build
       run: cargo test --no-run --locked
     - name: Test
-      # set PATH to ensure we use go binaries installed above
-      run: PATH=$(go env GOPATH)/bin:$PATH cargo test
+      run: cargo test
   
   janus_lints:
     runs-on: ubuntu-latest
