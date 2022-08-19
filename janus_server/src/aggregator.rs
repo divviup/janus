@@ -207,7 +207,6 @@ impl From<datastore::Error> for Error {
 }
 
 /// Bound counters to record each possible cause of failures when stepping a report's aggregation.
-#[derive(Debug)]
 pub(crate) struct AggregateStepFailureCounters {
     missing_leader_input_share: BoundCounter<u64>,
     missing_helper_input_share: BoundCounter<u64>,
