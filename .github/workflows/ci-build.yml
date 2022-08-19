@@ -9,6 +9,7 @@ on:
 env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   janus_server_build:
@@ -32,7 +33,7 @@ jobs:
     - name: lint
       run: cargo fmt --message-format human -- --check
     - name: clippy
-      run: cargo clippy --workspace --all-targets -- -D warnings
+      run: cargo clippy --workspace --all-targets
     - name: check, all features
       run: cargo check --all-features
     - name: Build
