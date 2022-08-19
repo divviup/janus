@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  janus_server_build:
+  janus_build:
     runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
@@ -26,27 +26,38 @@ jobs:
         toolchain: stable
         profile: minimal
         override: true
-        components: clippy, rustfmt
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
-    - name: Lint
-      run: cargo fmt --message-format human -- --check
-    - name: Clippy
-      env:
-        CARGO_TARGET_DIR: "/tmp/target"
-      run: cargo clippy --workspace --all-targets
-    - name: Document
-      env:
-        CARGO_TARGET_DIR: "/tmp/target"
-        RUSTDOCFLAGS: "-D warnings"
-      run: cargo doc
     - name: Build
       run: cargo test --no-run --locked
     - name: Test
       # set PATH to ensure we use go binaries installed above
       run: PATH=$(go env GOPATH)/bin:$PATH cargo test
+  
+  janus_lints:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_TERM_COLOR: always
+      RUSTDOCFLAGS: "-D warnings"
+      RUSTFLAGS: "-D warnings"
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        components: clippy, rustfmt
+    - name: Format
+      run: cargo fmt --message-format human -- --check
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets
+    - name: Document
+      run: cargo doc -- -D warnings
 
-  janus_server_docker:
+  janus_docker:
     runs-on: ubuntu-latest
     env:
       DOCKER_BUILDKIT: 1
