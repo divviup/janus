@@ -47,6 +47,11 @@ jobs:
         CARGO_TARGET_DIR: "target/doc-deny"
         RUSTDOCFLAGS: "-Dwarnings"
       run: cargo doc
+    - name: cache cleanup
+      # Delete some heavyweight files as an interim stopgap, so that the cache
+      # action can successfully upload without exhausting disk space.
+      run: |
+        docker system prune --force
 
   janus_server_docker:
     runs-on: ubuntu-latest
