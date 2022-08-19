@@ -2595,13 +2595,15 @@ pub mod models {
     }
 
     /// AggregationJob represents an aggregation job from the PPM specification.
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Derivative)]
+    #[derivative(Debug)]
     pub struct AggregationJob<const L: usize, A: vdaf::Aggregator<L>>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         pub aggregation_job_id: AggregationJobId,
         pub task_id: TaskId,
+        #[derivative(Debug = "ignore")]
         pub aggregation_param: A::AggregationParam,
         pub state: AggregationJobState,
     }

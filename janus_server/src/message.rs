@@ -2,6 +2,7 @@
 
 use anyhow::anyhow;
 use base64::display::Base64Display;
+use derivative::Derivative;
 use janus_core::{
     hpke::{associated_data_for_aggregate_share, associated_data_for_report_share},
     message::{Extension, HpkeCiphertext, Interval, Nonce, NonceChecksum, TaskId},
@@ -197,10 +198,12 @@ impl AggregationJobId {
 }
 
 /// DAP protocol message representing an aggregation initialization request from leader to helper.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
 pub struct AggregateInitializeReq {
     pub task_id: TaskId,
     pub job_id: AggregationJobId,
+    #[derivative(Debug = "ignore")]
     pub agg_param: Vec<u8>,
     pub report_shares: Vec<ReportShare>,
 }
@@ -318,10 +321,12 @@ impl Decode for AggregateContinueResp {
 
 /// PPM protocol message representing a request from the leader to a helper to provide an
 /// encrypted aggregate of its share of data for a given batch interval.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
 pub struct AggregateShareReq {
     pub(crate) task_id: TaskId,
     pub(crate) batch_interval: Interval,
+    #[derivative(Debug = "ignore")]
     pub(crate) aggregation_param: Vec<u8>,
     pub(crate) report_count: u64,
     pub(crate) checksum: NonceChecksum,
@@ -394,10 +399,12 @@ impl Decode for AggregateShareResp {
 
 /// PPM protocol message representing a request from the collector to the leader to provide
 /// aggregate shares for a given batch interval.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
 pub struct CollectReq {
     pub task_id: TaskId,
     pub batch_interval: Interval,
+    #[derivative(Debug = "ignore")]
     pub agg_param: Vec<u8>,
 }
 

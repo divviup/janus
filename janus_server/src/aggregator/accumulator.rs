@@ -119,10 +119,9 @@ where
 
             if batch_unit_aggregations.len() > 1 {
                 return Err(datastore::Error::DbState(format!(
-                    "found {} batch unit aggregation rows for task {}, interval {unit_interval}, agg parameter {:?}",
+                    "found {} batch unit aggregation rows for task {}, interval {unit_interval}",
                     batch_unit_aggregations.len(),
                     self.task_id,
-                    self.aggregation_param,
                 )));
             }
 
