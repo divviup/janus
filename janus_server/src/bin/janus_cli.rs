@@ -60,6 +60,9 @@ enum Command {
         #[structopt(flatten)]
         common_options: CommonBinaryOptions,
 
+        #[structopt(flatten)]
+        kubernetes_secret_options: KubernetesSecretOptions,
+
         /// A YAML file containing a list of tasks to be written. Existing tasks (matching by task
         /// ID) will be overwritten.
         tasks_file: PathBuf,
@@ -70,11 +73,8 @@ enum Command {
         #[structopt(flatten)]
         common_options: CommonBinaryOptions,
 
-        /// The Kubernetes namespace to create the datastore key secret in.
-        k8s_namespace: String,
-
-        /// The name of the Kubernetes secret to place the datastore key in.
-        k8s_secret_name: String,
+        #[structopt(flatten)]
+        kubernetes_secret_options: KubernetesSecretOptions,
     },
 
     /// Decode a single Distributed Aggregation Protocol message.
@@ -118,8 +118,12 @@ impl Command {
 
             Command::ProvisionTasks {
                 common_options,
+                kubernetes_secret_options,
                 tasks_file,
             } => {
+                let kube_client = kube::Client::try_default()
+                    .await
+                    .context("couldn't connect to Kubernetes environment")?;
                 let config: Config = read_config(common_options)?;
                 install_tracing_and_metrics_handlers(config.common_config())?;
                 let pool = database_pool(
@@ -127,24 +131,35 @@ impl Command {
                     common_options.database_password.as_deref(),
                 )
                 .await?;
-                let datastore =
-                    datastore(pool, RealClock::default(), &common_options.datastore_keys)?;
+
+                let datastore = datastore(
+                    pool,
+                    RealClock::default(),
+                    &kubernetes_secret_options
+                        .datastore_keys(common_options, kube_client)
+                        .await?,
+                )?;
+
                 provision_tasks(&datastore, tasks_file).await
             }
 
             Command::CreateDatastoreKey {
                 common_options,
-                k8s_namespace,
-                k8s_secret_name,
+                kubernetes_secret_options,
             } => {
+                let kube_client = kube::Client::try_default()
+                    .await
+                    .context("couldn't connect to Kubernetes environment")?;
                 let config: Config = read_config(common_options)?;
                 install_tracing_and_metrics_handlers(config.common_config())?;
+                let k8s_namespace = kubernetes_secret_options
+                    .secrets_k8s_namespace
+                    .as_deref()
+                    .context("--secrets-k8s-namespace is required")?;
                 create_datastore_key(
-                    kube::Client::try_default()
-                        .await
-                        .context("couldn't connect to Kubernetes environment")?,
+                    kube_client,
                     k8s_namespace,
-                    k8s_secret_name,
+                    &kubernetes_secret_options.datastore_keys_secret_name,
                 )
                 .await
             }
@@ -216,13 +231,41 @@ async fn provision_tasks<C: Clock>(datastore: &Datastore<C>, tasks_file: &Path) 
         .context("couldn't write tasks")
 }
 
+async fn fetch_datastore_keys(
+    kube_client: &kube::Client,
+    namespace: &str,
+    secret_name: &str,
+    secret_data_key: &str,
+) -> Result<Vec<String>> {
+    debug!(
+        "Fetching value {} from secret {}/{}",
+        secret_data_key, namespace, secret_name,
+    );
+
+    let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client.clone(), namespace);
+
+    let secret = secrets_api
+        .get(secret_name)
+        .await?
+        .data
+        .context(format!("no data on secret {secret_name}"))?;
+    let secret_value = secret.get(secret_data_key).context(format!(
+        "no data key {secret_data_key} on secret {secret_name}"
+    ))?;
+
+    Ok(String::from_utf8(secret_value.0.clone())?
+        .split(',')
+        .map(&str::to_string)
+        .collect())
+}
+
 async fn create_datastore_key(
     kube_client: kube::Client,
     k8s_namespace: &str,
     k8s_secret_name: &str,
 ) -> Result<()> {
     info!("Creating datastore key");
-    let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client, k8s_namespace);
+    let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client.clone(), k8s_namespace);
 
     // Generate a random datastore key & encode it into unpadded base64 as will be expected by
     // consumers of the secret we are about to write.
@@ -296,6 +339,66 @@ fn decode_dap_message(message_file: &str, media_type: &str) -> Result<Box<dyn De
 }
 
 #[derive(Debug, StructOpt)]
+struct KubernetesSecretOptions {
+    /// The Kubernetes namespace where secrets are stored.
+    #[structopt(
+        long,
+        env = "SECRETS_K8S_NAMESPACE",
+        takes_value = true,
+        long_help = "Kubernetes namespace where the datastore key is stored. Required if \
+        --datastore-keys is not set or if command is create-datastore-key."
+    )]
+    secrets_k8s_namespace: Option<String>,
+
+    /// Kubernetes secret containing the datastore key(s).
+    #[structopt(
+        long,
+        env = "DATASTORE_KEYS_SECRET_NAME",
+        takes_value = true,
+        default_value = "datastore-key"
+    )]
+    datastore_keys_secret_name: String,
+
+    /// Key into data of datastore key Kubernetes secret
+    #[structopt(
+        long,
+        env = "DATASTORE_KEYS_SECRET_KEY",
+        takes_value = true,
+        help = "Key into data of datastore key Kubernetes secret",
+        default_value = "datastore_key"
+    )]
+    datastore_keys_secret_data_key: String,
+}
+
+impl KubernetesSecretOptions {
+    /// Fetch the datastore keys from the options. If --secrets-k8s-namespace is set, keys are fetched
+    /// from a secret therein. Otherwise, returns the keys provided to --datastore-keys. If neither was
+    /// set, returns an error.
+    async fn datastore_keys(
+        &self,
+        options: &CommonBinaryOptions,
+        kube_client: kube::Client,
+    ) -> Result<Vec<String>> {
+        if let Some(ref secrets_namespace) = self.secrets_k8s_namespace {
+            fetch_datastore_keys(
+                &kube_client,
+                secrets_namespace,
+                &self.datastore_keys_secret_name,
+                &self.datastore_keys_secret_data_key,
+            )
+            .await
+            .context("failed to fetch datastore key(s) from Kubernetes secret")
+        } else if !options.datastore_keys.is_empty() {
+            Ok(options.datastore_keys.clone())
+        } else {
+            Err(anyhow!(
+                "Either --datastore-keys or --secrets-k8s-namespace must be set"
+            ))
+        }
+    }
+}
+
+#[derive(Debug, StructOpt)]
 #[structopt(
     name = "janus_cli",
     about = "Janus CLI tool",
@@ -325,7 +428,7 @@ impl BinaryConfig for Config {
 
 #[cfg(test)]
 mod tests {
-    use super::Config;
+    use super::{fetch_datastore_keys, Config, KubernetesSecretOptions};
     use base64::STANDARD_NO_PAD;
     use janus_core::{
         message::{Role, TaskId},
@@ -334,6 +437,7 @@ mod tests {
         time::RealClock,
     };
     use janus_server::{
+        binary_utils::CommonBinaryOptions,
         config::test_util::{
             generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
         },
@@ -341,7 +445,6 @@ mod tests {
         datastore::test_util::{ephemeral_datastore, ephemeral_db_handle},
         task::test_util::new_dummy_task,
     };
-    use k8s_openapi::api::core::v1::Secret;
     use ring::aead::{UnboundKey, AES_128_GCM};
     use std::{
         collections::HashMap,
@@ -349,6 +452,65 @@ mod tests {
         net::{Ipv4Addr, SocketAddr},
     };
     use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn options_datastore_keys() {
+        // Prep: create a Kubernetes cluster and put a secret in it
+        let k8s_cluster = kubernetes::EphemeralCluster::create();
+        let kube_client = k8s_cluster.cluster().client().await;
+        super::create_datastore_key(kube_client.clone(), "default", "secret-name")
+            .await
+            .unwrap();
+
+        let expected_datastore_keys =
+            vec!["datastore-key-1".to_string(), "datastore-key-2".to_string()];
+
+        // Keys provided at command line, not present in k8s
+        let mut binary_options = CommonBinaryOptions::default();
+        binary_options.datastore_keys = expected_datastore_keys.clone();
+
+        let k8s_secret_options = KubernetesSecretOptions {
+            datastore_keys_secret_name: "secret-name".to_string(),
+            datastore_keys_secret_data_key: "secret-data-key".to_string(),
+            secrets_k8s_namespace: None,
+        };
+
+        assert_eq!(
+            k8s_secret_options
+                .datastore_keys(&binary_options, kube_client.clone())
+                .await
+                .unwrap(),
+            expected_datastore_keys
+        );
+
+        // Keys not provided at command line, present in k8s
+        let k8s_secret_options = KubernetesSecretOptions {
+            datastore_keys_secret_name: "secret-name".to_string(),
+            datastore_keys_secret_data_key: "datastore_key".to_string(),
+            secrets_k8s_namespace: Some("default".to_string()),
+        };
+
+        assert_eq!(
+            k8s_secret_options
+                .datastore_keys(&CommonBinaryOptions::default(), kube_client.clone())
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // Neither flag provided
+        let k8s_secret_options = KubernetesSecretOptions {
+            datastore_keys_secret_name: "secret-name".to_string(),
+            datastore_keys_secret_data_key: "datastore_key".to_string(),
+            secrets_k8s_namespace: None,
+        };
+
+        k8s_secret_options
+            .datastore_keys(&CommonBinaryOptions::default(), kube_client.clone())
+            .await
+            .unwrap_err();
+    }
 
     #[tokio::test]
     async fn write_schema() {
@@ -421,12 +583,14 @@ mod tests {
             .unwrap();
 
         // Verify that the secret was created.
-        let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client, NAMESPACE);
-        let secret = secrets_api.get(SECRET_NAME).await.unwrap();
-        let secret_data = secret.data.unwrap().get("datastore_key").unwrap().clone();
+        let secret_data =
+            fetch_datastore_keys(&kube_client, NAMESPACE, SECRET_NAME, "datastore_key")
+                .await
+                .unwrap();
 
-        // Verify that the written secret data can be parsed as a datastore key.
-        let datastore_key_bytes = base64::decode_config(&secret_data.0, STANDARD_NO_PAD).unwrap();
+        // Verify that the written secret data can be parsed as a comma-separated list of datastore
+        // keys.
+        let datastore_key_bytes = base64::decode_config(&secret_data[0], STANDARD_NO_PAD).unwrap();
         UnboundKey::new(&AES_128_GCM, &datastore_key_bytes).unwrap();
     }
 

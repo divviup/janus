@@ -157,7 +157,7 @@ pub trait BinaryOptions: StructOpt + Debug {
 }
 
 #[cfg_attr(doc, doc = "Common options that are used by all Janus binaries.")]
-#[derive(StructOpt)]
+#[derive(Default, StructOpt)]
 pub struct CommonBinaryOptions {
     /// Path to configuration YAML.
     #[structopt(
