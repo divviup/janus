@@ -50,7 +50,7 @@ impl Cluster {
     }
 
     /// Set up port forwarding from `local_port` to `service_port` on the service in the namespace.
-    /// Returns a [`PortForwardGuard`] which will kill the child `kubectl` process on drop.
+    /// Returns a [`PortForward`] which will kill the child `kubectl` process on drop.
     pub async fn forward_port(
         &self,
         namespace: &str,
@@ -182,8 +182,8 @@ impl Drop for EphemeralCluster {
     }
 }
 
-/// A guard on a running `kubectl port-forward` process. The process will be killed and reaped when
-/// the guard is dropped.
+/// An active port forward into a Kubernetes cluster. The forwarded port will be closed when this
+/// value is dropped.
 pub struct PortForward {
     local_port: u16,
     child: Child,
