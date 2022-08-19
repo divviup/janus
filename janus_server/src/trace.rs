@@ -119,7 +119,13 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
 
     let mut layers = Vec::new();
     match (output_json, config.use_test_writer) {
-        (true, false) => layers.push(base_layer().json().with_filter(stdout_filter).boxed()),
+        (true, false) => layers.push(
+            base_layer()
+                .json()
+                .with_current_span(false)
+                .with_filter(stdout_filter)
+                .boxed(),
+        ),
         (false, false) => layers.push(base_layer().pretty().with_filter(stdout_filter).boxed()),
         (_, true) => layers.push(
             base_layer()
