@@ -29,13 +29,15 @@ jobs:
         components: clippy, rustfmt
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
-    - name: lint
+    - name: Lint
       run: cargo fmt --message-format human -- --check
-    - name: clippy
+    - name: Clippy
+      env:
+        CARGO_TARGET_DIR: "/tmp/target"
       run: cargo clippy --workspace --all-targets
     - name: Document
       env:
-        CARGO_TARGET_DIR: "/tmp/rustdoc"
+        CARGO_TARGET_DIR: "/tmp/target"
         RUSTDOCFLAGS: "-D warnings"
       run: cargo doc
     - name: Build
