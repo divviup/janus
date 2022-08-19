@@ -4,7 +4,7 @@ use clap::{Arg, Command};
 use interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
-    HpkeConfigRegistry, VdafObject,
+    AddTaskRequest, AddTaskResponse, HpkeConfigRegistry,
 };
 use janus_core::{
     message::{Duration, HpkeConfig, Role, TaskId},
@@ -14,7 +14,7 @@ use janus_core::{
 use janus_server::{
     aggregator::{
         aggregate_share::CollectJobDriver, aggregation_job_creator::AggregationJobCreator,
-        aggregation_job_driver::AggregationJobDriver,
+        aggregation_job_driver::AggregationJobDriver, aggregator_filter,
     },
     binary_utils::{database_pool, job_driver::JobDriver},
     config::DbConfig,
@@ -25,50 +25,19 @@ use opentelemetry::global::meter;
 use prio::codec::Decode;
 use rand::{thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration as StdDuration,
 };
 use tokio::sync::Mutex;
-use url::Url;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
 #[derive(Debug, Serialize)]
-struct EndpointResponse {
-    status: &'static str,
-    endpoint: &'static str,
-}
-
-static ENDPOINT_RESPONSE: EndpointResponse = EndpointResponse {
-    status: "success",
-    endpoint: "/",
-};
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AddTaskRequest {
-    task_id: String,
-    leader: Url,
-    helper: Url,
-    vdaf: VdafObject,
-    leader_authentication_token: String,
-    #[serde(default)]
-    collector_authentication_token: Option<String>,
-    aggregator_id: u8,
-    verify_key: String,
-    max_batch_lifetime: u64,
-    min_batch_size: u64,
-    min_batch_duration: u64,
-    collector_hpke_config: String,
-}
-
-#[derive(Debug, Serialize)]
-struct AddTaskResponse {
-    status: &'static str,
-    #[serde(default)]
-    error: Option<String>,
+struct EndpointResponse<'a> {
+    status: &'a str,
+    endpoint: &'a str,
 }
 
 async fn handle_add_task(
@@ -76,11 +45,10 @@ async fn handle_add_task(
     keyring: &Mutex<HpkeConfigRegistry>,
     request: AddTaskRequest,
 ) -> anyhow::Result<()> {
-    let task_id_bytes = base64::decode_config(request.task_id, base64::URL_SAFE_NO_PAD)
+    let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
         .context("invalid base64url content in \"taskId\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
-    let vdaf: janus_core::task::VdafInstance = request.vdaf.into();
-    let vdaf: janus_server::task::VdafInstance = vdaf.into();
+    let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
     let verify_key = base64::decode_config(request.verify_key, URL_SAFE_NO_PAD)
@@ -141,14 +109,28 @@ async fn handle_add_task(
 
 fn make_filter(
     datastore: Arc<Datastore<RealClock>>,
+    dap_serving_prefix: String,
 ) -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
-    let clock = janus_core::time::RealClock::default();
-    let dap_filter = janus_server::aggregator::aggregator_filter(Arc::clone(&datastore), clock)?;
+    let dap_filter = aggregator_filter(Arc::clone(&datastore), RealClock::default())?;
 
-    let endpoint_filter = warp::path!("endpoint_for_task").map(|| {
-        warp::reply::with_status(warp::reply::json(&ENDPOINT_RESPONSE), StatusCode::OK)
-            .into_response()
+    // Respect dap_serving_prefix.
+    let dap_filter = dap_serving_prefix
+        .split('/')
+        .filter_map(|s| (!s.is_empty()).then(|| warp::path(s.to_owned()).boxed()))
+        .reduce(|x, y| x.and(y).boxed())
+        .unwrap_or_else(|| warp::any().boxed())
+        .and(dap_filter);
+
+    let endpoint_filter = warp::path!("endpoint_for_task").map(move || {
+        warp::reply::with_status(
+            warp::reply::json(&EndpointResponse {
+                status: "success",
+                endpoint: &dap_serving_prefix,
+            }),
+            StatusCode::OK,
+        )
+        .into_response()
     });
     let add_task_filter =
         warp::path!("add_task")
@@ -159,11 +141,11 @@ fn make_filter(
                 async move {
                     let response = match handle_add_task(&datastore, &keyring, request).await {
                         Ok(()) => AddTaskResponse {
-                            status: SUCCESS,
+                            status: SUCCESS.to_string(),
                             error: None,
                         },
                         Err(e) => AddTaskResponse {
-                            status: ERROR,
+                            status: ERROR.to_string(),
                             error: Some(format!("{:?}", e)),
                         },
                     };
@@ -194,14 +176,24 @@ fn app() -> clap::Command<'static> {
                 .default_value("postgres://postgres@127.0.0.1:5432/postgres")
                 .help("PostgreSQL database connection URL."),
         )
+        .arg(
+            Arg::new("dap-serving-prefix")
+                .long("dap-serving-prefix")
+                .default_value("/")
+                .help("Path prefix, e.g. `/dap/`, to serve DAP from"),
+        )
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     install_tracing_subscriber()?;
     let matches = app().get_matches();
-    let http_port = matches.value_of_t::<u16>("port")?;
-    let postgres_url = matches.value_of_t::<Url>("postgres-url")?;
+    let http_port = matches.value_of_t("port")?;
+    let postgres_url = matches.value_of_t("postgres-url")?;
+    let dap_serving_prefix = matches
+        .get_one("dap-serving-prefix")
+        .map(Clone::clone)
+        .unwrap_or_else(|| "/".to_string());
 
     // Make an ephemeral datastore key.
     let mut key_bytes = [0u8; 16];
@@ -227,7 +219,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Run an HTTP server with both the DAP aggregator endpoints and the interoperation test
     // endpoints.
-    let filter = make_filter(Arc::clone(&datastore))?;
+    let filter = make_filter(Arc::clone(&datastore), dap_serving_prefix)?;
     let server = warp::serve(filter);
     let aggregator_future = server.bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, http_port)));
 

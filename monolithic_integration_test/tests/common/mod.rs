@@ -1,5 +1,3 @@
-use std::iter;
-
 use http::{
     header::{CONTENT_TYPE, LOCATION},
     StatusCode,
@@ -20,7 +18,6 @@ use janus_server::{
     message::{CollectReq, CollectResp},
     task::{test_util::generate_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
-use portpicker::pick_unused_port;
 use prio::{
     codec::{Decode, Encode},
     field::Field64,
@@ -28,30 +25,24 @@ use prio::{
 };
 use rand::{thread_rng, Rng};
 use reqwest::{redirect, Url};
+use std::iter;
 use tokio::time::{self, Instant};
 
-pub fn pick_two_unused_ports() -> (u16, u16) {
-    let first_unused_port = pick_unused_port().unwrap();
-    for _ in 0..10 {
-        let second_unused_port = pick_unused_port().unwrap();
-        if first_unused_port != second_unused_port {
-            return (first_unused_port, second_unused_port);
-        }
-    }
-    panic!("Couldn't find two unused ports");
+pub fn generate_network_name() -> String {
+    let mut buf = [0; 4];
+    thread_rng().fill(&mut buf);
+    format!("janus_integration_test_{}", hex::encode(buf))
 }
 
 // Returns (leader_task, helper_task).
-pub fn create_test_tasks(
-    leader_port: u16,
-    helper_port: u16,
-    collector_hpke_config: &HpkeConfig,
-) -> (Task, Task) {
+pub fn create_test_tasks(collector_hpke_config: &HpkeConfig) -> (Task, Task) {
     // Generate parameters.
     let task_id = TaskId::random();
+    let mut buf = [0; 4];
+    thread_rng().fill(&mut buf);
     let endpoints = Vec::from([
-        Url::parse(&format!("http://localhost:{}", leader_port)).unwrap(),
-        Url::parse(&format!("http://localhost:{}", helper_port)).unwrap(),
+        Url::parse(&format!("http://leader-{}:8080/", hex::encode(buf))).unwrap(),
+        Url::parse(&format!("http://helper-{}:8080/", hex::encode(buf))).unwrap(),
     ]);
     let mut vdaf_verify_key = [0u8; PRIO3_AES128_VERIFY_KEY_LENGTH];
     thread_rng().fill(&mut vdaf_verify_key[..]);
@@ -95,17 +86,32 @@ pub fn create_test_tasks(
     (leader_task, helper_task)
 }
 
+pub fn translate_url_for_external_access(url: &Url, external_port: u16) -> Url {
+    let mut translated = url.clone();
+    translated.set_host(Some("localhost")).unwrap();
+    translated.set_port(Some(external_port)).unwrap();
+    translated
+}
+
 pub async fn submit_measurements_and_verify_aggregate(
+    (leader_port, helper_port): (u16, u16),
     leader_task: &Task,
-    collector_hpke_config: &HpkeConfig,
     collector_private_key: &HpkePrivateKey,
 ) {
+    // Translate aggregator endpoints for our perspective outside the container network.
+    let aggregator_endpoints: Vec<_> = leader_task
+        .aggregator_endpoints
+        .iter()
+        .zip([leader_port, helper_port])
+        .map(|(url, port)| translate_url_for_external_access(url, port))
+        .collect();
+
     // Create client.
     let task_id = leader_task.id;
     let vdaf = Prio3::new_aes128_count(2).unwrap();
     let client_parameters = ClientParameters::new(
         task_id,
-        leader_task.aggregator_endpoints.clone(),
+        aggregator_endpoints.clone(),
         leader_task.min_batch_duration,
     );
     let http_client = janus_client::default_http_client().unwrap();
@@ -157,8 +163,8 @@ pub async fn submit_measurements_and_verify_aggregate(
         .redirect(redirect::Policy::none()) // otherwise following SEE_OTHER is automatic
         .build()
         .unwrap();
-    let collect_url = leader_task
-        .aggregator_url(Role::Leader)
+    let collect_url = aggregator_endpoints
+        .get(Role::Leader.index().unwrap())
         .unwrap()
         .join("collect")
         .unwrap();
@@ -197,6 +203,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             .unwrap(),
     )
     .unwrap();
+    let collect_job_url = translate_url_for_external_access(&collect_job_url, leader_port);
 
     // Poll until the collect job completes.
     let collect_job_poll_timeout = Instant::now()
@@ -235,7 +242,7 @@ pub async fn submit_measurements_and_verify_aggregate(
                 .zip([Role::Leader, Role::Helper])
                 .map(|(encrypted_agg_share, role)| {
                     let agg_share_bytes = hpke::open(
-                        collector_hpke_config,
+                        &leader_task.collector_hpke_config,
                         collector_private_key,
                         &HpkeApplicationInfo::new(Label::AggregateShare, role, Role::Collector),
                         encrypted_agg_share,

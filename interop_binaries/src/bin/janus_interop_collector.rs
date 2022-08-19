@@ -291,10 +291,8 @@ async fn handle_collect_poll(
             let helper_aggregate_share =
                 AggregateShare::<Field64>::try_from(helper_aggregate_share_bytes.as_ref())
                     .context("could not decode helper's aggregate share")?;
-            <<Prio3Aes128Count as Vdaf>::AggregationParam>::get_decoded(
-                &collect_job_state.agg_param,
-            )
-            .context("could not decode aggregation parameter")?;
+            <Prio3Aes128Count as Vdaf>::AggregationParam::get_decoded(&collect_job_state.agg_param)
+                .context("could not decode aggregation parameter")?;
             let vdaf =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
             let aggregate_result = vdaf
@@ -309,7 +307,7 @@ async fn handle_collect_poll(
             let helper_aggregate_share =
                 AggregateShare::<Field128>::try_from(helper_aggregate_share_bytes.as_ref())
                     .context("could not decode helper's aggregate share")?;
-            <<Prio3Aes128Sum as Vdaf>::AggregationParam>::get_decoded(&collect_job_state.agg_param)
+            <Prio3Aes128Sum as Vdaf>::AggregationParam::get_decoded(&collect_job_state.agg_param)
                 .context("could not decode aggregation parameter")?;
             let vdaf = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
@@ -329,7 +327,7 @@ async fn handle_collect_poll(
             let helper_aggregate_share =
                 AggregateShare::<Field128>::try_from(helper_aggregate_share_bytes.as_ref())
                     .context("could not decode helper's aggregate share")?;
-            <<Prio3Aes128Histogram as Vdaf>::AggregationParam>::get_decoded(
+            <Prio3Aes128Histogram as Vdaf>::AggregationParam::get_decoded(
                 &collect_job_state.agg_param,
             )
             .context("could not decode aggregation parameter")?;
