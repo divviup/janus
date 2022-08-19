@@ -6,14 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  CARGO_INCREMENTAL: 0
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
-
 jobs:
   janus_server_build:
     runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
     steps:
     - uses: actions/checkout@v3
     - name: Install Kind
