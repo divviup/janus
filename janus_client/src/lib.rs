@@ -1,5 +1,6 @@
 //! PPM protocol client
 
+use derivative::Derivative;
 use http::{header::CONTENT_TYPE, StatusCode};
 use janus_core::{
     hpke::associated_data_for_report_share,
@@ -11,7 +12,10 @@ use prio::{
     codec::{Decode, Encode},
     vdaf,
 };
-use std::io::Cursor;
+use std::{
+    fmt::{self, Formatter},
+    io::Cursor,
+};
 use url::Url;
 
 #[derive(Debug, thiserror::Error)]
@@ -41,12 +45,14 @@ static CLIENT_USER_AGENT: &str = concat!(
 );
 
 /// The PPM client's view of task parameters.
-#[derive(Clone, Debug)]
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
 pub struct ClientParameters {
     /// Unique identifier for the task
     task_id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
+    #[derivative(Debug(format_with = "fmt_vector_of_urls"))]
     aggregator_endpoints: Vec<Url>,
     /// The minimum batch duration of the task. This value is shared by all
     /// parties in the protocol, and is used to compute report nonces.
@@ -95,6 +101,14 @@ impl ClientParameters {
     fn upload_endpoint(&self) -> Result<Url, Error> {
         Ok(self.aggregator_endpoint(Role::Leader)?.join("upload")?)
     }
+}
+
+fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
+    let mut list = f.debug_list();
+    for url in urls {
+        list.entry(&format!("{}", url));
+    }
+    list.finish()
 }
 
 /// Fetches HPKE configuration from the specified aggregator using the

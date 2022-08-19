@@ -1623,6 +1623,7 @@ name = "janus_client"
 version = "0.1.8"
 dependencies = [
  "assert_matches",
+ "derivative",
  "http",
  "janus_core",
  "mockito",
