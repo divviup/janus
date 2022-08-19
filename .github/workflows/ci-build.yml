@@ -34,13 +34,11 @@ jobs:
       run: cargo clippy --workspace --all-targets -- -D warnings
     - name: check, all features
       run: cargo check --all-features
-    - name: build
-      run: cargo build --verbose
-    - name: test
-      env:
-        RUST_LOG: info
+    - name: Build
+      run: cargo test --no-run --locked
+    - name: Test
       # set PATH to ensure we use go binaries installed above
-      run: PATH=$(go env GOPATH)/bin:$PATH cargo test --verbose
+      run: PATH=$(go env GOPATH)/bin:$PATH cargo test
     - name: document
       env:
         CARGO_TARGET_DIR: "target/doc-deny"
