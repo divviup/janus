@@ -177,7 +177,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
-    #[tracing::instrument(skip(self, job_creation_time_recorder))]
+    #[tracing::instrument(skip(self, shutdown, job_creation_time_recorder))]
     async fn run_for_task(
         &self,
         mut shutdown: Receiver<()>,
