@@ -711,7 +711,7 @@ dependencies = [
 [[package]]
 name = "daphne"
 version = "0.0.1"
-source = "git+https://github.com/cloudflare/daphne?rev=6301e712df216a0301c42cb3177110dd8217fa84#6301e712df216a0301c42cb3177110dd8217fa84"
+source = "git+https://github.com/cloudflare/daphne?rev=2f042113af8df7527c1761490cea40139952ad5e#2f042113af8df7527c1761490cea40139952ad5e"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -721,6 +721,7 @@ dependencies = [
  "getrandom",
  "hex",
  "hpke 0.8.0",
+ "matchit 0.6.0",
  "prio",
  "rand",
  "reqwest",
@@ -1929,6 +1930,12 @@ name = "matchit"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73cbba799671b762df5a175adf59ce145165747bb891505c43d09aefbbf38beb"
+
+[[package]]
+name = "matchit"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3dfc802da7b1cf80aefffa0c7b2f77247c8b32206cc83c270b61264f5b360a80"
 
 [[package]]
 name = "md-5"

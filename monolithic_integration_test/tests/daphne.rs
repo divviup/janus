@@ -1,6 +1,6 @@
 use common::{create_test_tasks, generate_network_name, submit_measurements_and_verify_aggregate};
 use janus_core::{
-    hpke::test_util::generate_test_hpke_config_and_private_key,
+    hpke::test_util::generate_test_hpke_config_and_private_key, message::Role,
     test_util::install_test_trace_subscriber,
 };
 use monolithic_integration_test::{daphne::Daphne, janus::Janus};
@@ -16,7 +16,15 @@ async fn daphne_janus() {
     let network = generate_network_name();
     let (collector_hpke_config, collector_private_key) =
         generate_test_hpke_config_and_private_key();
-    let (leader_task, helper_task) = create_test_tasks(&collector_hpke_config);
+    let (mut leader_task, mut helper_task) = create_test_tasks(&collector_hpke_config);
+
+    // Daphne is hardcoded to serve from a path starting with /v01/.
+    for task in [&mut leader_task, &mut helper_task] {
+        task.aggregator_endpoints
+            .get_mut(Role::Leader.index().unwrap())
+            .unwrap()
+            .set_path("/v01/");
+    }
 
     let leader = Daphne::new(&network, &leader_task).await;
     let helper = Janus::new_in_container(&network, &helper_task).await;
@@ -39,7 +47,15 @@ async fn janus_daphne() {
     let network = generate_network_name();
     let (collector_hpke_config, collector_private_key) =
         generate_test_hpke_config_and_private_key();
-    let (leader_task, helper_task) = create_test_tasks(&collector_hpke_config);
+    let (mut leader_task, mut helper_task) = create_test_tasks(&collector_hpke_config);
+
+    // Daphne is hardcoded to serve from a path starting with /v01/.
+    for task in [&mut leader_task, &mut helper_task] {
+        task.aggregator_endpoints
+            .get_mut(Role::Helper.index().unwrap())
+            .unwrap()
+            .set_path("/v01/");
+    }
 
     let leader = Janus::new_in_container(&network, &leader_task).await;
     let helper = Daphne::new(&network, &helper_task).await;

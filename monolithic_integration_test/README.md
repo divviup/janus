@@ -8,8 +8,8 @@ compiled artifacts are included in `artifacts/daphne_compiled`; the test contain
 build script & included in necessary test binaries which know how to load the image into Docker
 themselves.
 
-The compiled Daphne is from commit [`6301e712df216a0301c42cb3177110dd8217fa84`](
-https://github.com/cloudflare/daphne/commit/6301e712df216a0301c42cb3177110dd8217fa84).
+The compiled Daphne is from commit [`2f042113af8df7527c1761490cea40139952ad5e`](
+https://github.com/cloudflare/daphne/commit/2f042113af8df7527c1761490cea40139952ad5e).
 
 ### Running Daphne integration tests
 
@@ -19,28 +19,25 @@ Once `docker` is installed, simply run `cargo test` to run the Daphne integratio
 
 ### Updating the version of Daphne under test
 
-Compiling a new version of Daphne requires having [workers-rs](
-https://github.com/cloudflare/workers-rs) and [wrangler](https://github.com/cloudflare/wrangler)
-installed. (At time of writing, workers-rs contains a bug that must be worked around by installing
-from a fix branch, via a command like:
-`cargo install -q --git https://github.com/cloudflare/workers-rs --branch zeb/esbuild`. Follow
-[workers-rs #204](https://github.com/cloudflare/workers-rs/issues/204) for more information.)
+Compiling a new version of Daphne requires having [wrangler](https://github.com/cloudflare/wrangler)
+installed.
 
 To update the version of Daphne in use:
 
-1. Check out the [Daphne repository](https://github.com/cloudflare/daphne), and switch into the
-   repository's `daphne_worker_test` directory.
+1. Update `Cargo.toml` in this directory to reference the new version of Daphne.
+1. Check out the [Daphne repository](https://github.com/cloudflare/daphne) at the desired version,
+   and switch into the repository's `daphne_worker_test` directory.
 1. Run `worker-build`; this will compile Daphne to WASM & place the results into the `build`
    directory.
 1. Replace the content of `monolithic_integration_test/artifacts/daphne_compiled` in the Janus
    repository with the content of `daphne_worker_test/build/worker` from the Daphne repository.
-1. Update this README to note the Daphne commit used to generate these artifacts!
+1. Update this README to note the Daphne commit used to generate these artifacts.
 
 ### License
 
 The contents of `artifacts/daphne_compiled` are a compiled artifact of the
 [Daphne](https://github.com/cloudflare/daphne) project, which is licensed under the [BSD 3-Clause
-License](https://github.com/cloudflare/daphne/blob/6301e712df216a0301c42cb3177110dd8217fa84/LICENSE),
+License](https://github.com/cloudflare/daphne/blob/2f042113af8df7527c1761490cea40139952ad5e/LICENSE),
 reproduced below:
 
 ```
