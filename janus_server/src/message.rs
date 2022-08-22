@@ -77,9 +77,10 @@ impl Decode for PrepareStep {
 
 /// DAP protocol message representing result-type-specific data associated with a preparation step
 /// in a VDAF evaluation. Included in a PrepareStep message.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
 pub enum PrepareStepResult {
-    Continued(Vec<u8>), // content is a serialized preparation message
+    Continued(#[derivative(Debug = "ignore")] Vec<u8>), // content is a serialized preparation message
     Finished,
     Failed(ReportShareError),
 }

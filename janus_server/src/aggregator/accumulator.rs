@@ -11,11 +11,13 @@ use prio::vdaf::{self, Aggregatable};
 use std::collections::HashMap;
 use tracing::debug;
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 struct Accumulation<const L: usize, A: vdaf::Aggregator<L>>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
+    #[derivative(Debug = "ignore")]
     aggregate_share: A::AggregateShare,
     report_count: u64,
     checksum: NonceChecksum,
