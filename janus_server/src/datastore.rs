@@ -1787,7 +1787,7 @@ ORDER BY id DESC
 
     /// Updates an existing collect job with the provided aggregate shares.
     // TODO(#242): update this function to take a CollectJob.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, leader_aggregate_share, helper_aggregate_share), err)]
     pub(crate) async fn update_collect_job<const L: usize, A: vdaf::Aggregator<L>>(
         &self,
         collect_job_id: Uuid,
@@ -2756,14 +2756,18 @@ pub mod models {
 
     /// ReportAggregationState represents the state of a single report aggregation. It corresponds
     /// to the REPORT_AGGREGATION_STATE enum in the schema, along with the state-specific data.
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Derivative)]
+    #[derivative(Debug)]
     pub enum ReportAggregationState<const L: usize, A: vdaf::Aggregator<L>>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         Start,
-        Waiting(A::PrepareState, Option<A::PrepareMessage>),
-        Finished(A::OutputShare),
+        Waiting(
+            #[derivative(Debug = "ignore")] A::PrepareState,
+            #[derivative(Debug = "ignore")] Option<A::PrepareMessage>,
+        ),
+        Finished(#[derivative(Debug = "ignore")] A::OutputShare),
         Failed(ReportShareError),
         Invalid,
     }
@@ -2984,7 +2988,6 @@ pub mod models {
         Start,
         Finished {
             /// The helper's encrypted aggregate share over the input shares in the interval.
-            #[derivative(Debug = "ignore")]
             encrypted_helper_aggregate_share: HpkeCiphertext,
             /// The leader's aggregate share over the input shares in the interval.
             #[derivative(Debug = "ignore")]

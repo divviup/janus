@@ -603,7 +603,7 @@ impl AggregationJobDriver {
                             }
                         }
                     } else {
-                        warn!(report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper continued but leader did not");
+                        warn!(report_nonce = %report_aggregation.nonce, "Helper continued but leader did not");
                         self.aggregate_step_failure_counters
                             .continue_mismatch
                             .add(1);
@@ -630,7 +630,7 @@ impl AggregationJobDriver {
                             }
                         }
                     } else {
-                        warn!(report_nonce = %report_aggregation.nonce, leader_transition = ?leader_transition, "Helper finished but leader did not");
+                        warn!(report_nonce = %report_aggregation.nonce, "Helper finished but leader did not");
                         self.aggregate_step_failure_counters.finish_mismatch.add(1);
                         report_aggregation.state = ReportAggregationState::Invalid;
                     }

@@ -3,6 +3,7 @@
 use crate::{hpke::associated_data_for_report_share, time::Clock};
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
+use derivative::Derivative;
 use hpke_dispatch::{Aead, Kdf, Kem};
 use num_enum::TryFromPrimitive;
 #[cfg(feature = "database")]
@@ -766,13 +767,16 @@ impl Decode for ExtensionType {
 }
 
 /// PPM protocol message representing an HPKE ciphertext.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Derivative, Eq, PartialEq)]
+#[derivative(Debug)]
 pub struct HpkeCiphertext {
     /// An identifier of the HPKE configuration used to seal the message.
     config_id: HpkeConfigId,
     /// An encasulated HPKE context.
+    #[derivative(Debug = "ignore")]
     encapsulated_context: Vec<u8>,
     /// An HPKE ciphertext.
+    #[derivative(Debug = "ignore")]
     payload: Vec<u8>,
 }
 
