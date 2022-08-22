@@ -1,11 +1,13 @@
 //! PPM protocol client
 
+use backoff::ExponentialBackoff;
 use derivative::Derivative;
 use http::{header::CONTENT_TYPE, StatusCode};
 use janus_core::{
     hpke::associated_data_for_report_share,
     hpke::{self, HpkeApplicationInfo, Label},
     message::{Duration, HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
+    retries::{http_request_exponential_backoff, retry_http_request},
     time::Clock,
 };
 use prio::{
@@ -57,14 +59,31 @@ pub struct ClientParameters {
     /// The minimum batch duration of the task. This value is shared by all
     /// parties in the protocol, and is used to compute report nonces.
     min_batch_duration: Duration,
+    /// Parameters to use when retrying HTTP requests.
+    http_request_retry_parameters: ExponentialBackoff,
 }
 
 impl ClientParameters {
     /// Creates a new set of client task parameters.
     pub fn new(
         task_id: TaskId,
+        aggregator_endpoints: Vec<Url>,
+        min_batch_duration: Duration,
+    ) -> Self {
+        Self::new_with_backoff(
+            task_id,
+            aggregator_endpoints,
+            min_batch_duration,
+            http_request_exponential_backoff(),
+        )
+    }
+
+    /// Creates a new set of client task parameters with non-default HTTP request retry parameters.
+    pub fn new_with_backoff(
+        task_id: TaskId,
         mut aggregator_endpoints: Vec<Url>,
         min_batch_duration: Duration,
+        http_request_retry_parameters: ExponentialBackoff,
     ) -> Self {
         // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
         // path segments into these endpoints & the Url::join implementation is persnickety about
@@ -79,6 +98,7 @@ impl ClientParameters {
             task_id,
             aggregator_endpoints,
             min_batch_duration,
+            http_request_retry_parameters,
         }
     }
 
@@ -122,7 +142,12 @@ pub async fn aggregator_hpke_config(
 ) -> Result<HpkeConfig, Error> {
     let mut request_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
     request_url.set_query(Some(&format!("task_id={}", task_id)));
-    let hpke_config_response = http_client.get(request_url).send().await?;
+    let hpke_config_response = retry_http_request(
+        client_parameters.http_request_retry_parameters.clone(),
+        || async { http_client.get(request_url.clone()).send().await },
+    )
+    .await
+    .or_else(|e| e)?;
     let status = hpke_config_response.status();
     if !status.is_success() {
         return Err(Error::Http(status));
@@ -217,21 +242,26 @@ where
         ))
     }
 
-    /// Upload a [`janus_core::message::Report`] to the leader, per §4.3.2 of
-    /// draft-gpew-priv-ppm. The provided measurement is sharded into one input
-    /// share plus one proof share for each aggregator and then uploaded to the
-    /// leader.
+    /// Upload a [`janus_core::message::Report`] to the leader, per §4.3.2 of draft-gpew-priv-ppm.
+    /// The provided measurement is sharded into one input share plus one proof share for each
+    /// aggregator and then uploaded to the leader.
     #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
         let report = self.prepare_report(measurement)?;
-
-        let upload_response = self
-            .http_client
-            .post(self.parameters.upload_endpoint()?)
-            .header(CONTENT_TYPE, Report::MEDIA_TYPE)
-            .body(report.get_encoded())
-            .send()
-            .await?;
+        let upload_endpoint = self.parameters.upload_endpoint()?;
+        let upload_response = retry_http_request(
+            self.parameters.http_request_retry_parameters.clone(),
+            || async {
+                self.http_client
+                    .post(upload_endpoint.clone())
+                    .header(CONTENT_TYPE, Report::MEDIA_TYPE)
+                    .body(report.get_encoded())
+                    .send()
+                    .await
+            },
+        )
+        .await
+        .or_else(|e| e)?;
         let status = upload_response.status();
         if !status.is_success() {
             // TODO(#233): decode an RFC 7807 problem document
@@ -249,6 +279,7 @@ mod tests {
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
         message::{TaskId, Time},
+        retries::test_http_request_exponential_backoff,
         test_util::install_test_trace_subscriber,
         time::MockClock,
     };
@@ -262,10 +293,11 @@ mod tests {
     {
         let server_url = Url::parse(&mockito::server_url()).unwrap();
         Client::new(
-            ClientParameters::new(
+            ClientParameters::new_with_backoff(
                 TaskId::random(),
                 Vec::from([server_url.clone(), server_url]),
                 Duration::from_seconds(1),
+                test_http_request_exponential_backoff(),
             ),
             vdaf_client,
             MockClock::default(),

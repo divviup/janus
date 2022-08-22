@@ -10,6 +10,7 @@ repository = "https://github.com/divviup/janus"
 rust-version = "1.63"
 
 [dependencies]
+backoff = { version = "0.4.0", features = ["tokio"] }
 derivative = "2.2.0"
 http = "0.2.8"
 janus_core = { version = "0.1", path = "../janus_core" }
