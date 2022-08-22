@@ -52,6 +52,10 @@ pub struct TraceConfiguration {
     /// [`tracing_subscriber::fmt::format::Pretty`].
     #[serde(default)]
     pub force_json_output: bool,
+    /// If true, trace events are output in Google's Cloud Logging JSON format by
+    /// [`tracing_stackdriver::Stackdriver`].
+    #[serde(default)]
+    pub stackdriver_json_output: bool,
     /// Configuration for tokio-console monitoring and debugging support.
     /// (optional)
     #[serde(default)]
@@ -118,19 +122,30 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     let stdout_filter = EnvFilter::from_default_env();
 
     let mut layers = Vec::new();
-    match (output_json, config.use_test_writer) {
-        (true, false) => layers.push(
+    match (
+        output_json,
+        config.use_test_writer,
+        config.stackdriver_json_output,
+    ) {
+        (true, false, false) => layers.push(
             base_layer()
                 .json()
                 .with_current_span(false)
                 .with_filter(stdout_filter)
                 .boxed(),
         ),
-        (false, false) => layers.push(base_layer().pretty().with_filter(stdout_filter).boxed()),
-        (_, true) => layers.push(
+        (false, false, false) => {
+            layers.push(base_layer().pretty().with_filter(stdout_filter).boxed())
+        }
+        (_, true, false) => layers.push(
             base_layer()
                 .pretty()
                 .with_test_writer()
+                .with_filter(stdout_filter)
+                .boxed(),
+        ),
+        (_, _, true) => layers.push(
+            tracing_stackdriver::Stackdriver::layer()
                 .with_filter(stdout_filter)
                 .boxed(),
         ),
