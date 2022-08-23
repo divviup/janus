@@ -47,7 +47,7 @@ tokio = { version = "^1.20", features = ["macros", "net", "rt"] }
 
 # Dependencies required only if feature "test-util" is enabled
 assert_matches = { version = "1", optional = true }
-serde_json = { version = "1.0.83", optional = true }
+serde_json = { version = "1.0.85", optional = true }
 futures = { version = "0.3.23", optional = true }
 tempfile = { version = "3", optional = true }
 tracing = { version = "0.1.36", optional = true }
