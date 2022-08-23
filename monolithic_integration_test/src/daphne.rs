@@ -115,7 +115,15 @@ impl Daphne {
         let port = pick_unused_port().expect("Couldn't pick unused port");
         let endpoint = task.aggregator_url(task.role).unwrap();
 
-        let args = [
+        let args: Vec<_> = [
+            (
+                // Note: DAP_DEPLOYMENT=dev overrides aggregator endpoint hostnames to "localhost",
+                // so it can't be used. The other option is DAP_DEPLOYMENT=prod -- despite the name,
+                // that's what we want since it operates as configured without any special dev-only
+                // overrides that our test configuration doesn't need.
+                "DAP_DEPLOYMENT".to_string(),
+                "prod".to_string(),
+            ),
             (
                 "DAP_AGGREGATOR_ROLE".to_string(),
                 task.role.as_str().to_string(),
@@ -147,6 +155,10 @@ impl Daphne {
         .into_iter()
         .map(|(env_var, env_val)| format!("--binding={env_var}={env_val}"))
         .collect();
+        let args = ["--port=8080".to_string()]
+            .into_iter()
+            .chain(args.into_iter())
+            .collect();
         let runnable_image = RunnableImage::from((GenericImage::new("sha256", &image_hash), args))
             .with_network(network)
             .with_container_name(endpoint.host_str().unwrap())

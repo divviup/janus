@@ -3,21 +3,49 @@ fn main() {
     {
         use build_script_utils::save_zstd_compressed_docker_image;
         use std::{env, fs::File, process::Command};
+        use tempfile::tempdir;
 
-        println!("cargo:rerun-if-changed=Dockerfile.test_daphne");
+        // This build script is self-contained, so we only need to rebuild if the build script
+        // itself changes.
+        println!("cargo:rerun-if-changed=build.rs");
 
-        // These directives should match the dependencies copied into Dockerfile.test_daphne.
-        println!("cargo:rerun-if-changed=artifacts/wrangler.toml");
-        println!("cargo:rerun-if-changed=artifacts/daphne_compiled/");
+        // Check out Daphne repository at a fixed hash, then build & save off a container image for
+        // the test Daphne instance.
+        const DAPHNE_COMMIT_HASH: &str = "6228556c7b87a7fe85e414a3186a2511407896f0";
+        let daphne_checkout_dir = tempdir().unwrap();
+        let clone_output = Command::new("git")
+            .args(["clone", "-n", "https://github.com/cloudflare/daphne", "."])
+            .current_dir(&daphne_checkout_dir)
+            .output()
+            .expect("Failed to execute `git clone` for Daphne repository");
+        assert!(
+            clone_output.status.success(),
+            "Git clone of Daphne repository failed:\n{}",
+            String::from_utf8_lossy(&clone_output.stderr)
+        );
+        let checkout_output = Command::new("git")
+            .args(["checkout", DAPHNE_COMMIT_HASH])
+            .current_dir(&daphne_checkout_dir)
+            .output()
+            .expect("Failed to execute `git checkout` for Daphne repository");
+        assert!(
+            checkout_output.status.success(),
+            "Git checkout of Daphne repository failed:\n{}",
+            String::from_utf8_lossy(&checkout_output.stderr)
+        );
 
-        // Build & save off a container image for the test Daphne instance.
         // Note: `docker build` has an `--output` flag which writes the output to somewhere, which
         // may be a tarfile. But `docker build --output` only exports the image filesystem, and not
         // any other image metadata (such as exposed ports, the entrypoint, etc), so we can't easily
         // use it.
         let build_output = Command::new("docker")
-            .args(["build", "--file=Dockerfile.test_daphne", "--quiet", "."])
-            .env("DOCKER_BUILDKIT", "1")
+            .args([
+                "build",
+                "--file=daphne_worker_test/docker/miniflare.Dockerfile",
+                "--quiet",
+                ".",
+            ])
+            .current_dir(&daphne_checkout_dir)
             .output()
             .expect("Failed to execute `docker build` for test Daphne");
         assert!(

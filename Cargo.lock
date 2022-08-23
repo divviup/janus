@@ -711,7 +711,7 @@ dependencies = [
 [[package]]
 name = "daphne"
 version = "0.0.1"
-source = "git+https://github.com/cloudflare/daphne?rev=2f042113af8df7527c1761490cea40139952ad5e#2f042113af8df7527c1761490cea40139952ad5e"
+source = "git+https://github.com/cloudflare/daphne?rev=6228556c7b87a7fe85e414a3186a2511407896f0#6228556c7b87a7fe85e414a3186a2511407896f0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -2065,6 +2065,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "testcontainers",
  "tokio",
  "tracing",
