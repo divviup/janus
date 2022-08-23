@@ -1,6 +1,6 @@
 [package]
 name = "janus_client"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 description = "Client for Janus, the server powering ISRG's Divvi Up."
 documentation = "https://docs.rs/janus_client"
