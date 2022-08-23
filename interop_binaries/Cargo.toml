@@ -21,7 +21,7 @@ testcontainer = [
 [dependencies]
 anyhow = "1"
 base64 = "0.13.0"
-clap = "3.2.16"
+clap = "3.2.17"
 lazy_static = { version = "1", optional = true }
 janus_client = { path = "../janus_client" }
 janus_core = { path = "../janus_core" }
