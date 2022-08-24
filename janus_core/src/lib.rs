@@ -3,6 +3,7 @@ use tokio::task::JoinHandle;
 
 pub mod hpke;
 pub mod message;
+pub mod retries;
 pub mod task;
 #[cfg(feature = "test-util")]
 pub mod test_util;

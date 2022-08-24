@@ -1636,6 +1636,7 @@ name = "janus_client"
 version = "0.1.8"
 dependencies = [
  "assert_matches",
+ "backoff",
  "derivative",
  "http",
  "janus_core",
@@ -1656,6 +1657,7 @@ version = "0.1.8"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "backoff",
  "base64",
  "bytes",
  "chrono",
@@ -1666,11 +1668,13 @@ dependencies = [
  "janus_core",
  "k8s-openapi",
  "kube",
+ "mockito",
  "num_enum",
  "postgres-protocol",
  "postgres-types",
  "prio",
  "rand",
+ "reqwest",
  "ring",
  "serde",
  "serde_json",
@@ -1680,6 +1684,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
