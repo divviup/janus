@@ -1,7 +1,7 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-use crate::{await_http_server, CONTAINER_CLIENT};
-use interop_binaries::{testcontainer::Aggregator, AddTaskRequest};
+use crate::CONTAINER_CLIENT;
+use interop_binaries::{test_util::await_http_server, testcontainer::Aggregator, AddTaskRequest};
 use janus_core::{
     test_util::kubernetes::{Cluster, PortForward},
     time::RealClock,
@@ -48,7 +48,7 @@ impl Janus {
             .with_container_name(endpoint.host_str().unwrap())
             .with_mapped_port(Port {
                 local: port,
-                internal: 8080,
+                internal: Aggregator::INTERNAL_SERVING_PORT,
             });
         let container = CONTAINER_CLIENT.run(runnable_image);
 

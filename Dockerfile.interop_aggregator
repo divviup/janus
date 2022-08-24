@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
 
 FROM postgres:14-alpine
 RUN mkdir /logs
-RUN apk add --update supervisor && rm  -rf /tmp/* /var/cache/apk/*
+RUN apk add --update supervisor && rm -rf /tmp/* /var/cache/apk/*
 COPY interop_binaries/supervisord.conf /supervisord.conf
 COPY --from=builder /src/db/schema.sql /db/schema.sql
 COPY --from=builder /janus_interop_aggregator /janus_interop_aggregator

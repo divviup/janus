@@ -1,5 +1,9 @@
-use anyhow::Context;
 use base64::URL_SAFE_NO_PAD;
+use futures::future::join_all;
+use interop_binaries::{
+    test_util::{await_http_server, generate_network_name, generate_unique_name},
+    testcontainer::{Aggregator, Client, Collector},
+};
 use janus_core::{
     message::{Duration, TaskId},
     time::{Clock, RealClock},
@@ -8,90 +12,17 @@ use janus_server::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use lazy_static::lazy_static;
 use portpicker::pick_unused_port;
 use prio::codec::Encode;
-use reqwest::{header::CONTENT_TYPE, StatusCode};
+use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
-use std::{
-    collections::BTreeSet,
-    env,
-    io::{self, ErrorKind},
-    net::{Ipv4Addr, SocketAddr},
-    process::{Child, Command, Stdio},
-    time::Duration as StdDuration,
-};
-use testcontainers::{images::postgres::Postgres, RunnableImage};
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    net::TcpStream,
-    process::{ChildStderr, ChildStdout},
-    time::sleep,
-};
+use std::{env, process::Command, time::Duration as StdDuration};
+use testcontainers::{core::Port, RunnableImage};
 
-static JSON_MEDIA_TYPE: &str = "application/json";
-static MIN_BATCH_DURATION: u64 = 3600;
+const JSON_MEDIA_TYPE: &str = "application/json";
+const MIN_BATCH_DURATION: u64 = 3600;
 
 lazy_static! {
     static ref CONTAINER_CLIENT: testcontainers::clients::Cli =
         testcontainers::clients::Cli::default();
-}
-
-/// Wait for a TCP server to begin listening on the given port.
-async fn wait_for_tcp_server(port: u16) -> anyhow::Result<()> {
-    for _ in 0..100 {
-        if TcpStream::connect(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
-            .await
-            .is_ok()
-        {
-            return Ok(());
-        }
-        sleep(StdDuration::from_millis(200)).await;
-    }
-    Err(anyhow::anyhow!(
-        "timed out waiting for a server to accept on port {}",
-        port,
-    ))
-}
-
-/// RAII guard to ensure that child processes are cleaned up during test failures.
-struct ChildProcessCleanupDropGuard(Child);
-
-impl Drop for ChildProcessCleanupDropGuard {
-    fn drop(&mut self) {
-        match self.0.kill() {
-            Ok(_) => {}
-            Err(e) if e.kind() == ErrorKind::InvalidInput => {}
-            Err(e) => panic!("failed to kill child process: {:?}", e),
-        }
-    }
-}
-
-/// Pass output from a child process's stdout pipe to print!(), so that it can be captured and
-/// stored by the test harness.
-async fn forward_stdout(stdout: ChildStdout) -> io::Result<()> {
-    let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let count = reader.read_line(&mut line).await?;
-        if count == 0 {
-            return Ok(());
-        }
-        print!("{}", line);
-    }
-}
-
-/// Pass output from a child process's stderr pipe to eprint!(), so that it can be captured and
-/// stored by the test harness.
-async fn forward_stderr(stderr: ChildStderr) -> io::Result<()> {
-    let mut reader = BufReader::new(stderr);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let count = reader.read_line(&mut line).await?;
-        if count == 0 {
-            return Ok(());
-        }
-        eprint!("{}", line);
-    }
 }
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
@@ -101,80 +32,67 @@ async fn run(
     vdaf_object: serde_json::Value,
     measurements: &[serde_json::Value],
     aggregation_parameter: &[u8],
-) -> anyhow::Result<serde_json::Value> {
-    // Start up a database testcontainer for each aggregator directly, and don't set up the schema.
-    let leader_db_container =
-        CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
-    let leader_postgres_port = leader_db_container.get_host_port_ipv4(5432);
-    let helper_db_container =
-        CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
-    let helper_postgres_port = helper_db_container.get_host_port_ipv4(5432);
-
-    // Pick four ports for HTTP servers.
-    let client_port = pick_unused_port().context("couldn't pick a port for the client")?;
-    let leader_port = pick_unused_port().context("couldn't pick a port for the leader")?;
-    let helper_port = pick_unused_port().context("couldn't pick a port for the helper")?;
-    let collector_port = pick_unused_port().context("couldn't pick a port for the collector")?;
-    assert_eq!(
-        BTreeSet::from([client_port, leader_port, helper_port, collector_port]).len(),
-        4,
-        "Ports selected for HTTP servers were not unique",
-    );
-
-    // Create and start containers. (here, we just run the binaries instead)
+) -> serde_json::Value {
+    // Create and start containers.
     // We use std::process instead of tokio::process so that we can kill the child processes from
     // a Drop implementation. tokio::process::Child::kill() is async, and could not be called from
     // there.
-    //
-    // We set up the helper task to serve out of the `/dap/` prefix. This tests for regression
-    // against a bug where Janus in the leader position would not work with a helper whose endpoint
-    // had a non-`/` path.
+    let network = generate_network_name();
+
+    let client_port = pick_unused_port().expect("couldn't pick a port for the client");
+    let client_name = generate_unique_name("client");
+    let client_image = RunnableImage::from(Client::default())
+        .with_network(network.clone())
+        .with_container_name(client_name)
+        .with_mapped_port(Port {
+            local: client_port,
+            internal: Client::INTERNAL_SERVING_PORT,
+        });
+    let _client_container = CONTAINER_CLIENT.run(client_image);
+
     let mut client_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_client"));
     client_command.arg("--port").arg(format!("{}", client_port));
-    let mut leader_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_aggregator"));
-    leader_command.arg("--port").arg(format!("{}", leader_port));
-    leader_command.arg("--postgres-url").arg(format!(
-        "postgres://postgres@127.0.0.1:{}/postgres",
-        leader_postgres_port
-    ));
-    let mut helper_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_aggregator"));
-    helper_command.arg("--port").arg(format!("{}", helper_port));
-    helper_command.arg("--postgres-url").arg(format!(
-        "postgres://postgres@127.0.0.1:{}/postgres",
-        helper_postgres_port
-    ));
-    helper_command.arg("--dap-serving-prefix=/dap/");
-    let mut collector_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_collector"));
-    collector_command
-        .arg("--port")
-        .arg(format!("{}", collector_port));
-    let commands = [
-        client_command,
-        leader_command,
-        helper_command,
-        collector_command,
-    ];
-    let mut drop_guards = Vec::with_capacity(commands.len());
-    for mut command in commands {
-        let mut drop_guard = ChildProcessCleanupDropGuard(
-            command
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()?,
-        );
-        tokio::spawn(forward_stdout(ChildStdout::from_std(
-            drop_guard.0.stdout.take().unwrap(),
-        )?));
-        tokio::spawn(forward_stderr(ChildStderr::from_std(
-            drop_guard.0.stderr.take().unwrap(),
-        )?));
-        drop_guards.push(drop_guard);
-    }
 
-    // Try opening a TCP connection to each container's port, and retry until it succeeds.
-    for port in [client_port, leader_port, helper_port, collector_port] {
-        wait_for_tcp_server(port).await?;
-    }
+    let leader_port = pick_unused_port().expect("couldn't pick a port for the leader");
+    let leader_name = generate_unique_name("leader");
+    let leader_image = RunnableImage::from(Aggregator::default())
+        .with_network(network.clone())
+        .with_container_name(leader_name.clone())
+        .with_mapped_port(Port {
+            local: leader_port,
+            internal: Aggregator::INTERNAL_SERVING_PORT,
+        });
+    let _leader_container = CONTAINER_CLIENT.run(leader_image);
+
+    let helper_port = pick_unused_port().expect("couldn't pick a port for the helper");
+    let helper_name = generate_unique_name("helper");
+    let helper_image = RunnableImage::from(Aggregator::default())
+        .with_network(network.clone())
+        .with_container_name(helper_name.clone())
+        .with_mapped_port(Port {
+            local: helper_port,
+            internal: Aggregator::INTERNAL_SERVING_PORT,
+        });
+    let _helper_container = CONTAINER_CLIENT.run(helper_image);
+
+    let collector_port = pick_unused_port().expect("couldn't pick a port for the collector");
+    let collector_name = generate_unique_name("collector");
+    let collector_image = RunnableImage::from(Collector::default())
+        .with_network(network)
+        .with_container_name(collector_name)
+        .with_mapped_port(Port {
+            local: collector_port,
+            internal: Collector::INTERNAL_SERVING_PORT,
+        });
+    let _collector_container = CONTAINER_CLIENT.run(collector_image);
+
+    // Wait for all containers to sucessfully respond to HTTP requests.
+    join_all(
+        [client_port, leader_port, helper_port, collector_port]
+            .into_iter()
+            .map(|port| await_http_server(port)),
+    )
+    .await;
 
     // Generate a random TaskId, random authentication tokens, and a VDAF verification key.
     let task_id = TaskId::random();
@@ -184,24 +102,34 @@ async fn run(
 
     let task_id_encoded = base64::encode_config(&task_id.get_encoded(), URL_SAFE_NO_PAD);
     let verify_key_encoded = base64::encode_config(&verify_key, URL_SAFE_NO_PAD);
-    let leader_endpoint = format!("http://127.0.0.1:{}/", leader_port);
-    let helper_endpoint = format!("http://127.0.0.1:{}/dap/", helper_port);
+
+    // Endpoints, from the POV of this test (i.e. the Docker host).
+    let local_client_endpoint = Url::parse(&format!("http://127.0.0.1:{client_port}/")).unwrap();
+    let local_leader_endpoint = Url::parse(&format!("http://127.0.0.1:{leader_port}/")).unwrap();
+    let local_helper_endpoint = Url::parse(&format!("http://127.0.0.1:{helper_port}/")).unwrap();
+    let local_collector_endpoint =
+        Url::parse(&format!("http://127.0.0.1:{collector_port}/")).unwrap();
+
+    // Endpoints, from the POV of the containers (i.e. the Docker network).
+    let internal_leader_endpoint = Url::parse(&format!("http://{leader_name}:8080/")).unwrap();
+    let internal_helper_endpoint = Url::parse(&format!("http://{helper_name}:8080/")).unwrap();
 
     let http_client = reqwest::Client::new();
 
     // Send a /internal/test/endpoint_for_task request to the leader.
     let leader_endpoint_response = http_client
-        .post(format!(
-            "http://127.0.0.1:{}/internal/test/endpoint_for_task",
-            leader_port,
-        ))
+        .post(
+            local_leader_endpoint
+                .join("/internal/test/endpoint_for_task")
+                .unwrap(),
+        )
         .json(&json!({
             "taskId": task_id_encoded,
             "aggregatorId": 0,
-            "hostnameAndPort": format!("127.0.0.1:{}", leader_port),
+            "hostnameAndPort": format!("{}:{}", local_leader_endpoint.host_str().unwrap(), local_leader_endpoint.port().unwrap()),
         }))
         .send()
-        .await?;
+        .await.unwrap();
     assert_eq!(leader_endpoint_response.status(), StatusCode::OK);
     assert_eq!(
         leader_endpoint_response
@@ -210,14 +138,14 @@ async fn run(
             .unwrap(),
         JSON_MEDIA_TYPE,
     );
-    let leader_endpoint_response_body = leader_endpoint_response.json::<Value>().await?;
+    let leader_endpoint_response_body = leader_endpoint_response.json::<Value>().await.unwrap();
     let leader_endpoint_response_object = leader_endpoint_response_body
         .as_object()
-        .context("endpoint_for_task response is not an object")?;
+        .expect("endpoint_for_task response is not an object");
     assert_eq!(
         leader_endpoint_response_object
             .get("status")
-            .context("endpoint_for_task response is missing \"status\"")?,
+            .expect("endpoint_for_task response is missing \"status\""),
         "success",
         "error: {:?}",
         leader_endpoint_response_object.get("error"),
@@ -225,23 +153,24 @@ async fn run(
     assert_eq!(
         leader_endpoint_response_object
             .get("endpoint")
-            .context("endpoint_for_task response is missing \"endpoint\"")?,
+            .expect("endpoint_for_task response is missing \"endpoint\""),
         "/",
     );
 
     // Send a /internal/test/endpoint_for_task request to the helper.
     let helper_endpoint_response = http_client
-        .post(format!(
-            "http://127.0.0.1:{}/internal/test/endpoint_for_task",
-            helper_port,
-        ))
+        .post(
+            local_helper_endpoint
+                .join("/internal/test/endpoint_for_task")
+                .unwrap(),
+        )
         .json(&json!({
             "taskId": task_id_encoded,
             "aggregatorId": 1,
-            "hostnameAndPort": format!("127.0.0.1:{}", leader_port),
+            "hostnameAndPort": format!("{}:{}", local_helper_endpoint.host_str().unwrap(), local_helper_endpoint.port().unwrap()),
         }))
         .send()
-        .await?;
+        .await.unwrap();
     assert_eq!(helper_endpoint_response.status(), StatusCode::OK);
     assert_eq!(
         helper_endpoint_response
@@ -250,14 +179,14 @@ async fn run(
             .unwrap(),
         JSON_MEDIA_TYPE,
     );
-    let helper_endpoint_response_body = helper_endpoint_response.json::<Value>().await?;
+    let helper_endpoint_response_body = helper_endpoint_response.json::<Value>().await.unwrap();
     let helper_endpoint_response_object = helper_endpoint_response_body
         .as_object()
-        .context("endpoint_for_task response is not an object")?;
+        .expect("endpoint_for_task response is not an object");
     assert_eq!(
         helper_endpoint_response_object
             .get("status")
-            .context("endpoint_for_task response is missing \"status\"")?,
+            .expect("endpoint_for_task response is missing \"status\""),
         "success",
         "error: {:?}",
         helper_endpoint_response_object.get("error"),
@@ -265,24 +194,26 @@ async fn run(
     assert_eq!(
         helper_endpoint_response_object
             .get("endpoint")
-            .context("endpoint_for_task response is missing \"endpoint\"")?,
-        "/dap/",
+            .expect("endpoint_for_task response is missing \"endpoint\""),
+        "/",
     );
 
     // Send a /internal/test/add_task request to the collector.
     let collector_add_task_response = http_client
-        .post(format!(
-            "http://127.0.0.1:{}/internal/test/add_task",
-            collector_port,
-        ))
+        .post(
+            local_collector_endpoint
+                .join("/internal/test/add_task")
+                .unwrap(),
+        )
         .json(&json!({
             "taskId": task_id_encoded,
-            "leader": leader_endpoint,
+            "leader": internal_leader_endpoint,
             "vdaf": vdaf_object,
             "collectorAuthenticationToken": collector_auth_token,
         }))
         .send()
-        .await?;
+        .await
+        .unwrap();
     assert_eq!(collector_add_task_response.status(), StatusCode::OK);
     assert_eq!(
         collector_add_task_response
@@ -291,34 +222,36 @@ async fn run(
             .unwrap(),
         JSON_MEDIA_TYPE,
     );
-    let collector_add_task_response_body = collector_add_task_response.json::<Value>().await?;
+    let collector_add_task_response_body =
+        collector_add_task_response.json::<Value>().await.unwrap();
     let collector_add_task_response_object = collector_add_task_response_body
         .as_object()
-        .context("collector add_task response is not an object")?;
+        .expect("collector add_task response is not an object");
     assert_eq!(
         collector_add_task_response_object
             .get("status")
-            .context("collector add_task response is missing \"status\"")?,
+            .expect("collector add_task response is missing \"status\""),
         "success",
         "error: {:?}",
         collector_add_task_response_object.get("error"),
     );
     let collector_hpke_config_encoded = collector_add_task_response_object
         .get("collectorHpkeConfig")
-        .context("collector add_task response is missing \"collectorHpkeConfig\"")?
+        .expect("collector add_task response is missing \"collectorHpkeConfig\"")
         .as_str()
-        .context("\"collectorHpkeConfig\" value is not a string")?;
+        .expect("\"collectorHpkeConfig\" value is not a string");
 
     // Send a /internal/test/add_task request to the leader.
     let leader_add_task_response = http_client
-        .post(format!(
-            "http://127.0.0.1:{}/internal/test/add_task",
-            leader_port,
-        ))
+        .post(
+            local_leader_endpoint
+                .join("/internal/test/add_task")
+                .unwrap(),
+        )
         .json(&json!({
             "taskId": task_id_encoded,
-            "leader": leader_endpoint,
-            "helper": helper_endpoint,
+            "leader": internal_leader_endpoint,
+            "helper": internal_helper_endpoint,
             "vdaf": vdaf_object,
             "leaderAuthenticationToken": aggregator_auth_token,
             "collectorAuthenticationToken": collector_auth_token,
@@ -330,7 +263,8 @@ async fn run(
             "collectorHpkeConfig": collector_hpke_config_encoded,
         }))
         .send()
-        .await?;
+        .await
+        .unwrap();
     assert_eq!(leader_add_task_response.status(), StatusCode::OK);
     assert_eq!(
         leader_add_task_response
@@ -339,14 +273,14 @@ async fn run(
             .unwrap(),
         JSON_MEDIA_TYPE,
     );
-    let leader_add_task_response_body = leader_add_task_response.json::<Value>().await?;
+    let leader_add_task_response_body = leader_add_task_response.json::<Value>().await.unwrap();
     let leader_add_task_response_object = leader_add_task_response_body
         .as_object()
-        .context("leader add_task response is not an object")?;
+        .expect("leader add_task response is not an object");
     assert_eq!(
         leader_add_task_response_object
             .get("status")
-            .context("leader add_task response is missing \"status\"")?,
+            .expect("leader add_task response is missing \"status\""),
         "success",
         "error: {:?}",
         leader_add_task_response_object.get("error"),
@@ -354,14 +288,15 @@ async fn run(
 
     // Send a /internal/test/add_task request to the helper.
     let helper_add_task_response = http_client
-        .post(format!(
-            "http://127.0.0.1:{}/internal/test/add_task",
-            helper_port,
-        ))
+        .post(
+            local_helper_endpoint
+                .join("/internal/test/add_task")
+                .unwrap(),
+        )
         .json(&json!({
             "taskId": task_id_encoded,
-            "leader": leader_endpoint,
-            "helper": helper_endpoint,
+            "leader": internal_leader_endpoint,
+            "helper": internal_helper_endpoint,
             "vdaf": vdaf_object,
             "leaderAuthenticationToken": aggregator_auth_token,
             "aggregatorId": 1,
@@ -372,7 +307,8 @@ async fn run(
             "collectorHpkeConfig": collector_hpke_config_encoded,
         }))
         .send()
-        .await?;
+        .await
+        .unwrap();
     assert_eq!(helper_add_task_response.status(), StatusCode::OK);
     assert_eq!(
         helper_add_task_response
@@ -381,14 +317,14 @@ async fn run(
             .unwrap(),
         JSON_MEDIA_TYPE,
     );
-    let helper_add_task_response_body = helper_add_task_response.json::<Value>().await?;
+    let helper_add_task_response_body = helper_add_task_response.json::<Value>().await.unwrap();
     let helper_add_task_response_object = helper_add_task_response_body
         .as_object()
-        .context("helper add_task response is not an object")?;
+        .expect("helper add_task response is not an object");
     assert_eq!(
         helper_add_task_response_object
             .get("status")
-            .context("helper add_task response is missing \"status\"")?,
+            .expect("helper add_task response is missing \"status\""),
         "success",
         "error: {:?}",
         helper_add_task_response_object.get("error"),
@@ -398,7 +334,8 @@ async fn run(
     // determine what batch time to start the aggregation at.
     let start_timestamp = RealClock::default().now();
     let batch_interval_start = start_timestamp
-        .to_batch_unit_interval_start(Duration::from_seconds(MIN_BATCH_DURATION))?
+        .to_batch_unit_interval_start(Duration::from_seconds(MIN_BATCH_DURATION))
+        .unwrap()
         .as_seconds_since_epoch();
     // Span the aggregation over two minimum batch durations, just in case our
     // measurements spilled over a batch boundary.
@@ -407,33 +344,31 @@ async fn run(
     // Send one or more /internal/test/upload requests to the client.
     for measurement in measurements {
         let upload_response = http_client
-            .post(format!(
-                "http://127.0.0.1:{}/internal/test/upload",
-                client_port,
-            ))
+            .post(local_client_endpoint.join("/internal/test/upload").unwrap())
             .json(&json!({
                 "taskId": task_id_encoded,
-                "leader": leader_endpoint,
-                "helper": helper_endpoint,
+                "leader": internal_leader_endpoint,
+                "helper": internal_helper_endpoint,
                 "vdaf": vdaf_object,
                 "measurement": measurement,
                 "minBatchDuration": MIN_BATCH_DURATION,
             }))
             .send()
-            .await?;
+            .await
+            .unwrap();
         assert_eq!(upload_response.status(), StatusCode::OK);
         assert_eq!(
             upload_response.headers().get(CONTENT_TYPE).unwrap(),
             JSON_MEDIA_TYPE,
         );
-        let upload_response_body = upload_response.json::<Value>().await?;
+        let upload_response_body = upload_response.json::<Value>().await.unwrap();
         let upload_response_object = upload_response_body
             .as_object()
-            .context("upload response is not an object")?;
+            .expect("upload response is not an object");
         assert_eq!(
             upload_response_object
                 .get("status")
-                .context("upload response is missing \"status\"")?,
+                .expect("upload response is missing \"status\""),
             "success",
             "error: {:?}",
             upload_response_object.get("error"),
@@ -442,10 +377,11 @@ async fn run(
 
     // Send a /internal/test/collect_start request to the collector.
     let collect_start_response = http_client
-        .post(format!(
-            "http://127.0.0.1:{}/internal/test/collect_start",
-            collector_port,
-        ))
+        .post(
+            local_collector_endpoint
+                .join("/internal/test/collect_start")
+                .unwrap(),
+        )
         .json(&json!({
             "taskId": task_id_encoded,
             "aggParam": base64::encode_config(aggregation_parameter, URL_SAFE_NO_PAD),
@@ -453,56 +389,59 @@ async fn run(
             "batchIntervalDuration": batch_interval_duration,
         }))
         .send()
-        .await?;
+        .await
+        .unwrap();
     assert_eq!(collect_start_response.status(), StatusCode::OK);
     assert_eq!(
         collect_start_response.headers().get(CONTENT_TYPE).unwrap(),
         JSON_MEDIA_TYPE,
     );
-    let collect_start_response_body = collect_start_response.json::<Value>().await?;
+    let collect_start_response_body = collect_start_response.json::<Value>().await.unwrap();
     let collect_start_response_object = collect_start_response_body
         .as_object()
-        .context("collect_start response is not an object")?;
+        .expect("collect_start response is not an object");
     assert_eq!(
         collect_start_response_object
             .get("status")
-            .context("collect_start response is missing \"status\"")?,
+            .expect("collect_start response is missing \"status\""),
         "success",
         "error: {:?}",
         collect_start_response_object.get("error"),
     );
     let collect_job_handle = collect_start_response_object
         .get("handle")
-        .context("collect_start response is missing \"handle\"")?
+        .expect("collect_start response is missing \"handle\"")
         .as_str()
-        .context("\"handle\" value is not a string")?;
+        .expect("\"handle\" value is not a string");
 
     // Send /internal/test/collect_poll requests to the collector, polling until it is completed.
     for _ in 0..30 {
         let collect_poll_response = http_client
-            .post(format!(
-                "http://127.0.0.1:{}/internal/test/collect_poll",
-                collector_port,
-            ))
+            .post(
+                local_collector_endpoint
+                    .join("/internal/test/collect_poll")
+                    .unwrap(),
+            )
             .json(&json!({
                 "handle": collect_job_handle,
             }))
             .send()
-            .await?;
+            .await
+            .unwrap();
         assert_eq!(collect_poll_response.status(), StatusCode::OK);
         assert_eq!(
             collect_poll_response.headers().get(CONTENT_TYPE).unwrap(),
             JSON_MEDIA_TYPE,
         );
-        let collect_poll_response_body = collect_poll_response.json::<Value>().await?;
+        let collect_poll_response_body = collect_poll_response.json::<Value>().await.unwrap();
         let collect_poll_response_object = collect_poll_response_body
             .as_object()
-            .context("collect_poll response is not an object")?;
+            .expect("collect_poll response is not an object");
         let status = collect_poll_response_object
             .get("status")
-            .context("collect_poll response is missing \"status\"")?
+            .expect("collect_poll response is missing \"status\"")
             .as_str()
-            .context("\"status\" value is not a string")?;
+            .expect("\"status\" value is not a string");
         if status == "in progress" {
             tokio::time::sleep(StdDuration::from_millis(500)).await;
             continue;
@@ -515,11 +454,11 @@ async fn run(
         );
         return collect_poll_response_object
             .get("result")
-            .context("completed collect_poll response is missing \"result\"")
-            .cloned();
+            .expect("completed collect_poll response is missing \"result\"")
+            .clone();
     }
 
-    Err(anyhow::anyhow!("timed out fetching aggregation result"))
+    panic!("timed out fetching aggregation result");
 }
 
 #[tokio::test]
@@ -548,8 +487,7 @@ async fn e2e_prio3_count() {
         ],
         b"",
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(result, json!(8));
 }
 
@@ -568,8 +506,7 @@ async fn e2e_prio3_sum() {
         ],
         b"",
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(result, json!(74));
 }
 
@@ -591,7 +528,6 @@ async fn e2e_prio3_histogram() {
         ],
         b"",
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(result, json!([0, 1, 1, 2, 1, 2, 2, 1]));
 }

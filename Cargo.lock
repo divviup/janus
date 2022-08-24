@@ -1584,9 +1584,13 @@ name = "interop_binaries"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backoff",
  "base64",
  "build_script_utils",
  "clap 3.2.17",
+ "futures",
+ "hex",
+ "interop_binaries",
  "janus_client",
  "janus_core",
  "janus_server",
@@ -2037,10 +2041,8 @@ dependencies = [
 name = "monolithic_integration_test"
 version = "0.1.0"
 dependencies = [
- "backoff",
  "build_script_utils",
  "daphne",
- "futures",
  "hex",
  "http",
  "interop_binaries",

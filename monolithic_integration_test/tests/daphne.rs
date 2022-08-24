@@ -1,4 +1,5 @@
-use common::{create_test_tasks, generate_network_name, submit_measurements_and_verify_aggregate};
+use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
+use interop_binaries::test_util::generate_network_name;
 use janus_core::{
     hpke::test_util::generate_test_hpke_config_and_private_key,
     test_util::install_test_trace_subscriber,

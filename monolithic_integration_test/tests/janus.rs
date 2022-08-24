@@ -1,4 +1,5 @@
-use common::{create_test_tasks, generate_network_name, submit_measurements_and_verify_aggregate};
+use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
+use interop_binaries::test_util::generate_network_name;
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
     test_util::install_test_trace_subscriber,
@@ -25,13 +26,6 @@ struct JanusPair {
 }
 
 impl JanusPair {
-    fn in_cluster_aggregator_url(namespace: &str) -> Url {
-        Url::parse(&format!(
-            "http://aggregator.{namespace}.svc.cluster.local:80"
-        ))
-        .unwrap()
-    }
-
     /// Set up a new Janus test instance with the provided task. If the environment variables listed
     /// below are set, then the test instance is backed by an already-running Kubernetes cluster.
     /// Otherwise, an ephemeral, in-process instance of Janus is spawned. In either case, the Janus
@@ -110,10 +104,9 @@ impl JanusPair {
                 Err(VarError::NotPresent),
             ) => {
                 let network = generate_network_name();
-                (
-                    Janus::new_in_container(&network, &leader_task).await,
-                    Janus::new_in_container(&network, &helper_task).await,
-                )
+                let leader = Janus::new_in_container(&network, &leader_task).await;
+                let helper = Janus::new_in_container(&network, &helper_task).await;
+                (leader, helper)
             }
             _ => panic!("unexpected environment variables"),
         };
@@ -124,6 +117,13 @@ impl JanusPair {
             leader,
             helper,
         }
+    }
+
+    fn in_cluster_aggregator_url(namespace: &str) -> Url {
+        Url::parse(&format!(
+            "http://aggregator.{namespace}.svc.cluster.local:80"
+        ))
+        .unwrap()
     }
 }
 
