@@ -1,6 +1,7 @@
 //! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
 use crate::{await_http_server, CONTAINER_CLIENT};
+use daphne::DapGlobalConfig;
 use interop_binaries::load_zstd_compressed_docker_image;
 use janus_core::message::{HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role};
 use janus_server::task::{Task, VdafInstance};
@@ -38,6 +39,15 @@ impl Daphne {
         // Generate values needed for the Daphne environment configuration based on the provided
         // Janus task definition.
 
+        // Daphne's DAP global config configures a few Daphne-specific configuration parameters.
+        // These aren't part of the DAP-specific task parameters, so we give reasonable defaults
+        // that work for our testing purposes.
+        let dap_global_config = DapGlobalConfig {
+            max_batch_duration: 360000,
+            min_batch_interval_start: 259200,
+            max_batch_interval_end: 259200,
+        };
+
         // Daphne currently only supports an HPKE config of (X25519HkdfSha256, HkdfSha256,
         // Aes128Gcm); this is checked in `DaphneHpkeConfig::from`.
         let dap_hpke_receiver_config_list = serde_json::to_string(
@@ -66,6 +76,7 @@ impl Daphne {
         let dap_task_list = serde_json::to_string(&HashMap::from([(
             hex::encode(task.id.as_bytes()),
             DaphneDapTaskConfig {
+                version: "v01".to_string(),
                 leader_url: task.aggregator_url(Role::Leader).unwrap().clone(),
                 helper_url: task.aggregator_url(Role::Helper).unwrap().clone(),
                 min_batch_duration: task.min_batch_duration.as_seconds(),
@@ -106,8 +117,20 @@ impl Daphne {
 
         let args = [
             (
+                // Note: DAP_DEPLOYMENT=dev overrides aggregator endpoint hostnames to "localhost",
+                // so it can't be used. The other option is DAP_DEPLOYMENT=prod -- despite the name,
+                // that's what we want since it operates as configured without any special dev-only
+                // overrides that our test configuration doesn't need.
+                "DAP_DEPLOYMENT".to_string(),
+                "prod".to_string(),
+            ),
+            (
                 "DAP_AGGREGATOR_ROLE".to_string(),
                 task.role.as_str().to_string(),
+            ),
+            (
+                "DAP_GLOBAL_CONFIG".to_string(),
+                serde_json::to_string(&dap_global_config).unwrap(),
             ),
             (
                 "DAP_HPKE_RECEIVER_CONFIG_LIST".to_string(),
@@ -130,8 +153,11 @@ impl Daphne {
             ),
         ]
         .into_iter()
-        .map(|(env_var, env_val)| format!("--binding={env_var}={env_val}"))
-        .collect();
+        .map(|(env_var, env_val)| format!("--binding={env_var}={env_val}"));
+        let args = ["--port=8080".to_string()]
+            .into_iter()
+            .chain(args)
+            .collect();
         let runnable_image = RunnableImage::from((GenericImage::new("sha256", &image_hash), args))
             .with_network(network)
             .with_container_name(endpoint.host_str().unwrap())
@@ -270,6 +296,7 @@ impl From<HpkeConfig> for DaphneHpkeConfig {
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 struct DaphneDapTaskConfig {
+    pub version: String,
     pub leader_url: Url,
     pub helper_url: Url,
     pub min_batch_duration: u64,
