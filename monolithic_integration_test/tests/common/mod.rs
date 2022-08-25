@@ -29,12 +29,6 @@ use reqwest::{redirect, Url};
 use std::iter;
 use tokio::time::{self, Instant};
 
-pub fn generate_network_name() -> String {
-    let mut buf = [0; 4];
-    thread_rng().fill(&mut buf);
-    format!("janus_integration_test_{}", hex::encode(buf))
-}
-
 // Returns (leader_task, helper_task).
 pub fn create_test_tasks(collector_hpke_config: &HpkeConfig) -> (Task, Task) {
     // Generate parameters.

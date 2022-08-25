@@ -1,8 +1,8 @@
 //! Functionality for tests interacting with Daphne (<https://github.com/cloudflare/daphne>).
 
-use crate::{await_http_server, CONTAINER_CLIENT};
+use crate::CONTAINER_CLIENT;
 use daphne::DapGlobalConfig;
-use interop_binaries::load_zstd_compressed_docker_image;
+use interop_binaries::test_util::{await_http_server, load_zstd_compressed_docker_image};
 use janus_core::message::{HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role};
 use janus_server::task::{Task, VdafInstance};
 use portpicker::pick_unused_port;
