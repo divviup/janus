@@ -15,7 +15,7 @@ use k8s_openapi::api::core::v1::Secret;
 use portpicker::pick_unused_port;
 use std::collections::HashMap;
 use std::path::Path;
-use testcontainers::{core::Port, Container, RunnableImage};
+use testcontainers::{Container, RunnableImage};
 use tracing::debug;
 use url::Url;
 
