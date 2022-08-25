@@ -40,17 +40,13 @@ impl Janus {
     /// to service the given task. The aggregator port is also exposed to the host.
     pub async fn new_in_container(network: &str, task: &Task) -> Self {
         // Start the Janus interop aggregator container running.
-        let port = pick_unused_port().expect("Couldn't pick unused port");
         let endpoint = task.aggregator_url(task.role).unwrap();
-
-        let runnable_image = RunnableImage::from(Aggregator::default())
-            .with_network(network)
-            .with_container_name(endpoint.host_str().unwrap())
-            .with_mapped_port(Port {
-                local: port,
-                internal: Aggregator::INTERNAL_SERVING_PORT,
-            });
-        let container = CONTAINER_CLIENT.run(runnable_image);
+        let container = CONTAINER_CLIENT.run(
+            RunnableImage::from(Aggregator::default())
+                .with_network(network)
+                .with_container_name(endpoint.host_str().unwrap()),
+        );
+        let port = container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
         // Wait for the container to start listening on its port.
         await_http_server(port).await;
@@ -157,7 +153,9 @@ impl Janus {
     /// Returns the port of the aggregator on the host.
     pub fn port(&self) -> u16 {
         match self {
-            Janus::Container { container } => container.get_host_port_ipv4(8080),
+            Janus::Container { container } => {
+                container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
+            }
             Janus::KubernetesCluster {
                 aggregator_port_forward,
             } => aggregator_port_forward.local_port(),

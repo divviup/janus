@@ -10,12 +10,11 @@ use janus_core::{
 };
 use janus_server::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use lazy_static::lazy_static;
-use portpicker::pick_unused_port;
 use prio::codec::Encode;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
-use std::{env, process::Command, time::Duration as StdDuration};
-use testcontainers::{core::Port, RunnableImage};
+use std::time::Duration as StdDuration;
+use testcontainers::RunnableImage;
 
 const JSON_MEDIA_TYPE: &str = "application/json";
 const MIN_BATCH_DURATION: u64 = 3600;
@@ -34,57 +33,37 @@ async fn run(
     aggregation_parameter: &[u8],
 ) -> serde_json::Value {
     // Create and start containers.
-    // We use std::process instead of tokio::process so that we can kill the child processes from
-    // a Drop implementation. tokio::process::Child::kill() is async, and could not be called from
-    // there.
     let network = generate_network_name();
 
-    let client_port = pick_unused_port().expect("couldn't pick a port for the client");
-    let client_name = generate_unique_name("client");
-    let client_image = RunnableImage::from(Client::default())
-        .with_network(network.clone())
-        .with_container_name(client_name)
-        .with_mapped_port(Port {
-            local: client_port,
-            internal: Client::INTERNAL_SERVING_PORT,
-        });
-    let _client_container = CONTAINER_CLIENT.run(client_image);
+    let client_container = CONTAINER_CLIENT.run(
+        RunnableImage::from(Client::default())
+            .with_network(&network)
+            .with_container_name(generate_unique_name("client")),
+    );
+    let client_port = client_container.get_host_port_ipv4(Client::INTERNAL_SERVING_PORT);
 
-    let mut client_command = Command::new(env!("CARGO_BIN_EXE_janus_interop_client"));
-    client_command.arg("--port").arg(format!("{}", client_port));
-
-    let leader_port = pick_unused_port().expect("couldn't pick a port for the leader");
     let leader_name = generate_unique_name("leader");
-    let leader_image = RunnableImage::from(Aggregator::default())
-        .with_network(network.clone())
-        .with_container_name(leader_name.clone())
-        .with_mapped_port(Port {
-            local: leader_port,
-            internal: Aggregator::INTERNAL_SERVING_PORT,
-        });
-    let _leader_container = CONTAINER_CLIENT.run(leader_image);
+    let leader_container = CONTAINER_CLIENT.run(
+        RunnableImage::from(Aggregator::default())
+            .with_network(&network)
+            .with_container_name(leader_name.clone()),
+    );
+    let leader_port = leader_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
-    let helper_port = pick_unused_port().expect("couldn't pick a port for the helper");
     let helper_name = generate_unique_name("helper");
-    let helper_image = RunnableImage::from(Aggregator::default())
-        .with_network(network.clone())
-        .with_container_name(helper_name.clone())
-        .with_mapped_port(Port {
-            local: helper_port,
-            internal: Aggregator::INTERNAL_SERVING_PORT,
-        });
-    let _helper_container = CONTAINER_CLIENT.run(helper_image);
+    let helper_container = CONTAINER_CLIENT.run(
+        RunnableImage::from(Aggregator::default())
+            .with_network(&network)
+            .with_container_name(helper_name.clone()),
+    );
+    let helper_port = helper_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
-    let collector_port = pick_unused_port().expect("couldn't pick a port for the collector");
-    let collector_name = generate_unique_name("collector");
-    let collector_image = RunnableImage::from(Collector::default())
-        .with_network(network)
-        .with_container_name(collector_name)
-        .with_mapped_port(Port {
-            local: collector_port,
-            internal: Collector::INTERNAL_SERVING_PORT,
-        });
-    let _collector_container = CONTAINER_CLIENT.run(collector_image);
+    let collector_container = CONTAINER_CLIENT.run(
+        RunnableImage::from(Collector::default())
+            .with_network(&network)
+            .with_container_name(generate_unique_name("collector")),
+    );
+    let collector_port = collector_container.get_host_port_ipv4(Collector::INTERNAL_SERVING_PORT);
 
     // Wait for all containers to sucessfully respond to HTTP requests.
     join_all(

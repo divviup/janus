@@ -214,8 +214,8 @@ pub mod test_util {
         .unwrap();
     }
 
-    /// Loads a given zstd-compressed docker image into Docker. Returns the hash of the loaded image,
-    /// e.g. as referenced by `sha256:$HASH`. Panics on failure.
+    /// Loads a given zstd-compressed docker image into Docker. Returns the hash of the loaded
+    /// image, e.g. as referenced by `sha256:$HASH`. Panics on failure.
     pub fn load_zstd_compressed_docker_image(compressed_image: &[u8]) -> String {
         use std::{
             io::{Cursor, Read},

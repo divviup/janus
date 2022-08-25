@@ -19,7 +19,7 @@ fn main() {
                 println!("cargo:rerun-if-changed=../Dockerfile.interop");
                 println!("cargo:rerun-if-changed=../Dockerfile.interop_aggregator");
 
-                // These directives should match the dependencies copied into the build layer in
+                // These directives should match the dependencies copied into the build stage in
                 // Dockerfile.interop & Dockerfile.interop_aggregator.
                 println!("cargo:rerun-if-changed=../Cargo.lock");
                 println!("cargo:rerun-if-changed=../Cargo.toml");
@@ -127,7 +127,7 @@ fn main() {
                     "{}/interop_collector.tar.zst",
                     env::var("OUT_DIR").unwrap()
                 ))
-                .expect("Couldn't create interop client image file");
+                .expect("Couldn't create interop collector image file");
                 save_zstd_compressed_docker_image(&collector_image_id, &collector_image_file);
                 collector_image_file
                     .sync_all()

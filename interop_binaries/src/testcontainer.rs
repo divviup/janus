@@ -22,7 +22,7 @@ static INTEROP_COLLECTOR_IMAGE_HASH: Mutex<Option<String>> = Mutex::new(None);
 pub struct Client {}
 
 impl Client {
-    // The internal port that the Client serves on.
+    /// The internal port that the Client serves on.
     pub const INTERNAL_SERVING_PORT: u16 = 8080;
 }
 
@@ -126,7 +126,7 @@ impl Image for Aggregator {
 pub struct Collector {}
 
 impl Collector {
-    // The internal port that the Collector serves on.
+    /// The internal port that the Collector serves on.
     pub const INTERNAL_SERVING_PORT: u16 = 8080;
 }
 
