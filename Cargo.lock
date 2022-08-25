@@ -711,7 +711,7 @@ dependencies = [
 [[package]]
 name = "daphne"
 version = "0.0.1"
-source = "git+https://github.com/cloudflare/daphne?rev=6301e712df216a0301c42cb3177110dd8217fa84#6301e712df216a0301c42cb3177110dd8217fa84"
+source = "git+https://github.com/cloudflare/daphne?rev=6228556c7b87a7fe85e414a3186a2511407896f0#6228556c7b87a7fe85e414a3186a2511407896f0"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -721,6 +721,7 @@ dependencies = [
  "getrandom",
  "hex",
  "hpke 0.8.0",
+ "matchit 0.6.0",
  "prio",
  "rand",
  "reqwest",
@@ -1637,9 +1638,10 @@ checksum = "1aab8fc367588b89dcee83ab0fd66b72b50b72fa1904d7095045ace2b0c81c35"
 
 [[package]]
 name = "janus_client"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "assert_matches",
+ "backoff",
  "derivative",
  "http",
  "janus_core",
@@ -1656,10 +1658,11 @@ dependencies = [
 
 [[package]]
 name = "janus_core"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "backoff",
  "base64",
  "bytes",
  "chrono",
@@ -1670,11 +1673,13 @@ dependencies = [
  "janus_core",
  "k8s-openapi",
  "kube",
+ "mockito",
  "num_enum",
  "postgres-protocol",
  "postgres-types",
  "prio",
  "rand",
+ "reqwest",
  "ring",
  "serde",
  "serde_json",
@@ -1684,11 +1689,12 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
 name = "janus_server"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -1935,6 +1941,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73cbba799671b762df5a175adf59ce145165747bb891505c43d09aefbbf38beb"
 
 [[package]]
+name = "matchit"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3dfc802da7b1cf80aefffa0c7b2f77247c8b32206cc83c270b61264f5b360a80"
+
+[[package]]
 name = "md-5"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2041,8 +2053,10 @@ dependencies = [
 name = "monolithic_integration_test"
 version = "0.1.0"
 dependencies = [
+ "backoff",
  "build_script_utils",
  "daphne",
+ "futures",
  "hex",
  "http",
  "interop_binaries",
@@ -2060,6 +2074,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "testcontainers",
  "tokio",
  "tracing",

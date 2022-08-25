@@ -91,10 +91,6 @@ impl JanusPair {
                 )
                 .await;
 
-                // Wait just a bit to allow kubectl port-forwards to be ready
-                // TODO(#196): Remove this.
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-
                 (leader, helper)
             }
             (

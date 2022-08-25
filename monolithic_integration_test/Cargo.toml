@@ -20,7 +20,9 @@ daphne = [
 kube-openssl = ["kube/openssl-tls"]
 
 [dependencies]
-daphne = { git = "https://github.com/cloudflare/daphne", rev = "6301e712df216a0301c42cb3177110dd8217fa84", optional = true }
+backoff = { version = "0.4", features = ["tokio"] }
+daphne = { git = "https://github.com/cloudflare/daphne", rev = "6228556c7b87a7fe85e414a3186a2511407896f0", optional = true }  # Match this to the version referenced in README.md.
+futures = "0.3.23"
 hex = { version = "0.4", optional = true }
 interop_binaries = { path = "../interop_binaries", features = ["testcontainer"] }
 janus_core = { path = "../janus_core", features = ["test-util"] }
@@ -48,3 +50,4 @@ prio = "0.8.2"
 
 [build-dependencies]
 build_script_utils = { path = "../build_script_utils", optional = true }
+tempfile = "3"
