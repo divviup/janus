@@ -90,7 +90,7 @@ async fn run(
     join_all(
         [client_port, leader_port, helper_port, collector_port]
             .into_iter()
-            .map(|port| await_http_server(port)),
+            .map(await_http_server),
     )
     .await;
 
