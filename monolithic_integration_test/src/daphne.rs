@@ -112,10 +112,12 @@ impl Daphne {
                 let metadata: serde_json::Value =
                     serde_json::from_slice(TEST_DAPHNE_METADATA_BYTES)
                         .expect("Couldn't parse Daphne test image metadata");
-                let strategy = metadata["strategy"].as_str().expect(&format!(
-                    "Metadata strategy field was not a string: {}",
-                    metadata["strategy"]
-                ));
+                let strategy = metadata["strategy"].as_str().unwrap_or_else(|| {
+                    panic!(
+                        "Metadata strategy field was not a string: {}",
+                        metadata["strategy"]
+                    )
+                });
 
                 *image_name_and_tag = Some(match strategy {
                     "build" => (
@@ -126,17 +128,21 @@ impl Daphne {
                     "prebuilt" => (
                         metadata["image_name"]
                             .as_str()
-                            .expect(&format!(
-                                "Daphne test image metadata image_name field was not a string: {}",
-                                metadata["image_name"]
-                            ))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Daphne test image metadata image_name field was not a string: {}",
+                                    metadata["image_name"]
+                                )
+                            })
                             .to_string(),
                         metadata["image_tag"]
                             .as_str()
-                            .expect(&format!(
-                                "Daphne test image metadata image_tag field was not a string: {}",
-                                metadata["image_tag"]
-                            ))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Daphne test image metadata image_tag field was not a string: {}",
+                                    metadata["image_tag"]
+                                )
+                            })
                             .to_string(),
                     ),
 
