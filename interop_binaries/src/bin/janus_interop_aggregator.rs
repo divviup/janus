@@ -4,7 +4,7 @@ use clap::{Arg, Command};
 use interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
-    AddTaskRequest, AddTaskResponse, HpkeConfigRegistry,
+    AddTaskResponse, AggregatorAddTaskRequest, HpkeConfigRegistry,
 };
 use janus_core::{
     message::{Duration, HpkeConfig, Role, TaskId},
@@ -44,7 +44,7 @@ struct EndpointResponse<'a> {
 async fn handle_add_task(
     datastore: &Datastore<RealClock>,
     keyring: &Mutex<HpkeConfigRegistry>,
-    request: AddTaskRequest,
+    request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
     let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
         .context("invalid base64url content in \"taskId\"")?;
@@ -135,27 +135,26 @@ fn make_filter(
         )
         .into_response()
     });
-    let add_task_filter =
-        warp::path!("add_task")
-            .and(warp::body::json())
-            .then(move |request: AddTaskRequest| {
-                let datastore = Arc::clone(&datastore);
-                let keyring = Arc::clone(&keyring);
-                async move {
-                    let response = match handle_add_task(&datastore, &keyring, request).await {
-                        Ok(()) => AddTaskResponse {
-                            status: SUCCESS.to_string(),
-                            error: None,
-                        },
-                        Err(e) => AddTaskResponse {
-                            status: ERROR.to_string(),
-                            error: Some(format!("{:?}", e)),
-                        },
-                    };
-                    warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                        .into_response()
-                }
-            });
+    let add_task_filter = warp::path!("add_task").and(warp::body::json()).then(
+        move |request: AggregatorAddTaskRequest| {
+            let datastore = Arc::clone(&datastore);
+            let keyring = Arc::clone(&keyring);
+            async move {
+                let response = match handle_add_task(&datastore, &keyring, request).await {
+                    Ok(()) => AddTaskResponse {
+                        status: SUCCESS.to_string(),
+                        error: None,
+                    },
+                    Err(e) => AddTaskResponse {
+                        status: ERROR.to_string(),
+                        error: Some(format!("{:?}", e)),
+                    },
+                };
+                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
+                    .into_response()
+            }
+        },
+    );
 
     Ok(warp::path!("internal" / "test" / ..)
         .and(warp::post())

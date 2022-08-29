@@ -1,6 +1,8 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-use interop_binaries::{test_util::await_http_server, testcontainer::Aggregator, AddTaskRequest};
+use interop_binaries::{
+    test_util::await_http_server, testcontainer::Aggregator, AggregatorAddTaskRequest,
+};
 use janus_core::{
     test_util::kubernetes::{Cluster, PortForward},
     time::RealClock,
@@ -58,7 +60,7 @@ impl<'a> Janus<'a> {
         let http_client = reqwest::Client::default();
         let resp = http_client
             .post(Url::parse(&format!("http://localhost:{}/internal/test/add_task", port)).unwrap())
-            .json(&AddTaskRequest::from(task.clone()))
+            .json(&AggregatorAddTaskRequest::from(task.clone()))
             .send()
             .await
             .unwrap();

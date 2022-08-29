@@ -65,7 +65,7 @@ impl From<VdafObject> for VdafInstance {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AddTaskRequest {
+pub struct AggregatorAddTaskRequest {
     pub task_id: String, // in unpadded base64url
     pub leader: Url,
     pub helper: Url,
@@ -88,7 +88,7 @@ pub struct AddTaskResponse {
     pub error: Option<String>,
 }
 
-impl From<Task> for AddTaskRequest {
+impl From<Task> for AggregatorAddTaskRequest {
     fn from(task: Task) -> Self {
         Self {
             task_id: base64::encode_config(task.id.as_bytes(), URL_SAFE_NO_PAD),
