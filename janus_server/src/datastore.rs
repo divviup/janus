@@ -337,7 +337,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Deletes a task from the datastore. Fails if there is any data related to the task, such as
     /// client reports, aggregations, etc.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self))]
     pub async fn delete_task(&self, task_id: TaskId) -> Result<(), Error> {
         let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_bytes()];
 
