@@ -471,35 +471,38 @@ async fn e2e_prio3_sum() {
     let result = run(
         json!({"type": "Prio3Aes128Sum", "bits": 64}),
         &[
-            json!(0),
-            json!(10),
-            json!(9),
-            json!(21),
-            json!(8),
-            json!(12),
-            json!(14),
+            json!("0"),
+            json!("10"),
+            json!("9"),
+            json!("21"),
+            json!("8"),
+            json!("12"),
+            json!("14"),
         ],
         b"",
     )
     .await;
-    assert_eq!(result, json!(74));
+    assert_eq!(result, json!("74"));
 }
 
 #[tokio::test]
 async fn e2e_prio3_histogram() {
     let result = run(
-        json!({"type": "Prio3Aes128Histogram", "buckets": [0, 1, 10, 100, 1_000, 10_000, 100_000]}),
+        json!({
+            "type": "Prio3Aes128Histogram",
+            "buckets": ["0", "1", "10", "100", "1000", "10000", "100000"],
+        }),
         &[
-            json!(1),
-            json!(4),
-            json!(16),
-            json!(64),
-            json!(256),
-            json!(1024),
-            json!(4096),
-            json!(16384),
-            json!(65536),
-            json!(262144),
+            json!("1"),
+            json!("4"),
+            json!("16"),
+            json!("64"),
+            json!("256"),
+            json!("1024"),
+            json!("4096"),
+            json!("16384"),
+            json!("65536"),
+            json!("262144"),
         ],
         b"",
     )

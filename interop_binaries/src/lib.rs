@@ -6,8 +6,8 @@ use janus_core::{
 use janus_server::task::{Task, VdafInstance};
 use prio::codec::Encode;
 use rand::{thread_rng, Rng};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use serde::{de::Visitor, Deserialize, Serialize};
+use std::{collections::HashMap, fmt::Display, marker::PhantomData, str::FromStr};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 use url::Url;
@@ -22,12 +22,71 @@ pub mod status {
     pub static IN_PROGRESS: &str = "in progress";
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// Helper type to serialize/deserialize a large number as a string.
+#[derive(Debug, Clone)]
+pub struct NumberAsString<T>(pub T);
+
+impl<T> Serialize for NumberAsString<T>
+where
+    T: Display,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de, T> Deserialize<'de> for NumberAsString<T>
+where
+    T: FromStr,
+    <T as FromStr>::Err: Display,
+{
+    fn deserialize<D>(deserializer: D) -> Result<NumberAsString<T>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(NumberAsStringVisitor::new())
+    }
+}
+
+struct NumberAsStringVisitor<T>(PhantomData<T>);
+
+impl<T> NumberAsStringVisitor<T> {
+    fn new() -> NumberAsStringVisitor<T> {
+        NumberAsStringVisitor(PhantomData)
+    }
+}
+
+impl<'de, T> Visitor<'de> for NumberAsStringVisitor<T>
+where
+    T: FromStr,
+    <T as FromStr>::Err: Display,
+{
+    type Value = NumberAsString<T>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a string with a number in base 10")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<NumberAsString<T>, E>
+    where
+        E: serde::de::Error,
+    {
+        let number = value
+            .parse()
+            .map_err(|err| E::custom(format!("string could not be parsed into number: {}", err)))?;
+        Ok(NumberAsString(number))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum VdafObject {
     Prio3Aes128Count,
     Prio3Aes128Sum { bits: u32 },
-    Prio3Aes128Histogram { buckets: Vec<u64> },
+    Prio3Aes128Histogram { buckets: Vec<NumberAsString<u64>> },
 }
 
 impl From<VdafInstance> for VdafObject {
@@ -41,7 +100,9 @@ impl From<VdafInstance> for VdafObject {
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
                 buckets,
-            }) => VdafObject::Prio3Aes128Histogram { buckets },
+            }) => VdafObject::Prio3Aes128Histogram {
+                buckets: buckets.iter().copied().map(NumberAsString).collect(),
+            },
             _ => panic!("Unsupported VDAF: {:?}", vdaf),
         }
     }
@@ -57,7 +118,9 @@ impl From<VdafObject> for VdafInstance {
                 VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits })
             }
             VdafObject::Prio3Aes128Histogram { buckets } => {
-                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { buckets })
+                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
+                    buckets: buckets.iter().map(|value| value.0).collect(),
+                })
             }
         }
     }
