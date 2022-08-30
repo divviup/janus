@@ -101,10 +101,11 @@ async fn run(
         .json(&json!({
             "taskId": task_id_encoded,
             "aggregatorId": 0,
-            "hostnameAndPort": format!("{}:{}", local_leader_endpoint.host_str().unwrap(), local_leader_endpoint.port().unwrap()),
+            "hostname": local_leader_endpoint.host_str().unwrap(),
         }))
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(leader_endpoint_response.status(), StatusCode::OK);
     assert_eq!(
         leader_endpoint_response
@@ -142,10 +143,11 @@ async fn run(
         .json(&json!({
             "taskId": task_id_encoded,
             "aggregatorId": 1,
-            "hostnameAndPort": format!("{}:{}", local_helper_endpoint.host_str().unwrap(), local_helper_endpoint.port().unwrap()),
+            "hostname": local_helper_endpoint.host_str().unwrap(),
         }))
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(helper_endpoint_response.status(), StatusCode::OK);
     assert_eq!(
         helper_endpoint_response
