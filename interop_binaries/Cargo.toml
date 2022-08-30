@@ -51,7 +51,7 @@ zstd = { version = "0.11", optional = true }
 
 [dev-dependencies]
 interop_binaries = { path = ".", features = ["testcontainer"] }
-lazy_static = "1"
+janus_core = { path = "../janus_core", features = ["test-util"] }
 reqwest = { version = "0.11.4", default-features = false, features = ["json"] }
 testcontainers = "0.14.0"
 

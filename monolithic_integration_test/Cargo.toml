@@ -29,7 +29,6 @@ janus_core = { path = "../janus_core", features = ["test-util"] }
 janus_server = { path = "../janus_server", features = ["test-util"] }
 k8s-openapi = { version = "0.13.1", features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.65.0", default-features = false, features = ["client"] }
-lazy_static = "1"
 portpicker = "0.1"
 rand = { version = "0.8", optional = true }
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }

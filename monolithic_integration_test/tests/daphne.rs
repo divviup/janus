@@ -1,8 +1,9 @@
 use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
 use interop_binaries::test_util::generate_network_name;
 use janus_core::{
-    hpke::test_util::generate_test_hpke_config_and_private_key, message::Role,
-    test_util::install_test_trace_subscriber,
+    hpke::test_util::generate_test_hpke_config_and_private_key,
+    message::Role,
+    test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
 use monolithic_integration_test::{daphne::Daphne, janus::Janus};
 
@@ -27,8 +28,9 @@ async fn daphne_janus() {
             .set_path("/v01/");
     }
 
-    let leader = Daphne::new(&network, &leader_task).await;
-    let helper = Janus::new_in_container(&network, &helper_task).await;
+    let container_client = container_client();
+    let leader = Daphne::new(&container_client, &network, &leader_task).await;
+    let helper = Janus::new_in_container(&container_client, &network, &helper_task).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -58,8 +60,9 @@ async fn janus_daphne() {
             .set_path("/v01/");
     }
 
-    let leader = Janus::new_in_container(&network, &leader_task).await;
-    let helper = Daphne::new(&network, &helper_task).await;
+    let container_client = container_client();
+    let leader = Janus::new_in_container(&container_client, &network, &leader_task).await;
+    let helper = Daphne::new(&container_client, &network, &helper_task).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(

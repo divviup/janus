@@ -6,10 +6,10 @@ use interop_binaries::{
 };
 use janus_core::{
     message::{Duration, TaskId},
+    test_util::testcontainers::container_client,
     time::{Clock, RealClock},
 };
 use janus_server::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
-use lazy_static::lazy_static;
 use prio::codec::Encode;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
@@ -18,11 +18,6 @@ use testcontainers::RunnableImage;
 
 const JSON_MEDIA_TYPE: &str = "application/json";
 const MIN_BATCH_DURATION: u64 = 3600;
-
-lazy_static! {
-    static ref CONTAINER_CLIENT: testcontainers::clients::Cli =
-        testcontainers::clients::Cli::default();
-}
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
@@ -33,9 +28,10 @@ async fn run(
     aggregation_parameter: &[u8],
 ) -> serde_json::Value {
     // Create and start containers.
+    let container_client = container_client();
     let network = generate_network_name();
 
-    let client_container = CONTAINER_CLIENT.run(
+    let client_container = container_client.run(
         RunnableImage::from(Client::default())
             .with_network(&network)
             .with_container_name(generate_unique_name("client")),
@@ -43,7 +39,7 @@ async fn run(
     let client_port = client_container.get_host_port_ipv4(Client::INTERNAL_SERVING_PORT);
 
     let leader_name = generate_unique_name("leader");
-    let leader_container = CONTAINER_CLIENT.run(
+    let leader_container = container_client.run(
         RunnableImage::from(Aggregator::default())
             .with_network(&network)
             .with_container_name(leader_name.clone()),
@@ -51,14 +47,14 @@ async fn run(
     let leader_port = leader_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
     let helper_name = generate_unique_name("helper");
-    let helper_container = CONTAINER_CLIENT.run(
+    let helper_container = container_client.run(
         RunnableImage::from(Aggregator::default())
             .with_network(&network)
             .with_container_name(helper_name.clone()),
     );
     let helper_port = helper_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
-    let collector_container = CONTAINER_CLIENT.run(
+    let collector_container = container_client.run(
         RunnableImage::from(Collector::default())
             .with_network(&network)
             .with_container_name(generate_unique_name("collector")),
