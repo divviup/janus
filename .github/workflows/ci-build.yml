@@ -9,12 +9,32 @@ on:
 jobs:
   janus_build:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: "write"
+      contents: "read"
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
+      DAPHNE_INTEROP_CONTAINER: prebuilt=${{ secrets.DAPHNE_PREBUILT_IMAGE_NAME_AND_TAG }}
       RUSTFLAGS: "-D warnings"
     steps:
     - uses: actions/checkout@v3
+    # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry
+    - id: "gcp-auth"
+      name: "Authenticate to GCP"
+      uses: "google-github-actions/auth@v0"
+      with:
+        workload_identity_provider: ${{ secrets.GCP_ARTIFACT_READER_WORKFLOW_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_ARTIFACT_READER_SERVICE_ACCOUNT }}
+        token_format: "access_token"
+        access_token_lifetime: "3600s"
+        access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
+        export_environment_variables: true
+    - uses: "docker/login-action@v2"
+      with:
+        registry: "us-west2-docker.pkg.dev"
+        username: "oauth2accesstoken"
+        password: ${{ steps.gcp-auth.outputs.access_token }}
     - name: Setup Go toolchain
       uses: actions/setup-go@v3
     - name: Install Kind
@@ -40,6 +60,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
+      DAPHNE_INTEROP_CONTAINER: skip
       JANUS_INTEROP_CONTAINER: skip
       RUSTDOCFLAGS: "-D warnings"
       RUSTFLAGS: "-D warnings"

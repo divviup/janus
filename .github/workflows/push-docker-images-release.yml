@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+    # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry
     - id: "gcp-auth"
       name: "Authenticate to GCP"
       uses: "google-github-actions/auth@v0"
@@ -27,7 +28,6 @@ jobs:
         access_token_lifetime: "3600s"
         access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
         export_environment_variables: true
-    # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry
     - uses: "docker/login-action@v2"
       with:
         registry: "us-west2-docker.pkg.dev"
