@@ -27,7 +27,7 @@ console-subscriber = { version = "0.1.7", optional = true }
 deadpool = { version = "0.9.5", features = ["rt_tokio_1"] }
 deadpool-postgres = "0.10.1"
 derivative = "2.2.0"
-futures = "0.3.23"
+futures = "0.3.24"
 hex = "0.4.3"
 hpke-dispatch = "0.3.0"
 http = "0.2.8"
@@ -58,7 +58,7 @@ structopt = "0.3.26"
 testcontainers = { version = "0.14.0", optional = true }
 thiserror = "1.0"
 tokio = { version = "^1.20", features = ["full", "tracing"] }
-tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
+tokio-postgres = { version = "0.7.7", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
 tonic = { version = "0.8.0", optional = true, features = ["tls", "tls-webpki-roots"] }
 tracing = "0.1.36"
 tracing-log = "0.1.3"
