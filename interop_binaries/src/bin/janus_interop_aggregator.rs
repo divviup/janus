@@ -125,6 +125,10 @@ fn make_filter(
         .unwrap_or_else(|| warp::any().boxed())
         .and(dap_filter);
 
+    let ready_filter = warp::path!("ready").map(|| {
+        warp::reply::with_status(warp::reply::json(&serde_json::json!({})), StatusCode::OK)
+            .into_response()
+    });
     let endpoint_filter = warp::path!("endpoint_for_task").map(move || {
         warp::reply::with_status(
             warp::reply::json(&EndpointResponse {
@@ -158,7 +162,13 @@ fn make_filter(
 
     Ok(warp::path!("internal" / "test" / ..)
         .and(warp::post())
-        .and(endpoint_filter.or(add_task_filter).unify())
+        .and(
+            ready_filter
+                .or(endpoint_filter)
+                .unify()
+                .or(add_task_filter)
+                .unify(),
+        )
         .or(dap_filter.map(Reply::into_response))
         .unify())
 }

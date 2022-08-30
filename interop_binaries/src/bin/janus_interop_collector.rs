@@ -358,6 +358,10 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
         Arc::new(Mutex::new(HashMap::new()));
     let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
 
+    let ready_filter = warp::path!("ready").map(|| {
+        warp::reply::with_status(warp::reply::json(&serde_json::json!({})), StatusCode::OK)
+            .into_response()
+    });
     let add_task_filter = warp::path!("add_task").and(warp::body::json()).then({
         let tasks = Arc::clone(&tasks);
         let keyring = Arc::clone(&keyring);
@@ -446,7 +450,9 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     });
 
     Ok(warp::path!("internal" / "test" / ..).and(warp::post()).and(
-        add_task_filter
+        ready_filter
+            .or(add_task_filter)
+            .unify()
             .or(collect_start_filter)
             .unify()
             .or(collect_poll_filter)

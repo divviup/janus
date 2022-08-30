@@ -136,26 +136,35 @@ async fn handle_upload(
 
 fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     let http_client = janus_client::default_http_client()?;
-    Ok(warp::path!("internal" / "test" / "upload")
+
+    let ready_filter = warp::path!("ready").map(|| {
+        warp::reply::with_status(warp::reply::json(&serde_json::json!({})), StatusCode::OK)
+            .into_response()
+    });
+    let upload_filter =
+        warp::path!("upload")
+            .and(warp::body::json())
+            .then(move |request: UploadRequest| {
+                let http_client = http_client.clone();
+                async move {
+                    let response = match handle_upload(&http_client, request).await {
+                        Ok(()) => UploadResponse {
+                            status: SUCCESS,
+                            error: None,
+                        },
+                        Err(e) => UploadResponse {
+                            status: ERROR,
+                            error: Some(format!("{:?}", e)),
+                        },
+                    };
+                    warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
+                        .into_response()
+                }
+            });
+
+    Ok(warp::path!("internal" / "test" / ..)
         .and(warp::post())
-        .and(warp::body::json())
-        .then(move |request: UploadRequest| {
-            let http_client = http_client.clone();
-            async move {
-                let response = match handle_upload(&http_client, request).await {
-                    Ok(()) => UploadResponse {
-                        status: SUCCESS,
-                        error: None,
-                    },
-                    Err(e) => UploadResponse {
-                        status: ERROR,
-                        error: Some(format!("{:?}", e)),
-                    },
-                };
-                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                    .into_response()
-            }
-        }))
+        .and(ready_filter.or(upload_filter).unify()))
 }
 
 fn app() -> clap::Command<'static> {

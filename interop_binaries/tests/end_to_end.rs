@@ -1,7 +1,7 @@
 use base64::URL_SAFE_NO_PAD;
 use futures::future::join_all;
 use interop_binaries::{
-    test_util::{await_http_server, generate_network_name, generate_unique_name},
+    test_util::{await_ready_ok, generate_network_name, generate_unique_name},
     testcontainer::{Aggregator, Client, Collector},
 };
 use janus_core::{
@@ -65,7 +65,7 @@ async fn run(
     join_all(
         [client_port, leader_port, helper_port, collector_port]
             .into_iter()
-            .map(await_http_server),
+            .map(await_ready_ok),
     )
     .await;
 

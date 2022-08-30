@@ -179,20 +179,23 @@ impl HpkeConfigRegistry {
 #[cfg(feature = "test-util")]
 pub mod test_util {
     use backoff::{future::retry, ExponentialBackoff};
-    use futures::TryFutureExt;
+    use futures::{Future, TryFutureExt};
     use rand::{thread_rng, Rng};
-    use std::time::Duration;
+    use std::{fmt::Debug, time::Duration};
     use url::Url;
 
     lazy_static::lazy_static! {
         static ref DOCKER_HASH_RE: regex::Regex = regex::Regex::new(r"sha256:([0-9a-f]{64})").unwrap();
     }
 
-    /// Waits a while for the given port to start responding to HTTP requests, panicking if this
-    /// doesn't happen soon enough.
-    pub async fn await_http_server(port: u16) {
-        let http_client = reqwest::Client::default();
-        let url = Url::parse(&format!("http://localhost:{port}/")).unwrap();
+    async fn await_readiness_condition<
+        I,
+        E: Debug,
+        Fn: FnMut() -> Fut,
+        Fut: Future<Output = Result<I, backoff::Error<E>>>,
+    >(
+        operation: Fn,
+    ) {
         retry(
             // (We use ExponentialBackoff as a constant-time backoff as the built-in Constant
             // backoff will never time out.)
@@ -203,15 +206,41 @@ pub mod test_util {
                 max_elapsed_time: Some(Duration::from_secs(10)),
                 ..Default::default()
             },
-            || {
-                http_client
-                    .get(url.clone())
-                    .send()
-                    .map_err(backoff::Error::transient)
-            },
+            operation,
         )
         .await
         .unwrap();
+    }
+
+    /// Waits a while for the given port to start responding successfully to
+    /// "/internal/test/ready" HTTP requests, panicking if this doesn't happen soon enough.
+    pub async fn await_ready_ok(port: u16) {
+        let http_client = reqwest::Client::default();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/internal/test/ready")).unwrap();
+        await_readiness_condition(|| async {
+            http_client
+                .post(url.clone())
+                .send()
+                .await
+                .map_err(backoff::Error::transient)?
+                .error_for_status()
+                .map_err(backoff::Error::transient)
+        })
+        .await
+    }
+
+    /// Waits a while for the given port to start responding to HTTP requests, panicking if this
+    /// doesn't happen soon enough.
+    pub async fn await_http_server(port: u16) {
+        let http_client = reqwest::Client::default();
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+        await_readiness_condition(|| {
+            http_client
+                .get(url.clone())
+                .send()
+                .map_err(backoff::Error::transient)
+        })
+        .await
     }
 
     /// Loads a given zstd-compressed docker image into Docker. Returns the hash of the loaded
