@@ -1,11 +1,11 @@
 use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
+use integration_tests::{daphne::Daphne, janus::Janus};
 use interop_binaries::test_util::generate_network_name;
 use janus_core::{
     hpke::test_util::generate_test_hpke_config_and_private_key,
     message::Role,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
-use monolithic_integration_test::{daphne::Daphne, janus::Janus};
 
 mod common;
 

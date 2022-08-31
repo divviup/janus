@@ -24,11 +24,11 @@ fn main() {
                 println!("cargo:rerun-if-changed=../Cargo.lock");
                 println!("cargo:rerun-if-changed=../Cargo.toml");
                 println!("cargo:rerun-if-changed=../db/schema.sql");
+                println!("cargo:rerun-if-changed=../integration_tests");
                 println!("cargo:rerun-if-changed=../interop_binaries");
                 println!("cargo:rerun-if-changed=../janus_core");
                 println!("cargo:rerun-if-changed=../janus_client");
                 println!("cargo:rerun-if-changed=../janus_server");
-                println!("cargo:rerun-if-changed=../monolithic_integration_test");
 
                 // Build containers.
                 // Note: `docker build` has an `--output` flag which writes the output to somewhere, which

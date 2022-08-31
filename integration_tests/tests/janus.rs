@@ -1,11 +1,11 @@
 use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
+use integration_tests::janus::Janus;
 use interop_binaries::test_util::generate_network_name;
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
 use janus_server::task::Task;
-use monolithic_integration_test::janus::Janus;
 use std::env::{self, VarError};
 use testcontainers::clients::Cli;
 use url::Url;
@@ -34,10 +34,9 @@ impl<'a> JanusPair<'a> {
     /// `Self.leader_task.aggregator_endpoints`.
     ///
     /// If connecting to the Kubernetes cluster API (k8s API, not DAP API) at an IP address over
-    /// HTTPS (e.g., "https://127.0.0.1:42356"), then the `monolithic_integration_test` package must
-    /// be built with the `kube-openssl` feature, as the default rustls can't validate IP addresses
-    /// in certificates.
-    /// e.g., `cargo test --features kube-openssl --package monolithic_integration_test`
+    /// HTTPS (e.g., "https://127.0.0.1:42356"), then the `integration_tests` package must be built
+    /// with the `kube-openssl` feature, as the default rustls can't validate IP addresses in
+    /// certificates. e.g., `cargo test --features kube-openssl --package integration_tests`
     ///
     /// Environment variables:
     ///  - `JANUS_E2E_KUBE_CONFIG_PATH`: The path to a `kubectl` configuration file containing

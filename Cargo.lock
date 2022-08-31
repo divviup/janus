@@ -1581,6 +1581,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e85a1509a128c855368e135cffcde7eac17d8e1083f41e2b98c58bc1a5074be"
 
 [[package]]
+name = "integration_tests"
+version = "0.1.0"
+dependencies = [
+ "backoff",
+ "build_script_utils",
+ "daphne",
+ "futures",
+ "hex",
+ "http",
+ "integration_tests",
+ "interop_binaries",
+ "itertools",
+ "janus_client",
+ "janus_core",
+ "janus_server",
+ "k8s-openapi",
+ "kube",
+ "portpicker",
+ "prio",
+ "rand",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "testcontainers",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "interop_binaries"
 version = "0.1.0"
 dependencies = [
@@ -2048,37 +2079,6 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "similar",
-]
-
-[[package]]
-name = "monolithic_integration_test"
-version = "0.1.0"
-dependencies = [
- "backoff",
- "build_script_utils",
- "daphne",
- "futures",
- "hex",
- "http",
- "interop_binaries",
- "itertools",
- "janus_client",
- "janus_core",
- "janus_server",
- "k8s-openapi",
- "kube",
- "monolithic_integration_test",
- "portpicker",
- "prio",
- "rand",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "testcontainers",
- "tokio",
- "tracing",
- "url",
 ]
 
 [[package]]

@@ -1,5 +1,12 @@
 [workspace]
-members = ["build_script_utils", "interop_binaries", "janus_core", "janus_client", "janus_server", "monolithic_integration_test"]
+members = [
+    "build_script_utils",
+    "integration_tests",
+    "interop_binaries",
+    "janus_core",
+    "janus_client",
+    "janus_server"
+]
 resolver = "2"
 
 [profile.dev]
