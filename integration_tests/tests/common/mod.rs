@@ -83,7 +83,7 @@ pub fn create_test_tasks(collector_hpke_config: &HpkeConfig) -> (Task, Task) {
 
 pub fn translate_url_for_external_access(url: &Url, external_port: u16) -> Url {
     let mut translated = url.clone();
-    translated.set_host(Some("localhost")).unwrap();
+    translated.set_host(Some("127.0.0.1")).unwrap();
     translated.set_port(Some(external_port)).unwrap();
     translated
 }
