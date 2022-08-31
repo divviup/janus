@@ -11,6 +11,7 @@ use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 pub mod dummy_vdaf;
 pub mod kubernetes;
 pub mod runtime;
+pub mod testcontainers;
 
 /// A transcript of a VDAF run. All fields are indexed by natural role index (i.e., index 0 =
 /// leader, index 1 = helper).

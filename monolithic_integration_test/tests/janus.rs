@@ -2,17 +2,18 @@ use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
 use interop_binaries::test_util::generate_network_name;
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
-    test_util::install_test_trace_subscriber,
+    test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
 use janus_server::task::Task;
 use monolithic_integration_test::janus::Janus;
 use std::env::{self, VarError};
+use testcontainers::clients::Cli;
 use url::Url;
 
 mod common;
 
 /// A pair of Janus instances, running somewhere, against which integration tests may be run.
-struct JanusPair {
+struct JanusPair<'a> {
     /// The leader's view of the task configured in both Janus aggregators.
     leader_task: Task,
     /// The private key corresponding to the collector HPKE configuration in the task configured in
@@ -20,12 +21,12 @@ struct JanusPair {
     collector_private_key: HpkePrivateKey,
 
     /// Handle to the leader's resources, which are released on drop.
-    leader: Janus,
+    leader: Janus<'a>,
     /// Handle to the helper's resources, which are released on drop.
-    helper: Janus,
+    helper: Janus<'a>,
 }
 
-impl JanusPair {
+impl<'a> JanusPair<'a> {
     /// Set up a new Janus test instance with the provided task. If the environment variables listed
     /// below are set, then the test instance is backed by an already-running Kubernetes cluster.
     /// Otherwise, an ephemeral, in-process instance of Janus is spawned. In either case, the Janus
@@ -47,7 +48,7 @@ impl JanusPair {
     ///    permissions to view secrets and forward ports to services.
     ///  - `JANUS_E2E_LEADER_NAMESPACE`: The Kubernetes namespace where the DAP leader is deployed.
     ///  - `JANUS_E2E_HELPER_NAMESPACE`: The Kubernetes namespace where the DAP helper is deployed.
-    pub async fn new() -> Self {
+    pub async fn new(container_client: &'a Cli) -> JanusPair<'a> {
         let (collector_hpke_config, collector_private_key) =
             generate_test_hpke_config_and_private_key();
         let (mut leader_task, mut helper_task) = create_test_tasks(&collector_hpke_config);
@@ -100,8 +101,10 @@ impl JanusPair {
                 Err(VarError::NotPresent),
             ) => {
                 let network = generate_network_name();
-                let leader = Janus::new_in_container(&network, &leader_task).await;
-                let helper = Janus::new_in_container(&network, &helper_task).await;
+                let leader =
+                    Janus::new_in_container(container_client, &network, &leader_task).await;
+                let helper =
+                    Janus::new_in_container(container_client, &network, &helper_task).await;
                 (leader, helper)
             }
             _ => panic!("unexpected environment variables"),
@@ -129,7 +132,8 @@ async fn janus_janus() {
     install_test_trace_subscriber();
 
     // Start servers.
-    let janus_pair = JanusPair::new().await;
+    let container_client = container_client();
+    let janus_pair = JanusPair::new(&container_client).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(

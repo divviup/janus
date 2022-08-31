@@ -1,6 +1,5 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-use crate::CONTAINER_CLIENT;
 use interop_binaries::{test_util::await_http_server, testcontainer::Aggregator, AddTaskRequest};
 use janus_core::{
     test_util::kubernetes::{Cluster, PortForward},
@@ -15,16 +14,16 @@ use k8s_openapi::api::core::v1::Secret;
 use portpicker::pick_unused_port;
 use std::collections::HashMap;
 use std::path::Path;
-use testcontainers::{Container, RunnableImage};
+use testcontainers::{clients::Cli, Container, RunnableImage};
 use tracing::debug;
 use url::Url;
 
 /// Represents a running Janus test instance
 #[allow(clippy::large_enum_variant)]
-pub enum Janus {
+pub enum Janus<'a> {
     /// Janus components are spawned in a container, and completely destroyed once the test ends.
     Container {
-        container: Container<'static, Aggregator>,
+        container: Container<'a, Aggregator>,
     },
 
     /// Janus components are assumed to already be running in the Kubernetes cluster. Running tests
@@ -35,13 +34,17 @@ pub enum Janus {
     },
 }
 
-impl Janus {
+impl<'a> Janus<'a> {
     /// Create & start a new hermetic Janus test instance in the given Docker network, configured
     /// to service the given task. The aggregator port is also exposed to the host.
-    pub async fn new_in_container(network: &str, task: &Task) -> Self {
+    pub async fn new_in_container(
+        container_client: &'a Cli,
+        network: &str,
+        task: &Task,
+    ) -> Janus<'a> {
         // Start the Janus interop aggregator container running.
         let endpoint = task.aggregator_url(task.role).unwrap();
-        let container = CONTAINER_CLIENT.run(
+        let container = container_client.run(
             RunnableImage::from(Aggregator::default())
                 .with_network(network)
                 .with_container_name(endpoint.host_str().unwrap()),
@@ -63,7 +66,7 @@ impl Janus {
         let resp: HashMap<String, Option<String>> = resp.json().await.unwrap();
         assert_eq!(resp.get("status"), Some(&Some("success".to_string())));
 
-        Janus::Container { container }
+        Self::Container { container }
     }
 
     /// Set up a test case running in a Kubernetes cluster where Janus components and a datastore
@@ -73,7 +76,7 @@ impl Janus {
         kubernetes_context_name: &str,
         namespace: &str,
         task: &Task,
-    ) -> Self
+    ) -> Janus<'static>
     where
         P: AsRef<Path>,
     {
