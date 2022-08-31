@@ -7,11 +7,11 @@ COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
 COPY build_script_utils /src/build_script_utils
 COPY db /src/db
+COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
 COPY janus_core /src/janus_core
 COPY janus_client /src/janus_client
 COPY janus_server /src/janus_server
-COPY monolithic_integration_test /src/monolithic_integration_test
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release -p janus_server --bin $BINARY --features=prometheus && cp /src/target/release/$BINARY /$BINARY
 
 FROM alpine:3.16.2
