@@ -21,7 +21,7 @@ const MIN_BATCH_DURATION: u64 = 3600;
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
-/// section 4.7 of draft-dcook-ppm-dap-interop-test-design-00.
+/// the "Test Runner Operation" section in draft-dcook-ppm-dap-interop-test-design-01.
 async fn run(
     vdaf_object: serde_json::Value,
     measurements: &[serde_json::Value],
