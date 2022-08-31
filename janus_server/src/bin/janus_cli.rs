@@ -1,28 +1,39 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use base64::STANDARD_NO_PAD;
 use deadpool_postgres::Pool;
-use janus_core::time::{Clock, RealClock};
+use janus_core::{
+    message::{HpkeConfig, Report},
+    time::{Clock, RealClock},
+};
 use janus_server::{
-    binary_utils::{database_pool, datastore, read_config, BinaryOptions, CommonBinaryOptions},
+    binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
     datastore::{self, Datastore},
+    message::{
+        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
+        AggregateInitializeResp, AggregateShareReq, AggregateShareResp, CollectReq, CollectResp,
+    },
     metrics::install_metrics_exporter,
     task::Task,
-    trace::install_trace_subscriber,
+    trace::{install_trace_subscriber, TraceConfiguration},
 };
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
+use prio::codec::Decode;
 use rand::{thread_rng, Rng};
 use ring::aead::AES_128_GCM;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    fmt::Debug,
+    fs::File,
+    io::{stdin, Cursor, Read},
     path::{Path, PathBuf},
     sync::Arc,
 };
 use structopt::StructOpt;
 use tokio::fs;
-use tracing::info;
+use tracing::{debug, info};
 
 static SCHEMA: &str = include_str!("../../../db/schema.sql");
 
@@ -30,26 +41,25 @@ static SCHEMA: &str = include_str!("../../../db/schema.sql");
 async fn main() -> Result<()> {
     // Parse options, then read & parse config.
     let options = Options::from_args();
-    let config: Config = read_config(&options)?;
 
-    // Install tracing/metrics handlers.
-    install_trace_subscriber(&config.common_config.logging_config)
-        .context("couldn't install tracing subscriber")?;
-    let _metrics_exporter = install_metrics_exporter(&config.common_config.metrics_config)
-        .context("failed to install metrics exporter")?;
+    debug!(?options, "Starting up");
 
-    info!(common_options = ?options.common_options(), ?config, "Starting up");
-
-    options.cmd.execute(&options, &config).await
+    options.cmd.execute().await
 }
 
 #[derive(Debug, StructOpt)]
 enum Command {
     /// Write the Janus database schema to the database.
-    WriteSchema,
+    WriteSchema {
+        #[structopt(flatten)]
+        common_options: CommonBinaryOptions,
+    },
 
     /// Write a set of tasks identified in a file to the datastore.
     ProvisionTasks {
+        #[structopt(flatten)]
+        common_options: CommonBinaryOptions,
+
         /// A YAML file containing a list of tasks to be written. Existing tasks (matching by task
         /// ID) will be overwritten.
         tasks_file: PathBuf,
@@ -57,44 +67,78 @@ enum Command {
 
     /// Create a datastore key and write it to a Kubernetes secret.
     CreateDatastoreKey {
+        #[structopt(flatten)]
+        common_options: CommonBinaryOptions,
+
         /// The Kubernetes namespace to create the datastore key secret in.
         k8s_namespace: String,
 
         /// The name of the Kubernetes secret to place the datastore key in.
         k8s_secret_name: String,
     },
+
+    /// Decode a single Distributed Aggregation Protocol message.
+    DecodeDapMessage {
+        /// Path to file containing message to debug. Pass "-" to read from stdin.
+        message_file: String,
+
+        /// Media type of the message to decode.
+        #[structopt(long, short = "t", required = true, possible_values(&[
+            "hpke-config",
+            "report",
+            "aggregate-initialize-req",
+            "aggregate-initialize-resp",
+            "aggregate-continue-req",
+            "aggregate-continue-resp",
+            "aggregate-share-req",
+            "aggregate-share-resp",
+            "collect-req",
+            "collect-resp",
+        ]))]
+        media_type: String,
+    },
 }
 
 impl Command {
-    async fn execute(&self, options: &Options, config: &Config) -> Result<()> {
+    async fn execute(&self) -> Result<()> {
         // Note: to keep this function reasonably-readable, individual command handlers should
         // generally create the command's dependencies based on options/config, then call another
         // function with the main command logic.
         match self {
-            Command::WriteSchema => {
+            Command::WriteSchema { common_options } => {
+                let config: Config = read_config(common_options)?;
+                install_tracing_and_metrics_handlers(config.common_config())?;
                 let pool = database_pool(
                     &config.common_config.database,
-                    options.common.database_password.as_deref(),
+                    common_options.database_password.as_deref(),
                 )
                 .await?;
                 write_schema(&pool).await
             }
 
-            Command::ProvisionTasks { tasks_file } => {
+            Command::ProvisionTasks {
+                common_options,
+                tasks_file,
+            } => {
+                let config: Config = read_config(common_options)?;
+                install_tracing_and_metrics_handlers(config.common_config())?;
                 let pool = database_pool(
                     &config.common_config.database,
-                    options.common.database_password.as_deref(),
+                    common_options.database_password.as_deref(),
                 )
                 .await?;
                 let datastore =
-                    datastore(pool, RealClock::default(), &options.common.datastore_keys)?;
+                    datastore(pool, RealClock::default(), &common_options.datastore_keys)?;
                 provision_tasks(&datastore, tasks_file).await
             }
 
             Command::CreateDatastoreKey {
+                common_options,
                 k8s_namespace,
                 k8s_secret_name,
             } => {
+                let config: Config = read_config(common_options)?;
+                install_tracing_and_metrics_handlers(config.common_config())?;
                 create_datastore_key(
                     kube::Client::try_default()
                         .await
@@ -104,8 +148,27 @@ impl Command {
                 )
                 .await
             }
+
+            Command::DecodeDapMessage {
+                message_file,
+                media_type,
+            } => {
+                install_trace_subscriber(&TraceConfiguration::default())?;
+                let decoded = decode_dap_message(message_file, media_type)?;
+                println!("{decoded:#?}");
+                Ok(())
+            }
         }
     }
+}
+
+fn install_tracing_and_metrics_handlers(config: &CommonConfig) -> Result<()> {
+    install_trace_subscriber(&config.logging_config)
+        .context("couldn't install tracing subscriber")?;
+    let _metrics_exporter = install_metrics_exporter(&config.metrics_config)
+        .context("failed to install metrics exporter")?;
+
+    Ok(())
 }
 
 async fn write_schema(pool: &Pool) -> Result<()> {
@@ -189,6 +252,49 @@ async fn create_datastore_key(
     Ok(())
 }
 
+/// Decode the contents of `message_file` as a DAP message with `media_type`, returning the decoded
+/// object.
+fn decode_dap_message(message_file: &str, media_type: &str) -> Result<Box<dyn Debug>> {
+    let mut reader = if message_file.eq("-") {
+        Box::new(stdin()) as Box<dyn Read>
+    } else {
+        Box::new(File::open(message_file)?) as Box<dyn Read>
+    };
+
+    let mut message_buf = vec![];
+    reader.read_to_end(&mut message_buf)?;
+
+    let mut binary_message = Cursor::new(message_buf.as_slice());
+
+    let decoded = match media_type {
+        "hpke-config" => Box::new(HpkeConfig::decode(&mut binary_message)?) as Box<dyn Debug>,
+        "report" => Box::new(Report::decode(&mut binary_message)?) as Box<dyn Debug>,
+        "aggregate-initialize-req" => {
+            Box::new(AggregateInitializeReq::decode(&mut binary_message)?) as Box<dyn Debug>
+        }
+        "aggregate-initialize-resp" => {
+            Box::new(AggregateInitializeResp::decode(&mut binary_message)?) as Box<dyn Debug>
+        }
+        "aggregate-continue-req" => {
+            Box::new(AggregateContinueReq::decode(&mut binary_message)?) as Box<dyn Debug>
+        }
+        "aggregate-continue-resp" => {
+            Box::new(AggregateContinueResp::decode(&mut binary_message)?) as Box<dyn Debug>
+        }
+        "aggregate-share-req" => {
+            Box::new(AggregateShareReq::decode(&mut binary_message)?) as Box<dyn Debug>
+        }
+        "aggregate-share-resp" => {
+            Box::new(AggregateShareResp::decode(&mut binary_message)?) as Box<dyn Debug>
+        }
+        "collect-req" => Box::new(CollectReq::decode(&mut binary_message)?) as Box<dyn Debug>,
+        "collect-resp" => Box::new(CollectResp::decode(&mut binary_message)?) as Box<dyn Debug>,
+        _ => return Err(anyhow!("unknown media type")),
+    };
+
+    Ok(decoded)
+}
+
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "janus_cli",
@@ -197,17 +303,8 @@ async fn create_datastore_key(
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    #[structopt(flatten)]
-    common: CommonBinaryOptions,
-
     #[structopt(subcommand)]
     cmd: Command,
-}
-
-impl BinaryOptions for Options {
-    fn common_options(&self) -> &CommonBinaryOptions {
-        &self.common
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

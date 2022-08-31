@@ -31,47 +31,29 @@ use tokio_postgres::NoTls;
 use tracing::info;
 use warp::Filter;
 
-/// Reads, parses, and returns the config referenced by the given options.
-pub fn read_config<Options: BinaryOptions, Config: BinaryConfig>(
-    options: &Options,
-) -> Result<Config> {
-    let config_content =
-        fs::read_to_string(&options.common_options().config_file).with_context(|| {
-            format!(
-                "couldn't read config file {:?}",
-                options.common_options().config_file
-            )
-        })?;
-    let mut config: Config = serde_yaml::from_str(&config_content).with_context(|| {
-        format!(
-            "couldn't parse config file {:?}",
-            options.common_options().config_file
-        )
-    })?;
+/// Reads, parses, and returns the config referenced by the given options, or None if no config file
+/// path was set.
+pub fn read_config<Config: BinaryConfig>(options: &CommonBinaryOptions) -> Result<Config> {
+    let config_content = fs::read_to_string(&options.config_file)
+        .with_context(|| format!("couldn't read config file {:?}", options.config_file))?;
+    let mut config: Config = serde_yaml::from_str(&config_content)
+        .with_context(|| format!("couldn't parse config file {:?}", options.config_file))?;
 
     if let Some(OpenTelemetryTraceConfiguration::Otlp(otlp_config)) = &mut config
         .common_config_mut()
         .logging_config
         .open_telemetry_config
     {
-        otlp_config.metadata.extend(
-            options
-                .common_options()
-                .otlp_tracing_metadata
-                .iter()
-                .cloned(),
-        );
+        otlp_config
+            .metadata
+            .extend(options.otlp_tracing_metadata.iter().cloned());
     }
     if let Some(MetricsExporterConfiguration::Otlp(otlp_config)) =
         &mut config.common_config_mut().metrics_config.exporter
     {
-        otlp_config.metadata.extend(
-            options
-                .common_options()
-                .otlp_metrics_metadata
-                .iter()
-                .cloned(),
-        );
+        otlp_config
+            .metadata
+            .extend(options.otlp_metrics_metadata.iter().cloned());
     }
 
     Ok(config)
@@ -266,7 +248,7 @@ where
 {
     // Parse arguments, then read & parse config.
     let options = Options::from_args();
-    let config: Config = read_config(&options)?;
+    let config: Config = read_config(options.common_options())?;
 
     // Install tracing/metrics handlers.
     install_trace_subscriber(&config.common_config().logging_config)
