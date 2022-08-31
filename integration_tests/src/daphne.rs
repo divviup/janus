@@ -234,7 +234,7 @@ impl<'a> Daphne<'a> {
                 .unwrap()
                 .join("/internal/process")
                 .unwrap();
-            request_url.set_host(Some("localhost")).unwrap();
+            request_url.set_host(Some("127.0.0.1")).unwrap();
             request_url.set_port(Some(port)).unwrap();
 
             let mut interval = interval(Duration::from_millis(250));
