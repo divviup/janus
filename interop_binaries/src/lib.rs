@@ -188,11 +188,13 @@ pub mod test_util {
         static ref DOCKER_HASH_RE: regex::Regex = regex::Regex::new(r"sha256:([0-9a-f]{64})").unwrap();
     }
 
-    /// Waits a while for the given port to start responding to HTTP requests, panicking if this
-    /// doesn't happen soon enough.
+    /// Waits a while for the given IPv4 port to start responding to HTTP requests, panicking if
+    /// this doesn't happen soon enough.
     pub async fn await_http_server(port: u16) {
         let http_client = reqwest::Client::default();
-        let url = Url::parse(&format!("http://localhost:{port}/")).unwrap();
+        // Explicitly connect to IPv4 localhost so that we don't accidentally try to talk to a
+        // different container's IPv6 port.
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
         retry(
             // (We use ExponentialBackoff as a constant-time backoff as the built-in Constant
             // backoff will never time out.)
