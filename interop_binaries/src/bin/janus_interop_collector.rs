@@ -4,7 +4,7 @@ use clap::{Arg, Command};
 use interop_binaries::{
     install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
-    HpkeConfigRegistry, VdafObject,
+    HpkeConfigRegistry, NumberAsString, VdafObject,
 };
 use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey, Label},
@@ -12,7 +12,7 @@ use janus_core::{
 };
 use janus_server::{
     message::{CollectReq, CollectResp},
-    task::DAP_AUTH_HEADER,
+    task::{VdafInstance, DAP_AUTH_HEADER},
 };
 use prio::{
     codec::{Decode, Encode},
@@ -80,6 +80,7 @@ struct CollectPollRequest {
 #[serde(untagged)]
 enum AggregationResult {
     Number(u64),
+    NumberAsString128(NumberAsString<u128>),
     NumberArray(Vec<u64>),
 }
 
@@ -283,8 +284,9 @@ async fn handle_collect_poll(
     )
     .context("could not decrypt aggregate share from the helper")?;
 
-    match task_state.vdaf {
-        VdafObject::Prio3Aes128Count {} => {
+    let vdaf_instance = task_state.vdaf.clone().into();
+    match vdaf_instance {
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count {}) => {
             let leader_aggregate_share =
                 AggregateShare::<Field64>::try_from(leader_aggregate_share_bytes.as_ref())
                     .context("could not decode leader's aggregate share")?;
@@ -300,7 +302,7 @@ async fn handle_collect_poll(
                 .context("could not unshard aggregate result")?;
             Ok(Some(AggregationResult::Number(aggregate_result)))
         }
-        VdafObject::Prio3Aes128Sum { bits } => {
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
             let leader_aggregate_share =
                 AggregateShare::<Field128>::try_from(leader_aggregate_share_bytes.as_ref())
                     .context("could not decode leader's aggregate share")?;
@@ -314,13 +316,13 @@ async fn handle_collect_poll(
             let aggregate_result = vdaf
                 .unshard(&(), [leader_aggregate_share, helper_aggregate_share])
                 .context("could not unshard aggregate result")?;
-            Ok(Some(AggregationResult::Number(
-                aggregate_result
-                    .try_into()
-                    .context("aggregate result was too large to represent natively in JSON")?,
-            )))
+            Ok(Some(AggregationResult::NumberAsString128(NumberAsString(
+                aggregate_result,
+            ))))
         }
-        VdafObject::Prio3Aes128Histogram { ref buckets } => {
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
+            ref buckets,
+        }) => {
             let leader_aggregate_share =
                 AggregateShare::<Field128>::try_from(leader_aggregate_share_bytes.as_ref())
                     .context("could not decode leader's aggregate share")?;
@@ -346,6 +348,7 @@ async fn handle_collect_poll(
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Some(AggregationResult::NumberArray(converted)))
         }
+        _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
     }
 }
 
@@ -358,6 +361,10 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
         Arc::new(Mutex::new(HashMap::new()));
     let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
 
+    let ready_filter = warp::path!("ready").map(|| {
+        warp::reply::with_status(warp::reply::json(&serde_json::json!({})), StatusCode::OK)
+            .into_response()
+    });
     let add_task_filter = warp::path!("add_task").and(warp::body::json()).then({
         let tasks = Arc::clone(&tasks);
         let keyring = Arc::clone(&keyring);
@@ -446,7 +453,9 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     });
 
     Ok(warp::path!("internal" / "test" / ..).and(warp::post()).and(
-        add_task_filter
+        ready_filter
+            .or(add_task_filter)
+            .unify()
             .or(collect_start_filter)
             .unify()
             .or(collect_poll_filter)

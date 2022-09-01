@@ -1,7 +1,7 @@
 use base64::URL_SAFE_NO_PAD;
 use futures::future::join_all;
 use interop_binaries::{
-    test_util::{await_http_server, generate_network_name, generate_unique_name},
+    test_util::{await_ready_ok, generate_network_name, generate_unique_name},
     testcontainer::{Aggregator, Client, Collector},
 };
 use janus_core::{
@@ -21,7 +21,7 @@ const MIN_BATCH_DURATION: u64 = 3600;
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
-/// section 4.7 of draft-dcook-ppm-dap-interop-test-design-00.
+/// the "Test Runner Operation" section in draft-dcook-ppm-dap-interop-test-design-01.
 async fn run(
     vdaf_object: serde_json::Value,
     measurements: &[serde_json::Value],
@@ -67,7 +67,7 @@ async fn run(
     join_all(
         [client_port, leader_port, helper_port, collector_port]
             .into_iter()
-            .map(await_http_server),
+            .map(await_ready_ok),
     )
     .await;
 
@@ -103,10 +103,11 @@ async fn run(
         .json(&json!({
             "taskId": task_id_encoded,
             "aggregatorId": 0,
-            "hostnameAndPort": format!("{}:{}", local_leader_endpoint.host_str().unwrap(), local_leader_endpoint.port().unwrap()),
+            "hostname": local_leader_endpoint.host_str().unwrap(),
         }))
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(leader_endpoint_response.status(), StatusCode::OK);
     assert_eq!(
         leader_endpoint_response
@@ -144,10 +145,11 @@ async fn run(
         .json(&json!({
             "taskId": task_id_encoded,
             "aggregatorId": 1,
-            "hostnameAndPort": format!("{}:{}", local_helper_endpoint.host_str().unwrap(), local_helper_endpoint.port().unwrap()),
+            "hostname": local_helper_endpoint.host_str().unwrap(),
         }))
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(helper_endpoint_response.status(), StatusCode::OK);
     assert_eq!(
         helper_endpoint_response
@@ -473,35 +475,38 @@ async fn e2e_prio3_sum() {
     let result = run(
         json!({"type": "Prio3Aes128Sum", "bits": 64}),
         &[
-            json!(0),
-            json!(10),
-            json!(9),
-            json!(21),
-            json!(8),
-            json!(12),
-            json!(14),
+            json!("0"),
+            json!("10"),
+            json!("9"),
+            json!("21"),
+            json!("8"),
+            json!("12"),
+            json!("14"),
         ],
         b"",
     )
     .await;
-    assert_eq!(result, json!(74));
+    assert_eq!(result, json!("74"));
 }
 
 #[tokio::test]
 async fn e2e_prio3_histogram() {
     let result = run(
-        json!({"type": "Prio3Aes128Histogram", "buckets": [0, 1, 10, 100, 1_000, 10_000, 100_000]}),
+        json!({
+            "type": "Prio3Aes128Histogram",
+            "buckets": ["0", "1", "10", "100", "1000", "10000", "100000"],
+        }),
         &[
-            json!(1),
-            json!(4),
-            json!(16),
-            json!(64),
-            json!(256),
-            json!(1024),
-            json!(4096),
-            json!(16384),
-            json!(65536),
-            json!(262144),
+            json!("1"),
+            json!("4"),
+            json!("16"),
+            json!("64"),
+            json!("256"),
+            json!("1024"),
+            json!("4096"),
+            json!("16384"),
+            json!("65536"),
+            json!("262144"),
         ],
         b"",
     )

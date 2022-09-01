@@ -4,13 +4,14 @@ use clap::{Arg, Command};
 use interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
-    VdafObject,
+    NumberAsString, VdafObject,
 };
 use janus_client::ClientParameters;
 use janus_core::{
     message::{Duration, Role, TaskId, Time},
     time::{MockClock, RealClock},
 };
+use janus_server::task::VdafInstance;
 use prio::{
     codec::Decode,
     vdaf::{prio3::Prio3, Vdaf},
@@ -21,13 +22,29 @@ use url::Url;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
 #[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Measurement {
+    Number(u64),
+    NumberAsString64(NumberAsString<u64>),
+}
+
+impl Measurement {
+    fn as_u64(&self) -> u64 {
+        match self {
+            Measurement::Number(value) => *value,
+            Measurement::NumberAsString64(NumberAsString(value)) => *value,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UploadRequest {
     task_id: String,
     leader: Url,
     helper: Url,
     vdaf: VdafObject,
-    measurement: u64,
+    measurement: Measurement,
     #[serde(default)]
     nonce_time: Option<u64>,
     min_batch_duration: u64,
@@ -113,49 +130,62 @@ async fn handle_upload(
     http_client: &reqwest::Client,
     request: UploadRequest,
 ) -> anyhow::Result<()> {
-    let measurement = request.measurement;
-    match request.vdaf {
-        VdafObject::Prio3Aes128Count {} => {
+    let measurement = request.measurement.as_u64();
+    let vdaf_instance = request.vdaf.clone().into();
+    match vdaf_instance {
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count {}) => {
             let vdaf_client =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
-        VdafObject::Prio3Aes128Sum { bits } => {
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
             let vdaf_client = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement.into()).await?;
         }
-        VdafObject::Prio3Aes128Histogram { ref buckets } => {
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
+            ref buckets,
+        }) => {
             let vdaf_client = Prio3::new_aes128_histogram(2, buckets)
                 .context("failed to construct Prio3Aes128Histogram VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement.into()).await?;
         }
+        _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
     }
     Ok(())
 }
 
 fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     let http_client = janus_client::default_http_client()?;
-    Ok(warp::path!("internal" / "test" / "upload")
+
+    let ready_filter = warp::path!("ready").map(|| {
+        warp::reply::with_status(warp::reply::json(&serde_json::json!({})), StatusCode::OK)
+            .into_response()
+    });
+    let upload_filter =
+        warp::path!("upload")
+            .and(warp::body::json())
+            .then(move |request: UploadRequest| {
+                let http_client = http_client.clone();
+                async move {
+                    let response = match handle_upload(&http_client, request).await {
+                        Ok(()) => UploadResponse {
+                            status: SUCCESS,
+                            error: None,
+                        },
+                        Err(e) => UploadResponse {
+                            status: ERROR,
+                            error: Some(format!("{:?}", e)),
+                        },
+                    };
+                    warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
+                        .into_response()
+                }
+            });
+
+    Ok(warp::path!("internal" / "test" / ..)
         .and(warp::post())
-        .and(warp::body::json())
-        .then(move |request: UploadRequest| {
-            let http_client = http_client.clone();
-            async move {
-                let response = match handle_upload(&http_client, request).await {
-                    Ok(()) => UploadResponse {
-                        status: SUCCESS,
-                        error: None,
-                    },
-                    Err(e) => UploadResponse {
-                        status: ERROR,
-                        error: Some(format!("{:?}", e)),
-                    },
-                };
-                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                    .into_response()
-            }
-        }))
+        .and(ready_filter.or(upload_filter).unify()))
 }
 
 fn app() -> clap::Command<'static> {
