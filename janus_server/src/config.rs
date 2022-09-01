@@ -3,10 +3,27 @@
 use crate::{metrics::MetricsConfiguration, trace::TraceConfiguration};
 use derivative::Derivative;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fmt::Debug, net::SocketAddr};
+use std::{
+    fmt::Debug,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 use url::Url;
 
 /// Configuration options common to all Janus binaries.
+///
+/// # Examples
+///
+/// ```
+/// use janus_server::config::CommonConfig;
+///
+/// let yaml_config = r#"
+/// ---
+/// database:
+///   url: postgres://postgres:postgres@localhost:5432/postgres
+/// "#;
+///
+/// let _decoded: CommonConfig = serde_yaml::from_str(yaml_config).unwrap();
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommonConfig {
     /// The database configuration.
@@ -21,7 +38,12 @@ pub struct CommonConfig {
     pub metrics_config: MetricsConfiguration,
 
     /// Address to serve HTTP health check requests on.
+    #[serde(default = "default_health_check_listen_address")]
     pub health_check_listen_address: SocketAddr,
+}
+
+fn default_health_check_listen_address() -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9001)
 }
 
 /// Trait describing configuration structures for various Janus binaries.
