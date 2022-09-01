@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Context, Result};
 use http::{
     header::{CONTENT_TYPE, LOCATION},
     StatusCode,
@@ -28,6 +29,12 @@ use rand::{thread_rng, Rng};
 use reqwest::{redirect, Url};
 use std::iter;
 use tokio::time::{self, Instant};
+
+macro_rules! here {
+    () => {
+        concat!("at ", file!(), " line ", line!(), " column ", column!())
+    };
+}
 
 // Returns (leader_task, helper_task).
 pub fn create_test_tasks(collector_hpke_config: &HpkeConfig) -> (Task, Task) {
@@ -92,7 +99,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     (leader_port, helper_port): (u16, u16),
     leader_task: &Task,
     collector_private_key: &HpkePrivateKey,
-) {
+) -> Result<()> {
     // Translate aggregator endpoints for our perspective outside the container network.
     let aggregator_endpoints: Vec<_> = leader_task
         .aggregator_endpoints
@@ -150,7 +157,7 @@ pub async fn submit_measurements_and_verify_aggregate(
         .take(num_nonzero_measurements)
         .interleave(iter::repeat(0).take(num_zero_measurements))
     {
-        client.upload(&measurement).await.unwrap();
+        client.upload(&measurement).await.context(here!())?;
     }
 
     // Send a collect request, recording the collect job URL.
@@ -187,17 +194,25 @@ pub async fn submit_measurements_and_verify_aggregate(
         .body(collect_req.get_encoded())
         .send()
         .await
-        .unwrap();
-    assert_eq!(collect_resp.status(), StatusCode::SEE_OTHER);
+        .context(here!())?;
+    if collect_resp.status() != StatusCode::SEE_OTHER {
+        return Err(anyhow!(
+            "{} != StatusCode::SEE_OTHER {}",
+            collect_resp.status(),
+            here!()
+        ));
+    }
     let collect_job_url = Url::parse(
         collect_resp
             .headers()
             .get(LOCATION)
-            .unwrap()
-            .to_str()
-            .unwrap(),
+            .context(format!(
+                "no Location header in collect request response {}",
+                here!()
+            ))?
+            .to_str()?,
     )
-    .unwrap();
+    .context(here!())?;
     let collect_job_url = translate_url_for_external_access(&collect_job_url, leader_port);
 
     // Poll until the collect job completes.
@@ -206,7 +221,9 @@ pub async fn submit_measurements_and_verify_aggregate(
         .unwrap();
     let mut poll_interval = time::interval(time::Duration::from_millis(500));
     let collect_resp = loop {
-        assert!(Instant::now() < collect_job_poll_timeout);
+        if Instant::now() >= collect_job_poll_timeout {
+            return Err(anyhow!("collect job poll timeout exceeded {}", here!()));
+        }
         let collect_job_resp = http_client
             .get(collect_job_url.clone())
             .header(
@@ -214,20 +231,28 @@ pub async fn submit_measurements_and_verify_aggregate(
                 leader_task.primary_collector_auth_token().as_bytes(),
             )
             .send()
-            .await
-            .unwrap();
+            .await?;
         let status = collect_job_resp.status();
-        assert!(status == StatusCode::OK || status == StatusCode::ACCEPTED);
+        if status != StatusCode::OK && status != StatusCode::ACCEPTED {
+            return Err(anyhow!("unexpected status {status} {}", here!()));
+        }
         if status == StatusCode::ACCEPTED {
             poll_interval.tick().await;
             continue;
         }
-        break CollectResp::get_decoded(&collect_job_resp.bytes().await.unwrap()).unwrap();
+        break CollectResp::get_decoded(&collect_job_resp.bytes().await?)?;
     };
+
+    if collect_resp.encrypted_agg_shares.len() != 2 {
+        return Err(anyhow!(
+            "got {} encrypted aggregate shares, wanted 2 {}",
+            collect_resp.encrypted_agg_shares.len(),
+            here!(),
+        ));
+    }
 
     // Verify that the aggregate in the collect response is the correct value.
     let associated_data = associated_data_for_aggregate_share(task_id, batch_interval);
-    assert_eq!(collect_resp.encrypted_agg_shares.len(), 2);
     let aggregate_result = vdaf
         .unshard(
             &(),
@@ -243,10 +268,19 @@ pub async fn submit_measurements_and_verify_aggregate(
                         encrypted_agg_share,
                         &associated_data,
                     )
-                    .unwrap();
-                    AggregateShare::<Field64>::try_from(agg_share_bytes.as_ref()).unwrap()
-                }),
+                    .context(format!("failed to decrypt {}", here!()))?;
+                    AggregateShare::<Field64>::try_from(agg_share_bytes.as_ref())
+                        .context(format!("failed to decode into field {}", here!()))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         )
         .unwrap();
-    assert_eq!(aggregate_result, num_nonzero_measurements as u64);
+    if aggregate_result != num_nonzero_measurements as u64 {
+        return Err(anyhow!(
+            "unexpected aggregate result {aggregate_result} {}",
+            here!()
+        ));
+    }
+
+    Ok(())
 }

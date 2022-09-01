@@ -135,10 +135,14 @@ async fn janus_janus() {
     let janus_pair = JanusPair::new(&container_client).await;
 
     // Run the behavioral test.
-    submit_measurements_and_verify_aggregate(
+    let result = submit_measurements_and_verify_aggregate(
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
     )
     .await;
+
+    tracing::info!(?result, "result from submit");
+
+    result.unwrap();
 }

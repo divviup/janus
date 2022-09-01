@@ -1560,6 +1560,7 @@ checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 name = "integration_tests"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "backoff",
  "build_script_utils",
  "daphne",

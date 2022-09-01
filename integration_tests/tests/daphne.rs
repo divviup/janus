@@ -38,7 +38,8 @@ async fn daphne_janus() {
         &leader_task,
         &collector_private_key,
     )
-    .await;
+    .await
+    .unwrap();
 }
 
 // This test places Janus in the leader role & Daphne in the helper role.
@@ -70,5 +71,6 @@ async fn janus_daphne() {
         &leader_task,
         &collector_private_key,
     )
-    .await;
+    .await
+    .unwrap();
 }
