@@ -59,7 +59,7 @@ impl<'a> Janus<'a> {
         // Write the given task to the Janus instance we started.
         let http_client = reqwest::Client::default();
         let resp = http_client
-            .post(Url::parse(&format!("http://localhost:{}/internal/test/add_task", port)).unwrap())
+            .post(Url::parse(&format!("http://127.0.0.1:{}/internal/test/add_task", port)).unwrap())
             .json(&AggregatorAddTaskRequest::from(task.clone()))
             .send()
             .await

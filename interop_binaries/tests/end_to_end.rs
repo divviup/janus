@@ -6,7 +6,7 @@ use interop_binaries::{
 };
 use janus_core::{
     message::{Duration, TaskId},
-    test_util::testcontainers::container_client,
+    test_util::{install_test_trace_subscriber, testcontainers::container_client},
     time::{Clock, RealClock},
 };
 use janus_server::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
@@ -27,6 +27,8 @@ async fn run(
     measurements: &[serde_json::Value],
     aggregation_parameter: &[u8],
 ) -> serde_json::Value {
+    install_test_trace_subscriber();
+
     // Create and start containers.
     let container_client = container_client();
     let network = generate_network_name();
