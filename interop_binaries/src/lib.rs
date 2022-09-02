@@ -278,7 +278,10 @@ pub mod test_util {
     /// Waits a while for the given IPv4 port to start responding successfully to
     /// "/internal/test/ready" HTTP requests, panicking if this doesn't happen soon enough.
     pub async fn await_ready_ok(port: u16) {
-        let http_client = reqwest::Client::default();
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(1))
+            .build()
+            .unwrap();
         // Explicitly connect to IPv4 localhost so that we don't accidentally try to talk to a
         // different container's IPv6 port.
         let url = Url::parse(&format!("http://127.0.0.1:{port}/internal/test/ready")).unwrap();
@@ -297,7 +300,10 @@ pub mod test_util {
     /// Waits a while for the given port to start responding to HTTP requests, panicking if this
     /// doesn't happen soon enough.
     pub async fn await_http_server(port: u16) {
-        let http_client = reqwest::Client::default();
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(1))
+            .build()
+            .unwrap();
         let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
         await_readiness_condition(|| {
             http_client
