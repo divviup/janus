@@ -1570,6 +1570,7 @@ dependencies = [
  "interop_binaries",
  "itertools",
  "janus_client",
+ "janus_collector",
  "janus_core",
  "janus_server",
  "k8s-openapi",
@@ -1600,6 +1601,7 @@ dependencies = [
  "hex",
  "interop_binaries",
  "janus_client",
+ "janus_collector",
  "janus_core",
  "janus_server",
  "lazy_static",
@@ -1659,6 +1661,24 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "janus_collector"
+version = "0.1.0"
+dependencies = [
+ "assert_matches",
+ "backoff",
+ "derivative",
+ "janus_core",
+ "mockito",
+ "prio",
+ "rand",
+ "reqwest",
+ "thiserror",
+ "tokio",
+ "tracing",
  "url",
 ]
 

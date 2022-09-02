@@ -22,11 +22,11 @@ use url::Url;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("invalid parameter {0}")]
+    #[error("Invalid parameter {0}")]
     InvalidParameter(&'static str),
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
-    #[error("codec error: {0}")]
+    #[error("Codec error: {0}")]
     Codec(#[from] prio::codec::CodecError),
     #[error("HTTP response status {0}")]
     Http(StatusCode),
@@ -50,7 +50,7 @@ static CLIENT_USER_AGENT: &str = concat!(
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct ClientParameters {
-    /// Unique identifier for the task
+    /// Unique identifier for the task.
     task_id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
@@ -190,10 +190,7 @@ where
         http_client: &reqwest::Client,
         leader_hpke_config: HpkeConfig,
         helper_hpke_config: HpkeConfig,
-    ) -> Self
-    where
-        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Self {
         Self {
             parameters,
             vdaf_client,

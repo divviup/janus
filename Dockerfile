@@ -9,6 +9,7 @@ COPY build_script_utils /src/build_script_utils
 COPY db /src/db
 COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
+COPY janus_collector /src/janus_collector
 COPY janus_core /src/janus_core
 COPY janus_client /src/janus_client
 COPY janus_server /src/janus_server

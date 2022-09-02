@@ -1032,11 +1032,78 @@ impl Decode for Report {
     }
 }
 
+/// PPM protocol message representing a request from the collector to the leader to provide
+/// aggregate shares for a given batch interval.
+#[derive(Clone, Derivative, PartialEq, Eq)]
+#[derivative(Debug)]
+pub struct CollectReq {
+    pub task_id: TaskId,
+    pub batch_interval: Interval,
+    #[derivative(Debug = "ignore")]
+    pub agg_param: Vec<u8>,
+}
+
+impl CollectReq {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-collect-req";
+}
+
+impl Encode for CollectReq {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.task_id.encode(bytes);
+        self.batch_interval.encode(bytes);
+        encode_u16_items(bytes, &(), &self.agg_param);
+    }
+}
+
+impl Decode for CollectReq {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let task_id = TaskId::decode(bytes)?;
+        let batch_interval = Interval::decode(bytes)?;
+        let agg_param = decode_u16_items(&(), bytes)?;
+
+        Ok(Self {
+            task_id,
+            batch_interval,
+            agg_param,
+        })
+    }
+}
+
+/// PPM protocol message representing a leader's response to the collector's request to provide
+/// aggregate shares for a given batch interval.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectResp {
+    pub encrypted_agg_shares: Vec<HpkeCiphertext>,
+}
+
+impl CollectResp {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-collect-resp";
+}
+
+impl Encode for CollectResp {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        encode_u16_items(bytes, &(), &self.encrypted_agg_shares);
+    }
+}
+
+impl Decode for CollectResp {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let encrypted_agg_shares = decode_u16_items(&(), bytes)?;
+
+        Ok(Self {
+            encrypted_agg_shares,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Duration, Extension, ExtensionType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId,
-        HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Nonce, Report, Role, TaskId, Time,
+        CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeAeadId, HpkeCiphertext,
+        HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Nonce, Report,
+        Role, TaskId, Time,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
@@ -1461,6 +1528,121 @@ mod tests {
                         ),
                     ),
                 ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_collect_req() {
+        roundtrip_encoding(&[
+            (
+                CollectReq {
+                    task_id: TaskId::new([u8::MIN; 32]),
+                    batch_interval: Interval::new(
+                        Time::from_seconds_since_epoch(54321),
+                        Duration::from_seconds(12345),
+                    )
+                    .unwrap(),
+                    agg_param: Vec::new(),
+                },
+                concat!(
+                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id,
+                    concat!(
+                        // batch_interval
+                        "000000000000D431", // start
+                        "0000000000003039", // duration
+                    ),
+                    concat!(
+                        // agg_param
+                        "0000", // length
+                        "",     // opaque data
+                    ),
+                ),
+            ),
+            (
+                CollectReq {
+                    task_id: TaskId::new([13u8; 32]),
+                    batch_interval: Interval::new(
+                        Time::from_seconds_since_epoch(48913),
+                        Duration::from_seconds(44721),
+                    )
+                    .unwrap(),
+                    agg_param: Vec::from("012345"),
+                },
+                concat!(
+                    "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D", // task_id
+                    concat!(
+                        // batch_interval
+                        "000000000000BF11", // start
+                        "000000000000AEB1", // duration
+                    ),
+                    concat!(
+                        // agg_param
+                        "0006",         // length
+                        "303132333435", // opaque data
+                    ),
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_collect_resp() {
+        roundtrip_encoding(&[
+            (
+                CollectResp {
+                    encrypted_agg_shares: Vec::new(),
+                },
+                concat!(concat!(
+                    // encrypted_agg_shares
+                    "0000", // length
+                )),
+            ),
+            (
+                CollectResp {
+                    encrypted_agg_shares: vec![
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(10),
+                            Vec::from("0123"),
+                            Vec::from("4567"),
+                        ),
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(12),
+                            Vec::from("01234"),
+                            Vec::from("567"),
+                        ),
+                    ],
+                },
+                concat!(concat!(
+                    // encrypted_agg_shares
+                    "001A", // length
+                    concat!(
+                        "0A", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0004",     // length
+                            "30313233", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "0004",     // length
+                            "34353637", // opaque data
+                        ),
+                    ),
+                    concat!(
+                        "0C", // config_id
+                        concat!(
+                            // encapsulated_context
+                            "0005",       // length
+                            "3031323334", // opaque data
+                        ),
+                        concat!(
+                            // payload
+                            "0003",   // length
+                            "353637", // opaque data
+                        ),
+                    )
+                )),
             ),
         ])
     }

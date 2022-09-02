@@ -3,6 +3,7 @@ members = [
     "build_script_utils",
     "integration_tests",
     "interop_binaries",
+    "janus_collector",
     "janus_core",
     "janus_client",
     "janus_server"

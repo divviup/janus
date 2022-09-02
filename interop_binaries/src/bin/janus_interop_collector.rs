@@ -1,4 +1,5 @@
 use anyhow::Context;
+use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use base64::URL_SAFE_NO_PAD;
 use clap::{Arg, Command};
 use interop_binaries::{
@@ -6,31 +7,23 @@ use interop_binaries::{
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
     HpkeConfigRegistry, NumberAsString, VdafObject,
 };
+use janus_collector::{CollectJob, Collector, CollectorParameters};
 use janus_core::{
-    hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey, Label},
-    message::{Duration, HpkeConfig, Interval, Role, TaskId, Time},
+    hpke::HpkePrivateKey,
+    message::{Duration, HpkeConfig, Interval, TaskId, Time},
 };
-use janus_server::{
-    message::{CollectReq, CollectResp},
-    task::{VdafInstance, DAP_AUTH_HEADER},
-};
+use janus_server::task::VdafInstance;
 use prio::{
     codec::{Decode, Encode},
-    field::{Field128, Field64},
-    vdaf::{
-        prio3::{Prio3, Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
-        AggregateShare, Collector, Vdaf,
-    },
+    vdaf::{self, prio3::Prio3},
 };
-use reqwest::{
-    header::{CONTENT_TYPE, LOCATION},
-    Url,
-};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{hash_map::Entry, HashMap},
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
+    time::Duration as StdDuration,
 };
 use tokio::sync::Mutex;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
@@ -147,6 +140,24 @@ async fn handle_add_task(
     Ok(hpke_config)
 }
 
+async fn handle_collect_start_generic<V: vdaf::Collector>(
+    http_client: &reqwest::Client,
+    collector_params: CollectorParameters,
+    batch_interval: Interval,
+    vdaf: V,
+    agg_param_encoded: &[u8],
+) -> anyhow::Result<Url>
+where
+    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
+{
+    let collector = Collector::new(collector_params, vdaf, http_client);
+    let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
+    let job = collector
+        .start_collection(batch_interval, &agg_param)
+        .await?;
+    Ok(job.collect_job_url().clone())
+}
+
 async fn handle_collect_start(
     http_client: &reqwest::Client,
     tasks: &Mutex<HashMap<TaskId, TaskState>>,
@@ -164,41 +175,66 @@ async fn handle_collect_start(
     )
     .context("invalid batch interval specification")?;
 
-    let dap_collect_request = CollectReq {
-        task_id,
-        batch_interval,
-        agg_param: agg_param.clone(),
-    };
-
     let tasks_guard = tasks.lock().await;
     let task_state = tasks_guard
         .get(&task_id)
         .context("task was not added before being used in a collect request")?;
 
-    let response = http_client
-        .post(task_state.leader_url.join("collect")?)
-        .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
-        .header(DAP_AUTH_HEADER, &task_state.auth_token)
-        .body(dap_collect_request.get_encoded())
-        .send()
-        .await
-        .context("error sending collect request to the leader")?;
-    let status = response.status();
-    if status != StatusCode::SEE_OTHER {
-        return Err(anyhow::anyhow!(format!(
-            "collect request got status code {}",
-            status,
-        )));
-    }
-    let collect_job_url = Url::parse(
-        response
-            .headers()
-            .get(LOCATION)
-            .context("response to collect request did not include a Location header")?
-            .to_str()
-            .context("collect response Location header contained invalid characters")?,
-    )
-    .context("collect response Location header contained an invalid URL")?;
+    let collector_params = CollectorParameters::new_with_backoff(
+        task_id,
+        task_state.leader_url.clone(),
+        task_state.auth_token.clone(),
+        task_state.hpke_config.clone(),
+        task_state.private_key.clone(),
+        ExponentialBackoffBuilder::new()
+            .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
+            .build(),
+        // collect_poll_wait_parameters is unused, since poll_until_complete() is not called.
+        ExponentialBackoff::default(),
+    );
+
+    let vdaf_instance = task_state.vdaf.clone().into();
+    let collect_job_url = match vdaf_instance {
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count {}) => {
+            let vdaf =
+                Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
+            handle_collect_start_generic(
+                http_client,
+                collector_params,
+                batch_interval,
+                vdaf,
+                &agg_param,
+            )
+            .await?
+        }
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+            let vdaf = Prio3::new_aes128_sum(2, bits)
+                .context("failed to construct Prio3Aes128Sum VDAF")?;
+            handle_collect_start_generic(
+                http_client,
+                collector_params,
+                batch_interval,
+                vdaf,
+                &agg_param,
+            )
+            .await?
+        }
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
+            ref buckets,
+        }) => {
+            let vdaf = Prio3::new_aes128_histogram(2, buckets)
+                .context("failed to construct Prio3Aes128Histogram VDAF")?;
+            handle_collect_start_generic(
+                http_client,
+                collector_params,
+                batch_interval,
+                vdaf,
+                &agg_param,
+            )
+            .await?
+        }
+        _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
+    };
 
     let mut collect_jobs_guard = collect_jobs.lock().await;
     let handle = loop {
@@ -220,6 +256,26 @@ async fn handle_collect_start(
     Ok(handle)
 }
 
+async fn handle_collect_poll_generic<V: vdaf::Collector>(
+    http_client: &reqwest::Client,
+    collector_params: CollectorParameters,
+    collect_job_url: Url,
+    batch_interval: Interval,
+    vdaf: V,
+    agg_param_encoded: &[u8],
+) -> anyhow::Result<Option<V::AggregateResult>>
+where
+    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
+{
+    let collector = Collector::new(collector_params, vdaf, http_client);
+    let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
+    let job = CollectJob::new(collect_job_url, batch_interval, agg_param);
+    collector
+        .poll_once(&job)
+        .await
+        .context("Error sending collect start request")
+}
+
 async fn handle_collect_poll(
     http_client: &reqwest::Client,
     tasks: &Mutex<HashMap<TaskId, TaskState>>,
@@ -236,108 +292,70 @@ async fn handle_collect_poll(
         .get(&task_id)
         .context("could not look up task information while polling")?;
 
-    let response = http_client
-        .get(collect_job_state.url.clone())
-        .header(DAP_AUTH_HEADER, &task_state.auth_token)
-        .send()
-        .await
-        .context("error fetching collect job from leader")?;
-    let status = response.status();
-    if status == StatusCode::ACCEPTED {
-        return Ok(None);
-    } else if status != StatusCode::OK {
-        return Err(anyhow::anyhow!(format!(
-            "collect job fetch got status code {}",
-            status
-        )));
-    }
-
-    let dap_collect_response = CollectResp::get_decoded(
-        &response
-            .bytes()
-            .await
-            .context("error reading collect response")?,
-    )
-    .context("could not decode collect response")?;
-
-    if dap_collect_response.encrypted_agg_shares.len() != 2 {
-        return Err(anyhow::anyhow!(
-            "collect response does not have two ciphertexts"
-        ));
-    }
-    let associated_data =
-        associated_data_for_aggregate_share(task_id, collect_job_state.batch_interval);
-    let leader_aggregate_share_bytes = hpke::open(
-        &task_state.hpke_config,
-        &task_state.private_key,
-        &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
-        &dap_collect_response.encrypted_agg_shares[0],
-        &associated_data,
-    )
-    .context("could not decrypt aggregate share from the leader")?;
-    let helper_aggregate_share_bytes = hpke::open(
-        &task_state.hpke_config,
-        &task_state.private_key,
-        &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
-        &dap_collect_response.encrypted_agg_shares[1],
-        &associated_data,
-    )
-    .context("could not decrypt aggregate share from the helper")?;
+    let collector_params = CollectorParameters::new(
+        task_id,
+        task_state.leader_url.clone(),
+        task_state.auth_token.clone(),
+        task_state.hpke_config.clone(),
+        task_state.private_key.clone(),
+    );
 
     let vdaf_instance = task_state.vdaf.clone().into();
     match vdaf_instance {
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count {}) => {
-            let leader_aggregate_share =
-                AggregateShare::<Field64>::try_from(leader_aggregate_share_bytes.as_ref())
-                    .context("could not decode leader's aggregate share")?;
-            let helper_aggregate_share =
-                AggregateShare::<Field64>::try_from(helper_aggregate_share_bytes.as_ref())
-                    .context("could not decode helper's aggregate share")?;
-            <Prio3Aes128Count as Vdaf>::AggregationParam::get_decoded(&collect_job_state.agg_param)
-                .context("could not decode aggregation parameter")?;
             let vdaf =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
-            let aggregate_result = vdaf
-                .unshard(&(), [leader_aggregate_share, helper_aggregate_share])
-                .context("could not unshard aggregate result")?;
-            Ok(Some(AggregationResult::Number(aggregate_result)))
+            match handle_collect_poll_generic(
+                http_client,
+                collector_params,
+                collect_job_state.url.clone(),
+                collect_job_state.batch_interval,
+                vdaf,
+                &collect_job_state.agg_param,
+            )
+            .await?
+            {
+                Some(aggregate_result) => Ok(Some(AggregationResult::Number(aggregate_result))),
+                None => Ok(None),
+            }
         }
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
-            let leader_aggregate_share =
-                AggregateShare::<Field128>::try_from(leader_aggregate_share_bytes.as_ref())
-                    .context("could not decode leader's aggregate share")?;
-            let helper_aggregate_share =
-                AggregateShare::<Field128>::try_from(helper_aggregate_share_bytes.as_ref())
-                    .context("could not decode helper's aggregate share")?;
-            <Prio3Aes128Sum as Vdaf>::AggregationParam::get_decoded(&collect_job_state.agg_param)
-                .context("could not decode aggregation parameter")?;
             let vdaf = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
-            let aggregate_result = vdaf
-                .unshard(&(), [leader_aggregate_share, helper_aggregate_share])
-                .context("could not unshard aggregate result")?;
-            Ok(Some(AggregationResult::NumberAsString128(NumberAsString(
-                aggregate_result,
-            ))))
+            match handle_collect_poll_generic(
+                http_client,
+                collector_params,
+                collect_job_state.url.clone(),
+                collect_job_state.batch_interval,
+                vdaf,
+                &collect_job_state.agg_param,
+            )
+            .await?
+            {
+                Some(aggregate_result) => Ok(Some(AggregationResult::NumberAsString128(
+                    NumberAsString(aggregate_result),
+                ))),
+                None => Ok(None),
+            }
         }
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
             ref buckets,
         }) => {
-            let leader_aggregate_share =
-                AggregateShare::<Field128>::try_from(leader_aggregate_share_bytes.as_ref())
-                    .context("could not decode leader's aggregate share")?;
-            let helper_aggregate_share =
-                AggregateShare::<Field128>::try_from(helper_aggregate_share_bytes.as_ref())
-                    .context("could not decode helper's aggregate share")?;
-            <Prio3Aes128Histogram as Vdaf>::AggregationParam::get_decoded(
-                &collect_job_state.agg_param,
-            )
-            .context("could not decode aggregation parameter")?;
             let vdaf = Prio3::new_aes128_histogram(2, buckets)
                 .context("failed to construct Prio3Aes128Histogram VDAF")?;
-            let aggregate_result = vdaf
-                .unshard(&(), [leader_aggregate_share, helper_aggregate_share])
-                .context("could not unshard aggregate result")?;
+            let aggregate_result = match handle_collect_poll_generic(
+                http_client,
+                collector_params,
+                collect_job_state.url.clone(),
+                collect_job_state.batch_interval,
+                vdaf,
+                &collect_job_state.agg_param,
+            )
+            .await?
+            {
+                Some(aggregate_result) => aggregate_result,
+                None => return Ok(None),
+            };
             let converted = aggregate_result
                 .into_iter()
                 .map(|counter| {

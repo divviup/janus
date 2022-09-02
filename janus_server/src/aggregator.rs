@@ -21,7 +21,7 @@ use crate::{
     message::{
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
-        CollectReq, CollectResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
+        PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
     task::{Task, VdafInstance, VerifyKey, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
@@ -33,7 +33,10 @@ use http::{
 };
 use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
-    message::{HpkeConfig, HpkeConfigId, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
+    message::{
+        CollectReq, CollectResp, HpkeConfig, HpkeConfigId, Interval, Nonce, NonceChecksum, Report,
+        Role, TaskId,
+    },
     time::Clock,
 };
 use opentelemetry::{

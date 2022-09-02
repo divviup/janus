@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use base64::STANDARD_NO_PAD;
 use deadpool_postgres::Pool;
 use janus_core::{
-    message::{HpkeConfig, Report},
+    message::{CollectReq, CollectResp, HpkeConfig, Report},
     time::{Clock, RealClock},
 };
 use janus_server::{
@@ -11,7 +11,7 @@ use janus_server::{
     datastore::{self, Datastore},
     message::{
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, AggregateShareReq, AggregateShareResp, CollectReq, CollectResp,
+        AggregateInitializeResp, AggregateShareReq, AggregateShareResp,
     },
     metrics::install_metrics_exporter,
     task::Task,
