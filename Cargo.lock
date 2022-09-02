@@ -1582,7 +1582,7 @@ checksum = "0e85a1509a128c855368e135cffcde7eac17d8e1083f41e2b98c58bc1a5074be"
 
 [[package]]
 name = "integration_tests"
-version = "0.1.0"
+version = "0.1.10"
 dependencies = [
  "backoff",
  "build_script_utils",
@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "interop_binaries"
-version = "0.1.0"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1668,7 +1668,7 @@ checksum = "1aab8fc367588b89dcee83ab0fd66b72b50b72fa1904d7095045ace2b0c81c35"
 
 [[package]]
 name = "janus_client"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "assert_matches",
  "backoff",
@@ -1688,7 +1688,7 @@ dependencies = [
 
 [[package]]
 name = "janus_core"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "assert_matches",
@@ -1726,7 +1726,7 @@ dependencies = [
 
 [[package]]
 name = "janus_server"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "assert_matches",
