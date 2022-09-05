@@ -417,9 +417,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "3.2.18"
+version = "3.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b15f2ea93df33549dbe2e8eecd1ca55269d63ae0b3ba1f55db030817d1c2867f"
+checksum = "23b71c3ce99b7611011217b366d923f1d0a7e07a92bb2dbf1e84508c673ca3bd"
 dependencies = [
  "atty",
  "bitflags",
@@ -717,7 +717,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "base64",
- "clap 3.2.18",
+ "clap 3.2.20",
  "getrandom",
  "hex",
  "hpke 0.8.0",
@@ -1619,7 +1619,7 @@ dependencies = [
  "backoff",
  "base64",
  "build_script_utils",
- "clap 3.2.18",
+ "clap 3.2.20",
  "futures",
  "hex",
  "interop_binaries",
