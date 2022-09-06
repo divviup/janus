@@ -21,6 +21,7 @@ use testcontainers::{
     clients::Cli, core::Port, images::generic::GenericImage, Container, RunnableImage,
 };
 use tokio::{select, sync::oneshot, task, time::interval};
+use tracing::debug;
 
 use crate::logs::CopyLogs;
 
@@ -310,7 +311,7 @@ impl<'a> CopyLogs for Daphne<'a> {
             "--timestamps",
             self.daphne_container.id(),
         ];
-        tracing::debug!(?args, "invoking docker");
+        debug!(?args, "invoking docker");
         let child_status = Command::new("docker")
             .args(args)
             .stdin(Stdio::null())
