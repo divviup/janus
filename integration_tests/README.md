@@ -7,8 +7,8 @@ compiled version of Daphne inside a container. The test container is built by th
 script based on the test Dockerfile in the Daphne repository; the test container is included in
 necessary test binaries which know how to load the image into Docker themselves.
 
-Daphne is compiled from commit [`e1b503eb2aefadfe2717abb0a359892848175534`](
-https://github.com/cloudflare/daphne/commit/6228556c7b87a7fe85e414a3186a2511407896f0).
+Daphne is compiled from commit [`80b53c4b0f2c93d5f9df66dfce237b20756c9147`](
+https://github.com/cloudflare/daphne/commit/80b53c4b0f2c93d5f9df66dfce237b20756c9147).
 
 ### Running Daphne integration tests
 

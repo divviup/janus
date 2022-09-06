@@ -18,7 +18,7 @@ fn main() {
         if container_strategy == "build" {
             // Check out Daphne repository at a fixed hash, then build & save off a container image for
             // the test Daphne instance.
-            const DAPHNE_COMMIT_HASH: &str = "e1b503eb2aefadfe2717abb0a359892848175534";
+            const DAPHNE_COMMIT_HASH: &str = "80b53c4b0f2c93d5f9df66dfce237b20756c9147";
             let daphne_checkout_dir = tempdir().unwrap();
             let clone_output = Command::new("git")
                 .args(["clone", "-n", "https://github.com/cloudflare/daphne", "."])
