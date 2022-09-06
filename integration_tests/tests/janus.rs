@@ -1,4 +1,6 @@
-use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
+use common::{
+    create_test_tasks, run_test_capturing_logs, submit_measurements_and_verify_aggregate,
+};
 use integration_tests::janus::Janus;
 use interop_binaries::test_util::generate_network_name;
 use janus_core::{
@@ -135,14 +137,17 @@ async fn janus_janus() {
     let janus_pair = JanusPair::new(&container_client).await;
 
     // Run the behavioral test.
-    let result = submit_measurements_and_verify_aggregate(
-        (janus_pair.leader.port(), janus_pair.helper.port()),
-        &janus_pair.leader_task,
-        &janus_pair.collector_private_key,
+    run_test_capturing_logs(
+        "janus_janus",
+        &janus_pair.helper,
+        &janus_pair.leader,
+        || {
+            submit_measurements_and_verify_aggregate(
+                (janus_pair.leader.port(), janus_pair.helper.port()),
+                &janus_pair.leader_task,
+                &janus_pair.collector_private_key,
+            )
+        },
     )
     .await;
-
-    tracing::info!(?result, "result from submit");
-
-    result.unwrap();
 }

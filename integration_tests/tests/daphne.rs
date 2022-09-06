@@ -1,4 +1,6 @@
-use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
+use common::{
+    create_test_tasks, run_test_capturing_logs, submit_measurements_and_verify_aggregate,
+};
 use integration_tests::{daphne::Daphne, janus::Janus};
 use interop_binaries::test_util::generate_network_name;
 use janus_core::{
@@ -33,13 +35,14 @@ async fn daphne_janus() {
     let helper = Janus::new_in_container(&container_client, &network, &helper_task).await;
 
     // Run the behavioral test.
-    submit_measurements_and_verify_aggregate(
-        (leader.port(), helper.port()),
-        &leader_task,
-        &collector_private_key,
-    )
-    .await
-    .unwrap();
+    run_test_capturing_logs("daphne_janus", &helper, &leader, || {
+        submit_measurements_and_verify_aggregate(
+            (leader.port(), helper.port()),
+            &leader_task,
+            &collector_private_key,
+        )
+    })
+    .await;
 }
 
 // This test places Janus in the leader role & Daphne in the helper role.
@@ -66,11 +69,12 @@ async fn janus_daphne() {
     let helper = Daphne::new(&container_client, &network, &helper_task).await;
 
     // Run the behavioral test.
-    submit_measurements_and_verify_aggregate(
-        (leader.port(), helper.port()),
-        &leader_task,
-        &collector_private_key,
-    )
-    .await
-    .unwrap();
+    run_test_capturing_logs("janus_daphne", &helper, &leader, || {
+        submit_measurements_and_verify_aggregate(
+            (leader.port(), helper.port()),
+            &leader_task,
+            &collector_private_key,
+        )
+    })
+    .await;
 }

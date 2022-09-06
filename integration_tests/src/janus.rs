@@ -1,9 +1,11 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
+use crate::logs::CopyLogs;
 use interop_binaries::{
     test_util::await_http_server, testcontainer::Aggregator, AggregatorAddTaskRequest,
 };
 use janus_core::{
+    message::Role,
     test_util::kubernetes::{Cluster, PortForward},
     time::RealClock,
 };
@@ -14,8 +16,11 @@ use janus_server::{
 };
 use k8s_openapi::api::core::v1::Secret;
 use portpicker::pick_unused_port;
-use std::collections::HashMap;
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    path::Path,
+    process::{Command, Stdio},
+};
 use testcontainers::{clients::Cli, Container, RunnableImage};
 use tracing::debug;
 use url::Url;
@@ -25,6 +30,7 @@ use url::Url;
 pub enum Janus<'a> {
     /// Janus components are spawned in a container, and completely destroyed once the test ends.
     Container {
+        role: Role,
         container: Container<'a, Aggregator>,
     },
 
@@ -68,7 +74,10 @@ impl<'a> Janus<'a> {
         let resp: HashMap<String, Option<String>> = resp.json().await.unwrap();
         assert_eq!(resp.get("status"), Some(&Some("success".to_string())));
 
-        Self::Container { container }
+        Self::Container {
+            role: task.role,
+            container,
+        }
     }
 
     /// Set up a test case running in a Kubernetes cluster where Janus components and a datastore
@@ -158,12 +167,51 @@ impl<'a> Janus<'a> {
     /// Returns the port of the aggregator on the host.
     pub fn port(&self) -> u16 {
         match self {
-            Janus::Container { container } => {
+            Janus::Container { role: _, container } => {
                 container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
             }
             Janus::KubernetesCluster {
                 aggregator_port_forward,
             } => aggregator_port_forward.local_port(),
+        }
+    }
+}
+
+impl<'a> CopyLogs for Janus<'a> {
+    fn logs<P: AsRef<Path>>(&self, destination: &P) {
+        match self {
+            Janus::Container { role, container } => {
+                let container_source_path = format!("{}:logs/", container.id());
+
+                let host_destination_path = destination
+                    .as_ref()
+                    .join(format!("{}-{}", role, container.id()))
+                    .into_os_string()
+                    .into_string()
+                    .unwrap();
+
+                let args = ["cp", &container_source_path, &host_destination_path];
+                debug!(?args, "invoking docker");
+                let child_status = Command::new("docker")
+                    .args(args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap()
+                    .wait()
+                    .unwrap();
+                assert!(
+                    child_status.success(),
+                    "docker cp failed with status {:?}",
+                    child_status.code()
+                );
+            }
+            // No-op: when running tests against the cluster, we gather up logfiles with `kind
+            // export logs`
+            Janus::KubernetesCluster {
+                aggregator_port_forward: _,
+            } => {}
         }
     }
 }

@@ -538,6 +538,12 @@ impl Decode for Role {
     }
 }
 
+impl Display for Role {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 /// PPM protocol message representing an identifier for an HPKE config.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HpkeConfigId(u8);
