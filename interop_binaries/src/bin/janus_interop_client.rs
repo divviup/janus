@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use base64::URL_SAFE_NO_PAD;
 use clap::{Arg, Command};
 use interop_binaries::{
@@ -24,15 +24,31 @@ use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum Measurement {
-    Number(u64),
-    NumberAsString64(NumberAsString<u64>),
+    Number(NumberAsString<u128>),
+    NumberVec(Vec<NumberAsString<u128>>),
 }
 
 impl Measurement {
-    fn as_u64(&self) -> u64 {
+    fn as_primitive<T: TryFrom<u128>>(&self) -> anyhow::Result<T> {
         match self {
-            Measurement::Number(value) => *value,
-            Measurement::NumberAsString64(NumberAsString(value)) => *value,
+            Measurement::Number(m) => {
+                T::try_from(m.0).map_err(|_| anyhow!("could not convert primitive"))
+            }
+            m => Err(anyhow!(
+                "cannot represent measurement {m:?} as a primitive value"
+            )),
+        }
+    }
+
+    fn as_primitive_vec<T: TryFrom<u128>>(&self) -> anyhow::Result<Vec<T>> {
+        match self {
+            Measurement::NumberVec(vec) => vec
+                .iter()
+                .map(|item| T::try_from(item.0).map_err(|_| anyhow!("could not convert primitive")))
+                .collect::<anyhow::Result<Vec<_>>>(),
+            m => Err(anyhow!(
+                "cannot represent measurement {m:?} as a vector of primitives"
+            )),
         }
     }
 }
@@ -130,25 +146,33 @@ async fn handle_upload(
     http_client: &reqwest::Client,
     request: UploadRequest,
 ) -> anyhow::Result<()> {
-    let measurement = request.measurement.as_u64();
     let vdaf_instance = request.vdaf.clone().into();
     match vdaf_instance {
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count {}) => {
+            let measurement = request.measurement.as_primitive()?;
             let vdaf_client =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+            let measurement = request.measurement.as_primitive_vec()?;
+            let vdaf_client = Prio3::new_aes128_count_vec_multithreaded(2, length)
+                .context("failed to construct Prio3Aes128CountVec VDAF")?;
+            handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
+        }
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+            let measurement = request.measurement.as_primitive()?;
             let vdaf_client = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
-            handle_upload_generic(http_client, vdaf_client, request, measurement.into()).await?;
+            handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
             ref buckets,
         }) => {
+            let measurement = request.measurement.as_primitive()?;
             let vdaf_client = Prio3::new_aes128_histogram(2, buckets)
                 .context("failed to construct Prio3Aes128Histogram VDAF")?;
-            handle_upload_generic(http_client, vdaf_client, request, measurement.into()).await?;
+            handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
         _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
     }

@@ -18,7 +18,10 @@ use prio::{
     codec::{Decode, Encode},
     field::{Field128, Field64},
     vdaf::{
-        prio3::{Prio3, Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
+        prio3::{
+            Prio3, Prio3Aes128Count, Prio3Aes128CountVecMultithreaded, Prio3Aes128Histogram,
+            Prio3Aes128Sum,
+        },
         AggregateShare, Collector, Vdaf,
     },
 };
@@ -79,9 +82,8 @@ struct CollectPollRequest {
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum AggregationResult {
-    Number(u64),
-    NumberAsString128(NumberAsString<u128>),
-    NumberArray(Vec<u64>),
+    Number(NumberAsString<u128>),
+    NumberVec(Vec<NumberAsString<u128>>),
 }
 
 #[derive(Debug, Serialize)]
@@ -300,7 +302,28 @@ async fn handle_collect_poll(
             let aggregate_result = vdaf
                 .unshard(&(), [leader_aggregate_share, helper_aggregate_share])
                 .context("could not unshard aggregate result")?;
-            Ok(Some(AggregationResult::Number(aggregate_result)))
+            Ok(Some(AggregationResult::Number(NumberAsString(
+                aggregate_result as u128,
+            ))))
+        }
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+            let leader_aggregate_share =
+                AggregateShare::<Field128>::try_from(leader_aggregate_share_bytes.as_ref())
+                    .context("could not decode leader's aggregate share")?;
+            let helper_aggregate_share =
+                AggregateShare::<Field128>::try_from(helper_aggregate_share_bytes.as_ref())
+                    .context("could not decode helper's aggregate share")?;
+            <Prio3Aes128CountVecMultithreaded as Vdaf>::AggregationParam::get_decoded(
+                &collect_job_state.agg_param,
+            )
+            .context("could not decode aggregation parameter")?;
+            let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
+                .context("failed to construct Prio3Aes128Count VDAF")?;
+            let aggregate_result = vdaf
+                .unshard(&(), [leader_aggregate_share, helper_aggregate_share])
+                .context("could not unshard aggregate result")?;
+            let converted = aggregate_result.into_iter().map(NumberAsString).collect();
+            Ok(Some(AggregationResult::NumberVec(converted)))
         }
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
             let leader_aggregate_share =
@@ -316,7 +339,7 @@ async fn handle_collect_poll(
             let aggregate_result = vdaf
                 .unshard(&(), [leader_aggregate_share, helper_aggregate_share])
                 .context("could not unshard aggregate result")?;
-            Ok(Some(AggregationResult::NumberAsString128(NumberAsString(
+            Ok(Some(AggregationResult::Number(NumberAsString(
                 aggregate_result,
             ))))
         }
@@ -338,15 +361,8 @@ async fn handle_collect_poll(
             let aggregate_result = vdaf
                 .unshard(&(), [leader_aggregate_share, helper_aggregate_share])
                 .context("could not unshard aggregate result")?;
-            let converted = aggregate_result
-                .into_iter()
-                .map(|counter| {
-                    u64::try_from(counter).context(
-                        "entry in aggregate result was too large to represent natively in JSON",
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Some(AggregationResult::NumberArray(converted)))
+            let converted = aggregate_result.into_iter().map(NumberAsString).collect();
+            Ok(Some(AggregationResult::NumberVec(converted)))
         }
         _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
     }

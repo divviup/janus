@@ -2542,6 +2542,7 @@ dependencies = [
  "cmac",
  "ctr 0.9.1",
  "getrandom",
+ "rayon",
  "ring",
  "serde",
  "static_assertions",

@@ -85,6 +85,7 @@ where
 #[serde(tag = "type")]
 pub enum VdafObject {
     Prio3Aes128Count,
+    Prio3Aes128CountVec { length: usize },
     Prio3Aes128Sum { bits: u32 },
     Prio3Aes128Histogram { buckets: Vec<NumberAsString<u64>> },
 }
@@ -94,6 +95,9 @@ impl From<VdafInstance> for VdafObject {
         match vdaf {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 VdafObject::Prio3Aes128Count
+            }
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+                VdafObject::Prio3Aes128CountVec { length }
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 VdafObject::Prio3Aes128Sum { bits }
@@ -113,6 +117,9 @@ impl From<VdafObject> for VdafInstance {
         match vdaf {
             VdafObject::Prio3Aes128Count => {
                 VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count)
+            }
+            VdafObject::Prio3Aes128CountVec { length } => {
+                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length })
             }
             VdafObject::Prio3Aes128Sum { bits } => {
                 VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits })
