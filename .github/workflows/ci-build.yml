@@ -53,7 +53,24 @@ jobs:
     - name: Build
       run: cargo test --no-run --locked
     - name: Test
+      id: test
+      env:
+        JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
       run: cargo test
+      # Continue on error so we can upload logs
+      continue-on-error: true
+    - name: Upload container logs
+      # Only get logs on test failure
+      if: steps.test.outcome == 'failure'
+      uses: actions/upload-artifact@v3
+      with:
+        name: container-logs
+        path: ${{ github.workspace }}/test-logs/
+        if-no-files-found: error
+    # Force overall job to fail if tests fail
+    - name: test status
+      if: steps.test.outcome == 'failure'
+      run: exit 1
   
   janus_lints:
     runs-on: ubuntu-latest
