@@ -23,6 +23,7 @@ To update the version of Daphne in use:
 1. Update `Cargo.toml` in this directory to reference the new commit of Daphne.
 1. Update `build.rs` in this directory to reference the new commit of Daphne.
 1. Update this README to note the new commit of Daphne.
+1. Build a new prebuilt image as described below, upload it, and update secrets for both GitHub Actions and Dependabot to use the new image.
 
 ### Using a prebuilt Daphne
 
@@ -34,7 +35,7 @@ example, to use an image named `test_daphne` with the `latest` tag, set
 
 To build a new Daphne image suitable for use as a prebuilt image, clone the [Daphne repository](
 https://github.com/cloudflare/daphne), check out the commit of interest, and then run a command like
-`docker build --file=daphne_worker_test/docker/miniflare.Dockerfile --tag=test_daphne:$(git rev-parse HEAD | head -c8) .`.
+`docker build --file=daphne_worker_test/docker/miniflare.Dockerfile --tag=test_daphne:$(git rev-parse --short=8 HEAD) .`.
 This command will generate an image named `test_daphne` tagged with a prefix of the git commit hash
 used to generate it.
 
