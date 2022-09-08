@@ -6,7 +6,7 @@ use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
     message::{Duration, HpkeConfig, Interval, Role, TaskId},
     retries::test_http_request_exponential_backoff,
-    task::VdafInstance,
+    task::{AuthenticationToken, VdafInstance},
     time::{Clock, RealClock},
 };
 use janus_server::{
@@ -156,13 +156,12 @@ pub async fn submit_measurements_and_verify_aggregate(
     let collector_params = CollectorParameters::new_with_backoff(
         task_id,
         aggregator_endpoints[0].clone(),
-        String::from_utf8(
+        AuthenticationToken::from(
             leader_task
                 .primary_collector_auth_token()
                 .as_bytes()
                 .to_vec(),
-        )
-        .unwrap(),
+        ),
         leader_task.collector_hpke_config.clone(),
         collector_private_key.clone(),
         test_http_request_exponential_backoff(),

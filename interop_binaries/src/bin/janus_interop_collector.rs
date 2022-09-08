@@ -11,6 +11,7 @@ use janus_collector::{CollectJob, Collector, CollectorParameters};
 use janus_core::{
     hpke::HpkePrivateKey,
     message::{Duration, HpkeConfig, Interval, TaskId, Time},
+    task::AuthenticationToken,
 };
 use janus_server::task::VdafInstance;
 use prio::{
@@ -91,7 +92,7 @@ struct TaskState {
     hpke_config: HpkeConfig,
     leader_url: Url,
     vdaf: VdafObject,
-    auth_token: String,
+    auth_token: AuthenticationToken,
 }
 
 /// A collect job handle.
@@ -134,7 +135,7 @@ async fn handle_add_task(
         hpke_config: hpke_config.clone(),
         leader_url: request.leader,
         vdaf: request.vdaf,
-        auth_token: request.collector_authentication_token,
+        auth_token: AuthenticationToken::from(request.collector_authentication_token.into_bytes()),
     });
 
     Ok(hpke_config)

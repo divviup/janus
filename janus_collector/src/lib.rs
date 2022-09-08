@@ -6,6 +6,7 @@ use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey},
     message::{CollectReq, CollectResp, HpkeConfig, Interval, Role, TaskId},
     retries::{http_request_exponential_backoff, retry_http_request},
+    task::AuthenticationToken,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -62,8 +63,8 @@ static COLLECTOR_USER_AGENT: &str = concat!(
 #[derivative(Debug)]
 #[non_exhaustive]
 pub enum Authentication {
-    /// Beearer token authentication, via the `DAP-Auth-Token` header.
-    BearerToken(#[derivative(Debug = "ignore")] String),
+    /// Bearer token authentication, via the `DAP-Auth-Token` header.
+    DapAuthToken(#[derivative(Debug = "ignore")] AuthenticationToken),
 }
 
 /// The PPM collector's view of task parameters.
@@ -93,7 +94,7 @@ impl CollectorParameters {
     pub fn new(
         task_id: TaskId,
         leader_endpoint: Url,
-        authentication_token: String,
+        authentication_token: AuthenticationToken,
         hpke_config: HpkeConfig,
         hpke_private_key: HpkePrivateKey,
     ) -> CollectorParameters {
@@ -120,7 +121,7 @@ impl CollectorParameters {
     pub fn new_with_backoff(
         task_id: TaskId,
         mut leader_endpoint: Url,
-        authentication_token: String,
+        authentication_token: AuthenticationToken,
         hpke_config: HpkeConfig,
         hpke_private_key: HpkePrivateKey,
         http_request_retry_parameters: ExponentialBackoff,
@@ -136,7 +137,7 @@ impl CollectorParameters {
         CollectorParameters {
             task_id,
             leader_endpoint,
-            authentication: Authentication::BearerToken(authentication_token),
+            authentication: Authentication::DapAuthToken(authentication_token),
             hpke_config,
             hpke_private_key,
             http_request_retry_parameters,
@@ -254,8 +255,8 @@ where
                     .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
                     .body(collect_request.get_encoded());
                 match &self.parameters.authentication {
-                    Authentication::BearerToken(token) => {
-                        request = request.header(DAP_AUTH_HEADER, token)
+                    Authentication::DapAuthToken(token) => {
+                        request = request.header(DAP_AUTH_HEADER, token.as_bytes())
                     }
                 }
                 request.send().await
@@ -297,8 +298,8 @@ where
             || async {
                 let mut request = self.http_client.get(job.collect_job_url.clone());
                 match &self.parameters.authentication {
-                    Authentication::BearerToken(token) => {
-                        request = request.header(DAP_AUTH_HEADER, token)
+                    Authentication::DapAuthToken(token) => {
+                        request = request.header(DAP_AUTH_HEADER, token.as_bytes())
                     }
                 }
                 request.send().await
@@ -415,7 +416,7 @@ mod tests {
             CollectorParameters::new_with_backoff(
                 TaskId::random(),
                 server_url,
-                "token".to_string(),
+                AuthenticationToken::from(b"token".to_vec()),
                 hpke_config,
                 hpke_private_key,
                 test_http_request_exponential_backoff(),
@@ -468,7 +469,7 @@ mod tests {
         let collector_parameters = CollectorParameters::new(
             TaskId::random(),
             "http://example.com/dap".parse().unwrap(),
-            "token".to_owned(),
+            AuthenticationToken::from(b"token".to_vec()),
             hpke_config.clone(),
             hpke_private_key.clone(),
         );
@@ -481,7 +482,7 @@ mod tests {
         let collector_parameters = CollectorParameters::new(
             TaskId::random(),
             "http://example.com".parse().unwrap(),
-            "token".to_owned(),
+            AuthenticationToken::from(b"token".to_vec()),
             hpke_config,
             hpke_private_key,
         );
