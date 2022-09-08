@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "janus_collector"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "assert_matches",
  "backoff",
