@@ -8,6 +8,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     message::{Duration, HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
     retries::{http_request_exponential_backoff, retry_http_request},
+    task::url_ensure_trailing_slash,
     time::Clock,
 };
 use prio::{
@@ -89,9 +90,7 @@ impl ClientParameters {
         // path segments into these endpoints & the Url::join implementation is persnickety about
         // the slash at the end of the path.
         for url in &mut aggregator_endpoints {
-            if !url.as_str().ends_with('/') {
-                url.set_path(&format!("{}/", url.path()));
-            }
+            url_ensure_trailing_slash(url);
         }
 
         Self {

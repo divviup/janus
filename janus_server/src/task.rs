@@ -9,7 +9,7 @@ use janus_core::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
         Interval, Role, TaskId,
     },
-    task::AuthenticationToken,
+    task::{url_ensure_trailing_slash, AuthenticationToken},
 };
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -244,9 +244,7 @@ impl Task {
         // path segments into these endpoints & the Url::join implementation is persnickety about
         // the slash at the end of the path.
         for url in &mut aggregator_endpoints {
-            if !url.as_str().ends_with('/') {
-                url.set_path(&format!("{}/", url.path()));
-            }
+            url_ensure_trailing_slash(url);
         }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).

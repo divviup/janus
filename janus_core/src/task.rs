@@ -1,3 +1,4 @@
+use reqwest::Url;
 use ring::constant_time;
 
 /// Identifiers for supported VDAFs, corresponding to definitions in
@@ -45,3 +46,14 @@ impl PartialEq for AuthenticationToken {
 }
 
 impl Eq for AuthenticationToken {}
+
+/// Modifies a [`Url`] in place to ensure it ends with a slash.
+///
+/// Aggregator endpoint URLs should end with a slash if they will be used with [`Url::join`],
+/// because that method will drop the last path component of the base URL if it does not end with a
+/// slash.
+pub fn url_ensure_trailing_slash(url: &mut Url) {
+    if !url.as_str().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+}

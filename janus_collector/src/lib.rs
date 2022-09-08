@@ -6,7 +6,7 @@ use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey},
     message::{CollectReq, CollectResp, HpkeConfig, Interval, Role, TaskId},
     retries::{http_request_exponential_backoff, retry_http_request},
-    task::AuthenticationToken,
+    task::{url_ensure_trailing_slash, AuthenticationToken},
 };
 use prio::{
     codec::{Decode, Encode},
@@ -127,12 +127,8 @@ impl CollectorParameters {
         http_request_retry_parameters: ExponentialBackoff,
         collect_poll_wait_parameters: ExponentialBackoff,
     ) -> CollectorParameters {
-        // Ensure the provided leader endpoint ends with a slash, as we will be joining additional
-        // path segments into this endpoint. The Url::join implementation will drop the last
-        // path component of the base URL if it does not end with a slash.
-        if !leader_endpoint.as_str().ends_with('/') {
-            leader_endpoint.set_path(&format!("{}/", leader_endpoint.path()));
-        }
+        // Ensure the provided leader endpoint ends with a slash.
+        url_ensure_trailing_slash(&mut leader_endpoint);
 
         CollectorParameters {
             task_id,
