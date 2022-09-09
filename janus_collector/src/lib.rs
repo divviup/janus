@@ -1024,18 +1024,18 @@ mod tests {
         mock_collect_poll_retry_after_past.assert();
         mock_collect_poll_retry_after_far_future.assert();
 
-        // Manipulate backoff settings so that we make one request and time out.
+        // Manipulate backoff settings so that we make one or two requests and time out.
         collector
             .parameters
             .collect_poll_wait_parameters
-            .max_elapsed_time = Some(StdDuration::from_millis(10));
+            .max_elapsed_time = Some(StdDuration::from_millis(15));
         collector
             .parameters
             .collect_poll_wait_parameters
-            .initial_interval = StdDuration::from_millis(15);
+            .initial_interval = StdDuration::from_millis(10);
         let mock_collect_poll_no_retry_after = mock("GET", "/collect_job/1")
             .with_status(202)
-            .expect(1)
+            .expect_at_least(1)
             .create();
         assert_matches!(
             collector.poll_until_complete(&job).await.unwrap_err(),
