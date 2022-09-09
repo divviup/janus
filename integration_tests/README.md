@@ -23,7 +23,7 @@ To update the version of Daphne in use:
 1. Update `Cargo.toml` in this directory to reference the new commit of Daphne.
 1. Update `build.rs` in this directory to reference the new commit of Daphne.
 1. Update this README to note the new commit of Daphne.
-1. Build a new prebuilt image as described below, upload it, and update secrets for both GitHub Actions and Dependabot to use the new image.
+1. If using a prebuilt Daphne image, rebuild it as described below.
 
 ### Using a prebuilt Daphne
 
