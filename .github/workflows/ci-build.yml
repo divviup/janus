@@ -66,7 +66,8 @@ jobs:
       with:
         name: container-logs
         path: ${{ github.workspace }}/test-logs/
-        if-no-files-found: error
+        # Not all test failures yield log files
+        if-no-files-found: ignore
     # Force overall job to fail if tests fail
     - name: test status
       if: steps.test.outcome == 'failure'
