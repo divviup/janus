@@ -1,6 +1,6 @@
 //! PPM protocol collector
 
-use backoff::{future::retry, ExponentialBackoff};
+use backoff::{backoff::Backoff, ExponentialBackoff};
 use derivative::Derivative;
 use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey},
@@ -13,10 +13,15 @@ use prio::{
     vdaf,
 };
 use reqwest::{
-    header::{HeaderValue, ToStrError, CONTENT_TYPE, LOCATION},
+    header::{HeaderValue, ToStrError, CONTENT_TYPE, LOCATION, RETRY_AFTER},
     StatusCode,
 };
-use std::time::Duration as StdDuration;
+use retry_after::{FromHeaderValueError, RetryAfter};
+use std::{
+    convert::TryFrom,
+    time::{Duration as StdDuration, SystemTime},
+};
+use tokio::time::{sleep, Instant};
 use url::Url;
 
 /// HTTP header where auth tokens are provided in messages to the leader.
@@ -36,6 +41,8 @@ pub enum Error {
     InvalidHeader(#[from] ToStrError),
     #[error("Wrong Content-Type header: {0:?}")]
     BadContentType(Option<HeaderValue>),
+    #[error("Invalid Retry-After header value: {0}")]
+    InvalidRetryAfterHeader(#[from] FromHeaderValueError),
     #[error("Codec error: {0}")]
     Codec(#[from] prio::codec::CodecError),
     #[error("Aggregate share decoding error")]
@@ -157,10 +164,7 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 /// Collector state related to a collect job that is in progress.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct CollectJob<V: vdaf::Collector>
-where
-    for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-{
+pub struct CollectJob<P> {
     /// The URL provided by the leader aggregator, where the collect response will be available
     /// upon completion.
     collect_job_url: Url,
@@ -168,18 +172,15 @@ where
     batch_interval: Interval,
     /// The aggregation parameter used in this collect request.
     #[derivative(Debug = "ignore")]
-    aggregation_parameter: V::AggregationParam,
+    aggregation_parameter: P,
 }
 
-impl<V: vdaf::Collector> CollectJob<V>
-where
-    for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-{
+impl<P> CollectJob<P> {
     pub fn new(
         collect_job_url: Url,
         batch_interval: Interval,
-        aggregation_parameter: V::AggregationParam,
-    ) -> CollectJob<V> {
+        aggregation_parameter: P,
+    ) -> CollectJob<P> {
         CollectJob {
             collect_job_url,
             batch_interval,
@@ -195,9 +196,21 @@ where
         self.batch_interval
     }
 
-    pub fn aggregation_parameter(&self) -> &V::AggregationParam {
+    pub fn aggregation_parameter(&self) -> &P {
         &self.aggregation_parameter
     }
+}
+
+#[derive(Derivative)]
+#[derivative(Debug)]
+/// The result of a collect request poll operation. This will either provide the aggregate result
+/// or indicate that the collection is still being processed.
+pub enum PollResult<T> {
+    /// The aggregate result from a completed collect request.
+    AggregateResult(#[derivative(Debug = "ignore")] T),
+    /// The collect request is not yet ready. If present, the [`RetryAfter`] object is the time at
+    /// which the leader recommends retrying the request.
+    NextAttempt(Option<RetryAfter>),
 }
 
 /// A PPM collector.
@@ -234,7 +247,7 @@ where
         &self,
         batch_interval: Interval,
         aggregation_parameter: &V::AggregationParam,
-    ) -> Result<CollectJob<V>, Error> {
+    ) -> Result<CollectJob<V::AggregationParam>, Error> {
         let collect_request = CollectReq {
             task_id: self.parameters.task_id,
             batch_interval,
@@ -287,8 +300,8 @@ where
     #[tracing::instrument(err)]
     pub async fn poll_once(
         &self,
-        job: &CollectJob<V>,
-    ) -> Result<Option<V::AggregateResult>, Error> {
+        job: &CollectJob<V::AggregationParam>,
+    ) -> Result<PollResult<V::AggregateResult>, Error> {
         let response = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
             || async {
@@ -309,7 +322,14 @@ where
 
         let status = response.status();
         match status {
-            StatusCode::ACCEPTED => return Ok(None),
+            StatusCode::ACCEPTED => {
+                let retry_after_opt = response
+                    .headers()
+                    .get(RETRY_AFTER)
+                    .map(RetryAfter::try_from)
+                    .transpose()?;
+                return Ok(PollResult::NextAttempt(retry_after_opt));
+            }
             StatusCode::OK => {}
             _ => return Err(Error::Http(status)),
         }
@@ -354,33 +374,54 @@ where
             .vdaf_collector
             .unshard(&job.aggregation_parameter, aggregate_shares)?;
 
-        Ok(Some(aggregate_result))
+        Ok(PollResult::AggregateResult(aggregate_result))
     }
 
     /// A convenience method to repeatedly request the result of an in-progress collection until it
     /// completes.
     pub async fn poll_until_complete(
         &self,
-        job: &CollectJob<V>,
+        job: &CollectJob<V::AggregationParam>,
     ) -> Result<V::AggregateResult, Error> {
-        // Use `backoff::future::retry` to poll the leader until the collect job is ready.
-        // Successful requests that indicate collection is still in progress are marked as
-        // "transient errors", and failed requests from the inner retry loop are marked as
-        // "permanent errors", to avoid performing further retries.
-        retry(
-            self.parameters.collect_poll_wait_parameters.clone(),
-            || async {
-                if let Some(aggregate_result) = self
-                    .poll_once(job)
-                    .await
-                    .map_err(backoff::Error::permanent)?
-                {
-                    return Ok(aggregate_result);
+        // Use this backoff object as a fallback to determine how long to wait between poll
+        // requests if there is no Retry-After header present.
+        let mut backoff = self.parameters.collect_poll_wait_parameters.clone();
+        backoff.reset();
+        let deadline = backoff
+            .max_elapsed_time
+            .map(|duration| Instant::now() + duration);
+
+        loop {
+            // poll_once() already retries upon server and connection errors, so propagate any error
+            // received from it and return immediately.
+            let retry_after = match self.poll_once(job).await? {
+                PollResult::AggregateResult(aggregate_result) => return Ok(aggregate_result),
+                PollResult::NextAttempt(retry_after) => retry_after,
+            };
+
+            // Compute a sleep duration based on the Retry-After header, if available.
+            let sleep_duration = match retry_after {
+                Some(RetryAfter::DateTime(system_time)) => {
+                    system_time.duration_since(SystemTime::now()).ok()
                 }
-                Err(backoff::Error::transient(Error::CollectPollTimeout))
-            },
-        )
-        .await
+                Some(RetryAfter::Delay(duration)) => Some(duration),
+                None => None,
+            };
+
+            if let Some(sleep_duration) = sleep_duration {
+                // Check against max_elapsed_time even if we are using Retry-After headers.
+                if let Some(deadline) = deadline {
+                    if Instant::now() + sleep_duration > deadline {
+                        return Err(Error::CollectPollTimeout);
+                    }
+                }
+                sleep(sleep_duration).await;
+            } else if let Some(next_backoff) = backoff.next_backoff() {
+                sleep(next_backoff).await;
+            } else {
+                return Err(Error::CollectPollTimeout);
+            }
+        }
     }
 }
 
@@ -388,6 +429,7 @@ where
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
+    use chrono::{TimeZone, Utc};
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, Label},
         message::{Duration, HpkeCiphertext, Nonce, Time},
@@ -408,19 +450,16 @@ mod tests {
     {
         let server_url = Url::parse(&mockito::server_url()).unwrap();
         let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
-        Collector::new(
-            CollectorParameters::new_with_backoff(
-                TaskId::random(),
-                server_url,
-                AuthenticationToken::from(b"token".to_vec()),
-                hpke_config,
-                hpke_private_key,
-                test_http_request_exponential_backoff(),
-                test_http_request_exponential_backoff(),
-            ),
-            vdaf_collector,
-            &default_http_client().unwrap(),
-        )
+        let parameters = CollectorParameters::new_with_backoff(
+            TaskId::random(),
+            server_url,
+            AuthenticationToken::from(b"token".to_vec()),
+            hpke_config,
+            hpke_private_key,
+            test_http_request_exponential_backoff(),
+            test_http_request_exponential_backoff(),
+        );
+        Collector::new(parameters, vdaf_collector, &default_http_client().unwrap())
     }
 
     fn random_verify_key() -> [u8; 16] {
@@ -545,8 +584,8 @@ mod tests {
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
         assert_eq!(job.batch_interval, batch_interval);
 
-        let poll_opt = collector.poll_once(&job).await.unwrap();
-        assert!(poll_opt.is_none());
+        let poll_result = collector.poll_once(&job).await.unwrap();
+        assert_matches!(poll_result, PollResult::NextAttempt(None));
 
         let agg_result = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(agg_result, 1);
@@ -859,5 +898,149 @@ mod tests {
         let error = collector.poll_until_complete(&job).await.unwrap_err();
         assert_matches!(error, Error::Http(StatusCode::INTERNAL_SERVER_ERROR));
         mock_collect_job_always_fail.assert();
+    }
+
+    #[tokio::test]
+    async fn collect_poll_retry_after() {
+        install_test_trace_subscriber();
+
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let collector = setup_collector(vdaf);
+
+        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
+        let mock_collect_start = mock("POST", "/collect")
+            .match_header(CONTENT_TYPE.as_str(), CollectReq::MEDIA_TYPE)
+            .with_status(303)
+            .with_header(LOCATION.as_str(), &collect_job_url)
+            .expect(1)
+            .create();
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(1_000_000),
+            Duration::from_seconds(3600),
+        )
+        .unwrap();
+        let job = collector
+            .start_collection(batch_interval, &())
+            .await
+            .unwrap();
+        mock_collect_start.assert();
+
+        let mock_collect_poll_no_retry_after = mock("GET", "/collect_job/1")
+            .with_status(202)
+            .expect(1)
+            .create();
+        assert_matches!(
+            collector.poll_once(&job).await.unwrap(),
+            PollResult::NextAttempt(None)
+        );
+        mock_collect_poll_no_retry_after.assert();
+
+        let mock_collect_poll_retry_after_60s = mock("GET", "/collect_job/1")
+            .with_status(202)
+            .with_header("Retry-After", "60")
+            .expect(1)
+            .create();
+        assert_matches!(
+            collector.poll_once(&job).await.unwrap(),
+            PollResult::NextAttempt(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, StdDuration::from_secs(60))
+        );
+        mock_collect_poll_retry_after_60s.assert();
+
+        let mock_collect_poll_retry_after_date_time = mock("GET", "/collect_job/1")
+            .with_status(202)
+            .with_header("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")
+            .expect(1)
+            .create();
+        let ref_date_time = Utc.ymd(2015, 10, 21).and_hms(7, 28, 0);
+        assert_matches!(
+            collector.poll_once(&job).await.unwrap(),
+            PollResult::NextAttempt(Some(RetryAfter::DateTime(system_time))) => assert_eq!(system_time, ref_date_time.into())
+        );
+        mock_collect_poll_retry_after_date_time.assert();
+    }
+
+    #[tokio::test]
+    async fn poll_timing() {
+        // This test exercises handling of the different Retry-After header forms. It does not test
+        // the amount of time that poll_until_complete() sleeps. `tokio::time::pause()` cannot be
+        // used for this because hyper uses `tokio::time::Interval` internally, see issue #234.
+        install_test_trace_subscriber();
+
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let mut collector = setup_collector(vdaf);
+        collector
+            .parameters
+            .collect_poll_wait_parameters
+            .max_elapsed_time = Some(StdDuration::from_secs(3));
+
+        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(1_000_000),
+            Duration::from_seconds(3600),
+        )
+        .unwrap();
+        let job = CollectJob::new(collect_job_url.parse().unwrap(), batch_interval, ());
+
+        let mock_collect_poll_retry_after_1s = mock("GET", "/collect_job/1")
+            .with_status(202)
+            .with_header("Retry-After", "1")
+            .expect(1)
+            .create();
+        let mock_collect_poll_retry_after_10s = mock("GET", "/collect_job/1")
+            .with_status(202)
+            .with_header("Retry-After", "10")
+            .expect(1)
+            .create();
+        assert_matches!(
+            collector.poll_until_complete(&job).await.unwrap_err(),
+            Error::CollectPollTimeout
+        );
+        mock_collect_poll_retry_after_1s.assert();
+        mock_collect_poll_retry_after_10s.assert();
+
+        let near_future =
+            Utc::now() + chrono::Duration::from_std(StdDuration::from_secs(1)).unwrap();
+        let near_future_formatted = near_future.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let mock_collect_poll_retry_after_near_future = mock("GET", "/collect_job/1")
+            .with_status(202)
+            .with_header("Retry-After", &near_future_formatted)
+            .expect(1)
+            .create();
+        let mock_collect_poll_retry_after_past = mock("GET", "/collect_job/1")
+            .with_status(202)
+            .with_header("Retry-After", "Mon, 01 Jan 1900 00:00:00 GMT")
+            .expect(1)
+            .create();
+        let mock_collect_poll_retry_after_far_future = mock("GET", "/collect_job/1")
+            .with_status(202)
+            .with_header("Retry-After", "Wed, 01 Jan 3000 00:00:00 GMT")
+            .expect(1)
+            .create();
+        assert_matches!(
+            collector.poll_until_complete(&job).await.unwrap_err(),
+            Error::CollectPollTimeout
+        );
+        mock_collect_poll_retry_after_near_future.assert();
+        mock_collect_poll_retry_after_past.assert();
+        mock_collect_poll_retry_after_far_future.assert();
+
+        // Manipulate backoff settings so that we make one request and time out.
+        collector
+            .parameters
+            .collect_poll_wait_parameters
+            .max_elapsed_time = Some(StdDuration::from_millis(10));
+        collector
+            .parameters
+            .collect_poll_wait_parameters
+            .initial_interval = StdDuration::from_millis(15);
+        let mock_collect_poll_no_retry_after = mock("GET", "/collect_job/1")
+            .with_status(202)
+            .expect(1)
+            .create();
+        assert_matches!(
+            collector.poll_until_complete(&job).await.unwrap_err(),
+            Error::CollectPollTimeout
+        );
+        mock_collect_poll_no_retry_after.assert();
     }
 }

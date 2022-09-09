@@ -7,7 +7,7 @@ use interop_binaries::{
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
     HpkeConfigRegistry, NumberAsString, VdafObject,
 };
-use janus_collector::{CollectJob, Collector, CollectorParameters};
+use janus_collector::{CollectJob, Collector, CollectorParameters, PollResult};
 use janus_core::{
     hpke::HpkePrivateKey,
     message::{Duration, HpkeConfig, Interval, TaskId, Time},
@@ -271,10 +271,14 @@ where
     let collector = Collector::new(collector_params, vdaf, http_client);
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let job = CollectJob::new(collect_job_url, batch_interval, agg_param);
-    collector
+    let poll_result = collector
         .poll_once(&job)
         .await
-        .context("Error sending collect start request")
+        .context("Error sending collect start request")?;
+    match poll_result {
+        PollResult::AggregateResult(aggregate_result) => Ok(Some(aggregate_result)),
+        PollResult::NextAttempt(_) => Ok(None),
+    }
 }
 
 async fn handle_collect_poll(
