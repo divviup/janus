@@ -44,7 +44,10 @@ use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
         self,
-        prio3::{Prio3, Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
+        prio3::{
+            Prio3, Prio3Aes128Count, Prio3Aes128CountVecMultithreaded, Prio3Aes128Histogram,
+            Prio3Aes128Sum,
+        },
         PrepareTransition,
     },
 };
@@ -550,6 +553,12 @@ impl TaskAggregator {
                 VdafOps::Prio3Aes128Count(Arc::new(vdaf), verify_key)
             }
 
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+                let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, *length)?;
+                let verify_key = task.primary_vdaf_verify_key()?;
+                VdafOps::Prio3Aes128CountVec(Arc::new(vdaf), verify_key)
+            }
+
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 let vdaf = Prio3::new_aes128_sum(2, *bits)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
@@ -702,6 +711,10 @@ enum VdafOps {
         Arc<Prio3Aes128Count>,
         VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
     ),
+    Prio3Aes128CountVec(
+        Arc<Prio3Aes128CountVecMultithreaded>,
+        VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+    ),
     Prio3Aes128Sum(
         Arc<Prio3Aes128Sum>,
         VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
@@ -727,6 +740,20 @@ impl VdafOps {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
                 Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
+                    datastore,
+                    clock,
+                    upload_decrypt_failure_counter,
+                    task,
+                    report,
+                )
+                .await
+            }
+            VdafOps::Prio3Aes128CountVec(_, _) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(
                     datastore,
                     clock,
                     upload_decrypt_failure_counter,
@@ -798,6 +825,21 @@ impl VdafOps {
                 )
                 .await
             }
+            VdafOps::Prio3Aes128CountVec(vdaf, verify_key) => {
+                Self::handle_aggregate_init_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(
+                    datastore,
+                    vdaf,
+                    aggregate_step_failure_counters,
+                    task,
+                    verify_key,
+                    req,
+                )
+                .await
+            }
             VdafOps::Prio3Aes128Sum(vdaf, verify_key) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -857,6 +899,20 @@ impl VdafOps {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
+                    _,
+                >(
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counters.prepare_step_failure.clone(),
+                    task,
+                    req,
+                )
+                .await
+            }
+            VdafOps::Prio3Aes128CountVec(vdaf, _) => {
+                Self::handle_aggregate_continue_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128CountVecMultithreaded,
                     _,
                 >(
                     datastore,
@@ -1429,6 +1485,14 @@ impl VdafOps {
                 )
                 .await
             }
+            VdafOps::Prio3Aes128CountVec(_, _) => {
+                Self::handle_collect_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(datastore, task, collect_req)
+                .await
+            }
             VdafOps::Prio3Aes128Sum(_, _) => {
                 Self::handle_collect_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum, _>(
                     datastore,
@@ -1511,6 +1575,14 @@ impl VdafOps {
                 Self::handle_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
+                    _,
+                >(datastore, task, collect_job_id)
+                .await
+            }
+            VdafOps::Prio3Aes128CountVec(_, _) => {
+                Self::handle_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128CountVecMultithreaded,
                     _,
                 >(datastore, task, collect_job_id)
                 .await
@@ -1637,6 +1709,14 @@ impl VdafOps {
                 Self::handle_aggregate_share_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
+                    _,
+                >(datastore, task, aggregate_share_req)
+                .await
+            }
+            VdafOps::Prio3Aes128CountVec(_, _) => {
+                Self::handle_aggregate_share_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128CountVecMultithreaded,
                     _,
                 >(datastore, task, aggregate_share_req)
                 .await

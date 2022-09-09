@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_retry_server_error_eventuall1y_succeeds() {
+    async fn http_retry_server_error_eventually_succeeds() {
         install_test_trace_subscriber();
 
         let mock_500 = mock("GET", "/")
