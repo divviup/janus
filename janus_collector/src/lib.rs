@@ -97,39 +97,10 @@ impl CollectorParameters {
     /// Creates a new set of collector task parameters.
     pub fn new(
         task_id: TaskId,
-        leader_endpoint: Url,
-        authentication_token: AuthenticationToken,
-        hpke_config: HpkeConfig,
-        hpke_private_key: HpkePrivateKey,
-    ) -> CollectorParameters {
-        CollectorParameters::new_with_backoff(
-            task_id,
-            leader_endpoint,
-            authentication_token,
-            hpke_config,
-            hpke_private_key,
-            http_request_exponential_backoff(),
-            ExponentialBackoff {
-                initial_interval: StdDuration::from_secs(15),
-                max_interval: StdDuration::from_secs(300),
-                multiplier: 1.5,
-                max_elapsed_time: None,
-                ..Default::default()
-            },
-        )
-    }
-
-    /// Creates a new set of collector task parameters with non-default HTTP request retry
-    /// parameters.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_backoff(
-        task_id: TaskId,
         mut leader_endpoint: Url,
         authentication_token: AuthenticationToken,
         hpke_config: HpkeConfig,
         hpke_private_key: HpkePrivateKey,
-        http_request_retry_parameters: ExponentialBackoff,
-        collect_poll_wait_parameters: ExponentialBackoff,
     ) -> CollectorParameters {
         // Ensure the provided leader endpoint ends with a slash.
         url_ensure_trailing_slash(&mut leader_endpoint);
@@ -140,9 +111,27 @@ impl CollectorParameters {
             authentication: Authentication::DapAuthToken(authentication_token),
             hpke_config,
             hpke_private_key,
-            http_request_retry_parameters,
-            collect_poll_wait_parameters,
+            http_request_retry_parameters: http_request_exponential_backoff(),
+            collect_poll_wait_parameters: ExponentialBackoff {
+                initial_interval: StdDuration::from_secs(15),
+                max_interval: StdDuration::from_secs(300),
+                multiplier: 1.5,
+                max_elapsed_time: None,
+                ..Default::default()
+            },
         }
+    }
+
+    /// Replace the exponential backoff settings used for HTTP requests.
+    pub fn with_http_request_backoff(mut self, backoff: ExponentialBackoff) -> CollectorParameters {
+        self.http_request_retry_parameters = backoff;
+        self
+    }
+
+    /// Replace the exponential backoff settings used while polling for aggregate shares.
+    pub fn with_collect_poll_backoff(mut self, backoff: ExponentialBackoff) -> CollectorParameters {
+        self.collect_poll_wait_parameters = backoff;
+        self
     }
 
     /// URL for collect requests.
@@ -447,15 +436,15 @@ mod tests {
     {
         let server_url = Url::parse(&mockito::server_url()).unwrap();
         let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
-        let parameters = CollectorParameters::new_with_backoff(
+        let parameters = CollectorParameters::new(
             TaskId::random(),
             server_url,
             AuthenticationToken::from(b"token".to_vec()),
             hpke_config,
             hpke_private_key,
-            test_http_request_exponential_backoff(),
-            test_http_request_exponential_backoff(),
-        );
+        )
+        .with_http_request_backoff(test_http_request_exponential_backoff())
+        .with_collect_poll_backoff(test_http_request_exponential_backoff());
         Collector::new(parameters, vdaf_collector, &default_http_client().unwrap())
     }
 

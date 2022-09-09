@@ -1,5 +1,5 @@
 use anyhow::Context;
-use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
+use backoff::ExponentialBackoffBuilder;
 use base64::URL_SAFE_NO_PAD;
 use clap::{Arg, Command};
 use interop_binaries::{
@@ -180,17 +180,17 @@ async fn handle_collect_start(
         .get(&task_id)
         .context("task was not added before being used in a collect request")?;
 
-    let collector_params = CollectorParameters::new_with_backoff(
+    let collector_params = CollectorParameters::new(
         task_id,
         task_state.leader_url.clone(),
         task_state.auth_token.clone(),
         task_state.hpke_config.clone(),
         task_state.private_key.clone(),
+    )
+    .with_http_request_backoff(
         ExponentialBackoffBuilder::new()
             .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
             .build(),
-        // collect_poll_wait_parameters is unused, since poll_until_complete() is not called.
-        ExponentialBackoff::default(),
     );
 
     let vdaf_instance = task_state.vdaf.clone().into();

@@ -193,7 +193,7 @@ pub async fn submit_measurements_and_verify_aggregate(
         Duration::from_seconds(2 * leader_task.min_batch_duration.as_seconds()),
     )
     .unwrap();
-    let collector_params = CollectorParameters::new_with_backoff(
+    let collector_params = CollectorParameters::new(
         task_id,
         aggregator_endpoints[0].clone(),
         AuthenticationToken::from(
@@ -204,7 +204,9 @@ pub async fn submit_measurements_and_verify_aggregate(
         ),
         leader_task.collector_hpke_config.clone(),
         collector_private_key.clone(),
-        test_http_request_exponential_backoff(),
+    )
+    .with_http_request_backoff(test_http_request_exponential_backoff())
+    .with_collect_poll_backoff(
         ExponentialBackoffBuilder::new()
             .with_initial_interval(time::Duration::from_millis(500))
             .with_max_interval(time::Duration::from_millis(500))
