@@ -1,4 +1,4 @@
-//! PPM protocol collector
+//! DAP protocol collector
 
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use derivative::Derivative;
@@ -74,7 +74,7 @@ pub enum Authentication {
     DapAuthToken(#[derivative(Debug = "ignore")] AuthenticationToken),
 }
 
-/// The PPM collector's view of task parameters.
+/// The DAP collector's view of task parameters.
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct CollectorParameters {
@@ -213,7 +213,7 @@ pub enum PollResult<T> {
     NextAttempt(Option<RetryAfter>),
 }
 
-/// A PPM collector.
+/// A DAP collector.
 #[derive(Debug)]
 pub struct Collector<V: vdaf::Collector>
 where
