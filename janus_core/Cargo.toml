@@ -46,7 +46,7 @@ reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tl
 ring = "0.16.20"
 serde = { version = "1.0.144", features = ["derive"] }
 thiserror = "1.0"
-tokio = { version = "^1.21", features = ["macros", "net", "rt"] }
+tokio = { version = "1.21", features = ["macros", "net", "rt"] }
 tracing = "0.1.36"
 
 # Dependencies required only if feature "test-util" is enabled
