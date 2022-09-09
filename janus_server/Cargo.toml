@@ -57,7 +57,7 @@ signal-hook-tokio = { version = "0.3.1", features = ["futures-v0_3"] }
 structopt = "0.3.26"
 testcontainers = { version = "0.14.0", optional = true }
 thiserror = "1.0"
-tokio = { version = "^1.20", features = ["full", "tracing"] }
+tokio = { version = "1.21", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.7", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
 tonic = { version = "0.6.2", optional = true, features = ["tls", "tls-webpki-roots"] }  # keep this version in sync with what opentelemetry-otlp uses
 tracing = "0.1.36"
@@ -66,7 +66,7 @@ tracing-opentelemetry = { version = "0.17.4", optional = true }
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt", "json"] }
 url = { version = "2.2.2", features = ["serde"] }
 uuid = { version = "1.1.2", features = ["v4"] }
-warp = { version = "^0.3", features = ["tls"] }
+warp = { version = "0.3", features = ["tls"] }
 
 [dev-dependencies]
 assert_matches = "1"
