@@ -9,6 +9,8 @@ use ring::constant_time;
 pub enum VdafInstance {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
     Prio3Aes128Count,
+    /// A vector of `prio3` counters using the AES 128 pseudorandom generator.
+    Prio3Aes128CountVec { length: usize },
     /// A `prio3` sum using the AES 128 pseudorandom generator.
     Prio3Aes128Sum { bits: u32 },
     /// A `prio3` histogram using the AES 128 pseudorandom generator.

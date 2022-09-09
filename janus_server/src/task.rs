@@ -68,6 +68,9 @@ impl Serialize for VdafInstance {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 VdafSerialization::Prio3Aes128Count
             }
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+                VdafSerialization::Prio3Aes128CountVec { length: *length }
+            }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 VdafSerialization::Prio3Aes128Sum { bits: *bits }
             }
@@ -100,6 +103,9 @@ impl<'de> Deserialize<'de> for VdafInstance {
             VdafSerialization::Prio3Aes128Count => Ok(VdafInstance::Real(
                 janus_core::task::VdafInstance::Prio3Aes128Count,
             )),
+            VdafSerialization::Prio3Aes128CountVec { length } => Ok(VdafInstance::Real(
+                janus_core::task::VdafInstance::Prio3Aes128CountVec { length },
+            )),
             VdafSerialization::Prio3Aes128Sum { bits } => Ok(VdafInstance::Real(
                 janus_core::task::VdafInstance::Prio3Aes128Sum { bits },
             )),
@@ -127,6 +133,8 @@ impl<'de> Deserialize<'de> for VdafInstance {
 enum VdafSerialization {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
     Prio3Aes128Count,
+    /// A vector of `prio3` counters using the AES 128 pseudorandom generator.
+    Prio3Aes128CountVec { length: usize },
     /// A `prio3` sum using the AES 128 pseudorandom generator.
     Prio3Aes128Sum { bits: u32 },
     /// A `prio3` histogram using the AES 128 pseudorandom generator.
@@ -737,6 +745,19 @@ mod tests {
                 name: "Vdaf",
                 variant: "Prio3Aes128Count",
             }],
+        );
+        assert_tokens(
+            &VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length: 8 }),
+            &[
+                Token::StructVariant {
+                    name: "Vdaf",
+                    variant: "Prio3Aes128CountVec",
+                    len: 1,
+                },
+                Token::Str("length"),
+                Token::U64(8),
+                Token::StructVariantEnd,
+            ],
         );
         assert_tokens(
             &VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits: 64 }),

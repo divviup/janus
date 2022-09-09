@@ -445,29 +445,29 @@ async fn e2e_prio3_count() {
     let result = run(
         json!({"type": "Prio3Aes128Count"}),
         &[
-            json!(0),
-            json!(1),
-            json!(1),
-            json!(0),
-            json!(1),
-            json!(0),
-            json!(1),
-            json!(0),
-            json!(1),
-            json!(1),
-            json!(0),
-            json!(1),
-            json!(0),
-            json!(1),
-            json!(0),
-            json!(0),
-            json!(0),
-            json!(0),
+            json!("0"),
+            json!("1"),
+            json!("1"),
+            json!("0"),
+            json!("1"),
+            json!("0"),
+            json!("1"),
+            json!("0"),
+            json!("1"),
+            json!("1"),
+            json!("0"),
+            json!("1"),
+            json!("0"),
+            json!("1"),
+            json!("0"),
+            json!("0"),
+            json!("0"),
+            json!("0"),
         ],
         b"",
     )
     .await;
-    assert_eq!(result, json!(8));
+    assert_eq!(result, json!("8"));
 }
 
 #[tokio::test]
@@ -511,5 +511,21 @@ async fn e2e_prio3_histogram() {
         b"",
     )
     .await;
-    assert_eq!(result, json!([0, 1, 1, 2, 1, 2, 2, 1]));
+    assert_eq!(result, json!(["0", "1", "1", "2", "1", "2", "2", "1"]));
+}
+
+#[tokio::test]
+async fn e2e_prio3_count_vec() {
+    let result = run(
+        json!({"type": "Prio3Aes128CountVec", "length": 4}),
+        &[
+            json!(["0", "0", "0", "1"]),
+            json!(["0", "0", "1", "0"]),
+            json!(["0", "1", "0", "0"]),
+            json!(["1", "0", "0", "0"]),
+        ],
+        b"",
+    )
+    .await;
+    assert_eq!(result, json!(["1", "1", "1", "1"]));
 }

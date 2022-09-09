@@ -31,7 +31,10 @@ use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
         self,
-        prio3::{Prio3, Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
+        prio3::{
+            Prio3, Prio3Aes128Count, Prio3Aes128CountVecMultithreaded, Prio3Aes128Histogram,
+            Prio3Aes128Sum,
+        },
         PrepareTransition,
     },
 };
@@ -74,6 +77,11 @@ impl AggregationJobDriver {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 let vdaf = Prio3::new_aes128_count(2)?;
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(datastore, vdaf, lease)
+                    .await
+            }
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+                let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)?;
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128CountVecMultithreaded>(datastore, vdaf, lease)
                     .await
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
@@ -706,6 +714,10 @@ impl AggregationJobDriver {
         match &lease.leased().vdaf {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(datastore, lease)
+                    .await
+            }
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }) => {
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128CountVecMultithreaded>(datastore, lease)
                     .await
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. }) => {

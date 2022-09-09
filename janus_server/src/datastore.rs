@@ -3339,6 +3339,16 @@ mod tests {
             ),
             (
                 TaskId::random(),
+                janus_core::task::VdafInstance::Prio3Aes128CountVec { length: 8 },
+                Role::Leader,
+            ),
+            (
+                TaskId::random(),
+                janus_core::task::VdafInstance::Prio3Aes128CountVec { length: 64 },
+                Role::Helper,
+            ),
+            (
+                TaskId::random(),
                 janus_core::task::VdafInstance::Prio3Aes128Sum { bits: 64 },
                 Role::Helper,
             ),

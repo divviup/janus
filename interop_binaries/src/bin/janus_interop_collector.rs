@@ -73,9 +73,8 @@ struct CollectPollRequest {
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum AggregationResult {
-    Number(u64),
-    NumberAsString128(NumberAsString<u128>),
-    NumberArray(Vec<u64>),
+    Number(NumberAsString<u128>),
+    NumberVec(Vec<NumberAsString<u128>>),
 }
 
 #[derive(Debug, Serialize)]
@@ -208,6 +207,18 @@ async fn handle_collect_start(
             )
             .await?
         }
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+            let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
+                .context("failed to construct Prio3Aes128CountVec VDAF")?;
+            handle_collect_start_generic(
+                http_client,
+                collector_params,
+                batch_interval,
+                vdaf,
+                &agg_param,
+            )
+            .await?
+        }
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
             let vdaf = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
@@ -320,7 +331,29 @@ async fn handle_collect_poll(
             )
             .await?
             {
-                Some(aggregate_result) => Ok(Some(AggregationResult::Number(aggregate_result))),
+                Some(aggregate_result) => Ok(Some(AggregationResult::Number(NumberAsString(
+                    aggregate_result.into(),
+                )))),
+                None => Ok(None),
+            }
+        }
+        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+            let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
+                .context("failed to construct Prio3Aes128Count VDAF")?;
+            match handle_collect_poll_generic(
+                http_client,
+                collector_params,
+                collect_job_state.url.clone(),
+                collect_job_state.batch_interval,
+                vdaf,
+                &collect_job_state.agg_param,
+            )
+            .await?
+            {
+                Some(aggregate_result) => {
+                    let converted = aggregate_result.into_iter().map(NumberAsString).collect();
+                    Ok(Some(AggregationResult::NumberVec(converted)))
+                }
                 None => Ok(None),
             }
         }
@@ -337,9 +370,9 @@ async fn handle_collect_poll(
             )
             .await?
             {
-                Some(aggregate_result) => Ok(Some(AggregationResult::NumberAsString128(
-                    NumberAsString(aggregate_result),
-                ))),
+                Some(aggregate_result) => Ok(Some(AggregationResult::Number(NumberAsString(
+                    aggregate_result,
+                )))),
                 None => Ok(None),
             }
         }
@@ -361,15 +394,8 @@ async fn handle_collect_poll(
                 Some(aggregate_result) => aggregate_result,
                 None => return Ok(None),
             };
-            let converted = aggregate_result
-                .into_iter()
-                .map(|counter| {
-                    u64::try_from(counter).context(
-                        "entry in aggregate result was too large to represent natively in JSON",
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Some(AggregationResult::NumberArray(converted)))
+            let converted = aggregate_result.into_iter().map(NumberAsString).collect();
+            Ok(Some(AggregationResult::NumberVec(converted)))
         }
         _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
     }

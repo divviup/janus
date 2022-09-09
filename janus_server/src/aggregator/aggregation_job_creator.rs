@@ -4,7 +4,7 @@ use crate::{
     },
     datastore::{self, Datastore},
     message::AggregationJobId,
-    task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::Result;
 use futures::future::try_join_all;
@@ -17,9 +17,9 @@ use opentelemetry::{
     metrics::{Unit, ValueRecorder},
     KeyValue,
 };
-use prio::codec::Encode;
 use prio::vdaf;
 use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum};
+use prio::{codec::Encode, vdaf::prio3::Prio3Aes128CountVecMultithreaded};
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
 #[cfg(test)]
@@ -215,17 +215,24 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     #[tracing::instrument(skip(self), err)]
     async fn create_aggregation_jobs_for_task(&self, task: &Task) -> anyhow::Result<()> {
         match task.vdaf {
-            crate::task::VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
                     .await
             }
 
-            crate::task::VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }) => {
+                self.create_aggregation_jobs_for_task_no_param::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128CountVecMultithreaded
+                >(task).await
+            }
+
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. }) => {
                 self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task)
                     .await
             }
 
-            crate::task::VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task)
                     .await
             }
