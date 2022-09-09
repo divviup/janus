@@ -1,4 +1,7 @@
+use anyhow::{anyhow, Context, Result};
 use backoff::ExponentialBackoffBuilder;
+use futures::Future;
+use integration_tests::logs::CopyLogs;
 use itertools::Itertools;
 use janus_client::{Client, ClientParameters};
 use janus_collector::{CollectJob, Collector, CollectorParameters};
@@ -16,8 +19,23 @@ use janus_server::{
 use prio::vdaf::prio3::Prio3;
 use rand::{thread_rng, Rng};
 use reqwest::Url;
-use std::iter;
+use std::{
+    self,
+    env::{self, VarError},
+    fs::create_dir_all,
+    iter,
+    path::PathBuf,
+    str::FromStr,
+};
+use tempfile::tempdir;
 use tokio::time;
+use tracing::debug;
+
+macro_rules! here {
+    () => {
+        concat!("at ", file!(), " line ", line!(), " column ", column!())
+    };
+}
 
 // Returns (leader_task, helper_task).
 pub fn create_test_tasks(collector_hpke_config: &HpkeConfig) -> (Task, Task) {
@@ -78,11 +96,33 @@ pub fn translate_url_for_external_access(url: &Url, external_port: u16) -> Url {
     translated
 }
 
+/// Run `test`, capturing logs from `helper` and `leader` if if fails.
+pub async fn run_test_capturing_logs<
+    Helper: CopyLogs,
+    Leader: CopyLogs,
+    Fut: Future<Output = Result<()>>,
+    Test: FnMut() -> Fut,
+>(
+    test_name: &str,
+    helper: &Helper,
+    leader: &Leader,
+    mut test: Test,
+) {
+    let result = test().await;
+    if result.is_err() {
+        let logs_destination = logs_host_path(test_name);
+
+        leader.logs(&logs_destination);
+        helper.logs(&logs_destination);
+    }
+    result.unwrap();
+}
+
 pub async fn submit_measurements_and_verify_aggregate(
     (leader_port, helper_port): (u16, u16),
     leader_task: &Task,
     collector_private_key: &HpkePrivateKey,
-) {
+) -> Result<()> {
     // Translate aggregator endpoints for our perspective outside the container network.
     let aggregator_endpoints: Vec<_> = leader_task
         .aggregator_endpoints
@@ -140,7 +180,7 @@ pub async fn submit_measurements_and_verify_aggregate(
         .take(num_nonzero_measurements)
         .interleave(iter::repeat(0).take(num_zero_measurements))
     {
-        client.upload(&measurement).await.unwrap();
+        client.upload(&measurement).await.context(here!())?;
     }
 
     // Send a collect request.
@@ -179,7 +219,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     let job = collector
         .start_collection(batch_interval, &())
         .await
-        .unwrap();
+        .context(here!())?;
 
     // Rewrite the collect URL to access it outside of the container network.
     let job = CollectJob::new(
@@ -189,8 +229,36 @@ pub async fn submit_measurements_and_verify_aggregate(
     );
 
     // Poll until the collect job completes.
-    let aggregate_result = collector.poll_until_complete(&job).await.unwrap();
+    let aggregate_result = collector.poll_until_complete(&job).await.context(here!())?;
 
     // Verify that the aggregate in the collect response is the correct value.
-    assert_eq!(aggregate_result, num_nonzero_measurements as u64);
+    if aggregate_result != num_nonzero_measurements as u64 {
+        return Err(anyhow!(
+            "unexpected aggregate result {aggregate_result} {}",
+            here!()
+        ));
+    }
+
+    Ok(())
+}
+
+/// Create a directory into which log files can be copied by tests and return its path.
+fn logs_host_path(test_name: &str) -> PathBuf {
+    let mut logs_directory = match env::var("JANUS_E2E_LOGS_PATH") {
+        Ok(logs_path) => PathBuf::from_str(&logs_path).unwrap(),
+        Err(VarError::NotPresent) => {
+            let temp_logs_dir = tempdir().unwrap();
+            // Calling TempDir::into_path means that the directory created by tempdir()
+            // won't get deleted when either the TempDir or the PathBuf are dropped,
+            // which is what we want since we want the log files to persist after the
+            // test ends.
+            temp_logs_dir.into_path()
+        }
+        Err(e) => panic!("failed to read environment variable {}", e),
+    };
+
+    logs_directory.push(test_name);
+    create_dir_all(&logs_directory).unwrap();
+    debug!(?logs_directory, "created temporary directory for logs");
+    logs_directory
 }
