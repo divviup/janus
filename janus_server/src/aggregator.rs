@@ -23,7 +23,7 @@ use crate::{
         AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
         PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
-    task::{Task, VdafInstance, VerifyKey, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{Task, VdafInstance, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use bytes::Bytes;
 use futures::try_join;
@@ -37,6 +37,7 @@ use janus_core::{
         CollectReq, CollectResp, HpkeConfig, HpkeConfigId, Interval, Nonce, NonceChecksum, Report,
         Role, TaskId,
     },
+    task::DAP_AUTH_HEADER,
     time::Clock,
 };
 use opentelemetry::{

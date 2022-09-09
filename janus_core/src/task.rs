@@ -1,6 +1,9 @@
 use reqwest::Url;
 use ring::constant_time;
 
+/// HTTP header where auth tokens are provided in messages between participants.
+pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
+
 /// Identifiers for supported VDAFs, corresponding to definitions in
 /// [draft-irtf-cfrg-vdaf-00][1] and implementations in [`prio::vdaf::prio3`].
 ///

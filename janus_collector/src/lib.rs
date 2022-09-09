@@ -6,7 +6,7 @@ use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey},
     message::{CollectReq, CollectResp, HpkeConfig, Interval, Role, TaskId},
     retries::{http_request_exponential_backoff, retry_http_request},
-    task::{url_ensure_trailing_slash, AuthenticationToken},
+    task::{url_ensure_trailing_slash, AuthenticationToken, DAP_AUTH_HEADER},
 };
 use prio::{
     codec::{Decode, Encode},
@@ -23,9 +23,6 @@ use std::{
 };
 use tokio::time::{sleep, Instant};
 use url::Url;
-
-/// HTTP header where auth tokens are provided in messages to the leader.
-pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

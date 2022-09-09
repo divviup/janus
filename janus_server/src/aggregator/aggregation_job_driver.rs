@@ -12,7 +12,7 @@ use crate::{
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     },
-    task::{Task, VdafInstance, VerifyKey, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{Task, VdafInstance, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::{anyhow, Context, Result};
 use derivative::Derivative;
@@ -24,6 +24,7 @@ use http::header::CONTENT_TYPE;
 use janus_core::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
     message::{Duration, Report, Role},
+    task::DAP_AUTH_HEADER,
     time::Clock,
 };
 use opentelemetry::metrics::{BoundCounter, Meter};

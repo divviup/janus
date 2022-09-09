@@ -19,9 +19,6 @@ use std::{
 };
 use url::Url;
 
-/// HTTP header where auth tokens are provided in inter-aggregator messages.
-pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
-
 /// Errors that methods and functions in this module may return.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
