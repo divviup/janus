@@ -722,11 +722,22 @@ mod tests {
                             .unwrap(),
                         Vec::new(),
                     );
-                    tx.put_client_report(&Report::new(
+                    tx.put_client_report_message(&Report::new(
                         *task.id(),
                         report_metadata.clone(),
                         Vec::new(),
-                        Vec::new(),
+                        vec![
+                            HpkeCiphertext::new(
+                                HpkeConfigId::from(13),
+                                Vec::from("encapsulated_context_0"),
+                                Vec::from("payload_0"),
+                            ),
+                            HpkeCiphertext::new(
+                                HpkeConfigId::from(13),
+                                Vec::from("encapsulated_context_1"),
+                                Vec::from("payload_1"),
+                            ),
+                        ],
                     ))
                     .await?;
 
@@ -845,11 +856,22 @@ mod tests {
                             .unwrap(),
                         Vec::new(),
                     );
-                    tx.put_client_report(&Report::new(
+                    tx.put_client_report_message(&Report::new(
                         *task.id(),
                         report_metadata.clone(),
                         Vec::new(),
-                        Vec::new(),
+                        vec![
+                            HpkeCiphertext::new(
+                                HpkeConfigId::from(13),
+                                Vec::from("encapsulated_context_0"),
+                                Vec::from("payload_0"),
+                            ),
+                            HpkeCiphertext::new(
+                                HpkeConfigId::from(13),
+                                Vec::from("encapsulated_context_1"),
+                                Vec::from("payload_1"),
+                            ),
+                        ],
                     ))
                     .await?;
 

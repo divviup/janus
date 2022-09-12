@@ -738,8 +738,8 @@ mod tests {
                 tx.put_task(&leader_task).await?;
                 tx.put_task(&helper_task).await?;
 
-                tx.put_client_report(&leader_report).await?;
-                tx.put_client_report(&helper_report).await
+                tx.put_client_report_message(&leader_report).await?;
+                tx.put_client_report_message(&helper_report).await
             })
         })
         .await
@@ -875,7 +875,7 @@ mod tests {
                     .chain(&small_batch_reports)
                     .chain(&big_batch_reports)
                 {
-                    tx.put_client_report(report).await?;
+                    tx.put_client_report_message(report).await?;
                 }
                 Ok(())
             })
@@ -963,7 +963,7 @@ mod tests {
             let (task, first_report) = (Arc::clone(&task), first_report.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                tx.put_client_report(&first_report).await
+                tx.put_client_report_message(&first_report).await
             })
         })
         .await
@@ -1007,7 +1007,7 @@ mod tests {
             .datastore
             .run_tx(|tx| {
                 let second_report = second_report.clone();
-                Box::pin(async move { tx.put_client_report(&second_report).await })
+                Box::pin(async move { tx.put_client_report_message(&second_report).await })
             })
             .await
             .unwrap();
@@ -1105,7 +1105,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 for report in &reports {
-                    tx.put_client_report(report).await?;
+                    tx.put_client_report_message(report).await?;
                 }
                 Ok(())
             })
@@ -1230,10 +1230,10 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 for report in batch_1_reports {
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report_message(&report).await?;
                 }
                 for report in batch_2_reports {
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report_message(&report).await?;
                 }
                 Ok(())
             })
