@@ -11,6 +11,7 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use backoff::{future::retry, ExponentialBackoff};
 use base64::STANDARD_NO_PAD;
+use clap::Parser;
 use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
@@ -26,7 +27,6 @@ use std::{
     str::FromStr,
     time::Duration,
 };
-use structopt::StructOpt;
 use tokio_postgres::NoTls;
 use tracing::info;
 use warp::Filter;
@@ -151,16 +151,16 @@ pub fn datastore<C: Clock>(
 }
 
 /// Options for Janus binaries.
-pub trait BinaryOptions: StructOpt + Debug {
+pub trait BinaryOptions: Parser + Debug {
     /// Returns the common options.
     fn common_options(&self) -> &CommonBinaryOptions;
 }
 
 #[cfg_attr(doc, doc = "Common options that are used by all Janus binaries.")]
-#[derive(Default, StructOpt)]
+#[derive(Default, Parser)]
 pub struct CommonBinaryOptions {
     /// Path to configuration YAML.
-    #[structopt(
+    #[clap(
         long,
         env = "CONFIG_FILE",
         parse(from_os_str),
@@ -172,13 +172,19 @@ pub struct CommonBinaryOptions {
 
     /// Password for the PostgreSQL database connection. If specified, must not be specified in the
     /// connection string.
-    #[structopt(long, env = "PGPASSWORD", help = "PostgreSQL password")]
+    #[clap(
+        long,
+        env = "PGPASSWORD",
+        hide_env_values = true,
+        help = "PostgreSQL password"
+    )]
     pub database_password: Option<String>,
 
     /// Datastore encryption keys.
-    #[structopt(
+    #[clap(
         long,
         env = "DATASTORE_KEYS",
+        hide_env_values = true,
         takes_value = true,
         use_delimiter = true,
         help = "datastore encryption keys, encoded in base64 then comma-separated"
@@ -187,7 +193,7 @@ pub struct CommonBinaryOptions {
 
     /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the logging
     /// configuration sections)
-    #[structopt(
+    #[clap(
         long,
         env = "OTLP_TRACING_METADATA",
         parse(try_from_str = parse_metadata_entry),
@@ -199,7 +205,7 @@ pub struct CommonBinaryOptions {
 
     /// Additional OTLP/gRPC metadata key/value pairs. (concatenated with those in the metrics
     /// configuration sections)
-    #[structopt(
+    #[clap(
         long,
         env = "OTLP_METRICS_METADATA",
         parse(try_from_str = parse_metadata_entry),
@@ -333,4 +339,15 @@ pub fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error
         // is owned by will not terminate before that happens.
         receiver.await.unwrap_or_default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::IntoApp;
+
+    #[test]
+    fn verify_app() {
+        CommonBinaryOptions::into_app().debug_assert()
+    }
 }
