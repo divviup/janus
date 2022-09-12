@@ -1,3 +1,5 @@
+#![cfg(daphne)]
+
 use common::{
     create_test_tasks, run_test_capturing_logs, submit_measurements_and_verify_aggregate,
 };
