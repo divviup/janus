@@ -1,15 +1,36 @@
 version: 2
 
 updates:
+  # Manage dependencies on the main branch
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
+    target-branch: "main"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    target-branch: "main"
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
+    target-branch: "main"
+
+  # Manage dependencies on the release/0.1 branch
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "release/0.1"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "release/0.1"
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "release/0.1"
