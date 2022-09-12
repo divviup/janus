@@ -1567,7 +1567,6 @@ dependencies = [
  "futures",
  "hex",
  "http",
- "integration_tests",
  "interop_binaries",
  "itertools",
  "janus_client",
