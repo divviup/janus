@@ -89,7 +89,8 @@ pub struct CollectorParameters {
     hpke_private_key: HpkePrivateKey,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,
-    /// Parameters to use when waiting for a collect job to be processed.
+    /// Parameters to use when waiting for a collect job to be processed. This is only used by
+    /// [`Collector::poll_until_complete`].
     collect_poll_wait_parameters: ExponentialBackoff,
 }
 
@@ -128,7 +129,8 @@ impl CollectorParameters {
         self
     }
 
-    /// Replace the exponential backoff settings used while polling for aggregate shares.
+    /// Replace the exponential backoff settings used while polling for aggregate shares. This is
+    /// only used by [`Collector::poll_until_complete`].
     pub fn with_collect_poll_backoff(mut self, backoff: ExponentialBackoff) -> CollectorParameters {
         self.collect_poll_wait_parameters = backoff;
         self
@@ -369,14 +371,11 @@ where
         &self,
         job: &CollectJob<V::AggregationParam>,
     ) -> Result<V::AggregateResult, Error> {
-        // Use this backoff object as a fallback to determine how long to wait between poll
-        // requests if there is no Retry-After header present.
         let mut backoff = self.parameters.collect_poll_wait_parameters.clone();
         backoff.reset();
         let deadline = backoff
             .max_elapsed_time
             .map(|duration| Instant::now() + duration);
-
         loop {
             // poll_once() already retries upon server and connection errors, so propagate any error
             // received from it and return immediately.
@@ -386,7 +385,7 @@ where
             };
 
             // Compute a sleep duration based on the Retry-After header, if available.
-            let sleep_duration = match retry_after {
+            let retry_after_duration = match retry_after {
                 Some(RetryAfter::DateTime(system_time)) => {
                     system_time.duration_since(SystemTime::now()).ok()
                 }
@@ -394,19 +393,29 @@ where
                 None => None,
             };
 
-            if let Some(sleep_duration) = sleep_duration {
-                // Check against max_elapsed_time even if we are using Retry-After headers.
+            let backoff_duration = if let Some(duration) = backoff.next_backoff() {
+                duration
+            } else {
+                // The maximum elapsed time has expired, so return a timeout error.
+                return Err(Error::CollectPollTimeout);
+            };
+
+            // Sleep for the time indicated in the Retry-After header or the time from our
+            // exponential backoff, whichever is longer.
+            let sleep_duration = if let Some(retry_after_duration) = retry_after_duration {
+                // Check if sleeping for as long as the Retry-After header recommends would result
+                // in exceeding the maximum elapsed time, and return a timeout error if so.
                 if let Some(deadline) = deadline {
-                    if Instant::now() + sleep_duration > deadline {
+                    if Instant::now() + retry_after_duration > deadline {
                         return Err(Error::CollectPollTimeout);
                     }
                 }
-                sleep(sleep_duration).await;
-            } else if let Some(next_backoff) = backoff.next_backoff() {
-                sleep(next_backoff).await;
+
+                std::cmp::max(retry_after_duration, backoff_duration)
             } else {
-                return Err(Error::CollectPollTimeout);
-            }
+                backoff_duration
+            };
+            sleep(sleep_duration).await;
         }
     }
 }
