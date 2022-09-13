@@ -92,7 +92,7 @@ pub struct CollectorParameters {
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,
     /// Parameters to use when waiting for a collect job to be processed. This is only used by
-    /// [`Collector::poll_until_complete`].
+    /// [`Collector::collect`] and [`Collector::poll_until_complete`].
     collect_poll_wait_parameters: ExponentialBackoff,
 }
 
@@ -132,7 +132,7 @@ impl CollectorParameters {
     }
 
     /// Replace the exponential backoff settings used while polling for aggregate shares. This is
-    /// only used by [`Collector::poll_until_complete`].
+    /// only used by [`Collector::collect`] and [`Collector::poll_until_complete`].
     pub fn with_collect_poll_backoff(mut self, backoff: ExponentialBackoff) -> CollectorParameters {
         self.collect_poll_wait_parameters = backoff;
         self
@@ -420,6 +420,19 @@ where
             };
             sleep(sleep_duration).await;
         }
+    }
+
+    /// Send a collect request to the leader aggregator, wait for it to complete, and return the
+    /// result of the aggregation.
+    pub async fn collect(
+        &self,
+        batch_interval: Interval,
+        aggregation_parameter: &V::AggregationParam,
+    ) -> Result<V::AggregateResult, Error> {
+        let job = self
+            .start_collection(batch_interval, aggregation_parameter)
+            .await?;
+        self.poll_until_complete(&job).await
     }
 }
 
