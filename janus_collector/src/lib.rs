@@ -16,7 +16,8 @@ use reqwest::{
     header::{HeaderValue, ToStrError, CONTENT_TYPE, LOCATION, RETRY_AFTER},
     StatusCode,
 };
-use retry_after::{FromHeaderValueError, RetryAfter};
+use retry_after::FromHeaderValueError;
+pub use retry_after::RetryAfter;
 use std::{
     convert::TryFrom,
     time::{Duration as StdDuration, SystemTime},
