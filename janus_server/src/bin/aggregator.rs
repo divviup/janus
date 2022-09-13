@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use clap::Parser;
 use http::HeaderMap;
 use janus_core::time::RealClock;
 use janus_server::{
@@ -8,7 +9,6 @@ use janus_server::{
 };
 use serde::{Deserialize, Serialize};
 use std::{iter::Iterator, net::SocketAddr, sync::Arc};
-use structopt::StructOpt;
 use tracing::info;
 
 #[tokio::main]
@@ -35,15 +35,15 @@ async fn main() -> Result<()> {
     .await
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(
+#[derive(Debug, Parser)]
+#[clap(
     name = "janus-aggregator",
     about = "PPM aggregator server",
     rename_all = "kebab-case",
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    #[structopt(flatten)]
+    #[clap(flatten)]
     common: CommonBinaryOptions,
 }
 
@@ -120,7 +120,8 @@ impl BinaryConfig for Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, HeaderEntry};
+    use super::{Config, HeaderEntry, Options};
+    use clap::IntoApp;
     use janus_server::{
         config::{
             test_util::{
@@ -138,6 +139,11 @@ mod tests {
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, SocketAddr},
     };
+
+    #[test]
+    fn verify_app() {
+        Options::into_app().debug_assert()
+    }
 
     #[test]
     fn roundtrip_config() {

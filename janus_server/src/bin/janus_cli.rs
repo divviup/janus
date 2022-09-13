@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use base64::STANDARD_NO_PAD;
+use clap::Parser;
 use deadpool_postgres::Pool;
 use janus_core::{
     message::{CollectReq, CollectResp, HpkeConfig, Report},
@@ -31,7 +32,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use structopt::StructOpt;
 use tokio::fs;
 use tracing::{debug, info};
 
@@ -47,20 +47,20 @@ async fn main() -> Result<()> {
     options.cmd.execute().await
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 enum Command {
     /// Write the Janus database schema to the database.
     WriteSchema {
-        #[structopt(flatten)]
+        #[clap(flatten)]
         common_options: CommonBinaryOptions,
     },
 
     /// Write a set of tasks identified in a file to the datastore.
     ProvisionTasks {
-        #[structopt(flatten)]
+        #[clap(flatten)]
         common_options: CommonBinaryOptions,
 
-        #[structopt(flatten)]
+        #[clap(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
 
         /// A YAML file containing a list of tasks to be written. Existing tasks (matching by task
@@ -70,10 +70,10 @@ enum Command {
 
     /// Create a datastore key and write it to a Kubernetes secret.
     CreateDatastoreKey {
-        #[structopt(flatten)]
+        #[clap(flatten)]
         common_options: CommonBinaryOptions,
 
-        #[structopt(flatten)]
+        #[clap(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
     },
 
@@ -83,7 +83,7 @@ enum Command {
         message_file: String,
 
         /// Media type of the message to decode.
-        #[structopt(long, short = "t", required = true, possible_values(&[
+        #[clap(long, short = 't', required = true, possible_values(&[
             "hpke-config",
             "report",
             "aggregate-initialize-req",
@@ -338,10 +338,10 @@ fn decode_dap_message(message_file: &str, media_type: &str) -> Result<Box<dyn De
     Ok(decoded)
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 struct KubernetesSecretOptions {
     /// The Kubernetes namespace where secrets are stored.
-    #[structopt(
+    #[clap(
         long,
         env = "SECRETS_K8S_NAMESPACE",
         takes_value = true,
@@ -351,7 +351,7 @@ struct KubernetesSecretOptions {
     secrets_k8s_namespace: Option<String>,
 
     /// Kubernetes secret containing the datastore key(s).
-    #[structopt(
+    #[clap(
         long,
         env = "DATASTORE_KEYS_SECRET_NAME",
         takes_value = true,
@@ -360,7 +360,7 @@ struct KubernetesSecretOptions {
     datastore_keys_secret_name: String,
 
     /// Key into data of datastore key Kubernetes secret
-    #[structopt(
+    #[clap(
         long,
         env = "DATASTORE_KEYS_SECRET_KEY",
         takes_value = true,
@@ -398,15 +398,15 @@ impl KubernetesSecretOptions {
     }
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(
+#[derive(Debug, Parser)]
+#[clap(
     name = "janus_cli",
     about = "Janus CLI tool",
     rename_all = "kebab-case",
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    #[structopt(subcommand)]
+    #[clap(subcommand)]
     cmd: Command,
 }
 
@@ -428,8 +428,9 @@ impl BinaryConfig for Config {
 
 #[cfg(test)]
 mod tests {
-    use super::{fetch_datastore_keys, Config, KubernetesSecretOptions};
+    use super::{fetch_datastore_keys, Config, KubernetesSecretOptions, Options};
     use base64::STANDARD_NO_PAD;
+    use clap::IntoApp;
     use janus_core::{
         message::{Role, TaskId},
         task::VdafInstance,
@@ -452,6 +453,11 @@ mod tests {
         net::{Ipv4Addr, SocketAddr},
     };
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn verify_app() {
+        Options::into_app().debug_assert()
+    }
 
     #[tokio::test]
     async fn options_datastore_keys() {

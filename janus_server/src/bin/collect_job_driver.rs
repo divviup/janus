@@ -1,4 +1,5 @@
 use anyhow::Context;
+use clap::Parser;
 use janus_core::{message::Duration, time::RealClock, TokioRuntime};
 use janus_server::{
     aggregator::aggregate_share::CollectJobDriver,
@@ -9,7 +10,6 @@ use janus_server::{
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, sync::Arc};
-use structopt::StructOpt;
 use tokio::select;
 
 #[tokio::main]
@@ -66,15 +66,15 @@ async fn main() -> anyhow::Result<()> {
     .await
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(
+#[derive(Debug, Parser)]
+#[clap(
     name = "janus-collect-job-driver",
     about = "Janus collect job driver",
     rename_all = "kebab-case",
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Options {
-    #[structopt(flatten)]
+    #[clap(flatten)]
     common: CommonBinaryOptions,
 }
 
@@ -125,7 +125,8 @@ impl BinaryConfig for Config {
 
 #[cfg(test)]
 mod tests {
-    use super::Config;
+    use super::{Config, Options};
+    use clap::IntoApp;
     use janus_server::config::{
         test_util::{
             generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
@@ -133,6 +134,11 @@ mod tests {
         CommonConfig, JobDriverConfig,
     };
     use std::net::{Ipv4Addr, SocketAddr};
+
+    #[test]
+    fn verify_app() {
+        Options::into_app().debug_assert()
+    }
 
     #[test]
     fn roundtrip_config() {
