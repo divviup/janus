@@ -12,7 +12,7 @@ jobs:
   crate:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     # We retry crate publishing to allow the newly published janus_core to be
     # visible on crates.io when we get around to publishing janus_client.
     - name: "Publish janus_core"
