@@ -1,8 +1,8 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
 use crate::message::{
-    Extension, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
-    HpkePublicKey, Interval, Nonce, Role, TaskId,
+    HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
+    Interval, ReportMetadata, Role, TaskId,
 };
 use derivative::Derivative;
 use hpke_dispatch::{HpkeError, Kem, Keypair};
@@ -37,16 +37,16 @@ impl TryFrom<&HpkeConfig> for hpke_dispatch::Config {
 }
 
 /// Construct the HPKE associated data for sealing or opening data enciphered for a report or report
-/// share, per §4.3.2 and 4.4.2.2 of draft-gpew-priv-ppm
+/// share, per §4.3.2 and 4.4.1.3 of draft-ietf-ppm-dap-02
 pub fn associated_data_for_report_share(
     task_id: TaskId,
-    nonce: Nonce,
-    extensions: &[Extension],
+    report_metadata: &ReportMetadata,
 ) -> Vec<u8> {
     let mut associated_data = vec![];
     task_id.encode(&mut associated_data);
-    nonce.encode(&mut associated_data);
-    encode_u16_items(&mut associated_data, &(), extensions);
+    report_metadata.time().encode(&mut associated_data);
+    report_metadata.nonce().encode(&mut associated_data);
+    encode_u16_items(&mut associated_data, &(), report_metadata.extensions());
     associated_data
 }
 
