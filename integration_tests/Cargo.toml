@@ -42,7 +42,7 @@ url = { version = "2.3.0", features = ["serde"] }
 http = "0.2"
 itertools = "0.10"
 janus_client = { path = "../janus_client" }
-prio = { version = "0.8.2", features = ["multithreaded"] }
+prio = { version = "0.9.0", features = ["multithreaded"] }
 tempfile = "3"
 
 [build-dependencies]
