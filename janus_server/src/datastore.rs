@@ -18,7 +18,7 @@ use janus_core::{
     hpke::HpkePrivateKey,
     message::{
         Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, NonceChecksum, Report,
-        Role, TaskId, Time,
+        ReportMetadata, Role, TaskId, Time,
     },
     task::AuthenticationToken,
     time::Clock,
@@ -723,9 +723,10 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT client_reports.extensions, client_reports.input_shares FROM client_reports
+                "SELECT client_reports.nonce_time, client_reports.extensions, client_reports.input_shares
+                FROM client_reports
                 JOIN tasks ON tasks.id = client_reports.task_id
-                WHERE tasks.task_id = $1 AND client_reports.nonce_time = $2 AND client_reports.nonce_rand = $3",
+                WHERE tasks.task_id = $1 AND client_reports.nonce_rand = $2",
             )
             .await?;
         self.tx
@@ -733,12 +734,13 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    /* nonce_time */ &nonce.time().as_naive_date_time(),
                     /* nonce_rand */ &&nonce.rand()[..],
                 ],
             )
             .await?
             .map(|row| {
+                let report_time = Time::from_naive_date_time(row.get("nonce_time"));
+
                 let encoded_extensions: Vec<u8> = row.get("extensions");
                 let extensions: Vec<Extension> =
                     decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
@@ -747,7 +749,11 @@ impl<C: Clock> Transaction<'_, C> {
                 let input_shares: Vec<HpkeCiphertext> =
                     decode_u16_items(&(), &mut Cursor::new(&encoded_input_shares))?;
 
-                Ok(Report::new(task_id, nonce, extensions, input_shares))
+                Ok(Report::new(
+                    task_id,
+                    ReportMetadata::new(report_time, nonce, extensions),
+                    input_shares,
+                ))
             })
             .transpose()
     }
@@ -763,7 +769,7 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn get_unaggregated_client_report_nonces_for_task(
         &self,
         task_id: TaskId,
-    ) -> Result<Vec<Nonce>, Error> {
+    ) -> Result<Vec<(Time, Nonce)>, Error> {
         // We choose to return the newest client reports first (LIFO). The goal is to maintain
         // throughput even if we begin to fall behind enough that reports are too old to be
         // aggregated.
@@ -788,14 +794,14 @@ impl<C: Clock> Transaction<'_, C> {
         rows.into_iter()
             .map(|row| {
                 let nonce_rand: Vec<u8> = row.get("nonce_rand");
-                Ok(Nonce::new(
+                Ok((
                     Time::from_naive_date_time(row.get("nonce_time")),
-                    nonce_rand.try_into().map_err(|err| {
+                    Nonce::new(nonce_rand.try_into().map_err(|err| {
                         Error::DbState(format!("couldn't convert nonce_rand value: {0:?}", err))
-                    })?,
+                    })?),
                 ))
             })
-            .collect::<Result<Vec<Nonce>, Error>>()
+            .collect::<Result<Vec<(Time, Nonce)>, Error>>()
     }
 
     /// `get_unaggregated_client_report_nonces_by_collect_for_task` returns pairs of nonces and
@@ -812,7 +818,7 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn get_unaggregated_client_report_nonces_by_collect_for_task<const L: usize, A>(
         &self,
         task_id: TaskId,
-    ) -> Result<Vec<(Nonce, A::AggregationParam)>, Error>
+    ) -> Result<Vec<(Time, Nonce, A::AggregationParam)>, Error>
     where
         A: vdaf::Aggregator<L> + VdafHasAggregationParameter,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -847,26 +853,26 @@ impl<C: Clock> Transaction<'_, C> {
 
         rows.into_iter()
             .map(|row| {
-                let nonce_time = Time::from_naive_date_time(row.get("nonce_time"));
+                let time = Time::from_naive_date_time(row.get("nonce_time"));
                 let nonce_rand: Vec<u8> = row.get("nonce_rand");
                 let nonce_rand = nonce_rand.try_into().map_err(|err| {
                     Error::DbState(format!("couldn't convert nonce_rand value: {0:?}", err))
                 })?;
-                let nonce = Nonce::new(nonce_time, nonce_rand);
+                let nonce = Nonce::new(nonce_rand);
                 let agg_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                Ok((nonce, agg_param))
+                Ok((time, nonce, agg_param))
             })
-            .collect::<Result<Vec<(Nonce, A::AggregationParam)>, Error>>()
+            .collect::<Result<Vec<(Time, Nonce, A::AggregationParam)>, Error>>()
     }
 
     /// put_client_report stores a client report.
     #[tracing::instrument(skip(self), err)]
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
-        let nonce_time = report.nonce().time().as_naive_date_time();
-        let nonce_rand = report.nonce().rand();
+        let nonce_time = report.metadata().time().as_naive_date_time();
+        let nonce_rand = report.metadata().nonce().rand();
 
         let mut encoded_extensions = Vec::new();
-        encode_u16_items(&mut encoded_extensions, &(), report.extensions());
+        encode_u16_items(&mut encoded_extensions, &(), report.metadata().extensions());
 
         let mut encoded_input_shares = Vec::new();
         encode_u16_items(
@@ -909,8 +915,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT 1 FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
                 WHERE tasks.task_id = $1
-                  AND client_reports.nonce_time = $2
-                  AND client_reports.nonce_rand = $3",
+                  AND client_reports.nonce_rand = $2",
             )
             .await?;
         Ok(self
@@ -919,7 +924,6 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    /* nonce_time */ &nonce.time().as_naive_date_time(),
                     /* nonce_rand */ &&nonce.rand()[..],
                 ],
             )
@@ -939,8 +943,8 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: TaskId,
         report_share: &ReportShare,
     ) -> Result<(), Error> {
-        let nonce_time = report_share.nonce.time().as_naive_date_time();
-        let nonce_rand = report_share.nonce.rand();
+        let nonce_time = report_share.metadata.time().as_naive_date_time();
+        let nonce_rand = report_share.metadata.nonce().rand();
 
         let stmt = self
             .tx
@@ -1221,7 +1225,6 @@ impl<C: Clock> Transaction<'_, C> {
         A::OutputShare: for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let nonce_time = nonce.time().as_naive_date_time();
         let nonce_rand = &nonce.rand()[..];
 
         let stmt = self
@@ -1234,8 +1237,7 @@ impl<C: Clock> Transaction<'_, C> {
                 JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
                 WHERE report_aggregations.aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1)
                   AND client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $2)
-                  AND client_reports.nonce_time = $3
-                  AND client_reports.nonce_rand = $4",
+                  AND client_reports.nonce_rand = $3",
             )
             .await?;
         self.tx
@@ -1244,7 +1246,6 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* aggregation_job_id */ &aggregation_job_id.as_bytes(),
                     /* task_id */ &task_id.as_bytes(),
-                    /* nonce_time */ &nonce_time,
                     /* nonce_rand */ &nonce_rand,
                 ],
             )
@@ -1309,7 +1310,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let nonce_time = report_aggregation.nonce.time().as_naive_date_time();
         let nonce_rand = &report_aggregation.nonce.rand()[..];
         let state_code = report_aggregation.state.state_code();
         let encoded_state_values = report_aggregation.state.encoded_values_from_state();
@@ -1320,8 +1320,8 @@ impl<C: Clock> Transaction<'_, C> {
             VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
                     (SELECT id FROM client_reports
                      WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
-                     AND nonce_time = $3 AND nonce_rand = $4),
-                    $5, $6, $7, $8, $9, $10)"
+                     AND nonce_rand = $3),
+                    $4, $5, $6, $7, $8, $9)"
         ).await?;
         self.tx
             .execute(
@@ -1330,7 +1330,6 @@ impl<C: Clock> Transaction<'_, C> {
                     /* aggregation_job_id */
                     &report_aggregation.aggregation_job_id.as_bytes(),
                     /* task_id */ &report_aggregation.task_id.as_bytes(),
-                    /* nonce_time */ &nonce_time,
                     /* nonce_rand */ &nonce_rand,
                     /* ord */ &report_aggregation.ord,
                     /* state */ &state_code,
@@ -1354,7 +1353,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let nonce_time = report_aggregation.nonce.time().as_naive_date_time();
         let nonce_rand = &report_aggregation.nonce.rand()[..];
         let state_code = report_aggregation.state.state_code();
         let encoded_state_values = report_aggregation.state.encoded_values_from_state();
@@ -1367,7 +1365,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE aggregation_job_id = (SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $7)
                 AND client_report_id = (SELECT id FROM client_reports
                     WHERE task_id = (SELECT id FROM tasks WHERE task_id = $8)
-                    AND nonce_time = $9 AND nonce_rand = $10)")
+                    AND nonce_rand = $9)")
             .await?;
         check_single_row_mutation(
             self.tx
@@ -1383,7 +1381,6 @@ impl<C: Clock> Transaction<'_, C> {
                         /* aggregation_job_id */
                         &report_aggregation.aggregation_job_id.as_bytes(),
                         /* task_id */ &report_aggregation.task_id.as_bytes(),
-                        /* nonce_time */ &nonce_time,
                         /* nonce_rand */ &nonce_rand,
                     ],
                 )
@@ -2232,13 +2229,12 @@ where
     A::OutputShare: for<'a> TryFrom<&'a [u8]>,
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
+    let time = Time::from_naive_date_time(row.get("nonce_time"));
     let nonce_rand: Vec<u8> = row.get("nonce_rand");
-    let nonce = Nonce::new(
-        Time::from_naive_date_time(row.get("nonce_time")),
-        nonce_rand.try_into().map_err(|err| {
+    let nonce =
+        Nonce::new(nonce_rand.try_into().map_err(|err| {
             Error::DbState(format!("couldn't convert nonce_rand value: {0:?}", err))
-        })?,
-    );
+        })?);
     let ord: i64 = row.get("ord");
     let state: ReportAggregationStateCode = row.get("state");
     let prep_state_bytes: Option<Vec<u8>> = row.get("prep_state");
@@ -2298,6 +2294,7 @@ where
     Ok(ReportAggregation {
         aggregation_job_id,
         task_id,
+        time,
         nonce,
         ord,
         state: agg_state,
@@ -2725,6 +2722,7 @@ pub mod models {
     {
         pub aggregation_job_id: AggregationJobId,
         pub task_id: TaskId,
+        pub time: Time,
         pub nonce: Nonce,
         pub ord: i64,
         pub state: ReportAggregationState<L, A>,
@@ -2740,6 +2738,7 @@ pub mod models {
         fn eq(&self, other: &Self) -> bool {
             self.aggregation_job_id == other.aggregation_job_id
                 && self.task_id == other.task_id
+                && self.time == other.time
                 && self.nonce == other.nonce
                 && self.ord == other.ord
                 && self.state == other.state
@@ -3454,14 +3453,14 @@ mod tests {
 
         let report = Report::new(
             TaskId::random(),
-            Nonce::new(
+            ReportMetadata::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                vec![
+                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
+                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
+                ],
             ),
-            vec![
-                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
-                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
-            ],
             vec![
                 HpkeCiphertext::new(
                     HpkeConfigId::from(12),
@@ -3494,7 +3493,7 @@ mod tests {
         let retrieved_report = ds
             .run_tx(|tx| {
                 let task_id = report.task_id();
-                let nonce = report.nonce();
+                let nonce = report.metadata().nonce();
                 Box::pin(async move { tx.get_client_report(task_id, nonce).await })
             })
             .await
@@ -3513,10 +3512,7 @@ mod tests {
                 Box::pin(async move {
                     tx.get_client_report(
                         TaskId::random(),
-                        Nonce::new(
-                            Time::from_seconds_since_epoch(12345),
-                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                        ),
+                        Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     )
                     .await
                 })
@@ -3537,38 +3533,26 @@ mod tests {
 
         let first_unaggregated_report = Report::new(
             task_id,
-            Nonce::new(
-                Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-            ),
-            vec![],
+            ReportMetadata::generate(&MockClock::default(), Duration::from_seconds(1000), vec![])
+                .unwrap(),
             vec![],
         );
         let second_unaggregated_report = Report::new(
             task_id,
-            Nonce::new(
-                Time::from_seconds_since_epoch(12346),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-            ),
-            vec![],
+            ReportMetadata::generate(&MockClock::default(), Duration::from_seconds(1000), vec![])
+                .unwrap(),
             vec![],
         );
         let aggregated_report = Report::new(
             task_id,
-            Nonce::new(
-                Time::from_seconds_since_epoch(12347),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-            ),
-            vec![],
+            ReportMetadata::generate(&MockClock::default(), Duration::from_seconds(1000), vec![])
+                .unwrap(),
             vec![],
         );
         let unrelated_report = Report::new(
             unrelated_task_id,
-            Nonce::new(
-                Time::from_seconds_since_epoch(12348),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-            ),
-            vec![],
+            ReportMetadata::generate(&MockClock::default(), Duration::from_seconds(1000), vec![])
+                .unwrap(),
             vec![],
         );
 
@@ -3620,7 +3604,8 @@ mod tests {
                     &ReportAggregation {
                         aggregation_job_id,
                         task_id,
-                        nonce: aggregated_report.nonce(),
+                        time: aggregated_report.metadata().time(),
+                        nonce: aggregated_report.metadata().nonce(),
                         ord: 0,
                         state: ReportAggregationState::<
                             PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -3649,8 +3634,14 @@ mod tests {
         assert_eq!(
             got_reports,
             HashSet::from([
-                first_unaggregated_report.nonce(),
-                second_unaggregated_report.nonce()
+                (
+                    first_unaggregated_report.metadata().time(),
+                    first_unaggregated_report.metadata().nonce()
+                ),
+                (
+                    second_unaggregated_report.metadata().time(),
+                    second_unaggregated_report.metadata().nonce()
+                ),
             ]),
         );
     }
@@ -3667,38 +3658,38 @@ mod tests {
 
         let first_unaggregated_report = Report::new(
             task_id,
-            Nonce::new(
+            ReportMetadata::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                Nonce::generate(),
+                vec![],
             ),
-            vec![],
             vec![],
         );
         let second_unaggregated_report = Report::new(
             task_id,
-            Nonce::new(
+            ReportMetadata::new(
                 Time::from_seconds_since_epoch(12346),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                Nonce::generate(),
+                vec![],
             ),
-            vec![],
             vec![],
         );
         let aggregated_report = Report::new(
             task_id,
-            Nonce::new(
+            ReportMetadata::new(
                 Time::from_seconds_since_epoch(12347),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                Nonce::generate(),
+                vec![],
             ),
-            vec![],
             vec![],
         );
         let unrelated_report = Report::new(
             unrelated_task_id,
-            Nonce::new(
+            ReportMetadata::new(
                 Time::from_seconds_since_epoch(12348),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                Nonce::generate(),
+                vec![],
             ),
-            vec![],
             vec![],
         );
 
@@ -3763,7 +3754,8 @@ mod tests {
 
         // Add collect jobs, and mark one report as having already been aggregated once.
         ds.run_tx(|tx| {
-            let aggregated_report_nonce = aggregated_report.nonce();
+            let aggregated_report_time = aggregated_report.metadata().time();
+            let aggregated_report_nonce = aggregated_report.metadata().nonce();
             Box::pin(async move {
                 tx.put_collect_job(
                     task_id,
@@ -3810,6 +3802,7 @@ mod tests {
                     &ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                         aggregation_job_id,
                         task_id,
+                        time: aggregated_report_time,
                         nonce: aggregated_report_nonce,
                         ord: 0,
                         state: ReportAggregationState::Start,
@@ -3834,11 +3827,31 @@ mod tests {
             .unwrap();
 
         let mut expected_reports = vec![
-            (first_unaggregated_report.nonce(), AggregationParam(0)),
-            (first_unaggregated_report.nonce(), AggregationParam(1)),
-            (second_unaggregated_report.nonce(), AggregationParam(0)),
-            (second_unaggregated_report.nonce(), AggregationParam(1)),
-            (aggregated_report.nonce(), AggregationParam(1)),
+            (
+                first_unaggregated_report.metadata().time(),
+                first_unaggregated_report.metadata().nonce(),
+                AggregationParam(0),
+            ),
+            (
+                first_unaggregated_report.metadata().time(),
+                first_unaggregated_report.metadata().nonce(),
+                AggregationParam(1),
+            ),
+            (
+                second_unaggregated_report.metadata().time(),
+                second_unaggregated_report.metadata().nonce(),
+                AggregationParam(0),
+            ),
+            (
+                second_unaggregated_report.metadata().time(),
+                second_unaggregated_report.metadata().nonce(),
+                AggregationParam(1),
+            ),
+            (
+                aggregated_report.metadata().time(),
+                aggregated_report.metadata().nonce(),
+                AggregationParam(1),
+            ),
         ];
         got_reports.sort();
         expected_reports.sort();
@@ -3895,14 +3908,14 @@ mod tests {
 
         let task_id = TaskId::random();
         let report_share = ReportShare {
-            nonce: Nonce::new(
+            metadata: ReportMetadata::new(
                 Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                vec![
+                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
+                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
+                ],
             ),
-            extensions: vec![
-                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
-                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
-            ],
             encrypted_input_share: HpkeCiphertext::new(
                 HpkeConfigId::from(12),
                 Vec::from("encapsulated_context_0"),
@@ -3921,7 +3934,7 @@ mod tests {
                     ))
                     .await?;
                     let report_share_exists = tx
-                        .check_report_share_exists(task_id, report_share.nonce)
+                        .check_report_share_exists(task_id, report_share.metadata.nonce())
                         .await?;
                     tx.put_report_share(task_id, &report_share).await?;
                     Ok(report_share_exists)
@@ -3933,11 +3946,12 @@ mod tests {
 
         let (got_report_share_exists, got_task_id, got_extensions, got_input_shares) = ds
             .run_tx(|tx| {
+                let report_share_metadata = report_share.metadata.clone();
                 Box::pin(async move {
-                    let report_share_exists = tx.check_report_share_exists(task_id, report_share.nonce).await?;
+                    let report_share_exists = tx.check_report_share_exists(task_id, report_share_metadata.nonce()).await?;
 
-                    let nonce_time = report_share.nonce.time().as_naive_date_time();
-                    let nonce_rand = report_share.nonce.rand();
+                    let nonce_time = report_share_metadata.time().as_naive_date_time();
+                    let nonce_rand = report_share_metadata.nonce().rand();
                     let row = tx
                         .tx
                         .query_one(
@@ -4443,10 +4457,8 @@ mod tests {
         {
             let task_id = TaskId::random();
             let aggregation_job_id = AggregationJobId::random();
-            let nonce = Nonce::new(
-                Time::from_seconds_since_epoch(12345),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-            );
+            let time = Time::from_seconds_since_epoch(12345);
+            let nonce = Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 
             let report_aggregation = ds
                 .run_tx(|tx| {
@@ -4471,8 +4483,7 @@ mod tests {
                         tx.put_report_share(
                             task_id,
                             &ReportShare {
-                                nonce,
-                                extensions: Vec::new(),
+                                metadata: ReportMetadata::new(time, nonce, Vec::new()),
                                 encrypted_input_share: HpkeCiphertext::new(
                                     HpkeConfigId::from(12),
                                     Vec::from("encapsulated_context_0"),
@@ -4485,6 +4496,7 @@ mod tests {
                         let report_aggregation = ReportAggregation {
                             aggregation_job_id,
                             task_id,
+                            time,
                             nonce,
                             ord: ord as i64,
                             state: state.clone(),
@@ -4560,10 +4572,7 @@ mod tests {
                         Role::Leader,
                         TaskId::random(),
                         AggregationJobId::random(),
-                        Nonce::new(
-                            Time::from_seconds_since_epoch(12345),
-                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                        ),
+                        Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     )
                     .await
                 })
@@ -4579,10 +4588,10 @@ mod tests {
                         &ReportAggregation {
                             aggregation_job_id: AggregationJobId::random(),
                             task_id: TaskId::random(),
-                            nonce: Nonce::new(
-                                Time::from_seconds_since_epoch(12345),
-                                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                            ),
+                            time: Time::from_seconds_since_epoch(12345),
+                            nonce: Nonce::new([
+                                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                            ]),
                             ord: 0,
                             state: ReportAggregationState::Invalid,
                         },
@@ -4645,15 +4654,12 @@ mod tests {
                         .iter()
                         .enumerate()
                     {
-                        let nonce = Nonce::new(
-                            Time::from_seconds_since_epoch(12345),
-                            (ord as u128).to_be_bytes(),
-                        );
+                        let time = Time::from_seconds_since_epoch(12345);
+                        let nonce = Nonce::new((ord as u128).to_be_bytes());
                         tx.put_report_share(
                             task_id,
                             &ReportShare {
-                                nonce,
-                                extensions: Vec::new(),
+                                metadata: ReportMetadata::new(time, nonce, Vec::new()),
                                 encrypted_input_share: HpkeCiphertext::new(
                                     HpkeConfigId::from(12),
                                     Vec::from("encapsulated_context_0"),
@@ -4666,6 +4672,7 @@ mod tests {
                         let report_aggregation = ReportAggregation {
                             aggregation_job_id,
                             task_id,
+                            time,
                             nonce,
                             ord: ord as i64,
                             state: state.clone(),
@@ -5296,7 +5303,8 @@ mod tests {
         let report_aggregations = vec![ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
             aggregation_job_id,
             task_id,
-            nonce: reports[0].nonce(),
+            time: reports[0].metadata().time(),
+            nonce: reports[0].metadata().nonce(),
             ord: 0,
             // Doesn't matter what state the report aggregation is in
             state: ReportAggregationState::Start,
@@ -5512,7 +5520,8 @@ mod tests {
         let report_aggregations = vec![ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
             aggregation_job_id,
             task_id,
-            nonce: reports[0].nonce(),
+            time: reports[0].metadata().time(),
+            nonce: reports[0].metadata().nonce(),
             ord: 0,
             // Shouldn't matter what state the report aggregation is in
             state: ReportAggregationState::Start,
@@ -5565,7 +5574,8 @@ mod tests {
         let report_aggregations = vec![ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
             aggregation_job_id,
             task_id,
-            nonce: reports[0].nonce(),
+            time: reports[0].metadata().time(),
+            nonce: reports[0].metadata().nonce(),
             ord: 0,
             state: ReportAggregationState::Start,
         }];
@@ -5632,14 +5642,16 @@ mod tests {
             ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                 aggregation_job_id: aggregation_job_ids[0],
                 task_id,
-                nonce: reports[0].nonce(),
+                time: reports[0].metadata().time(),
+                nonce: reports[0].metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Start,
             },
             ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                 aggregation_job_id: aggregation_job_ids[1],
                 task_id,
-                nonce: reports[1].nonce(),
+                time: reports[1].metadata().time(),
+                nonce: reports[1].metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Start,
             },
@@ -5700,14 +5712,16 @@ mod tests {
             ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                 aggregation_job_id: aggregation_job_ids[0],
                 task_id,
-                nonce: reports[0].nonce(),
+                time: reports[0].metadata().time(),
+                nonce: reports[0].metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Start,
             },
             ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
                 aggregation_job_id: aggregation_job_ids[1],
                 task_id,
-                nonce: reports[0].nonce(),
+                time: reports[0].metadata().time(),
+                nonce: reports[0].metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Start,
             },

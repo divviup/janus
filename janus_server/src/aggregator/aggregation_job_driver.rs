@@ -263,7 +263,7 @@ impl AggregationJobDriver {
             .collect();
         for (report_aggregation, client_report) in &reports {
             assert_eq!(report_aggregation.task_id, client_report.task_id());
-            assert_eq!(report_aggregation.nonce, client_report.nonce());
+            assert_eq!(report_aggregation.nonce, client_report.metadata().nonce());
         }
 
         // Compute report shares to send to helper, and decrypt our input shares & initialize
@@ -324,8 +324,7 @@ impl AggregationJobDriver {
             };
             let hpke_application_info =
                 HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
-            let associated_data =
-                associated_data_for_report_share(task.id, report.nonce(), report.extensions());
+            let associated_data = associated_data_for_report_share(task.id, report.metadata());
             let leader_input_share_bytes = match hpke::open(
                 hpke_config,
                 hpke_private_key,
@@ -365,7 +364,7 @@ impl AggregationJobDriver {
                 verify_key.as_bytes(),
                 Role::Leader.index().unwrap(),
                 &aggregation_job.aggregation_param,
-                &report.nonce().get_encoded(),
+                &report.metadata().nonce().get_encoded(),
                 &leader_input_share,
             ) {
                 Ok(prep_state_and_share) => prep_state_and_share,
@@ -382,8 +381,7 @@ impl AggregationJobDriver {
             };
 
             report_shares.push(ReportShare {
-                nonce: report.nonce(),
-                extensions: report.extensions().to_vec(),
+                metadata: report.metadata().clone(),
                 encrypted_input_share: helper_encrypted_input_share.clone(),
             });
             stepped_aggregations.push(SteppedAggregation {
@@ -624,7 +622,11 @@ impl AggregationJobDriver {
                     // If the leader finished too, we are done; prepare to store the output share.
                     // If the leader didn't finish too, we transition to INVALID.
                     if let PrepareTransition::Finish(out_share) = leader_transition {
-                        match accumulator.update(&out_share, report_aggregation.nonce) {
+                        match accumulator.update(
+                            &out_share,
+                            report_aggregation.time,
+                            report_aggregation.nonce,
+                        ) {
                             Ok(_) => {
                                 report_aggregation.state =
                                     ReportAggregationState::Finished(out_share)
@@ -863,7 +865,9 @@ mod tests {
             self, associated_data_for_report_share,
             test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
-        message::{Duration, HpkeConfig, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
+        message::{
+            Duration, HpkeConfig, Interval, NonceChecksum, Report, ReportMetadata, Role, TaskId,
+        },
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
         time::MockClock,
@@ -903,21 +907,30 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
+
+        let report_metadata =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
-        let transcript = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce, &0);
+        let transcript = run_vdaf(
+            vdaf.as_ref(),
+            verify_key.as_bytes(),
+            &(),
+            report_metadata.nonce(),
+            &0,
+        );
 
         let agg_auth_token = task.primary_aggregator_auth_token().clone();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
         let report = generate_report(
             task_id,
-            nonce,
+            &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
             &transcript.input_shares,
         );
+
         let aggregation_job_id = AggregationJobId::random();
 
         ds.run_tx(|tx| {
@@ -942,7 +955,8 @@ mod tests {
                 > {
                     aggregation_job_id,
                     task_id,
-                    nonce: report.nonce(),
+                    time: report.metadata().time(),
+                    nonce: report.metadata().nonce(),
                     ord: 0,
                     state: ReportAggregationState::Start,
                 })
@@ -962,7 +976,7 @@ mod tests {
                 AggregateInitializeResp::MEDIA_TYPE,
                 AggregateInitializeResp {
                     prepare_steps: vec![PrepareStep {
-                        nonce,
+                        nonce: report.metadata().nonce(),
                         result: PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
                     }],
                 }
@@ -973,7 +987,7 @@ mod tests {
                 AggregateContinueResp::MEDIA_TYPE,
                 AggregateContinueResp {
                     prepare_steps: vec![PrepareStep {
-                        nonce,
+                        nonce: report.metadata().nonce(),
                         result: PrepareStepResult::Finished,
                     }],
                 }
@@ -1044,7 +1058,8 @@ mod tests {
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
                 task_id,
-                nonce,
+                time: report.metadata().time(),
+                nonce: report.metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Finished(leader_output_share),
             };
@@ -1052,6 +1067,7 @@ mod tests {
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
+                let report_nonce = report.metadata().nonce();
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
@@ -1066,7 +1082,7 @@ mod tests {
                             Role::Leader,
                             task_id,
                             aggregation_job_id,
-                            nonce,
+                            report_nonce,
                         )
                         .await?
                         .unwrap();
@@ -1095,18 +1111,26 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
+
+        let report_metadata =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
-        let transcript = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce, &0);
+        let transcript = run_vdaf(
+            vdaf.as_ref(),
+            verify_key.as_bytes(),
+            &(),
+            report_metadata.nonce(),
+            &0,
+        );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
         let report = generate_report(
             task_id,
-            nonce,
+            &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
             &transcript.input_shares,
         );
@@ -1135,7 +1159,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce: report.nonce(),
+                        time: report.metadata().time(),
+                        nonce: report.metadata().nonce(),
                         ord: 0,
                         state: ReportAggregationState::Start,
                     })
@@ -1161,8 +1186,7 @@ mod tests {
             job_id: aggregation_job_id,
             agg_param: ().get_encoded(),
             report_shares: vec![ReportShare {
-                nonce,
-                extensions: Vec::new(),
+                metadata: report.metadata().clone(),
                 encrypted_input_share: report
                     .encrypted_input_shares()
                     .get(Role::Helper.index().unwrap())
@@ -1175,7 +1199,7 @@ mod tests {
             PrepareTransition::Continue(_, prep_share) => prep_share);
         let helper_response = AggregateInitializeResp {
             prepare_steps: vec![PrepareStep {
-                nonce,
+                nonce: report.metadata().nonce(),
                 result: PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
             }],
         };
@@ -1225,7 +1249,9 @@ mod tests {
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
                 task_id,
-                nonce,
+                time: report.metadata().time(),
+                nonce: report.metadata().nonce(),
+
                 ord: 0,
                 state: ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
             };
@@ -1233,6 +1259,7 @@ mod tests {
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
+                let report_nonce = report.metadata().nonce();
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
@@ -1247,7 +1274,7 @@ mod tests {
                             Role::Leader,
                             task_id,
                             aggregation_job_id,
-                            nonce,
+                            report_nonce,
                         )
                         .await?
                         .unwrap();
@@ -1277,18 +1304,25 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
+        let report_metadata =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
-        let transcript = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce, &0);
+        let transcript = run_vdaf(
+            vdaf.as_ref(),
+            verify_key.as_bytes(),
+            &(),
+            report_metadata.nonce(),
+            &0,
+        );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
         let report = generate_report(
             task_id,
-            nonce,
+            &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
             &transcript.input_shares,
         );
@@ -1331,7 +1365,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce: report.nonce(),
+                        time: report.metadata().time(),
+                        nonce: report.metadata().nonce(),
                         ord: 0,
                         state: ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
                     })
@@ -1356,13 +1391,13 @@ mod tests {
             task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
-                nonce,
+                nonce: report.metadata().nonce(),
                 result: PrepareStepResult::Continued(prep_msg.get_encoded()),
             }],
         };
         let helper_response = AggregateContinueResp {
             prepare_steps: vec![PrepareStep {
-                nonce,
+                nonce: report.metadata().nonce(),
                 result: PrepareStepResult::Finished,
             }],
         };
@@ -1411,11 +1446,13 @@ mod tests {
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
                 task_id,
-                nonce,
+                time: report.metadata().time(),
+                nonce: report.metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Finished(leader_output_share),
             };
-        let batch_interval_start = nonce
+        let batch_interval_start = report
+            .metadata()
             .time()
             .to_batch_unit_interval_start(task.min_batch_duration)
             .unwrap();
@@ -1428,12 +1465,13 @@ mod tests {
             aggregation_param: (),
             aggregate_share: leader_aggregate_share,
             report_count: 1,
-            checksum: NonceChecksum::from_nonce(nonce),
+            checksum: NonceChecksum::from_nonce(report.metadata().nonce()),
         }]);
 
         let (got_aggregation_job, got_report_aggregation, got_batch_unit_aggregations) = ds
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
+                let report_metadata = report.metadata().clone();
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
@@ -1448,7 +1486,7 @@ mod tests {
                             Role::Leader,
                             task_id,
                             aggregation_job_id,
-                            nonce,
+                            report_metadata.nonce(),
                         )
                         .await?
                         .unwrap();
@@ -1456,7 +1494,7 @@ mod tests {
                         .get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                             task_id,
                             Interval::new(
-                                nonce.time().to_batch_unit_interval_start(task.min_batch_duration).unwrap(),
+                                report_metadata.time().to_batch_unit_interval_start(task.min_batch_duration).unwrap(),
                                 task.min_batch_duration).unwrap(),
                             &())
                         .await
@@ -1487,18 +1525,25 @@ mod tests {
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
+        let report_metadata =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
-        let input_shares =
-            run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce, &0).input_shares;
+        let input_shares = run_vdaf(
+            vdaf.as_ref(),
+            verify_key.as_bytes(),
+            &(),
+            report_metadata.nonce(),
+            &0,
+        )
+        .input_shares;
 
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
         let report = generate_report(
             task_id,
-            nonce,
+            &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
             &input_shares,
         );
@@ -1514,7 +1559,8 @@ mod tests {
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
                 task_id,
-                nonce,
+                time: report.metadata().time(),
+                nonce: report.metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Start,
             };
@@ -1565,6 +1611,7 @@ mod tests {
         let (got_aggregation_job, got_report_aggregation, got_leases) = ds
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
+                let report_nonce = report.metadata().nonce();
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
@@ -1579,7 +1626,7 @@ mod tests {
                             Role::Leader,
                             task_id,
                             aggregation_job_id,
-                            nonce,
+                            report_nonce,
                         )
                         .await?
                         .unwrap();
@@ -1596,11 +1643,11 @@ mod tests {
         assert!(got_leases.is_empty());
     }
 
-    /// Returns a report with the given task ID & nonce values, no extensions, and encrypted input
-    /// shares corresponding to the given HPKE configs & input shares.
+    /// Returns a report with the given task ID & metadata values and encrypted input shares
+    /// corresponding to the given HPKE configs & input shares.
     fn generate_report<I: Encode>(
         task_id: TaskId,
-        nonce: Nonce,
+        report_metadata: &ReportMetadata,
         hpke_configs: &[&HpkeConfig],
         input_shares: &[I],
     ) -> Report {
@@ -1617,13 +1664,13 @@ mod tests {
                         .get(role.index().unwrap())
                         .unwrap()
                         .get_encoded(),
-                    &associated_data_for_report_share(task_id, nonce, &[]),
+                    &associated_data_for_report_share(task_id, report_metadata),
                 )
             })
             .collect::<Result<_, _>>()
             .unwrap();
 
-        Report::new(task_id, nonce, Vec::new(), encrypted_input_shares)
+        Report::new(task_id, report_metadata.clone(), encrypted_input_shares)
     }
 
     #[tokio::test]
@@ -1649,11 +1696,18 @@ mod tests {
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce, &0);
+        let report_metadata =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let transcript = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata.nonce(),
+            &0,
+        );
         let report = generate_report(
             task_id,
-            nonce,
+            &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
             &transcript.input_shares,
         );
@@ -1686,7 +1740,8 @@ mod tests {
                 > {
                     aggregation_job_id,
                     task_id,
-                    nonce,
+                    time: report.metadata().time(),
+                    nonce: report.metadata().nonce(),
                     ord: 0,
                     state: ReportAggregationState::Start,
                 })

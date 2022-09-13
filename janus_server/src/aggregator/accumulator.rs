@@ -72,14 +72,14 @@ where
         }
     }
 
-    /// Update the in-memory accumulators with the provided output share and report nonce.
+    /// Update the in-memory accumulators with the provided output share and report timestamp.
     pub(super) fn update(
         &mut self,
         output_share: &A::OutputShare,
+        report_time: Time,
         nonce: Nonce,
     ) -> Result<(), datastore::Error> {
-        let key = nonce
-            .time()
+        let key = report_time
             .to_batch_unit_interval_start(self.min_batch_duration)
             .map_err(|e| datastore::Error::User(e.into()))?;
         if let Some(accumulation) = self.accumulations.get_mut(&key) {

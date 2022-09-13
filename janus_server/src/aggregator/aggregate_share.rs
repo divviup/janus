@@ -466,7 +466,9 @@ mod tests {
     use assert_matches::assert_matches;
     use http::StatusCode;
     use janus_core::{
-        message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId},
+        message::{
+            Duration, HpkeCiphertext, HpkeConfigId, Interval, Report, ReportMetadata, Role, TaskId,
+        },
         test_util::{
             dummy_vdaf::{AggregateShare, AggregationParam, OutputShare},
             install_test_trace_subscriber,
@@ -523,9 +525,14 @@ mod tests {
                     )
                     .await?;
 
-                    let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-                    tx.put_client_report(&Report::new(task_id, nonce, Vec::new(), Vec::new()))
-                        .await?;
+                    let report_metadata =
+                        ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+                    tx.put_client_report(&Report::new(
+                        task_id,
+                        report_metadata.clone(),
+                        Vec::new(),
+                    ))
+                    .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
@@ -533,7 +540,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce,
+                        time: report_metadata.time(),
+                        nonce: report_metadata.nonce(),
                         ord: 0,
                         state: ReportAggregationState::Finished(OutputShare()),
                     })
@@ -732,9 +740,14 @@ mod tests {
                     )
                     .await?;
 
-                    let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-                    tx.put_client_report(&Report::new(task_id, nonce, Vec::new(), Vec::new()))
-                        .await?;
+                    let report_metadata =
+                        ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+                    tx.put_client_report(&Report::new(
+                        task_id,
+                        report_metadata.clone(),
+                        Vec::new(),
+                    ))
+                    .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<
                         VERIFY_KEY_LENGTH,
@@ -742,7 +755,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce,
+                        time: report_metadata.time(),
+                        nonce: report_metadata.nonce(),
                         ord: 0,
                         state: ReportAggregationState::Finished(OutputShare()),
                     })
@@ -875,16 +889,23 @@ mod tests {
                     // We need to have some report aggregations present, so that our collect job
                     // can be picked up and the anti-replay check has something to check.
                     for i in 0..10 {
-                        let nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-                        tx.put_client_report(&Report::new(task_id, nonce, vec![], vec![]))
-                            .await?;
+                        let report_metadata =
+                            ReportMetadata::generate(&clock, task.min_batch_duration, vec![])
+                                .unwrap();
+                        tx.put_client_report(&Report::new(
+                            task_id,
+                            report_metadata.clone(),
+                            vec![],
+                        ))
+                        .await?;
                         tx.put_report_aggregation(&ReportAggregation::<
                             VERIFY_KEY_LENGTH,
                             dummy_vdaf::Vdaf,
                         > {
                             aggregation_job_id,
                             task_id,
-                            nonce,
+                            time: report_metadata.time(),
+                            nonce: report_metadata.nonce(),
                             ord: i,
                             state: ReportAggregationState::Finished(OutputShare()),
                         })

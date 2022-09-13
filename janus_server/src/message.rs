@@ -5,7 +5,7 @@ use base64::display::Base64Display;
 use derivative::Derivative;
 use janus_core::{
     hpke::{associated_data_for_aggregate_share, associated_data_for_report_share},
-    message::{Extension, HpkeCiphertext, Interval, Nonce, NonceChecksum, TaskId},
+    message::{HpkeCiphertext, Interval, Nonce, NonceChecksum, ReportMetadata, TaskId, Time},
 };
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
@@ -19,34 +19,30 @@ use std::{
 /// PPM protocol message representing one aggregator's share of a single client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportShare {
-    pub nonce: Nonce,
-    pub extensions: Vec<Extension>,
+    pub metadata: ReportMetadata,
     pub encrypted_input_share: HpkeCiphertext,
 }
 
 impl ReportShare {
     pub(crate) fn associated_data(&self, task_id: TaskId) -> Vec<u8> {
-        associated_data_for_report_share(task_id, self.nonce, &self.extensions)
+        associated_data_for_report_share(task_id, &self.metadata)
     }
 }
 
 impl Encode for ReportShare {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.nonce.encode(bytes);
-        encode_u16_items(bytes, &(), &self.extensions);
+        self.metadata.encode(bytes);
         self.encrypted_input_share.encode(bytes);
     }
 }
 
 impl Decode for ReportShare {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let nonce = Nonce::decode(bytes)?;
-        let extensions = decode_u16_items(&(), bytes)?;
+        let metadata = ReportMetadata::decode(bytes)?;
         let encrypted_input_share = HpkeCiphertext::decode(bytes)?;
 
         Ok(Self {
-            nonce,
-            extensions,
+            metadata,
             encrypted_input_share,
         })
     }
@@ -400,15 +396,13 @@ impl Decode for AggregateShareResp {
 
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use super::{Nonce, TaskId};
-    use janus_core::message::{Report, Time};
-    use rand::{thread_rng, Rng};
+    use super::*;
+    use janus_core::message::{Report, ReportMetadata};
 
     pub fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
         Report::new(
             task_id,
-            Nonce::new(when, thread_rng().gen()),
-            Vec::new(),
+            ReportMetadata::new(when, Nonce::generate(), Vec::new()),
             Vec::new(),
         )
     }
@@ -417,7 +411,7 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use janus_core::message::{Duration, ExtensionType, HpkeConfigId, Time};
+    use janus_core::message::{Duration, Extension, ExtensionType, HpkeConfigId, Time};
 
     fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
     where
@@ -438,19 +432,12 @@ mod tests {
         roundtrip_encoding(&[
             (
                 PrepareStep {
-                    nonce: Nonce::new(
-                        Time::from_seconds_since_epoch(54372),
-                        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                    ),
+                    nonce: Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     result: PrepareStepResult::Continued(Vec::from("012345")),
                 },
                 concat!(
-                    concat!(
-                        // nonce
-                        "000000000000D464",                 // time
-                        "0102030405060708090a0b0c0d0e0f10", // rand
-                    ),
-                    "00", // prepare_step_result
+                    "0102030405060708090a0b0c0d0e0f10", // nonce
+                    "00",                               // prepare_step_result
                     concat!(
                         // vdaf_msg
                         "0006",         // length
@@ -460,34 +447,23 @@ mod tests {
             ),
             (
                 PrepareStep {
-                    nonce: Nonce::new(
-                        Time::from_seconds_since_epoch(12345),
-                        [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-                    ),
+                    nonce: Nonce::new([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     result: PrepareStepResult::Finished,
                 },
                 concat!(
-                    concat!(
-                        // nonce
-                        "0000000000003039",                 // time
-                        "100f0e0d0c0b0a090807060504030201", // rand
-                    ),
-                    "01", // prepare_step_result
+                    "100f0e0d0c0b0a090807060504030201", // nonce
+                    "01",                               // prepare_step_result
                 ),
             ),
             (
                 PrepareStep {
-                    nonce: Nonce::new(Time::from_seconds_since_epoch(345078), [255; 16]),
+                    nonce: Nonce::new([255; 16]),
                     result: PrepareStepResult::Failed(ReportShareError::VdafPrepError),
                 },
                 concat!(
-                    concat!(
-                        // nonce
-                        "00000000000543F6",                 // time
-                        "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // rand
-                    ),
-                    "02", // prepare_step_result
-                    "05", // report_share_error
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // nonce
+                    "02",                               // prepare_step_result
+                    "05",                               // report_share_error
                 ),
             ),
         ])
@@ -535,11 +511,11 @@ mod tests {
                 agg_param: Vec::from("012345"),
                 report_shares: vec![
                     ReportShare {
-                        nonce: Nonce::new(
+                        metadata: ReportMetadata::new(
                             Time::from_seconds_since_epoch(54321),
-                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                            Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                            vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                         ),
-                        extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                         encrypted_input_share: HpkeCiphertext::new(
                             HpkeConfigId::from(42),
                             Vec::from("012345"),
@@ -547,11 +523,11 @@ mod tests {
                         ),
                     },
                     ReportShare {
-                        nonce: Nonce::new(
+                        metadata: ReportMetadata::new(
                             Time::from_seconds_since_epoch(73542),
-                            [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+                            Nonce::new([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                            vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
                         ),
-                        extensions: vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
                         encrypted_input_share: HpkeCiphertext::new(
                             HpkeConfigId::from(13),
                             Vec::from("abce"),
@@ -573,19 +549,18 @@ mod tests {
                     "0062", // length
                     concat!(
                         concat!(
-                            // nonce
                             "000000000000D431",                 // time
-                            "0102030405060708090a0b0c0d0e0f10", // rand
-                        ),
-                        concat!(
-                            // extensions
-                            "0008", // length
+                            "0102030405060708090a0b0c0d0e0f10", // nonce
                             concat!(
-                                "0000", // extension_type
+                                // extensions
+                                "0008", // length
                                 concat!(
-                                    // extension_data
-                                    "0004",     // length
-                                    "30313233", // opaque data
+                                    "0000", // extension_type
+                                    concat!(
+                                        // extension_data
+                                        "0004",     // length
+                                        "30313233", // opaque data
+                                    ),
                                 ),
                             ),
                         ),
@@ -606,19 +581,18 @@ mod tests {
                     ),
                     concat!(
                         concat!(
-                            // nonce
                             "0000000000011F46",                 // time
-                            "100f0e0d0c0b0a090807060504030201", // rand
-                        ),
-                        concat!(
-                            // extensions
-                            "0008", // length
+                            "100f0e0d0c0b0a090807060504030201", // nonce
                             concat!(
-                                "0000", // extension_type
+                                // extensions
+                                "0008", // length
                                 concat!(
-                                    // extension_data
-                                    "0004",     // length
-                                    "33323130", // opaque data
+                                    "0000", // extension_type
+                                    concat!(
+                                        // extension_data
+                                        "0004",     // length
+                                        "33323130", // opaque data
+                                    ),
                                 ),
                             ),
                         ),
@@ -657,31 +631,25 @@ mod tests {
                 AggregateInitializeResp {
                     prepare_steps: vec![
                         PrepareStep {
-                            nonce: Nonce::new(
-                                Time::from_seconds_since_epoch(54372),
-                                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                            ),
+                            nonce: Nonce::new([
+                                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                            ]),
                             result: PrepareStepResult::Continued(Vec::from("012345")),
                         },
                         PrepareStep {
-                            nonce: Nonce::new(
-                                Time::from_seconds_since_epoch(12345),
-                                [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-                            ),
+                            nonce: Nonce::new([
+                                16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                            ]),
                             result: PrepareStepResult::Finished,
                         },
                     ],
                 },
                 concat!(concat!(
-                    //prepare_steps
-                    "003A", // length
+                    // prepare_steps
+                    "002A", // length
                     concat!(
-                        concat!(
-                            // nonce
-                            "000000000000D464",                 // time
-                            "0102030405060708090a0b0c0d0e0f10", // rand
-                        ),
-                        "00", // prepare_step_result
+                        "0102030405060708090a0b0c0d0e0f10", // nonce
+                        "00",                               // prepare_step_result
                         concat!(
                             // payload
                             "0006",         // length
@@ -689,12 +657,8 @@ mod tests {
                         ),
                     ),
                     concat!(
-                        concat!(
-                            // nonce
-                            "0000000000003039",                 // time
-                            "100f0e0d0c0b0a090807060504030201", // rand
-                        ),
-                        "01", // prepare_step_result
+                        "100f0e0d0c0b0a090807060504030201", // nonce
+                        "01",                               // prepare_step_result
                     ),
                 )),
             ),
@@ -709,17 +673,11 @@ mod tests {
                 job_id: AggregationJobId([u8::MAX; 32]),
                 prepare_steps: vec![
                     PrepareStep {
-                        nonce: Nonce::new(
-                            Time::from_seconds_since_epoch(54372),
-                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                        ),
+                        nonce: Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                         result: PrepareStepResult::Continued(Vec::from("012345")),
                     },
                     PrepareStep {
-                        nonce: Nonce::new(
-                            Time::from_seconds_since_epoch(12345),
-                            [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-                        ),
+                        nonce: Nonce::new([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                         result: PrepareStepResult::Finished,
                     },
                 ],
@@ -729,14 +687,10 @@ mod tests {
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
                 concat!(
                     // prepare_steps
-                    "003A", // length
+                    "002A", // length
                     concat!(
-                        concat!(
-                            // nonce
-                            "000000000000D464",                 // time
-                            "0102030405060708090a0b0c0d0e0f10", // rand
-                        ),
-                        "00", // prepare_step_result
+                        "0102030405060708090a0b0c0d0e0f10", // nonce
+                        "00",                               // prepare_step_result
                         concat!(
                             // payload
                             "0006",         // length
@@ -744,12 +698,8 @@ mod tests {
                         ),
                     ),
                     concat!(
-                        concat!(
-                            // nonce
-                            "0000000000003039",                 // time
-                            "100f0e0d0c0b0a090807060504030201", // rand
-                        ),
-                        "01", // prepare_step_result
+                        "100f0e0d0c0b0a090807060504030201", // nonce
+                        "01",                               // prepare_step_result
                     )
                 ),
             ),
@@ -772,31 +722,25 @@ mod tests {
                 AggregateContinueResp {
                     prepare_steps: vec![
                         PrepareStep {
-                            nonce: Nonce::new(
-                                Time::from_seconds_since_epoch(54372),
-                                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                            ),
+                            nonce: Nonce::new([
+                                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                            ]),
                             result: PrepareStepResult::Continued(Vec::from("012345")),
                         },
                         PrepareStep {
-                            nonce: Nonce::new(
-                                Time::from_seconds_since_epoch(12345),
-                                [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-                            ),
+                            nonce: Nonce::new([
+                                16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                            ]),
                             result: PrepareStepResult::Finished,
                         },
                     ],
                 },
                 concat!(concat!(
-                    //prepare_steps
-                    "003A", // length
+                    // prepare_steps
+                    "002A", // length
                     concat!(
-                        concat!(
-                            // nonce
-                            "000000000000D464",                 // time
-                            "0102030405060708090a0b0c0d0e0f10", // rand
-                        ),
-                        "00", // prepare_step_result
+                        "0102030405060708090a0b0c0d0e0f10", // nonce
+                        "00",                               // prepare_step_result
                         concat!(
                             // payload
                             "0006",         // length
@@ -804,12 +748,8 @@ mod tests {
                         ),
                     ),
                     concat!(
-                        concat!(
-                            // nonce
-                            "0000000000003039",                 // time
-                            "100f0e0d0c0b0a090807060504030201", // rand
-                        ),
-                        "01", // prepare_step_result
+                        "100f0e0d0c0b0a090807060504030201", // nonce
+                        "01",                               // prepare_step_result
                     ),
                 )),
             ),
