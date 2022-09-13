@@ -185,7 +185,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     {
         let mut map = MetadataMap::with_capacity(otlp_config.metadata.len());
         for (key, value) in otlp_config.metadata.iter() {
-            map.insert(MetadataKey::from_str(key)?, MetadataValue::from_str(value)?);
+            map.insert(MetadataKey::from_str(key)?, MetadataValue::try_from(value)?);
         }
 
         let tracer =
