@@ -195,7 +195,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     .unwrap();
     let collector_params = CollectorParameters::new(
         task_id,
-        aggregator_endpoints[0].clone(),
+        aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
         AuthenticationToken::from(
             leader_task
                 .primary_collector_auth_token()
