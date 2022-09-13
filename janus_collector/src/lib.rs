@@ -25,6 +25,7 @@ use std::{
 use tokio::time::{sleep, Instant};
 use url::Url;
 
+/// Errors that may occur when performing collections.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("HTTP client error: {0}")]
@@ -143,6 +144,7 @@ impl CollectorParameters {
     }
 }
 
+/// Construct a [`reqwest::Client`] suitable for use in a DAP [`Collector`].
 pub fn default_http_client() -> Result<reqwest::Client, Error> {
     Ok(reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
