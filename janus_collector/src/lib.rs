@@ -84,25 +84,25 @@ pub enum Error {
     Http(StatusCode),
     #[error("URL parse: {0}")]
     Url(#[from] url::ParseError),
-    #[error("Missing Location header in See Other response")]
+    #[error("missing Location header in See Other response")]
     MissingLocationHeader,
-    #[error("Invalid bytes in header")]
+    #[error("invalid bytes in header")]
     InvalidHeader(#[from] ToStrError),
-    #[error("Wrong Content-Type header: {0:?}")]
+    #[error("wrong Content-Type header: {0:?}")]
     BadContentType(Option<HeaderValue>),
-    #[error("Invalid Retry-After header value: {0}")]
+    #[error("invalid Retry-After header value: {0}")]
     InvalidRetryAfterHeader(#[from] FromHeaderValueError),
-    #[error("Codec error: {0}")]
+    #[error("codec error: {0}")]
     Codec(#[from] prio::codec::CodecError),
-    #[error("Aggregate share decoding error")]
+    #[error("aggregate share decoding error")]
     AggregateShareDecode,
-    #[error("Expected two aggregate shares, got {0}")]
+    #[error("expected two aggregate shares, got {0}")]
     AggregateShareCount(usize),
     #[error("VDAF error: {0}")]
     Vdaf(#[from] prio::vdaf::VdafError),
     #[error("HPKE error: {0}")]
     Hpke(#[from] janus_core::hpke::Error),
-    #[error("Timed out waiting for collection to finish")]
+    #[error("timed out waiting for collection to finish")]
     CollectPollTimeout,
 }
 

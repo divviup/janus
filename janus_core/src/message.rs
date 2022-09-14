@@ -1038,7 +1038,7 @@ impl Decode for Report {
     }
 }
 
-/// PPM protocol message representing a request from the collector to the leader to provide
+/// DAP protocol message representing a request from the collector to the leader to provide
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
@@ -1076,7 +1076,7 @@ impl Decode for CollectReq {
     }
 }
 
-/// PPM protocol message representing a leader's response to the collector's request to provide
+/// DAP protocol message representing a leader's response to the collector's request to provide
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectResp {

@@ -23,11 +23,11 @@ use url::Url;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Invalid parameter {0}")]
+    #[error("invalid parameter {0}")]
     InvalidParameter(&'static str),
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
-    #[error("Codec error: {0}")]
+    #[error("codec error: {0}")]
     Codec(#[from] prio::codec::CodecError),
     #[error("HTTP response status {0}")]
     Http(StatusCode),
