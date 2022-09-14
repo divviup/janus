@@ -9,8 +9,8 @@ use janus_core::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
         Interval, Role, TaskId,
     },
+    task::{url_ensure_trailing_slash, AuthenticationToken},
 };
-use ring::constant_time;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     array::TryFromSliceError,
@@ -18,9 +18,6 @@ use std::{
     fmt::{self, Formatter},
 };
 use url::Url;
-
-/// HTTP header where auth tokens are provided in inter-aggregator messages.
-pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 
 /// Errors that methods and functions in this module may return.
 #[derive(Debug, thiserror::Error)]
@@ -173,36 +170,6 @@ impl<const L: usize> TryFrom<&SecretBytes> for VerifyKey<L> {
     }
 }
 
-/// An authentication (bearer) token used by aggregators for aggregator-to-aggregator &
-/// collector-to-aggregator authentication.
-#[derive(Clone)]
-pub struct AuthenticationToken(Vec<u8>);
-
-impl From<Vec<u8>> for AuthenticationToken {
-    fn from(token: Vec<u8>) -> Self {
-        Self(token)
-    }
-}
-
-impl AuthenticationToken {
-    /// Returns a view of the aggregator authentication token as a byte slice.
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl PartialEq for AuthenticationToken {
-    fn eq(&self, other: &Self) -> bool {
-        // We attempt constant-time comparisons of the token data. Note that this function still
-        // leaks whether the lengths of the tokens are equal -- this is acceptable because we expect
-        // the content of the tokens to provide enough randomness that needs to be guessed even if
-        // the length is known.
-        constant_time::verify_slices_are_equal(&self.0, &other.0).is_ok()
-    }
-}
-
-impl Eq for AuthenticationToken {}
-
 /// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
@@ -282,9 +249,7 @@ impl Task {
         // path segments into these endpoints & the Url::join implementation is persnickety about
         // the slash at the end of the path.
         for url in &mut aggregator_endpoints {
-            if !url.as_str().ends_with('/') {
-                url.set_path(&format!("{}/", url.path()));
-            }
+            url_ensure_trailing_slash(url);
         }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).

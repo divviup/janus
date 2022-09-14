@@ -1,4 +1,4 @@
-//! PPM protocol client
+//! DAP protocol client
 
 use backoff::ExponentialBackoff;
 use derivative::Derivative;
@@ -8,6 +8,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     message::{Duration, HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
     retries::{http_request_exponential_backoff, retry_http_request},
+    task::url_ensure_trailing_slash,
     time::Clock,
 };
 use prio::{
@@ -46,11 +47,11 @@ static CLIENT_USER_AGENT: &str = concat!(
     "client"
 );
 
-/// The PPM client's view of task parameters.
+/// The DAP client's view of task parameters.
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct ClientParameters {
-    /// Unique identifier for the task
+    /// Unique identifier for the task.
     task_id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
@@ -89,9 +90,7 @@ impl ClientParameters {
         // path segments into these endpoints & the Url::join implementation is persnickety about
         // the slash at the end of the path.
         for url in &mut aggregator_endpoints {
-            if !url.as_str().ends_with('/') {
-                url.set_path(&format!("{}/", url.path()));
-            }
+            url_ensure_trailing_slash(url);
         }
 
         Self {
@@ -158,14 +157,14 @@ pub async fn aggregator_hpke_config(
     ))?)
 }
 
-/// Construct a [`reqwest::Client`] suitable for use in a PPM [`Client`].
+/// Construct a [`reqwest::Client`] suitable for use in a DAP [`Client`].
 pub fn default_http_client() -> Result<reqwest::Client, Error> {
     Ok(reqwest::Client::builder()
         .user_agent(CLIENT_USER_AGENT)
         .build()?)
 }
 
-/// A PPM client.
+/// A DAP client.
 #[derive(Debug)]
 pub struct Client<V: vdaf::Client, C>
 where
@@ -190,10 +189,7 @@ where
         http_client: &reqwest::Client,
         leader_hpke_config: HpkeConfig,
         helper_hpke_config: HpkeConfig,
-    ) -> Self
-    where
-        for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
-    {
+    ) -> Self {
         Self {
             parameters,
             vdaf_client,
@@ -208,7 +204,7 @@ where
     /// to be uploaded.
     fn prepare_report(&self, measurement: &V::Measurement) -> Result<Report, Error> {
         let input_shares = self.vdaf_client.shard(measurement)?;
-        assert_eq!(input_shares.len(), 2); // PPM only supports VDAFs using two aggregators.
+        assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
         let nonce =
             Nonce::generate(&self.clock, self.parameters.min_batch_duration).map_err(|_| {

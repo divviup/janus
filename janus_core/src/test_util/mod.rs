@@ -19,9 +19,16 @@ pub struct VdafTranscript<const L: usize, V: vdaf::Aggregator<L>>
 where
     for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
+    /// The measurement's input shares, from the sharding algorithm.
     pub input_shares: Vec<V::InputShare>,
+    /// Prepare transitions sent throughout the protocol run. The outer `Vec` is indexed by
+    /// aggregator, and the inner `Vec`s are indexed by VDAF round.
     pub prepare_transitions: Vec<Vec<PrepareTransition<V, L>>>,
+    /// The prepare messages broadcast to all aggregators prior to each continuation round of the
+    /// VDAF.
     pub prepare_messages: Vec<V::PrepareMessage>,
+    /// The aggregate shares from each aggregator.
+    pub aggregate_shares: Vec<V::AggregateShare>,
 }
 
 /// run_vdaf runs a VDAF state machine from sharding through to generating an output share,
@@ -61,19 +68,27 @@ where
         // Gather messages from last round & combine them into next round's message; if any
         // participants have reached a terminal state (Finish or Fail), we are done.
         let mut prep_shares = Vec::new();
+        let mut agg_shares = Vec::new();
         for pts in &prep_trans {
             match pts.last().unwrap() {
                 PrepareTransition::<V, L>::Continue(_, prep_share) => {
                     prep_shares.push(prep_share.clone())
                 }
-                _ => {
-                    return VdafTranscript {
-                        input_shares,
-                        prepare_transitions: prep_trans,
-                        prepare_messages: prep_msgs,
-                    }
+                PrepareTransition::Finish(output_share) => {
+                    agg_shares.push(
+                        vdaf.aggregate(aggregation_param, [output_share.clone()].into_iter())
+                            .unwrap(),
+                    );
                 }
             }
+        }
+        if !agg_shares.is_empty() {
+            return VdafTranscript {
+                input_shares,
+                prepare_transitions: prep_trans,
+                prepare_messages: prep_msgs,
+                aggregate_shares: agg_shares,
+            };
         }
         let prep_msg = vdaf.prepare_preprocess(prep_shares).unwrap();
         prep_msgs.push(prep_msg.clone());
