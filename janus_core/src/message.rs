@@ -1,4 +1,4 @@
-//! PPM protocol message definitions with serialization/deserialization support.
+//! DAP protocol message definitions with serialization/deserialization support.
 
 use crate::{hpke::associated_data_for_report_share, time::Clock};
 use anyhow::anyhow;
@@ -33,7 +33,7 @@ pub enum Error {
 /// Number of milliseconds per second.
 const USEC_PER_SEC: u64 = 1_000_000;
 
-/// PPM protocol message representing a duration with a resolution of seconds.
+/// DAP protocol message representing a duration with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Duration(u64);
 
@@ -100,7 +100,7 @@ impl Display for Duration {
     }
 }
 
-/// PPM protocol message representing an instant in time with a resolution of seconds.
+/// DAP protocol message representing an instant in time with a resolution of seconds.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Time(u64);
 
@@ -193,7 +193,7 @@ impl Decode for Time {
     }
 }
 
-/// PPM protocol message representing a half-open interval of time with a resolution of seconds;
+/// DAP protocol message representing a half-open interval of time with a resolution of seconds;
 /// the start of the interval is included while the end of the interval is excluded.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct Interval {
@@ -358,62 +358,45 @@ impl ToSql for Interval {
     to_sql_checked!();
 }
 
-/// PPM protocol message representing a nonce uniquely identifying a client report.
+/// DAP protocol message representing a nonce uniquely identifying a client report.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Nonce {
-    /// The time at which the report was generated.
-    time: Time,
-    /// A randomly generated value.
-    rand: [u8; 16],
-}
+pub struct Nonce([u8; 16]);
 
 impl Nonce {
-    /// Construct a nonce with the given time and random parts.
-    pub fn new(time: Time, rand: [u8; 16]) -> Nonce {
-        Nonce { time, rand }
+    /// Construct a nonce with the given bytes.
+    pub fn new(rand: [u8; 16]) -> Nonce {
+        Nonce(rand)
     }
 
-    /// Generate a fresh nonce based on the current time.
-    pub fn generate<C: Clock>(clock: &C, min_batch_duration: Duration) -> Result<Nonce, Error> {
-        Ok(Nonce {
-            time: clock
-                .now()
-                .to_batch_unit_interval_start(min_batch_duration)?,
-            rand: rand::random(),
-        })
-    }
-
-    /// Get the time component of a nonce.
-    pub fn time(&self) -> Time {
-        self.time
+    /// Generate a fresh, random nonce.
+    pub fn generate() -> Nonce {
+        Nonce(rand::random())
     }
 
     /// Get the random component of a nonce.
     pub fn rand(&self) -> [u8; 16] {
-        self.rand
+        self.0
     }
 }
 
 impl Display for Nonce {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}", self.time, hex::encode(self.rand))
+        write!(f, "{}", hex::encode(self.0))
     }
 }
 
 impl Encode for Nonce {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.time.encode(bytes);
-        bytes.extend_from_slice(&self.rand);
+        bytes.extend_from_slice(&self.0);
     }
 }
 
 impl Decode for Nonce {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let time = Time::decode(bytes)?;
         let mut rand = [0; 16];
         bytes.read_exact(&mut rand)?;
 
-        Ok(Self { time, rand })
+        Ok(Self(rand))
     }
 }
 
@@ -468,7 +451,7 @@ impl Decode for NonceChecksum {
     }
 }
 
-/// PPM protocol message representing the different roles that participants can adopt.
+/// DAP protocol message representing the different roles that participants can adopt.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Role {
@@ -544,7 +527,7 @@ impl Display for Role {
     }
 }
 
-/// PPM protocol message representing an identifier for an HPKE config.
+/// DAP protocol message representing an identifier for an HPKE config.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HpkeConfigId(u8);
 
@@ -578,7 +561,7 @@ impl From<HpkeConfigId> for u8 {
     }
 }
 
-/// PPM protocol message representing an identifier for a PPM task.
+/// DAP protocol message representing an identifier for a PPM task.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TaskId([u8; Self::ENCODED_LEN]);
 
@@ -638,7 +621,7 @@ impl TaskId {
     }
 }
 
-/// PPM protocol message representing an HPKE key encapsulation mechanism.
+/// DAP protocol message representing an HPKE key encapsulation mechanism.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum HpkeKemId {
@@ -662,7 +645,7 @@ impl Decode for HpkeKemId {
     }
 }
 
-/// PPM protocol message representing an HPKE key derivation function.
+/// DAP protocol message representing an HPKE key derivation function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum HpkeKdfId {
@@ -688,7 +671,7 @@ impl Decode for HpkeKdfId {
     }
 }
 
-/// PPM protocol message representing an HPKE AEAD.
+/// DAP protocol message representing an HPKE AEAD.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum HpkeAeadId {
@@ -714,7 +697,7 @@ impl Decode for HpkeAeadId {
     }
 }
 
-/// PPM protocol message representing an arbitrary extension included in a client report.
+/// DAP protocol message representing an arbitrary extension included in a client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Extension {
     extension_type: ExtensionType,
@@ -750,7 +733,7 @@ impl Decode for Extension {
     }
 }
 
-/// PPM protocol message representing the type of an extension included in a client report.
+/// DAP protocol message representing the type of an extension included in a client report.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
 #[repr(u16)]
 pub enum ExtensionType {
@@ -772,7 +755,7 @@ impl Decode for ExtensionType {
     }
 }
 
-/// PPM protocol message representing an HPKE ciphertext.
+/// DAP protocol message representing an HPKE ciphertext.
 #[derive(Clone, Derivative, Eq, PartialEq)]
 #[derivative(Debug)]
 pub struct HpkeCiphertext {
@@ -838,7 +821,7 @@ impl Decode for HpkeCiphertext {
     }
 }
 
-/// PPM protocol message representing an HPKE public key.
+/// DAP protocol message representing an HPKE public key.
 // TODO(#230): refactor HpkePublicKey & HpkeConfig to simplify usage
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkePublicKey(pub(crate) Vec<u8>);
@@ -874,7 +857,7 @@ impl Debug for HpkePublicKey {
     }
 }
 
-/// PPM protocol message representing an HPKE config.
+/// DAP protocol message representing an HPKE config.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkeConfig {
     id: HpkeConfigId,
@@ -959,12 +942,94 @@ impl Decode for HpkeConfig {
     }
 }
 
-/// PPM protocol message representing a client report.
+/// DAP protocol message representing client report metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReportMetadata {
+    time: Time,
+    nonce: Nonce,
+    extensions: Vec<Extension>,
+}
+
+impl ReportMetadata {
+    /// Construct report metadata from its components.
+    pub fn new(time: Time, nonce: Nonce, extensions: Vec<Extension>) -> Self {
+        Self {
+            time,
+            nonce,
+            extensions,
+        }
+    }
+
+    /// Generate a fresh report metadata based on the current time.
+    pub fn generate<C: Clock>(
+        clock: &C,
+        min_batch_duration: Duration,
+        extensions: Vec<Extension>,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            time: clock
+                .now()
+                .to_batch_unit_interval_start(min_batch_duration)?,
+            nonce: Nonce::generate(),
+            extensions,
+        })
+    }
+
+    /// Get this report's timestamp.
+    pub fn time(&self) -> Time {
+        self.time
+    }
+
+    /// Get this report's nonce.
+    pub fn nonce(&self) -> Nonce {
+        self.nonce
+    }
+
+    /// Set this report's nonce.
+    #[cfg(feature = "test-util")]
+    pub fn set_nonce(&mut self, nonce: Nonce) {
+        self.nonce = nonce
+    }
+
+    /// Get this report's extensions.
+    pub fn extensions(&self) -> &[Extension] {
+        &self.extensions
+    }
+}
+
+impl Encode for ReportMetadata {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.time.encode(bytes);
+        self.nonce.encode(bytes);
+        encode_u16_items(bytes, &(), &self.extensions);
+    }
+}
+
+impl Decode for ReportMetadata {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let time = Time::decode(bytes)?;
+        let nonce = Nonce::decode(bytes)?;
+        let extensions = decode_u16_items(&(), bytes)?;
+
+        Ok(Self {
+            time,
+            nonce,
+            extensions,
+        })
+    }
+}
+
+impl Display for ReportMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.time, self.nonce)
+    }
+}
+
+/// DAP protocol message representing a client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
     task_id: TaskId,
-    nonce: Nonce,
-    extensions: Vec<Extension>,
+    metadata: ReportMetadata,
     encrypted_input_shares: Vec<HpkeCiphertext>,
 }
 
@@ -975,14 +1040,12 @@ impl Report {
     /// Construct a report from its components.
     pub fn new(
         task_id: TaskId,
-        nonce: Nonce,
-        extensions: Vec<Extension>,
+        metadata: ReportMetadata,
         encrypted_input_shares: Vec<HpkeCiphertext>,
-    ) -> Report {
-        Report {
+    ) -> Self {
+        Self {
             task_id,
-            nonce,
-            extensions,
+            metadata,
             encrypted_input_shares,
         }
     }
@@ -992,14 +1055,9 @@ impl Report {
         self.task_id
     }
 
-    /// Get this report's nonce.
-    pub fn nonce(&self) -> Nonce {
-        self.nonce
-    }
-
-    /// Get this report's extensions.
-    pub fn extensions(&self) -> &[Extension] {
-        &self.extensions
+    /// Get this report's metadata.
+    pub fn metadata(&self) -> &ReportMetadata {
+        &self.metadata
     }
 
     /// Get this report's encrypted input shares.
@@ -1009,15 +1067,14 @@ impl Report {
 
     /// Get the authenticated additional data associated with this report.
     pub fn associated_data(&self) -> Vec<u8> {
-        associated_data_for_report_share(self.task_id, self.nonce, &self.extensions)
+        associated_data_for_report_share(self.task_id, &self.metadata)
     }
 }
 
 impl Encode for Report {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
-        self.nonce.encode(bytes);
-        encode_u16_items(bytes, &(), &self.extensions);
+        self.metadata.encode(bytes);
         encode_u16_items(bytes, &(), &self.encrypted_input_shares);
     }
 }
@@ -1025,14 +1082,12 @@ impl Encode for Report {
 impl Decode for Report {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
-        let timestamp = Nonce::decode(bytes)?;
-        let extensions = decode_u16_items(&(), bytes)?;
+        let metadata = ReportMetadata::decode(bytes)?;
         let encrypted_input_shares = decode_u16_items(&(), bytes)?;
 
         Ok(Self {
             task_id,
-            nonce: timestamp,
-            extensions,
+            metadata,
             encrypted_input_shares,
         })
     }
@@ -1109,7 +1164,7 @@ mod tests {
     use super::{
         CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeAeadId, HpkeCiphertext,
         HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval, Nonce, Report,
-        Role, TaskId, Time,
+        ReportMetadata, Role, TaskId, Time,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
@@ -1209,24 +1264,12 @@ mod tests {
     fn roundtrip_nonce() {
         roundtrip_encoding(&[
             (
-                Nonce::new(
-                    Time::from_seconds_since_epoch(12345),
-                    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                ),
-                concat!(
-                    "0000000000003039",                 // time
-                    "0102030405060708090a0b0c0d0e0f10", // rand
-                ),
+                Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                "0102030405060708090a0b0c0d0e0f10", // nonce
             ),
             (
-                Nonce::new(
-                    Time::from_seconds_since_epoch(54321),
-                    [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
-                ),
-                concat!(
-                    "000000000000D431",                 // time
-                    "100f0e0d0c0b0a090807060504030201", // rand
-                ),
+                Nonce::new([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                "100f0e0d0c0b0a090807060504030201", // nonce
             ),
         ])
     }
@@ -1440,23 +1483,23 @@ mod tests {
             (
                 Report::new(
                     TaskId::new([u8::MIN; 32]),
-                    Nonce::new(
+                    ReportMetadata::new(
                         Time::from_seconds_since_epoch(12345),
-                        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                        Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                        vec![],
                     ),
-                    vec![],
                     vec![],
                 ),
                 concat!(
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
-                        // nonce
+                        // report metadata
                         "0000000000003039",                 // time
-                        "0102030405060708090a0b0c0d0e0f10", // rand
-                    ),
-                    concat!(
-                        // extensions
-                        "0000", // length
+                        "0102030405060708090a0b0c0d0e0f10", // nonce
+                        concat!(
+                            // extensions
+                            "0000", // length
+                        ),
                     ),
                     concat!(
                         // encrypted_input_shares
@@ -1467,11 +1510,11 @@ mod tests {
             (
                 Report::new(
                     TaskId::new([u8::MAX; 32]),
-                    Nonce::new(
+                    ReportMetadata::new(
                         Time::from_seconds_since_epoch(54321),
-                        [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+                        Nonce::new([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                        vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                     ),
-                    vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                     vec![
                         HpkeCiphertext::new(
                             HpkeConfigId::from(42),
@@ -1488,20 +1531,21 @@ mod tests {
                 concat!(
                     "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
                     concat!(
+                        // report metadata
                         "000000000000D431",                 // time
-                        "100f0e0d0c0b0a090807060504030201", // rand
-                    ),
-                    concat!(
-                        // extensions
-                        "0008", // length
+                        "100f0e0d0c0b0a090807060504030201", // nonce
                         concat!(
-                            "0000", // extension_type
+                            // extensions
+                            "0008", // length
                             concat!(
-                                // extension_data
-                                "0004",     // length
-                                "30313233", // opaque data
-                            ),
-                        )
+                                "0000", // extension_type
+                                concat!(
+                                    // extension_data
+                                    "0004",     // length
+                                    "30313233", // opaque data
+                                ),
+                            )
+                        ),
                     ),
                     concat!(
                         // encrypted_input_shares

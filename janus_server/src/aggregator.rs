@@ -34,8 +34,8 @@ use http::{
 use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
     message::{
-        CollectReq, CollectResp, HpkeConfig, HpkeConfigId, Interval, Nonce, NonceChecksum, Report,
-        Role, TaskId,
+        CollectReq, CollectResp, HpkeConfig, HpkeConfigId, Interval, NonceChecksum, Report,
+        ReportMetadata, Role, TaskId,
     },
     task::DAP_AUTH_HEADER,
     time::Clock,
@@ -96,10 +96,10 @@ pub enum Error {
     Message(#[from] janus_core::message::Error),
     /// Corresponds to `reportTooLate`, §3.1
     #[error("task {1:?}: stale report: {0}")]
-    ReportTooLate(Nonce, TaskId),
+    ReportTooLate(ReportMetadata, TaskId),
     /// Corresponds to `reportTooEarly`, §3.1. A report was rejected becuase the timestamp is too far in the future, §4.3.4.
     #[error("task {1:?}: report from the future: {0}")]
-    ReportTooEarly(Nonce, TaskId),
+    ReportTooEarly(ReportMetadata, TaskId),
     /// Corresponds to `unrecognizedMessage`, §3.1
     #[error("task {1:?}: unrecognized message: {0}")]
     UnrecognizedMessage(&'static str, Option<TaskId>),
@@ -1004,8 +1004,11 @@ impl VdafOps {
         let report_deadline = clock.now().add(task.tolerable_clock_skew)?;
 
         // §4.2.4: reject reports from too far in the future
-        if report.nonce().time().is_after(report_deadline) {
-            return Err(Error::ReportTooEarly(report.nonce(), report.task_id()));
+        if report.metadata().time().is_after(report_deadline) {
+            return Err(Error::ReportTooEarly(
+                report.metadata().clone(),
+                report.task_id(),
+            ));
         }
 
         // Check that we can decrypt the report. This isn't required by the spec
@@ -1019,7 +1022,7 @@ impl VdafOps {
             leader_report,
             &report.associated_data(),
         ) {
-            warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
+            warn!(report.task_id = ?report.task_id(), report.metadata = ?report.metadata(), ?err, "Report decryption failed");
             upload_decrypt_failure_counter.add(1);
             return Ok(());
         }
@@ -1029,10 +1032,10 @@ impl VdafOps {
                 let report = report.clone();
                 Box::pin(async move {
                     let (existing_client_report, conflicting_collect_jobs) = try_join!(
-                        tx.get_client_report(report.task_id(), report.nonce()),
+                        tx.get_client_report(report.task_id(), report.metadata().nonce()),
                         tx.find_collect_jobs_including_time::<L, A>(
                             report.task_id(),
-                            report.nonce().time()
+                            report.metadata().time()
                         ),
                     )?;
 
@@ -1040,7 +1043,8 @@ impl VdafOps {
                     if existing_client_report.is_some() {
                         // TODO(#34): change this error type.
                         return Err(datastore::Error::User(
-                            Error::ReportTooLate(report.nonce(), report.task_id()).into(),
+                            Error::ReportTooLate(report.metadata().clone(), report.task_id())
+                                .into(),
                         ));
                     }
 
@@ -1048,7 +1052,8 @@ impl VdafOps {
                     // that has already been collected.
                     if !conflicting_collect_jobs.is_empty() {
                         return Err(datastore::Error::User(
-                            Error::ReportTooLate(report.nonce(), report.task_id()).into(),
+                            Error::ReportTooLate(report.metadata().clone(), report.task_id())
+                                .into(),
                         ));
                     }
 
@@ -1089,7 +1094,7 @@ impl VdafOps {
         // error "unrecognizedMessage". (§4.4.4.1)
         let mut seen_nonces = HashSet::with_capacity(req.report_shares.len());
         for share in &req.report_shares {
-            if !seen_nonces.insert(share.nonce) {
+            if !seen_nonces.insert(share.metadata.nonce()) {
                 return Err(Error::UnrecognizedMessage(
                     "aggregate request contains duplicate nonce",
                     Some(task_id),
@@ -1136,7 +1141,7 @@ impl VdafOps {
                 .map_err(|err| {
                     warn!(
                         ?task_id,
-                        nonce = %report_share.nonce,
+                        metadata = %report_share.metadata,
                         %err,
                         "Couldn't decrypt helper's report share"
                     );
@@ -1153,7 +1158,7 @@ impl VdafOps {
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext)
                     .map_err(|err| {
-                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode helper's input share");
+                        warn!(?task_id, metadata = %report_share.metadata, %err, "Couldn't decode helper's input share");
                         aggregate_step_failure_counters.input_share_decode_failure.add(1);
                         ReportShareError::VdafPrepError
                     })
@@ -1168,11 +1173,11 @@ impl VdafOps {
                         verify_key.as_bytes(),
                         Role::Helper.index().unwrap(),
                         &agg_param,
-                        &report_share.nonce.get_encoded(),
+                        &report_share.metadata.nonce().get_encoded(),
                         &input_share,
                     )
                     .map_err(|err| {
-                        warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_init report share");
+                        warn!(?task_id, nonce = %report_share.metadata.nonce(), %err, "Couldn't prepare_init report share");
                         aggregate_step_failure_counters.prepare_init_failure.add(1);
                         ReportShareError::VdafPrepError
                     })
@@ -1229,22 +1234,25 @@ impl VdafOps {
                         // Verify that we haven't seen this nonce before, and that the report isn't
                         // for a batch interval that has already started collection.
                         let (report_share_exists, conflicting_aggregate_share_jobs) = try_join!(
-                            tx.check_report_share_exists(task_id, share_data.report_share.nonce),
+                            tx.check_report_share_exists(
+                                task_id,
+                                share_data.report_share.metadata.nonce()
+                            ),
                             tx.find_aggregate_share_jobs_including_time::<L, A>(
                                 task_id,
-                                share_data.report_share.nonce.time()
+                                share_data.report_share.metadata.time()
                             ),
                         )?;
                         if report_share_exists {
                             prep_steps.push(PrepareStep {
-                                nonce: share_data.report_share.nonce,
+                                nonce: share_data.report_share.metadata.nonce(),
                                 result: PrepareStepResult::Failed(ReportShareError::ReportReplayed),
                             });
                             continue;
                         }
                         if !conflicting_aggregate_share_jobs.is_empty() {
                             prep_steps.push(PrepareStep {
-                                nonce: share_data.report_share.nonce,
+                                nonce: share_data.report_share.metadata.nonce(),
                                 result: PrepareStepResult::Failed(ReportShareError::BatchCollected),
                             });
                             continue;
@@ -1256,7 +1264,8 @@ impl VdafOps {
                         tx.put_report_aggregation(&ReportAggregation::<L, A> {
                             aggregation_job_id: req.job_id,
                             task_id,
-                            nonce: share_data.report_share.nonce,
+                            time: share_data.report_share.metadata.time(),
+                            nonce: share_data.report_share.metadata.nonce(),
                             ord: ord as i64,
                             state: share_data.agg_state.clone(),
                         })
@@ -1265,11 +1274,15 @@ impl VdafOps {
                         if let ReportAggregationState::<L, A>::Finished(ref output_share) =
                             share_data.agg_state
                         {
-                            accumulator.update(output_share, share_data.report_share.nonce)?;
+                            accumulator.update(
+                                output_share,
+                                share_data.report_share.metadata.time(),
+                                share_data.report_share.metadata.nonce(),
+                            )?;
                         }
 
                         prep_steps.push(PrepareStep {
-                            nonce: share_data.report_share.nonce,
+                            nonce: share_data.report_share.metadata.nonce(),
                             result: share_data.prep_result.clone(),
                         })
                     }
@@ -1313,7 +1326,7 @@ impl VdafOps {
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx(|tx| {
-                let (vdaf, prep_steps,prepare_step_failure_counter) =
+                let (vdaf, prep_steps, prepare_step_failure_counter) =
                     (Arc::clone(&vdaf), Arc::clone(&prep_steps), prepare_step_failure_counter.clone());
 
                 Box::pin(async move {
@@ -1360,7 +1373,7 @@ impl VdafOps {
 
                         // Make sure this report isn't in an interval that has already started
                         // collection.
-                        let conflicting_aggregate_share_jobs = tx.find_aggregate_share_jobs_including_time::<L, A>(task_id, prep_step.nonce.time()).await?;
+                        let conflicting_aggregate_share_jobs = tx.find_aggregate_share_jobs_including_time::<L, A>(task_id, report_aggregation.time).await?;
                         if !conflicting_aggregate_share_jobs.is_empty() {
                             report_aggregation.state = ReportAggregationState::Failed(ReportShareError::BatchCollected);
                             response_prep_steps.push(PrepareStep {
@@ -1416,7 +1429,7 @@ impl VdafOps {
 
                             Ok(PrepareTransition::Finish(output_share)) => {
                                 saw_finish = true;
-                                accumulator.update(&output_share, prep_step.nonce)?;
+                                accumulator.update(&output_share, report_aggregation.time, prep_step.nonce)?;
                                 report_aggregation.state =
                                     ReportAggregationState::Finished(output_share);
                                 response_prep_steps.push(PrepareStep {
@@ -2375,7 +2388,7 @@ mod tests {
             associated_data_for_aggregate_share,
             test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey, Label,
         },
-        message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
+        message::{Duration, HpkeCiphertext, HpkeConfig, Nonce, ReportMetadata, TaskId, Time},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber, run_vdaf,
@@ -2388,7 +2401,6 @@ mod tests {
         field::Field64,
         vdaf::{prio3::Prio3Aes128Count, AggregateShare, Aggregator as _},
     };
-    use rand::{thread_rng, Rng};
     use serde_json::json;
     use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
@@ -2498,13 +2510,13 @@ mod tests {
         datastore.put_task(task).await.unwrap();
 
         let hpke_key = current_hpke_key(&task.hpke_keys);
-        let nonce = Nonce::new(
+        let report_metadata = ReportMetadata::new(
             clock.now().sub(task.tolerable_clock_skew).unwrap(),
-            thread_rng().gen(),
+            Nonce::generate(),
+            vec![],
         );
-        let extensions = vec![];
         let message = b"this is a message";
-        let associated_data = associated_data_for_report_share(task.id, nonce, &extensions);
+        let associated_data = associated_data_for_report_share(task.id, &report_metadata);
 
         let leader_ciphertext = hpke::seal(
             &hpke_key.0,
@@ -2523,8 +2535,7 @@ mod tests {
 
         Report::new(
             task.id,
-            nonce,
-            extensions,
+            report_metadata,
             vec![leader_ciphertext, helper_ciphertext],
         )
     }
@@ -2594,8 +2605,7 @@ mod tests {
         // should reject a report with only one share with the unrecognizedMessage type.
         let bad_report = Report::new(
             report.task_id(),
-            report.nonce(),
-            report.extensions().to_vec(),
+            report.metadata().clone(),
             vec![report.encrypted_input_shares()[0].clone()],
         );
         let mut response =
@@ -2621,8 +2631,7 @@ mod tests {
         // the error type outdatedConfig.
         let bad_report = Report::new(
             report.task_id(),
-            report.nonce(),
-            report.extensions().to_vec(),
+            report.metadata().clone(),
             vec![
                 HpkeCiphertext::new(
                     HpkeConfigId::from(101),
@@ -2662,8 +2671,11 @@ mod tests {
             .unwrap();
         let bad_report = Report::new(
             report.task_id(),
-            Nonce::new(bad_report_time, report.nonce().rand()),
-            report.extensions().to_vec(),
+            ReportMetadata::new(
+                bad_report_time,
+                report.metadata().nonce(),
+                report.metadata().extensions().to_vec(),
+            ),
             report.encrypted_input_shares().to_vec(),
         );
         let mut response =
@@ -2718,8 +2730,7 @@ mod tests {
             .body(
                 Report::new(
                     report.task_id(),
-                    Nonce::generate(&clock, task.min_batch_duration).unwrap(),
-                    vec![],
+                    ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap(),
                     report.encrypted_input_shares().to_vec(),
                 )
                 .get_encoded(),
@@ -2828,9 +2839,9 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                let task_id = report.task_id();
-                let nonce = report.nonce();
-                Box::pin(async move { tx.get_client_report(task_id, nonce).await })
+                let (task_id, report_metadata_nonce) =
+                    (report.task_id(), report.metadata().nonce());
+                Box::pin(async move { tx.get_client_report(task_id, report_metadata_nonce).await })
             })
             .await
             .unwrap();
@@ -2840,7 +2851,7 @@ mod tests {
         // TODO(#34): change this error type.
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooLate(stale_nonce, task_id)) => {
             assert_eq!(task_id, report.task_id());
-            assert_eq!(report.nonce(), stale_nonce);
+            assert_eq!(report.metadata(), &stale_nonce);
         });
     }
 
@@ -2852,8 +2863,7 @@ mod tests {
 
         report = Report::new(
             report.task_id(),
-            report.nonce(),
-            report.extensions().to_vec(),
+            report.metadata().clone(),
             vec![report.encrypted_input_shares()[0].clone()],
         );
 
@@ -2871,8 +2881,7 @@ mod tests {
 
         report = Report::new(
             report.task_id(),
-            report.nonce(),
-            report.extensions().to_vec(),
+            report.metadata().clone(),
             vec![
                 HpkeCiphertext::new(
                     HpkeConfigId::from(101),
@@ -2913,8 +2922,7 @@ mod tests {
 
         Report::new(
             report.task_id(),
-            report.nonce(),
-            report.extensions().to_vec(),
+            report.metadata().clone(),
             vec![leader_ciphertext, helper_ciphertext],
         )
     }
@@ -2926,19 +2934,18 @@ mod tests {
         let (aggregator, task, report, datastore, _db_handle) = setup_upload_test().await;
 
         // Boundary condition
-        let future_nonce = Nonce::new(
-            aggregator
-                .clock
-                .now()
-                .add(task.tolerable_clock_skew)
-                .unwrap(),
-            report.nonce().rand(),
-        );
         let report = reencrypt_report(
             Report::new(
                 report.task_id(),
-                future_nonce,
-                report.extensions().to_vec(),
+                ReportMetadata::new(
+                    aggregator
+                        .clock
+                        .now()
+                        .add(task.tolerable_clock_skew)
+                        .unwrap(),
+                    report.metadata().nonce(),
+                    report.metadata().extensions().to_vec(),
+                ),
                 report.encrypted_input_shares().to_vec(),
             ),
             &task.hpke_keys.values().next().unwrap().0,
@@ -2950,37 +2957,35 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                let task_id = report.task_id();
-                let nonce = report.nonce();
-                Box::pin(async move { tx.get_client_report(task_id, nonce).await })
+                let (task_id, report_nonce) = (report.task_id(), report.metadata().nonce());
+                Box::pin(async move { tx.get_client_report(task_id, report_nonce).await })
             })
             .await
             .unwrap();
         assert_eq!(Some(&report), got_report.as_ref());
 
         // Just past the clock skew
-        let future_nonce = Nonce::new(
-            aggregator
-                .clock
-                .now()
-                .add(task.tolerable_clock_skew)
-                .unwrap()
-                .add(Duration::from_seconds(1))
-                .unwrap(),
-            report.nonce().rand(),
-        );
         let report = reencrypt_report(
             Report::new(
                 report.task_id(),
-                future_nonce,
-                report.extensions().to_vec(),
+                ReportMetadata::new(
+                    aggregator
+                        .clock
+                        .now()
+                        .add(task.tolerable_clock_skew)
+                        .unwrap()
+                        .add(Duration::from_seconds(1))
+                        .unwrap(),
+                    report.metadata().nonce(),
+                    report.metadata().extensions().to_vec(),
+                ),
                 report.encrypted_input_shares().to_vec(),
             ),
             &task.hpke_keys.values().next().unwrap().0,
         );
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooEarly(nonce, task_id)) => {
             assert_eq!(task_id, report.task_id());
-            assert_eq!(report.nonce(), nonce);
+            assert_eq!(report.metadata(), &nonce);
         });
     }
 
@@ -2989,11 +2994,12 @@ mod tests {
         install_test_trace_subscriber();
 
         let (aggregator, task, report, datastore, _db_handle) = setup_upload_test().await;
-        let (task_id, nonce) = (task.id, report.nonce());
+        let task_id = task.id;
 
         // Insert a collect job for the batch interval including our report.
         let batch_interval = Interval::new(
-            nonce
+            report
+                .metadata()
                 .time()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
@@ -3009,7 +3015,7 @@ mod tests {
 
         // Try to upload the report, verify that we get the expected error.
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err(), Error::ReportTooLate(err_nonce, err_task_id) => {
-            assert_eq!(nonce, err_nonce);
+            assert_eq!(report.metadata(), &err_nonce);
             assert_eq!(task_id, err_task_id);
         });
     }
@@ -3194,20 +3200,27 @@ mod tests {
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let input_share = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_0, &0)
-            .input_shares
-            .remove(1);
+        let report_metadata_0 =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let input_share = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_0.nonce(),
+            &0,
+        )
+        .input_shares
+        .remove(1);
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_0,
+            &report_metadata_0,
             &hpke_key.0,
             &input_share,
         );
 
         // report_share_1 fails decryption.
         let mut report_share_1 = report_share_0.clone();
-        report_share_1.nonce = Nonce::generate(&clock, task.min_batch_duration).unwrap();
+        report_share_1.metadata.set_nonce(Nonce::generate());
         let mut corrupted_payload = report_share_1.encrypted_input_share.payload().to_vec();
         corrupted_payload[0] ^= 0xFF;
         report_share_1.encrypted_input_share = HpkeCiphertext::new(
@@ -3220,18 +3233,20 @@ mod tests {
         );
 
         // report_share_2 fails decoding.
-        let nonce_2 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
+        let report_metadata_2 =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
         let report_share_2 = generate_helper_report_share_for_plaintext(
-            nonce_2,
+            &report_metadata_2,
             &hpke_key.0,
             &input_share_bytes,
-            &associated_data_for_report_share(task_id, nonce_2, &[]),
+            &associated_data_for_report_share(task_id, &report_metadata_2),
         );
 
         // report_share_3 has an unknown HPKE config ID.
-        let nonce_3 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
+        let report_metadata_3 =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
         let wrong_hpke_config = loop {
             let hpke_config = generate_test_hpke_config_and_private_key().0;
             if task.hpke_keys.contains_key(&hpke_config.id()) {
@@ -3241,19 +3256,26 @@ mod tests {
         };
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_3,
+            &report_metadata_3,
             &wrong_hpke_config,
             &input_share,
         );
 
         // report_share_4 has already been aggregated.
-        let nonce_4 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let input_share = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_4, &0)
-            .input_shares
-            .remove(1);
+        let report_metadata_4 =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let input_share = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_4.nonce(),
+            &0,
+        )
+        .input_shares
+        .remove(1);
         let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_4,
+            &report_metadata_4,
             &hpke_key.0,
             &input_share,
         );
@@ -3262,13 +3284,20 @@ mod tests {
         let past_clock = MockClock::new(Time::from_seconds_since_epoch(
             task.min_batch_duration.as_seconds() / 2,
         ));
-        let nonce_5 = Nonce::generate(&past_clock, task.min_batch_duration).unwrap();
-        let input_share = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_5, &0)
-            .input_shares
-            .remove(1);
+        let report_metadata_5 =
+            ReportMetadata::generate(&past_clock, task.min_batch_duration, vec![]).unwrap();
+        let input_share = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_5.nonce(),
+            &0,
+        )
+        .input_shares
+        .remove(1);
         let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_5,
+            &report_metadata_5,
             &hpke_key.0,
             &input_share,
         );
@@ -3343,39 +3372,39 @@ mod tests {
         assert_eq!(aggregate_resp.prepare_steps.len(), 6);
 
         let prepare_step_0 = aggregate_resp.prepare_steps.get(0).unwrap();
-        assert_eq!(prepare_step_0.nonce, report_share_0.nonce);
+        assert_eq!(prepare_step_0.nonce, report_share_0.metadata.nonce());
         assert_matches!(prepare_step_0.result, PrepareStepResult::Continued(..));
 
         let prepare_step_1 = aggregate_resp.prepare_steps.get(1).unwrap();
-        assert_eq!(prepare_step_1.nonce, report_share_1.nonce);
+        assert_eq!(prepare_step_1.nonce, report_share_1.metadata.nonce());
         assert_matches!(
             prepare_step_1.result,
             PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
         );
 
         let prepare_step_2 = aggregate_resp.prepare_steps.get(2).unwrap();
-        assert_eq!(prepare_step_2.nonce, report_share_2.nonce);
+        assert_eq!(prepare_step_2.nonce, report_share_2.metadata.nonce());
         assert_matches!(
             prepare_step_2.result,
             PrepareStepResult::Failed(ReportShareError::VdafPrepError)
         );
 
         let prepare_step_3 = aggregate_resp.prepare_steps.get(3).unwrap();
-        assert_eq!(prepare_step_3.nonce, report_share_3.nonce);
+        assert_eq!(prepare_step_3.nonce, report_share_3.metadata.nonce());
         assert_matches!(
             prepare_step_3.result,
             PrepareStepResult::Failed(ReportShareError::HpkeUnknownConfigId)
         );
 
         let prepare_step_4 = aggregate_resp.prepare_steps.get(4).unwrap();
-        assert_eq!(prepare_step_4.nonce, report_share_4.nonce);
+        assert_eq!(prepare_step_4.nonce, report_share_4.metadata.nonce());
         assert_eq!(
             prepare_step_4.result,
             PrepareStepResult::Failed(ReportShareError::ReportReplayed)
         );
 
         let prepare_step_5 = aggregate_resp.prepare_steps.get(5).unwrap();
-        assert_eq!(prepare_step_5.nonce, report_share_5.nonce);
+        assert_eq!(prepare_step_5.nonce, report_share_5.metadata.nonce());
         assert_eq!(
             prepare_step_5.result,
             PrepareStepResult::Failed(ReportShareError::BatchCollected)
@@ -3397,7 +3426,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
-            Nonce::generate(&clock, task.min_batch_duration).unwrap(),
+            &ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap(),
             &hpke_key.0,
             &(),
         );
@@ -3436,7 +3465,7 @@ mod tests {
         assert_eq!(aggregate_resp.prepare_steps.len(), 1);
 
         let prepare_step = aggregate_resp.prepare_steps.get(0).unwrap();
-        assert_eq!(prepare_step.nonce, report_share.nonce);
+        assert_eq!(prepare_step.nonce, report_share.metadata.nonce());
         assert_matches!(
             prepare_step.result,
             PrepareStepResult::Failed(ReportShareError::VdafPrepError)
@@ -3458,7 +3487,7 @@ mod tests {
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
-            Nonce::generate(&clock, task.min_batch_duration).unwrap(),
+            &ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap(),
             &hpke_key.0,
             &(),
         );
@@ -3497,7 +3526,7 @@ mod tests {
         assert_eq!(aggregate_resp.prepare_steps.len(), 1);
 
         let prepare_step = aggregate_resp.prepare_steps.get(0).unwrap();
-        assert_eq!(prepare_step.nonce, report_share.nonce);
+        assert_eq!(prepare_step.nonce, report_share.metadata.nonce());
         assert_matches!(
             prepare_step.result,
             PrepareStepResult::Failed(ReportShareError::VdafPrepError)
@@ -3516,11 +3545,11 @@ mod tests {
         datastore.put_task(&task).await.unwrap();
 
         let report_share = ReportShare {
-            nonce: Nonce::new(
+            metadata: ReportMetadata::new(
                 Time::from_seconds_since_epoch(54321),
-                [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+                Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                Vec::new(),
             ),
-            extensions: Vec::new(),
             encrypted_input_share: HpkeCiphertext::new(
                 // bogus, but we never get far enough to notice
                 HpkeConfigId::from(42),
@@ -3592,25 +3621,47 @@ mod tests {
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let transcript_0 = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce_0, &0);
-        let prep_state_0 = assert_matches!(&transcript_0.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
-        let out_share_0 = assert_matches!(&transcript_0.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
+        let report_metadata_0 =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let transcript_0 = run_vdaf(
+            vdaf.as_ref(),
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_0.nonce(),
+            &0,
+        );
+        let prep_state_0 = assert_matches!(
+            &transcript_0.prepare_transitions[1][0],
+            PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _)
+            => prep_state.clone()
+        );
+        let out_share_0 = assert_matches!(
+            &transcript_0.prepare_transitions[1][1],
+            PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share)
+            => out_share.clone()
+        );
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_0,
+            &report_metadata_0,
             &hpke_key.0,
             &transcript_0.input_shares[1],
         );
 
         // report_share_1 is omitted by the leader's request.
-        let nonce_1 = Nonce::generate(&clock, task.min_batch_duration).unwrap();
-        let transcript_1 = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce_1, &0);
+        let report_metadata_1 =
+            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let transcript_1 = run_vdaf(
+            vdaf.as_ref(),
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_1.nonce(),
+            &0,
+        );
         let prep_state_1 = assert_matches!(&transcript_1.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_1,
+            &report_metadata_1,
             &hpke_key.0,
             &transcript_1.input_shares[1],
         );
@@ -3619,13 +3670,20 @@ mod tests {
         let past_clock = MockClock::new(Time::from_seconds_since_epoch(
             task.min_batch_duration.as_seconds() / 2,
         ));
-        let nonce_2 = Nonce::generate(&past_clock, task.min_batch_duration).unwrap();
-        let transcript_2 = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), nonce_2, &0);
+        let report_metadata_2 =
+            ReportMetadata::generate(&past_clock, task.min_batch_duration, vec![]).unwrap();
+        let transcript_2 = run_vdaf(
+            vdaf.as_ref(),
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_2.nonce(),
+            &0,
+        );
         let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_2,
+            &report_metadata_2,
             &hpke_key.0,
             &transcript_2.input_shares[1],
         );
@@ -3642,6 +3700,11 @@ mod tests {
                     prep_state_0.clone(),
                     prep_state_1.clone(),
                     prep_state_2.clone(),
+                );
+                let (report_metadata_0, report_metadata_1, report_metadata_2) = (
+                    report_metadata_0.clone(),
+                    report_metadata_1.clone(),
+                    report_metadata_2.clone(),
                 );
 
                 Box::pin(async move {
@@ -3666,7 +3729,8 @@ mod tests {
                         &ReportAggregation {
                             aggregation_job_id,
                             task_id,
-                            nonce: nonce_0,
+                            time: report_metadata_0.time(),
+                            nonce: report_metadata_0.nonce(),
                             ord: 0,
                             state: ReportAggregationState::Waiting(prep_state_0, None),
                         },
@@ -3676,7 +3740,8 @@ mod tests {
                         &ReportAggregation {
                             aggregation_job_id,
                             task_id,
-                            nonce: nonce_1,
+                            time: report_metadata_1.time(),
+                            nonce: report_metadata_1.nonce(),
                             ord: 1,
                             state: ReportAggregationState::Waiting(prep_state_1, None),
                         },
@@ -3686,7 +3751,8 @@ mod tests {
                         &ReportAggregation {
                             aggregation_job_id,
                             task_id,
-                            nonce: nonce_2,
+                            time: report_metadata_2.time(),
+                            nonce: report_metadata_2.nonce(),
                             ord: 2,
                             state: ReportAggregationState::Waiting(prep_state_2, None),
                         },
@@ -3720,11 +3786,11 @@ mod tests {
             job_id: aggregation_job_id,
             prepare_steps: Vec::from([
                 PrepareStep {
-                    nonce: nonce_0,
+                    nonce: report_metadata_0.nonce(),
                     result: PrepareStepResult::Continued(prep_msg_0.get_encoded()),
                 },
                 PrepareStep {
-                    nonce: nonce_2,
+                    nonce: report_metadata_2.nonce(),
                     result: PrepareStepResult::Continued(prep_msg_2.get_encoded()),
                 },
             ]),
@@ -3760,11 +3826,11 @@ mod tests {
             AggregateContinueResp {
                 prepare_steps: Vec::from([
                     PrepareStep {
-                        nonce: nonce_0,
+                        nonce: report_metadata_0.nonce(),
                         result: PrepareStepResult::Finished,
                     },
                     PrepareStep {
-                        nonce: nonce_2,
+                        nonce: report_metadata_2.nonce(),
                         result: PrepareStepResult::Failed(ReportShareError::BatchCollected),
                     }
                 ])
@@ -3812,21 +3878,24 @@ mod tests {
                 ReportAggregation {
                     aggregation_job_id,
                     task_id,
-                    nonce: nonce_0,
+                    time: report_metadata_0.time(),
+                    nonce: report_metadata_0.nonce(),
                     ord: 0,
                     state: ReportAggregationState::Finished(out_share_0.clone()),
                 },
                 ReportAggregation {
                     aggregation_job_id,
                     task_id,
-                    nonce: nonce_1,
+                    time: report_metadata_1.time(),
+                    nonce: report_metadata_1.nonce(),
                     ord: 1,
                     state: ReportAggregationState::Failed(ReportShareError::ReportDropped),
                 },
                 ReportAggregation {
                     aggregation_job_id,
                     task_id,
-                    nonce: nonce_2,
+                    time: report_metadata_2.time(),
+                    nonce: report_metadata_2.nonce(),
                     ord: 2,
                     state: ReportAggregationState::Failed(ReportShareError::BatchCollected),
                 }
@@ -3862,44 +3931,74 @@ mod tests {
         let hpke_key = current_hpke_key(&task.hpke_keys);
 
         // report_share_0 is a "happy path" report.
-        let nonce_0 =
-            Nonce::generate(&first_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_0 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_0, &0);
+        let report_metadata_0 = ReportMetadata::generate(
+            &first_batch_unit_interval_clock,
+            task.min_batch_duration,
+            vec![],
+        )
+        .unwrap();
+        let transcript_0 = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_0.nonce(),
+            &0,
+        );
         let prep_state_0 = assert_matches!(&transcript_0.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_0 = assert_matches!(&transcript_0.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_0,
+            &report_metadata_0,
             &hpke_key.0,
             &transcript_0.input_shares[1],
         );
 
         // report_share_1 is another "happy path" report to exercise in-memory accumulation of
         // output shares
-        let nonce_1 =
-            Nonce::generate(&first_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_1 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_1, &0);
+        let report_metadata_1 = ReportMetadata::generate(
+            &first_batch_unit_interval_clock,
+            task.min_batch_duration,
+            vec![],
+        )
+        .unwrap();
+        let transcript_1 = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_1.nonce(),
+            &0,
+        );
         let prep_state_1 = assert_matches!(&transcript_1.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_1 = assert_matches!(&transcript_1.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_1 = transcript_1.prepare_messages[0].clone();
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_1,
+            &report_metadata_1,
             &hpke_key.0,
             &transcript_1.input_shares[1],
         );
 
         // report share 2 aggregates successfully, but into a distinct batch unit aggregation.
-        let nonce_2 =
-            Nonce::generate(&second_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_2 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_2, &0);
+        let report_metadata_2 = ReportMetadata::generate(
+            &second_batch_unit_interval_clock,
+            task.min_batch_duration,
+            vec![],
+        )
+        .unwrap();
+        let transcript_2 = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_2.nonce(),
+            &0,
+        );
         let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_2 = assert_matches!(&transcript_2.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_2,
+            &report_metadata_2,
             &hpke_key.0,
             &transcript_2.input_shares[1],
         );
@@ -3916,6 +4015,11 @@ mod tests {
                     prep_state_0.clone(),
                     prep_state_1.clone(),
                     prep_state_2.clone(),
+                );
+                let (report_metadata_0, report_metadata_1, report_metadata_2) = (
+                    report_metadata_0.clone(),
+                    report_metadata_1.clone(),
+                    report_metadata_2.clone(),
                 );
 
                 Box::pin(async move {
@@ -3942,7 +4046,8 @@ mod tests {
                     > {
                         aggregation_job_id: aggregation_job_id_0,
                         task_id,
-                        nonce: nonce_0,
+                        time: report_metadata_0.time(),
+                        nonce: report_metadata_0.nonce(),
                         ord: 0,
                         state: ReportAggregationState::Waiting(prep_state_0, None),
                     })
@@ -3953,7 +4058,8 @@ mod tests {
                     > {
                         aggregation_job_id: aggregation_job_id_0,
                         task_id,
-                        nonce: nonce_1,
+                        time: report_metadata_1.time(),
+                        nonce: report_metadata_1.nonce(),
                         ord: 1,
                         state: ReportAggregationState::Waiting(prep_state_1, None),
                     })
@@ -3964,7 +4070,8 @@ mod tests {
                     > {
                         aggregation_job_id: aggregation_job_id_0,
                         task_id,
-                        nonce: nonce_2,
+                        time: report_metadata_2.time(),
+                        nonce: report_metadata_2.nonce(),
                         ord: 2,
                         state: ReportAggregationState::Waiting(prep_state_2, None),
                     })
@@ -3981,15 +4088,15 @@ mod tests {
             job_id: aggregation_job_id_0,
             prepare_steps: vec![
                 PrepareStep {
-                    nonce: nonce_0,
+                    nonce: report_metadata_0.nonce(),
                     result: PrepareStepResult::Continued(prep_msg_0.get_encoded()),
                 },
                 PrepareStep {
-                    nonce: nonce_1,
+                    nonce: report_metadata_1.nonce(),
                     result: PrepareStepResult::Continued(prep_msg_1.get_encoded()),
                 },
                 PrepareStep {
-                    nonce: nonce_2,
+                    nonce: report_metadata_2.nonce(),
                     result: PrepareStepResult::Continued(prep_msg_2.get_encoded()),
                 },
             ],
@@ -4020,11 +4127,12 @@ mod tests {
 
         let batch_unit_aggregations = datastore
             .run_tx(|tx| {
+                let report_metadata_0 = report_metadata_0.clone();
                 Box::pin(async move {
                     tx.get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                         task_id,
                         Interval::new(
-                            nonce_0
+                            report_metadata_0
                                 .time()
                                 .to_batch_unit_interval_start(task.min_batch_duration)
                                 .unwrap(),
@@ -4043,15 +4151,15 @@ mod tests {
         let aggregate_share = vdaf
             .aggregate(&(), [out_share_0.clone(), out_share_1.clone()])
             .unwrap();
-        let mut checksum = NonceChecksum::from_nonce(nonce_0);
-        checksum.update(nonce_1);
+        let mut checksum = NonceChecksum::from_nonce(report_metadata_0.nonce());
+        checksum.update(report_metadata_1.nonce());
 
         assert_eq!(
             batch_unit_aggregations,
             vec![
                 BatchUnitAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                     task_id,
-                    unit_interval_start: nonce_0
+                    unit_interval_start: report_metadata_0
                         .time()
                         .to_batch_unit_interval_start(task.min_batch_duration)
                         .unwrap(),
@@ -4062,14 +4170,14 @@ mod tests {
                 },
                 BatchUnitAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                     task_id,
-                    unit_interval_start: nonce_2
+                    unit_interval_start: report_metadata_2
                         .time()
                         .to_batch_unit_interval_start(task.min_batch_duration)
                         .unwrap(),
                     aggregation_param: (),
                     aggregate_share: AggregateShare::from(out_share_2.clone()),
                     report_count: 1,
-                    checksum: NonceChecksum::from_nonce(nonce_2),
+                    checksum: NonceChecksum::from_nonce(report_metadata_2.nonce()),
                 }
             ]
         );
@@ -4077,43 +4185,73 @@ mod tests {
         // Aggregate some more reports, which should get accumulated into the
         // batch_unit_aggregations rows created earlier.
         // report_share_3 gets aggreated into the first batch unit interval.
-        let nonce_3 =
-            Nonce::generate(&first_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_3 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_3, &0);
+        let report_metadata_3 = ReportMetadata::generate(
+            &first_batch_unit_interval_clock,
+            task.min_batch_duration,
+            vec![],
+        )
+        .unwrap();
+        let transcript_3 = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_3.nonce(),
+            &0,
+        );
         let prep_state_3 = assert_matches!(&transcript_3.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_3 = assert_matches!(&transcript_3.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_3 = transcript_3.prepare_messages[0].clone();
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_3,
+            &report_metadata_3,
             &hpke_key.0,
             &transcript_3.input_shares[1],
         );
 
         // report_share_4 gets aggregated into the second batch unit interval
-        let nonce_4 =
-            Nonce::generate(&second_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_4 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_4, &0);
+        let report_metadata_4 = ReportMetadata::generate(
+            &second_batch_unit_interval_clock,
+            task.min_batch_duration,
+            vec![],
+        )
+        .unwrap();
+        let transcript_4 = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_4.nonce(),
+            &0,
+        );
         let prep_state_4 = assert_matches!(&transcript_4.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_4 = assert_matches!(&transcript_4.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_4 = transcript_4.prepare_messages[0].clone();
         let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_4,
+            &report_metadata_4,
             &hpke_key.0,
             &transcript_4.input_shares[1],
         );
 
         // report share 5 also gets aggregated into the second batch unit interval
-        let nonce_5 =
-            Nonce::generate(&second_batch_unit_interval_clock, task.min_batch_duration).unwrap();
-        let transcript_5 = run_vdaf(&vdaf, verify_key.as_bytes(), &(), nonce_5, &0);
+        let report_metadata_5 = ReportMetadata::generate(
+            &second_batch_unit_interval_clock,
+            task.min_batch_duration,
+            vec![],
+        )
+        .unwrap();
+        let transcript_5 = run_vdaf(
+            &vdaf,
+            verify_key.as_bytes(),
+            &(),
+            report_metadata_5.nonce(),
+            &0,
+        );
         let prep_state_5 = assert_matches!(&transcript_5.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let out_share_5 = assert_matches!(&transcript_5.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_5 = transcript_5.prepare_messages[0].clone();
         let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
-            nonce_5,
+            &report_metadata_5,
             &hpke_key.0,
             &transcript_5.input_shares[1],
         );
@@ -4129,6 +4267,11 @@ mod tests {
                     prep_state_3.clone(),
                     prep_state_4.clone(),
                     prep_state_5.clone(),
+                );
+                let (report_metadata_3, report_metadata_4, report_metadata_5) = (
+                    report_metadata_3.clone(),
+                    report_metadata_4.clone(),
+                    report_metadata_5.clone(),
                 );
 
                 Box::pin(async move {
@@ -4153,7 +4296,8 @@ mod tests {
                     > {
                         aggregation_job_id: aggregation_job_id_1,
                         task_id,
-                        nonce: nonce_3,
+                        time: report_metadata_3.time(),
+                        nonce: report_metadata_3.nonce(),
                         ord: 3,
                         state: ReportAggregationState::Waiting(prep_state_3, None),
                     })
@@ -4164,7 +4308,8 @@ mod tests {
                     > {
                         aggregation_job_id: aggregation_job_id_1,
                         task_id,
-                        nonce: nonce_4,
+                        time: report_metadata_4.time(),
+                        nonce: report_metadata_4.nonce(),
                         ord: 4,
                         state: ReportAggregationState::Waiting(prep_state_4, None),
                     })
@@ -4175,7 +4320,8 @@ mod tests {
                     > {
                         aggregation_job_id: aggregation_job_id_1,
                         task_id,
-                        nonce: nonce_5,
+                        time: report_metadata_5.time(),
+                        nonce: report_metadata_5.nonce(),
                         ord: 5,
                         state: ReportAggregationState::Waiting(prep_state_5, None),
                     })
@@ -4192,15 +4338,15 @@ mod tests {
             job_id: aggregation_job_id_1,
             prepare_steps: vec![
                 PrepareStep {
-                    nonce: nonce_3,
+                    nonce: report_metadata_3.nonce(),
                     result: PrepareStepResult::Continued(prep_msg_3.get_encoded()),
                 },
                 PrepareStep {
-                    nonce: nonce_4,
+                    nonce: report_metadata_4.nonce(),
                     result: PrepareStepResult::Continued(prep_msg_4.get_encoded()),
                 },
                 PrepareStep {
-                    nonce: nonce_5,
+                    nonce: report_metadata_5.nonce(),
                     result: PrepareStepResult::Continued(prep_msg_5.get_encoded()),
                 },
             ],
@@ -4230,11 +4376,12 @@ mod tests {
 
         let batch_unit_aggregations = datastore
             .run_tx(|tx| {
+                let report_metadata_0 = report_metadata_0.clone();
                 Box::pin(async move {
                     tx.get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                         task_id,
                         Interval::new(
-                            nonce_0
+                            report_metadata_0
                                 .time()
                                 .to_batch_unit_interval_start(task.min_batch_duration)
                                 .unwrap(),
@@ -4253,23 +4400,23 @@ mod tests {
         let first_aggregate_share = vdaf
             .aggregate(&(), [out_share_0, out_share_1, out_share_3])
             .unwrap();
-        let mut first_checksum = NonceChecksum::from_nonce(nonce_0);
-        first_checksum.update(nonce_1);
-        first_checksum.update(nonce_3);
+        let mut first_checksum = NonceChecksum::from_nonce(report_metadata_0.nonce());
+        first_checksum.update(report_metadata_1.nonce());
+        first_checksum.update(report_metadata_3.nonce());
 
         let second_aggregate_share = vdaf
             .aggregate(&(), [out_share_2, out_share_4, out_share_5])
             .unwrap();
-        let mut second_checksum = NonceChecksum::from_nonce(nonce_2);
-        second_checksum.update(nonce_4);
-        second_checksum.update(nonce_5);
+        let mut second_checksum = NonceChecksum::from_nonce(report_metadata_2.nonce());
+        second_checksum.update(report_metadata_4.nonce());
+        second_checksum.update(report_metadata_5.nonce());
 
         assert_eq!(
             batch_unit_aggregations,
             vec![
                 BatchUnitAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                     task_id,
-                    unit_interval_start: nonce_0
+                    unit_interval_start: report_metadata_0
                         .time()
                         .to_batch_unit_interval_start(task.min_batch_duration)
                         .unwrap(),
@@ -4280,7 +4427,7 @@ mod tests {
                 },
                 BatchUnitAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                     task_id,
-                    unit_interval_start: nonce_2
+                    unit_interval_start: report_metadata_2
                         .time()
                         .to_batch_unit_interval_start(task.min_batch_duration)
                         .unwrap(),
@@ -4301,9 +4448,10 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce = Nonce::new(
+        let report_metadata = ReportMetadata::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            vec![],
         );
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
         let clock = MockClock::default();
@@ -4315,15 +4463,14 @@ mod tests {
         // Setup datastore.
         datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let (task, report_metadata) = (task.clone(), report_metadata.clone());
 
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(
                         task_id,
                         &ReportShare {
-                            nonce,
-                            extensions: Vec::new(),
+                            metadata: report_metadata.clone(),
                             encrypted_input_share: HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -4347,7 +4494,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce,
+                        time: report_metadata.time(),
+                        nonce: report_metadata.nonce(),
                         ord: 0,
                         state: ReportAggregationState::Waiting((), None),
                     })
@@ -4362,7 +4510,7 @@ mod tests {
             task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
-                nonce,
+                nonce: report_metadata.nonce(),
                 result: PrepareStepResult::Finished,
             }],
         };
@@ -4409,9 +4557,10 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce = Nonce::new(
+        let report_metadata = ReportMetadata::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            vec![],
         );
         let task = new_dummy_task(task_id, VdafInstance::FakeFailsPrepStep, Role::Helper);
         let clock = MockClock::default();
@@ -4423,15 +4572,14 @@ mod tests {
         // Setup datastore.
         datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let (task, report_metadata) = (task.clone(), report_metadata.clone());
 
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(
                         task_id,
                         &ReportShare {
-                            nonce,
-                            extensions: Vec::new(),
+                            metadata: report_metadata.clone(),
                             encrypted_input_share: HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -4455,7 +4603,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce,
+                        time: report_metadata.time(),
+                        nonce: report_metadata.nonce(),
                         ord: 0,
                         state: ReportAggregationState::Waiting((), None),
                     })
@@ -4470,7 +4619,7 @@ mod tests {
             task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
-                nonce,
+                nonce: report_metadata.nonce(),
                 result: PrepareStepResult::Continued(Vec::new()),
             }],
         };
@@ -4504,7 +4653,7 @@ mod tests {
             aggregate_resp,
             AggregateContinueResp {
                 prepare_steps: vec![PrepareStep {
-                    nonce,
+                    nonce: report_metadata.nonce(),
                     result: PrepareStepResult::Failed(ReportShareError::VdafPrepError),
                 }],
             }
@@ -4513,6 +4662,7 @@ mod tests {
         // Check datastore state.
         let (aggregation_job, report_aggregation) = datastore
             .run_tx(|tx| {
+                let report_metadata = report_metadata.clone();
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
@@ -4526,7 +4676,7 @@ mod tests {
                             Role::Helper,
                             task_id,
                             aggregation_job_id,
-                            nonce,
+                            report_metadata.nonce(),
                         )
                         .await?;
                     Ok((aggregation_job, report_aggregation))
@@ -4549,7 +4699,8 @@ mod tests {
             Some(ReportAggregation {
                 aggregation_job_id,
                 task_id,
-                nonce,
+                time: report_metadata.time(),
+                nonce: report_metadata.nonce(),
                 ord: 0,
                 state: ReportAggregationState::Failed(ReportShareError::VdafPrepError),
             })
@@ -4564,9 +4715,10 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce = Nonce::new(
+        let report_metadata = ReportMetadata::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            vec![],
         );
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
         let clock = MockClock::default();
@@ -4577,15 +4729,14 @@ mod tests {
         // Setup datastore.
         datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let (task, report_metadata) = (task.clone(), report_metadata.clone());
 
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(
                         task_id,
                         &ReportShare {
-                            nonce,
-                            extensions: Vec::new(),
+                            metadata: report_metadata.clone(),
                             encrypted_input_share: HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -4609,7 +4760,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce,
+                        time: report_metadata.time(),
+                        nonce: report_metadata.nonce(),
                         ord: 0,
                         state: ReportAggregationState::Waiting((), None),
                     })
@@ -4625,7 +4777,7 @@ mod tests {
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
                 nonce: Nonce::new(
-                    Time::from_seconds_since_epoch(54321),
+                    //Time::from_seconds_since_epoch(54321),
                     [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
                 ),
                 result: PrepareStepResult::Continued(Vec::new()),
@@ -4674,13 +4826,15 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce_0 = Nonce::new(
+        let report_metadata_0 = ReportMetadata::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            vec![],
         );
-        let nonce_1 = Nonce::new(
+        let report_metadata_1 = ReportMetadata::new(
             Time::from_seconds_since_epoch(54321),
-            [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+            Nonce::new([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+            vec![],
         );
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
@@ -4692,7 +4846,11 @@ mod tests {
         // Setup datastore.
         datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let (task, report_metadata_0, report_metadata_1) = (
+                    task.clone(),
+                    report_metadata_0.clone(),
+                    report_metadata_1.clone(),
+                );
 
                 Box::pin(async move {
                     tx.put_task(&task).await?;
@@ -4700,8 +4858,7 @@ mod tests {
                     tx.put_report_share(
                         task_id,
                         &ReportShare {
-                            nonce: nonce_0,
-                            extensions: Vec::new(),
+                            metadata: report_metadata_0.clone(),
                             encrypted_input_share: HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -4713,8 +4870,7 @@ mod tests {
                     tx.put_report_share(
                         task_id,
                         &ReportShare {
-                            nonce: nonce_1,
-                            extensions: Vec::new(),
+                            metadata: report_metadata_1.clone(),
                             encrypted_input_share: HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -4740,7 +4896,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce: nonce_0,
+                        time: report_metadata_0.time(),
+                        nonce: report_metadata_0.nonce(),
                         ord: 0,
                         state: ReportAggregationState::Waiting((), None),
                     })
@@ -4751,7 +4908,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce: nonce_1,
+                        time: report_metadata_1.time(),
+                        nonce: report_metadata_1.nonce(),
                         ord: 1,
                         state: ReportAggregationState::Waiting((), None),
                     })
@@ -4768,11 +4926,11 @@ mod tests {
             prepare_steps: vec![
                 // nonces are in opposite order to what was stored in the datastore.
                 PrepareStep {
-                    nonce: nonce_1,
+                    nonce: report_metadata_1.nonce(),
                     result: PrepareStepResult::Continued(Vec::new()),
                 },
                 PrepareStep {
-                    nonce: nonce_0,
+                    nonce: report_metadata_0.nonce(),
                     result: PrepareStepResult::Continued(Vec::new()),
                 },
             ],
@@ -4820,9 +4978,10 @@ mod tests {
         // Prepare parameters.
         let task_id = TaskId::random();
         let aggregation_job_id = AggregationJobId::random();
-        let nonce = Nonce::new(
+        let report_metadata = ReportMetadata::new(
             Time::from_seconds_since_epoch(54321),
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            vec![],
         );
 
         let task = new_dummy_task(task_id, VdafInstance::Fake, Role::Helper);
@@ -4834,15 +4993,14 @@ mod tests {
         // Setup datastore.
         datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let (task, report_metadata) = (task.clone(), report_metadata.clone());
 
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(
                         task_id,
                         &ReportShare {
-                            nonce,
-                            extensions: Vec::new(),
+                            metadata: report_metadata.clone(),
                             encrypted_input_share: HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -4866,7 +5024,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        nonce,
+                        time: report_metadata.time(),
+                        nonce: report_metadata.nonce(),
                         ord: 0,
                         state: ReportAggregationState::Invalid,
                     })
@@ -4881,10 +5040,7 @@ mod tests {
             task_id,
             job_id: aggregation_job_id,
             prepare_steps: vec![PrepareStep {
-                nonce: Nonce::new(
-                    Time::from_seconds_since_epoch(54321),
-                    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-                ),
+                nonce: Nonce::new([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 result: PrepareStepResult::Continued(Vec::new()),
             }],
         };
@@ -6119,16 +6275,16 @@ mod tests {
 
     fn generate_helper_report_share<V: vdaf::Client>(
         task_id: TaskId,
-        nonce: Nonce,
+        report_metadata: &ReportMetadata,
         cfg: &HpkeConfig,
         input_share: &V::InputShare,
     ) -> ReportShare
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let associated_data = associated_data_for_report_share(task_id, nonce, &[]);
+        let associated_data = associated_data_for_report_share(task_id, report_metadata);
         generate_helper_report_share_for_plaintext(
-            nonce,
+            report_metadata,
             cfg,
             &input_share.get_encoded(),
             &associated_data,
@@ -6136,14 +6292,13 @@ mod tests {
     }
 
     fn generate_helper_report_share_for_plaintext(
-        nonce: Nonce,
+        metadata: &ReportMetadata,
         cfg: &HpkeConfig,
         plaintext: &[u8],
         associated_data: &[u8],
     ) -> ReportShare {
         ReportShare {
-            nonce,
-            extensions: Vec::new(),
+            metadata: metadata.clone(),
             encrypted_input_share: hpke::seal(
                 cfg,
                 &HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Helper),

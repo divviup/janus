@@ -6,7 +6,7 @@ use http::{header::CONTENT_TYPE, StatusCode};
 use janus_core::{
     hpke::associated_data_for_report_share,
     hpke::{self, HpkeApplicationInfo, Label},
-    message::{Duration, HpkeCiphertext, HpkeConfig, Nonce, Report, Role, TaskId},
+    message::{Duration, HpkeCiphertext, HpkeConfig, Report, ReportMetadata, Role, TaskId},
     retries::{http_request_exponential_backoff, retry_http_request},
     task::url_ensure_trailing_slash,
     time::Clock,
@@ -206,13 +206,15 @@ where
         let input_shares = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
-        let nonce =
-            Nonce::generate(&self.clock, self.parameters.min_batch_duration).map_err(|_| {
-                Error::InvalidParameter("Error rounding time down to min_batch_duration")
-            })?;
-        let extensions = vec![]; // No extensions supported yet
+        let report_metadata = ReportMetadata::generate(
+            &self.clock,
+            self.parameters.min_batch_duration,
+            // No extensions supported yet
+            vec![],
+        )
+        .map_err(|_| Error::InvalidParameter("Error rounding time down to min_batch_duration"))?;
         let associated_data =
-            associated_data_for_report_share(self.parameters.task_id, nonce, &extensions);
+            associated_data_for_report_share(self.parameters.task_id, &report_metadata);
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
             (&self.leader_hpke_config, Role::Leader),
@@ -232,8 +234,7 @@ where
 
         Ok(Report::new(
             self.parameters.task_id,
-            nonce,
-            extensions,
+            report_metadata,
             encrypted_input_shares,
         ))
     }
@@ -396,19 +397,19 @@ mod tests {
         client.parameters.min_batch_duration = Duration::from_seconds(100);
         client.clock = MockClock::new(Time::from_seconds_since_epoch(101));
         assert_eq!(
-            client.prepare_report(&1).unwrap().nonce().time(),
+            client.prepare_report(&1).unwrap().metadata().time(),
             Time::from_seconds_since_epoch(100),
         );
 
         client.clock = MockClock::new(Time::from_seconds_since_epoch(5200));
         assert_eq!(
-            client.prepare_report(&1).unwrap().nonce().time(),
+            client.prepare_report(&1).unwrap().metadata().time(),
             Time::from_seconds_since_epoch(5200),
         );
 
         client.clock = MockClock::new(Time::from_seconds_since_epoch(9814));
         assert_eq!(
-            client.prepare_report(&1).unwrap().nonce().time(),
+            client.prepare_report(&1).unwrap().metadata().time(),
             Time::from_seconds_since_epoch(9800),
         );
     }
