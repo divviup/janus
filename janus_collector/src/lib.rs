@@ -509,7 +509,6 @@ mod tests {
         message::{Duration, HpkeCiphertext, Nonce, Time},
         retries::test_http_request_exponential_backoff,
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
-        time::RealClock,
     };
     use mockito::mock;
     use prio::{
@@ -607,13 +606,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let transcript = run_vdaf(
-            &vdaf,
-            &random_verify_key(),
-            &(),
-            Nonce::generate(&RealClock::default(), Duration::from_seconds(3600)).unwrap(),
-            &1,
-        );
+        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), Nonce::generate(), &1);
         let collector = setup_collector(vdaf);
 
         let batch_interval = Interval::new(
@@ -676,13 +669,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let vdaf = Prio3::new_aes128_sum(2, 8).unwrap();
-        let transcript = run_vdaf(
-            &vdaf,
-            &random_verify_key(),
-            &(),
-            Nonce::generate(&RealClock::default(), Duration::from_seconds(3600)).unwrap(),
-            &144,
-        );
+        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), Nonce::generate(), &144);
         let collector = setup_collector(vdaf);
 
         let batch_interval = Interval::new(
@@ -726,13 +713,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let vdaf = Prio3::new_aes128_histogram(2, &[25, 50, 75, 100]).unwrap();
-        let transcript = run_vdaf(
-            &vdaf,
-            &random_verify_key(),
-            &(),
-            Nonce::generate(&RealClock::default(), Duration::from_seconds(3600)).unwrap(),
-            &80,
-        );
+        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), Nonce::generate(), &80);
         let collector = setup_collector(vdaf);
 
         let batch_interval = Interval::new(
