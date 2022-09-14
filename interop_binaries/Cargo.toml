@@ -8,7 +8,6 @@ publish = false
 
 [features]
 test-util = [
-    "dep:backoff",
     "dep:hex",
     "dep:futures",
     "dep:lazy_static",
@@ -23,13 +22,14 @@ testcontainer = [
 
 [dependencies]
 anyhow = "1"
-backoff = { version = "0.4", features = ["tokio"], optional = true }
+backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.13.0"
 clap = "3.2.20"
 futures = { version = "0.3.24", optional = true }
 hex = { version = "0.4", optional = true }
 lazy_static = { version = "1", optional = true }
 janus_client = { path = "../janus_client" }
+janus_collector = { path = "../janus_collector" }
 janus_core = { path = "../janus_core" }
 janus_server = { path = "../janus_server" }
 opentelemetry = { version = "0.17", features = ["metrics"] }
