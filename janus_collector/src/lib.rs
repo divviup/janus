@@ -17,7 +17,7 @@ use reqwest::{
     StatusCode,
 };
 use retry_after::FromHeaderValueError;
-pub use retry_after::RetryAfter;
+use retry_after::RetryAfter;
 use std::{
     convert::TryFrom,
     time::{Duration as StdDuration, SystemTime},
@@ -91,8 +91,7 @@ pub struct CollectorParameters {
     hpke_private_key: HpkePrivateKey,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,
-    /// Parameters to use when waiting for a collect job to be processed. This is only used by
-    /// [`Collector::collect`] and [`Collector::poll_until_complete`].
+    /// Parameters to use when waiting for a collect job to be processed.
     collect_poll_wait_parameters: ExponentialBackoff,
 }
 
@@ -118,7 +117,7 @@ impl CollectorParameters {
             collect_poll_wait_parameters: ExponentialBackoff {
                 initial_interval: StdDuration::from_secs(15),
                 max_interval: StdDuration::from_secs(300),
-                multiplier: 1.5,
+                multiplier: 1.2,
                 max_elapsed_time: None,
                 ..Default::default()
             },
@@ -131,8 +130,7 @@ impl CollectorParameters {
         self
     }
 
-    /// Replace the exponential backoff settings used while polling for aggregate shares. This is
-    /// only used by [`Collector::collect`] and [`Collector::poll_until_complete`].
+    /// Replace the exponential backoff settings used while polling for aggregate shares.
     pub fn with_collect_poll_backoff(mut self, backoff: ExponentialBackoff) -> CollectorParameters {
         self.collect_poll_wait_parameters = backoff;
         self
@@ -155,7 +153,7 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 /// Collector state related to a collect job that is in progress.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct CollectJob<P> {
+struct CollectJob<P> {
     /// The URL provided by the leader aggregator, where the collect response will be available
     /// upon completion.
     collect_job_url: Url,
@@ -167,7 +165,7 @@ pub struct CollectJob<P> {
 }
 
 impl<P> CollectJob<P> {
-    pub fn new(
+    fn new(
         collect_job_url: Url,
         batch_interval: Interval,
         aggregation_parameter: P,
@@ -178,25 +176,13 @@ impl<P> CollectJob<P> {
             aggregation_parameter,
         }
     }
-
-    pub fn collect_job_url(&self) -> &Url {
-        &self.collect_job_url
-    }
-
-    pub fn batch_interval(&self) -> Interval {
-        self.batch_interval
-    }
-
-    pub fn aggregation_parameter(&self) -> &P {
-        &self.aggregation_parameter
-    }
 }
 
 #[derive(Derivative)]
 #[derivative(Debug)]
 /// The result of a collect request poll operation. This will either provide the aggregate result
 /// or indicate that the collection is still being processed.
-pub enum PollResult<T> {
+enum PollResult<T> {
     /// The aggregate result from a completed collect request.
     AggregateResult(#[derivative(Debug = "ignore")] T),
     /// The collect request is not yet ready. If present, the [`RetryAfter`] object is the time at
@@ -219,7 +205,7 @@ impl<V: vdaf::Collector> Collector<V>
 where
     for<'a> Vec<u8>: From<&'a V::AggregateShare>,
 {
-    /// Construct a new collector
+    /// Construct a new collector.
     pub fn new(
         parameters: CollectorParameters,
         vdaf_collector: V,
@@ -234,7 +220,7 @@ where
 
     /// Send a collect request to the leader aggregator.
     #[tracing::instrument(err)]
-    pub async fn start_collection(
+    async fn start_collection(
         &self,
         batch_interval: Interval,
         aggregation_parameter: &V::AggregationParam,
@@ -279,17 +265,17 @@ where
             .to_str()?;
         let collect_job_url = location_header_value.parse()?;
 
-        Ok(CollectJob {
+        Ok(CollectJob::new(
             collect_job_url,
             batch_interval,
-            aggregation_parameter: aggregation_parameter.clone(),
-        })
+            aggregation_parameter.clone(),
+        ))
     }
 
     /// Request the results of an in-progress collection from the leader aggregator. This may
     /// return `Ok(None)` if the aggregation is not done yet.
     #[tracing::instrument(err)]
-    pub async fn poll_once(
+    async fn poll_once(
         &self,
         job: &CollectJob<V::AggregationParam>,
     ) -> Result<PollResult<V::AggregateResult>, Error> {
@@ -370,7 +356,7 @@ where
 
     /// A convenience method to repeatedly request the result of an in-progress collection until it
     /// completes.
-    pub async fn poll_until_complete(
+    async fn poll_until_complete(
         &self,
         job: &CollectJob<V::AggregationParam>,
     ) -> Result<V::AggregateResult, Error> {
@@ -433,6 +419,31 @@ where
             .start_collection(batch_interval, aggregation_parameter)
             .await?;
         self.poll_until_complete(&job).await
+    }
+}
+
+#[cfg(feature = "test-util")]
+pub mod test_util {
+    use crate::{Collector, Error};
+    use janus_core::message::Interval;
+    use prio::vdaf;
+
+    pub async fn collect_with_rewritten_url<V: vdaf::Collector>(
+        collector: &Collector<V>,
+        batch_interval: Interval,
+        aggregation_parameter: &V::AggregationParam,
+        host: &str,
+        port: u16,
+    ) -> Result<V::AggregateResult, Error>
+    where
+        for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
+    {
+        let mut job = collector
+            .start_collection(batch_interval, aggregation_parameter)
+            .await?;
+        job.collect_job_url.set_host(Some(host))?;
+        job.collect_job_url.set_port(Some(port)).unwrap();
+        collector.poll_until_complete(&job).await
     }
 }
 

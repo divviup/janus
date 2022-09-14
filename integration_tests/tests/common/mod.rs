@@ -4,7 +4,7 @@ use futures::Future;
 use integration_tests::logs::CopyLogs;
 use itertools::Itertools;
 use janus_client::{Client, ClientParameters};
-use janus_collector::{CollectJob, Collector, CollectorParameters};
+use janus_collector::{test_util::collect_with_rewritten_url, Collector, CollectorParameters};
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
     message::{Duration, HpkeConfig, Interval, Role, TaskId},
@@ -218,20 +218,10 @@ pub async fn submit_measurements_and_verify_aggregate(
         vdaf,
         &janus_collector::default_http_client().unwrap(),
     );
-    let job = collector
-        .start_collection(batch_interval, &())
-        .await
-        .context(here!())?;
-
-    // Rewrite the collect URL to access it outside of the container network.
-    let job = CollectJob::new(
-        translate_url_for_external_access(job.collect_job_url(), leader_port),
-        job.batch_interval(),
-        (),
-    );
-
-    // Poll until the collect job completes.
-    let aggregate_result = collector.poll_until_complete(&job).await.context(here!())?;
+    let aggregate_result =
+        collect_with_rewritten_url(&collector, batch_interval, &(), "127.0.0.1", leader_port)
+            .await
+            .context(here!())?;
 
     // Verify that the aggregate in the collect response is the correct value.
     if aggregate_result != num_nonzero_measurements as u64 {

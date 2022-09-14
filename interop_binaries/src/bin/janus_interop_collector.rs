@@ -7,7 +7,7 @@ use interop_binaries::{
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
     HpkeConfigRegistry, NumberAsString, VdafObject,
 };
-use janus_collector::{CollectJob, Collector, CollectorParameters, PollResult};
+use janus_collector::{Collector, CollectorParameters};
 use janus_core::{
     hpke::HpkePrivateKey,
     message::{Duration, HpkeConfig, Interval, TaskId, Time},
@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
     time::Duration as StdDuration,
 };
-use tokio::sync::Mutex;
+use tokio::{spawn, sync::Mutex, task::JoinHandle};
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
 #[derive(Debug, Deserialize)]
@@ -70,7 +70,7 @@ struct CollectPollRequest {
     handle: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 enum AggregationResult {
     Number(NumberAsString<u128>),
@@ -105,11 +105,10 @@ impl Handle {
     }
 }
 
-struct CollectJobState {
-    task_id: TaskId,
-    url: Url,
-    batch_interval: Interval,
-    agg_param: Vec<u8>,
+enum CollectJobState {
+    InProgress(Option<JoinHandle<anyhow::Result<AggregationResult>>>),
+    Completed(AggregationResult),
+    Error,
 }
 
 async fn handle_add_task(
@@ -140,22 +139,27 @@ async fn handle_add_task(
     Ok(hpke_config)
 }
 
-async fn handle_collect_start_generic<V: vdaf::Collector>(
+async fn handle_collect_generic<V>(
     http_client: &reqwest::Client,
     collector_params: CollectorParameters,
     batch_interval: Interval,
     vdaf: V,
     agg_param_encoded: &[u8],
-) -> anyhow::Result<Url>
+    convert_fn: impl Fn(V::AggregateResult) -> AggregationResult + Send + 'static,
+) -> anyhow::Result<JoinHandle<anyhow::Result<AggregationResult>>>
 where
+    V: vdaf::Collector + Send + Sync + 'static,
+    V::AggregationParam: Send + Sync + 'static,
     for<'a> Vec<u8>: From<&'a V::AggregateShare>,
 {
     let collector = Collector::new(collector_params, vdaf, http_client);
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
-    let job = collector
-        .start_collection(batch_interval, &agg_param)
-        .await?;
-    Ok(job.collect_job_url().clone())
+    let handle = spawn(async move {
+        let vdaf_result = collector.collect(batch_interval, &agg_param).await?;
+        let enum_result = convert_fn(vdaf_result);
+        Ok(enum_result)
+    });
+    Ok(handle)
 }
 
 async fn handle_collect_start(
@@ -189,45 +193,61 @@ async fn handle_collect_start(
     )
     .with_http_request_backoff(
         ExponentialBackoffBuilder::new()
+            .with_initial_interval(StdDuration::from_secs(1))
+            .with_max_interval(StdDuration::from_secs(1))
+            .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
+            .build(),
+    )
+    .with_collect_poll_backoff(
+        ExponentialBackoffBuilder::new()
+            .with_initial_interval(StdDuration::from_millis(200))
+            .with_max_interval(StdDuration::from_secs(1))
+            .with_multiplier(1.2)
             .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
             .build(),
     );
 
     let vdaf_instance = task_state.vdaf.clone().into();
-    let collect_job_url = match vdaf_instance {
+    let task_handle = match vdaf_instance {
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count {}) => {
             let vdaf =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
-            handle_collect_start_generic(
+            handle_collect_generic(
                 http_client,
                 collector_params,
                 batch_interval,
                 vdaf,
                 &agg_param,
+                |result| AggregationResult::Number(NumberAsString(result.into())),
             )
             .await?
         }
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
             let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3Aes128CountVec VDAF")?;
-            handle_collect_start_generic(
+            handle_collect_generic(
                 http_client,
                 collector_params,
                 batch_interval,
                 vdaf,
                 &agg_param,
+                |result| {
+                    let converted = result.into_iter().map(NumberAsString).collect();
+                    AggregationResult::NumberVec(converted)
+                },
             )
             .await?
         }
         VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
             let vdaf = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
-            handle_collect_start_generic(
+            handle_collect_generic(
                 http_client,
                 collector_params,
                 batch_interval,
                 vdaf,
                 &agg_param,
+                |result| AggregationResult::Number(NumberAsString(result)),
             )
             .await?
         }
@@ -236,12 +256,16 @@ async fn handle_collect_start(
         }) => {
             let vdaf = Prio3::new_aes128_histogram(2, buckets)
                 .context("failed to construct Prio3Aes128Histogram VDAF")?;
-            handle_collect_start_generic(
+            handle_collect_generic(
                 http_client,
                 collector_params,
                 batch_interval,
                 vdaf,
                 &agg_param,
+                |result| {
+                    let converted = result.into_iter().map(NumberAsString).collect();
+                    AggregationResult::NumberVec(converted)
+                },
             )
             .await?
         }
@@ -254,12 +278,7 @@ async fn handle_collect_start(
         match collect_jobs_guard.entry(handle.clone()) {
             Entry::Occupied(_) => continue,
             entry @ Entry::Vacant(_) => {
-                entry.or_insert(CollectJobState {
-                    task_id,
-                    url: collect_job_url,
-                    batch_interval,
-                    agg_param,
-                });
+                entry.or_insert(CollectJobState::InProgress(Some(task_handle)));
                 break handle;
             }
         }
@@ -268,136 +287,50 @@ async fn handle_collect_start(
     Ok(handle)
 }
 
-async fn handle_collect_poll_generic<V: vdaf::Collector>(
-    http_client: &reqwest::Client,
-    collector_params: CollectorParameters,
-    collect_job_url: Url,
-    batch_interval: Interval,
-    vdaf: V,
-    agg_param_encoded: &[u8],
-) -> anyhow::Result<Option<V::AggregateResult>>
-where
-    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
-{
-    let collector = Collector::new(collector_params, vdaf, http_client);
-    let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
-    let job = CollectJob::new(collect_job_url, batch_interval, agg_param);
-    let poll_result = collector
-        .poll_once(&job)
-        .await
-        .context("Error sending collect start request")?;
-    match poll_result {
-        PollResult::AggregateResult(aggregate_result) => Ok(Some(aggregate_result)),
-        PollResult::NextAttempt(_) => Ok(None),
-    }
-}
-
 async fn handle_collect_poll(
-    http_client: &reqwest::Client,
-    tasks: &Mutex<HashMap<TaskId, TaskState>>,
     collect_jobs: &Mutex<HashMap<Handle, CollectJobState>>,
     request: CollectPollRequest,
 ) -> anyhow::Result<Option<AggregationResult>> {
-    let tasks_guard = tasks.lock().await;
-    let collect_jobs_guard = collect_jobs.lock().await;
-    let collect_job_state = collect_jobs_guard
-        .get(&Handle(request.handle))
-        .context("did not recognize handle in collect_poll request")?;
-    let task_id = collect_job_state.task_id;
-    let task_state = tasks_guard
-        .get(&task_id)
-        .context("could not look up task information while polling")?;
-
-    let collector_params = CollectorParameters::new(
-        task_id,
-        task_state.leader_url.clone(),
-        task_state.auth_token.clone(),
-        task_state.hpke_config.clone(),
-        task_state.private_key.clone(),
-    );
-
-    let vdaf_instance = task_state.vdaf.clone().into();
-    match vdaf_instance {
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count {}) => {
-            let vdaf =
-                Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
-            match handle_collect_poll_generic(
-                http_client,
-                collector_params,
-                collect_job_state.url.clone(),
-                collect_job_state.batch_interval,
-                vdaf,
-                &collect_job_state.agg_param,
-            )
-            .await?
-            {
-                Some(aggregate_result) => Ok(Some(AggregationResult::Number(NumberAsString(
-                    aggregate_result.into(),
-                )))),
-                None => Ok(None),
-            }
-        }
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
-            let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
-                .context("failed to construct Prio3Aes128Count VDAF")?;
-            match handle_collect_poll_generic(
-                http_client,
-                collector_params,
-                collect_job_state.url.clone(),
-                collect_job_state.batch_interval,
-                vdaf,
-                &collect_job_state.agg_param,
-            )
-            .await?
-            {
-                Some(aggregate_result) => {
-                    let converted = aggregate_result.into_iter().map(NumberAsString).collect();
-                    Ok(Some(AggregationResult::NumberVec(converted)))
+    let mut collect_jobs_guard = collect_jobs.lock().await;
+    let collect_job_state_entry = collect_jobs_guard.entry(Handle(request.handle.clone()));
+    match collect_job_state_entry {
+        Entry::Occupied(mut occupied_entry) => match occupied_entry.get_mut() {
+            CollectJobState::InProgress(join_handle_opt) => {
+                if join_handle_opt.as_ref().unwrap().is_finished() {
+                    // Awaiting on the JoinHandle requires owning it. We take it out of the Option,
+                    // and ensure that a different enum variant is stored over it before dropping
+                    // the lock on the HashMap.
+                    let taken_handle = join_handle_opt.take().unwrap();
+                    let task_result = taken_handle.await;
+                    let collect_result = match task_result {
+                        Ok(collect_result) => collect_result,
+                        Err(e) => {
+                            occupied_entry.insert(CollectJobState::Error);
+                            return Err(e).context("panic while handling collection");
+                        }
+                    };
+                    match collect_result {
+                        Ok(agg_result) => {
+                            occupied_entry.insert(CollectJobState::Completed(agg_result.clone()));
+                            Ok(Some(agg_result))
+                        }
+                        Err(e) => {
+                            occupied_entry.insert(CollectJobState::Error);
+                            Err(e)
+                        }
+                    }
+                } else {
+                    Ok(None)
                 }
-                None => Ok(None),
             }
-        }
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
-            let vdaf = Prio3::new_aes128_sum(2, bits)
-                .context("failed to construct Prio3Aes128Sum VDAF")?;
-            match handle_collect_poll_generic(
-                http_client,
-                collector_params,
-                collect_job_state.url.clone(),
-                collect_job_state.batch_interval,
-                vdaf,
-                &collect_job_state.agg_param,
-            )
-            .await?
-            {
-                Some(aggregate_result) => Ok(Some(AggregationResult::Number(NumberAsString(
-                    aggregate_result,
-                )))),
-                None => Ok(None),
-            }
-        }
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
-            ref buckets,
-        }) => {
-            let vdaf = Prio3::new_aes128_histogram(2, buckets)
-                .context("failed to construct Prio3Aes128Histogram VDAF")?;
-            let aggregate_result = match handle_collect_poll_generic(
-                http_client,
-                collector_params,
-                collect_job_state.url.clone(),
-                collect_job_state.batch_interval,
-                vdaf,
-                &collect_job_state.agg_param,
-            )
-            .await?
-            {
-                Some(aggregate_result) => aggregate_result,
-                None => return Ok(None),
-            };
-            let converted = aggregate_result.into_iter().map(NumberAsString).collect();
-            Ok(Some(AggregationResult::NumberVec(converted)))
-        }
-        _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
+            CollectJobState::Completed(ref agg_result) => Ok(Some(agg_result.clone())),
+            CollectJobState::Error => Err(anyhow::anyhow!(
+                "collection previously resulted in an error"
+            )),
+        },
+        Entry::Vacant(_) => Err(anyhow::anyhow!(
+            "did not recognize handle in collect_poll request"
+        )),
     }
 }
 
@@ -443,7 +376,6 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     });
     let collect_start_filter =
         warp::path!("collect_start").and(warp::body::json()).then({
-            let http_client = http_client.clone();
             let tasks = Arc::clone(&tasks);
             let collect_jobs = Arc::clone(&collect_jobs);
             move |request: CollectStartRequest| {
@@ -473,28 +405,25 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
         });
     let collect_poll_filter = warp::path!("collect_poll").and(warp::body::json()).then({
         move |request: CollectPollRequest| {
-            let http_client = http_client.clone();
-            let tasks = Arc::clone(&tasks);
             let collect_jobs = Arc::clone(&collect_jobs);
             async move {
-                let response =
-                    match handle_collect_poll(&http_client, &tasks, &collect_jobs, request).await {
-                        Ok(Some(result)) => CollectPollResponse {
-                            status: COMPLETE,
-                            error: None,
-                            result: Some(result),
-                        },
-                        Ok(None) => CollectPollResponse {
-                            status: IN_PROGRESS,
-                            error: None,
-                            result: None,
-                        },
-                        Err(e) => CollectPollResponse {
-                            status: ERROR,
-                            error: Some(format!("{:?}", e)),
-                            result: None,
-                        },
-                    };
+                let response = match handle_collect_poll(&collect_jobs, request).await {
+                    Ok(Some(result)) => CollectPollResponse {
+                        status: COMPLETE,
+                        error: None,
+                        result: Some(result),
+                    },
+                    Ok(None) => CollectPollResponse {
+                        status: IN_PROGRESS,
+                        error: None,
+                        result: None,
+                    },
+                    Err(e) => CollectPollResponse {
+                        status: ERROR,
+                        error: Some(format!("{:?}", e)),
+                        result: None,
+                    },
+                };
                 warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
                     .into_response()
             }
