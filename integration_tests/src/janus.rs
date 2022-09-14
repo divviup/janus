@@ -1,6 +1,5 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-use crate::logs::CopyLogs;
 use interop_binaries::{
     test_util::await_http_server, testcontainer::Aggregator, AggregatorAddTaskRequest,
 };
@@ -20,10 +19,13 @@ use std::{
     collections::HashMap,
     path::Path,
     process::{Command, Stdio},
+    thread::panicking,
 };
 use testcontainers::{clients::Cli, Container, RunnableImage};
 use tracing::debug;
 use url::Url;
+
+use crate::log_export_path;
 
 /// Represents a running Janus test instance
 #[allow(clippy::large_enum_variant)]
@@ -179,41 +181,35 @@ impl Janus<'static> {
     }
 }
 
-impl<'a> CopyLogs for Janus<'a> {
-    fn logs<P: AsRef<Path>>(&self, destination: &P) {
-        match self {
-            Janus::Container { role, container } => {
-                let container_source_path = format!("{}:logs/", container.id());
+impl<'a> Drop for Janus<'a> {
+    fn drop(&mut self) {
+        // We assume that if a Janus value is dropped during a panic, we are in the middle of
+        // test failure. In this case, export logs if log_export_path() suggests doing so.
+        //
+        // (log export is a no-op for non-containers: when running tests against a cluster, we
+        // gather up logfiles with `kind export logs`)
 
-                let host_destination_path = destination
-                    .as_ref()
-                    .join(format!("{}-{}", role, container.id()))
-                    .into_os_string()
-                    .into_string()
-                    .unwrap();
-
-                let args = ["cp", &container_source_path, &host_destination_path];
-                debug!(?args, "invoking docker");
-                let child_status = Command::new("docker")
-                    .args(args)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .unwrap()
-                    .wait()
-                    .unwrap();
-                assert!(
-                    child_status.success(),
-                    "docker cp failed with status {:?}",
-                    child_status.code()
-                );
+        if let Janus::Container { role, container } = self {
+            if panicking() {
+                if let Some(mut destination_path) = log_export_path() {
+                    destination_path.push(format!("{}-{}", role, container.id()));
+                    let docker_cp_status = Command::new("docker")
+                        .args([
+                            "cp",
+                            &format!("{}:logs/", container.id()),
+                            destination_path.as_os_str().to_str().unwrap(),
+                        ])
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status()
+                        .expect("Failed to execute `docker cp`");
+                    assert!(
+                        docker_cp_status.success(),
+                        "`docker cp` failed with status {docker_cp_status:?}"
+                    );
+                }
             }
-            // No-op: when running tests against the cluster, we gather up logfiles with `kind
-            // export logs`
-            Janus::KubernetesCluster {
-                aggregator_port_forward: _,
-            } => {}
         }
     }
 }
