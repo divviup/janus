@@ -1,4 +1,54 @@
-//! DAP protocol collector
+//! A [DAP-PPM](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/) collector
+//!
+//! This library implements the collector role of the DAP-PPM protocol. It works in concert with
+//! two DAP-PPM aggregator servers to compute a statistical aggregate over data from many clients,
+//! while preserving the privacy of each client's data.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use janus_collector::{Collector, CollectorParameters, default_http_client};
+//! use janus_core::{
+//!     message::{Duration, HpkeConfig, Interval, TaskId, Time},
+//!     task::AuthenticationToken,
+//! };
+//! use prio::vdaf::prio3::Prio3;
+//! use url::Url;
+//!
+//! # async fn run() {
+//! // Supply DAP task paramenters.
+//! # let task_id = TaskId::random();
+//! # let (hpke_config, private_key) = janus_core::hpke::generate_hpke_config_and_private_key(
+//! #     janus_core::message::HpkeConfigId::from(0),
+//! #     janus_core::message::HpkeKemId::X25519HkdfSha256,
+//! #     janus_core::message::HpkeKdfId::HkdfSha256,
+//! #     janus_core::message::HpkeAeadId::Aes128Gcm,
+//! # );
+//! let authentication_token = AuthenticationToken::from(b"my-authentication-token".to_vec());
+//! let parameters = CollectorParameters::new(
+//!     task_id,
+//!     "https://example.com/dap/".parse().unwrap(),
+//!     authentication_token,
+//!     hpke_config,
+//!     private_key,
+//! );
+//!
+//! // Supply a VDAF implementation, corresponding to this task.
+//! let vdaf = Prio3::new_aes128_count(2).unwrap();
+//! // Use the default HTTP client as-is.
+//! let http_client = default_http_client().unwrap();
+//! let collector = Collector::new(parameters, vdaf, &http_client);
+//!
+//! // Specify the time interval over which the aggregation should be calculated.
+//! let interval = Interval::new(
+//!     Time::from_seconds_since_epoch(1_656_000_000),
+//!     Duration::from_seconds(3600),
+//! )
+//! .unwrap();
+//! // Make the requests and retrieve the aggregated statistic.
+//! let aggregation_result = collector.collect(interval, &()).await.unwrap();
+//! # }
+//! ```
 
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use derivative::Derivative;
@@ -205,7 +255,9 @@ impl<V: vdaf::Collector> Collector<V>
 where
     for<'a> Vec<u8>: From<&'a V::AggregateShare>,
 {
-    /// Construct a new collector.
+    /// Construct a new collector. This requires certain DAP task parameters, an implementation of
+    /// the task's VDAF, and a [`reqwest::Client`], configured to never follow redirects, that will
+    /// be used to communicate with the leader aggregator.
     pub fn new(
         parameters: CollectorParameters,
         vdaf_collector: V,
