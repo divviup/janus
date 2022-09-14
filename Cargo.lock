@@ -380,9 +380,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "3.2.20"
+version = "3.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b71c3ce99b7611011217b366d923f1d0a7e07a92bb2dbf1e84508c673ca3bd"
+checksum = "1ed5341b2301a26ab80be5cbdced622e80ed808483c52e45e3310a877d3b37d7"
 dependencies = [
  "atty",
  "bitflags",
@@ -1555,6 +1555,7 @@ dependencies = [
  "interop_binaries",
  "itertools",
  "janus_client",
+ "janus_collector",
  "janus_core",
  "janus_server",
  "k8s-openapi",
@@ -1585,6 +1586,7 @@ dependencies = [
  "hex",
  "interop_binaries",
  "janus_client",
+ "janus_collector",
  "janus_core",
  "janus_server",
  "lazy_static",
@@ -1644,6 +1646,26 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "janus_collector"
+version = "0.1.11"
+dependencies = [
+ "assert_matches",
+ "backoff",
+ "chrono",
+ "derivative",
+ "janus_core",
+ "mockito",
+ "prio",
+ "rand",
+ "reqwest",
+ "retry-after",
+ "thiserror",
+ "tokio",
+ "tracing",
  "url",
 ]
 
@@ -2579,9 +2601,9 @@ dependencies = [
 
 [[package]]
 name = "prometheus"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cface98dfa6d645ea4c789839f176e4b072265d085bfcc48eaa8d137f58d3c39"
+checksum = "45c8babc29389186697fe5a2a4859d697825496b83db5d0b65271cdc0488e88c"
 dependencies = [
  "cfg-if 1.0.0",
  "fnv",
@@ -2861,6 +2883,17 @@ name = "retain_mut"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4389f1d5789befaf6029ebd9f7dac4af7f7e3d61b69d4f30e2ac02b57e7712b0"
+
+[[package]]
+name = "retry-after"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "128d55dc93b909e04874b53878316eb687633459706f8fc647de333cc0620caa"
+dependencies = [
+ "chrono",
+ "http",
+ "thiserror",
+]
 
 [[package]]
 name = "ring"
@@ -4037,13 +4070,12 @@ checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "url"
-version = "2.2.2"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a507c383b2d33b5fc35d1861e77e6b383d158b2da5e14fe51b83dfedf6fd578c"
+checksum = "22fe195a4f217c25b25cb5058ced57059824a678474874038dc88d211bf508d3"
 dependencies = [
  "form_urlencoded",
  "idna",
- "matches",
  "percent-encoding",
  "serde",
 ]

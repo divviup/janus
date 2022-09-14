@@ -9,8 +9,7 @@ use crate::{
         Datastore, Transaction,
     },
     message::{AggregateShareReq, AggregateShareResp},
-    task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
-    task::{VdafInstance, DAP_AUTH_HEADER},
+    task::{Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use derivative::Derivative;
 use futures::{future::BoxFuture, try_join};
@@ -19,6 +18,7 @@ use http::header::CONTENT_TYPE;
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{
     message::{Duration, Interval, NonceChecksum, Role},
+    task::DAP_AUTH_HEADER,
     time::Clock,
 };
 use opentelemetry::metrics::{BoundCounter, Meter};

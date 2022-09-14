@@ -1,29 +1,32 @@
 [package]
-name = "janus_client"
+name = "janus_collector"
 version = "0.1.11"
 edition = "2021"
-description = "Client for Janus, the server powering ISRG's Divvi Up."
-documentation = "https://docs.rs/janus_client"
+description = "Collector for Janus, the server powering ISRG's Divvi Up."
+documentation = "https://docs.rs/janus_collector"
 homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.63"
 
+[features]
+test-util = []
+
 [dependencies]
 backoff = { version = "0.4.0", features = ["tokio"] }
 derivative = "2.2.0"
-http = "0.2.8"
 janus_core = { version = "0.1", path = "../janus_core" }
-prio = { version = "0.8.2", features = ["multithreaded"] }
+prio = "0.8.2"
 reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls"] }
+retry-after = "0.3.1"
 thiserror = "1.0"
 tokio = { version = "1.21", features = ["full"] }
 tracing = "0.1.36"
-url = "2.3.0"
+url = "2.2.2"
 
 [dev-dependencies]
 assert_matches = "1"
+chrono = "0.4"
 janus_core = { path = "../janus_core", features = ["test-util"]}
 mockito = "0.31.0"
-tracing-log = "0.1.3"
-tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }
+rand = "0.8"

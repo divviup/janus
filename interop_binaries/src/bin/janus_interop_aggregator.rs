@@ -8,6 +8,7 @@ use interop_binaries::{
 };
 use janus_core::{
     message::{Duration, HpkeConfig, Role, TaskId},
+    task::AuthenticationToken,
     time::RealClock,
     TokioRuntime,
 };
@@ -19,7 +20,7 @@ use janus_server::{
     binary_utils::{database_pool, job_driver::JobDriver},
     config::DbConfig,
     datastore::{Crypter, Datastore},
-    task::{AuthenticationToken, Task},
+    task::Task,
     SecretBytes,
 };
 use opentelemetry::global::meter;

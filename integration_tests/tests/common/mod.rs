@@ -1,33 +1,23 @@
-use http::{
-    header::{CONTENT_TYPE, LOCATION},
-    StatusCode,
-};
+use backoff::ExponentialBackoffBuilder;
 use itertools::Itertools;
 use janus_client::{Client, ClientParameters};
+use janus_collector::{test_util::collect_with_rewritten_url, Collector, CollectorParameters};
 use janus_core::{
-    hpke::{
-        self, associated_data_for_aggregate_share,
-        test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, HpkePrivateKey,
-        Label,
-    },
+    hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
     message::{Duration, HpkeConfig, Interval, Role, TaskId},
-    task::VdafInstance,
+    retries::test_http_request_exponential_backoff,
+    task::{AuthenticationToken, VdafInstance},
     time::{Clock, RealClock},
 };
 use janus_server::{
-    message::{CollectReq, CollectResp},
     task::{test_util::generate_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     SecretBytes,
 };
-use prio::{
-    codec::{Decode, Encode},
-    field::Field64,
-    vdaf::{prio3::Prio3, AggregateShare, Collector},
-};
+use prio::vdaf::prio3::Prio3;
 use rand::{thread_rng, Rng};
-use reqwest::{redirect, Url};
+use reqwest::Url;
 use std::iter;
-use tokio::time::{self, Instant};
+use tokio::time::{self};
 
 // Returns (leader_task, helper_task).
 pub fn create_test_tasks(collector_hpke_config: &HpkeConfig) -> (Task, Task) {
@@ -153,16 +143,7 @@ pub async fn submit_measurements_and_verify_aggregate(
         client.upload(&measurement).await.unwrap();
     }
 
-    // Send a collect request, recording the collect job URL.
-    let http_client = reqwest::Client::builder()
-        .redirect(redirect::Policy::none()) // otherwise following SEE_OTHER is automatic
-        .build()
-        .unwrap();
-    let collect_url = aggregator_endpoints
-        .get(Role::Leader.index().unwrap())
-        .unwrap()
-        .join("collect")
-        .unwrap();
+    // Send a collect request.
     let batch_interval = Interval::new(
         before_timestamp
             .to_batch_unit_interval_start(leader_task.min_batch_duration)
@@ -172,106 +153,37 @@ pub async fn submit_measurements_and_verify_aggregate(
         Duration::from_seconds(2 * leader_task.min_batch_duration.as_seconds()),
     )
     .unwrap();
-    let collect_req = CollectReq {
+    let collector_params = CollectorParameters::new(
         task_id,
-        batch_interval,
-        agg_param: Vec::new(),
-    };
-    let collect_resp = http_client
-        .post(collect_url)
-        .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
-        .header(
-            "DAP-Auth-Token",
-            leader_task.primary_collector_auth_token().as_bytes(),
-        )
-        .body(collect_req.get_encoded())
-        .send()
-        .await
-        .unwrap();
-    assert!(
-        collect_resp.status() == StatusCode::SEE_OTHER,
-        "Unexpected status (wanted SEE_OTHER, got {})",
-        collect_resp.status()
-    );
-
-    let collect_job_url = Url::parse(
-        collect_resp
-            .headers()
-            .get(LOCATION)
-            .expect("No Location header in collect request response")
-            .to_str()
-            .unwrap(),
+        aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
+        AuthenticationToken::from(
+            leader_task
+                .primary_collector_auth_token()
+                .as_bytes()
+                .to_vec(),
+        ),
+        leader_task.collector_hpke_config.clone(),
+        collector_private_key.clone(),
     )
-    .expect("Couldn't parse collect job URL");
-    let collect_job_url = translate_url_for_external_access(&collect_job_url, leader_port);
-
-    // Poll until the collect job completes.
-    let collect_job_poll_timeout = Instant::now()
-        .checked_add(time::Duration::from_secs(60))
-        .unwrap();
-    let mut poll_interval = time::interval(time::Duration::from_millis(500));
-    let collect_resp = loop {
-        assert!(
-            Instant::now() < collect_job_poll_timeout,
-            "Collect job poll timeout exceeded"
-        );
-        let collect_job_resp = http_client
-            .get(collect_job_url.clone())
-            .header(
-                "DAP-Auth-Token",
-                leader_task.primary_collector_auth_token().as_bytes(),
-            )
-            .send()
+    .with_http_request_backoff(test_http_request_exponential_backoff())
+    .with_collect_poll_backoff(
+        ExponentialBackoffBuilder::new()
+            .with_initial_interval(time::Duration::from_millis(500))
+            .with_max_interval(time::Duration::from_millis(500))
+            .with_max_elapsed_time(Some(time::Duration::from_secs(60)))
+            .build(),
+    );
+    let collector = Collector::new(
+        collector_params,
+        vdaf,
+        &janus_collector::default_http_client().unwrap(),
+    );
+    let aggregate_result =
+        collect_with_rewritten_url(&collector, batch_interval, &(), "127.0.0.1", leader_port)
             .await
             .unwrap();
-        let status = collect_job_resp.status();
-        assert!(
-            status == StatusCode::OK || status == StatusCode::ACCEPTED,
-            "Unexpected status (wanted OK or ACCEPTED, got {status}"
-        );
-        if status == StatusCode::ACCEPTED {
-            poll_interval.tick().await;
-            continue;
-        }
-        break CollectResp::get_decoded(
-            &collect_job_resp
-                .bytes()
-                .await
-                .expect("Couldn't read response from collect job URI"),
-        )
-        .expect("Coudln't parse collect response");
-    };
-
-    assert!(
-        collect_resp.encrypted_agg_shares.len() == 2,
-        "Unexpected number of aggregate shares (want 2, got {})",
-        collect_resp.encrypted_agg_shares.len()
-    );
 
     // Verify that the aggregate in the collect response is the correct value.
-    let associated_data = associated_data_for_aggregate_share(task_id, batch_interval);
-    let aggregate_result = vdaf
-        .unshard(
-            &(),
-            collect_resp
-                .encrypted_agg_shares
-                .iter()
-                .zip([Role::Leader, Role::Helper])
-                .map(|(encrypted_agg_share, role)| {
-                    let agg_share_bytes = hpke::open(
-                        &leader_task.collector_hpke_config,
-                        collector_private_key,
-                        &HpkeApplicationInfo::new(Label::AggregateShare, role, Role::Collector),
-                        encrypted_agg_share,
-                        &associated_data,
-                    )
-                    .expect("HPKE decryption failure");
-                    AggregateShare::<Field64>::try_from(agg_share_bytes.as_ref())
-                        .expect("Couldn't parse aggregate share")
-                })
-                .collect::<Vec<_>>(),
-        )
-        .unwrap();
     assert!(
         aggregate_result == num_nonzero_measurements as u64,
         "Unexpected aggregate result (want {num_nonzero_measurements}, got {aggregate_result})"

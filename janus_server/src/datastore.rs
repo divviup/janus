@@ -9,7 +9,7 @@ use self::models::{
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
 use crate::{
     message::{AggregateShareReq, AggregationJobId, ReportShare},
-    task::{self, AuthenticationToken, Task, VdafInstance},
+    task::{self, Task, VdafInstance},
     SecretBytes,
 };
 use anyhow::anyhow;
@@ -20,6 +20,7 @@ use janus_core::{
         Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, NonceChecksum, Report,
         Role, TaskId, Time,
     },
+    task::AuthenticationToken,
     time::Clock,
 };
 use opentelemetry::{metrics::BoundCounter, KeyValue};

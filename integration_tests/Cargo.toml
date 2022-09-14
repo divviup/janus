@@ -36,12 +36,13 @@ serde_json = { version = "1", optional = true }
 testcontainers = "0.14.0"
 tokio = { version = "1", features = ["full", "tracing"] }
 tracing = "0.1.36"
-url = { version = "2.2.2", features = ["serde"] }
+url = { version = "2.3.0", features = ["serde"] }
 
 [dev-dependencies]
 http = "0.2"
 itertools = "0.10"
 janus_client = { path = "../janus_client" }
+janus_collector = { path = "../janus_collector", features = ["test-util"] }
 prio = { version = "0.8.2", features = ["multithreaded"] }
 tempfile = "3"
 
