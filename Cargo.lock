@@ -1653,9 +1653,12 @@ dependencies = [
 name = "janus_collector"
 version = "0.1.11"
 dependencies = [
+ "anyhow",
  "assert_matches",
  "backoff",
+ "base64",
  "chrono",
+ "clap",
  "derivative",
  "janus_core",
  "mockito",
@@ -1666,6 +1669,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-log",
+ "tracing-subscriber",
  "url",
 ]
 
