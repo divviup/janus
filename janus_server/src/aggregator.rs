@@ -67,7 +67,7 @@ use std::{
     time::Instant,
 };
 use tokio::sync::Mutex;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use url::Url;
 use uuid::Uuid;
 use warp::{
@@ -1022,7 +1022,7 @@ impl VdafOps {
             leader_report,
             &report.associated_data(),
         ) {
-            warn!(report.task_id = ?report.task_id(), report.metadata = ?report.metadata(), ?err, "Report decryption failed");
+            info!(report.task_id = ?report.task_id(), report.metadata = ?report.metadata(), ?err, "Report decryption failed");
             upload_decrypt_failure_counter.add(1);
             return Ok(());
         }
@@ -1119,7 +1119,7 @@ impl VdafOps {
                 .hpke_keys
                 .get(&report_share.encrypted_input_share.config_id())
                 .ok_or_else(|| {
-                    warn!(
+                    info!(
                         config_id = ?report_share.encrypted_input_share.config_id(),
                         "Helper encrypted input share references unknown HPKE config ID"
                     );
@@ -1139,7 +1139,7 @@ impl VdafOps {
                     &report_share.associated_data(task_id),
                 )
                 .map_err(|err| {
-                    warn!(
+                    info!(
                         ?task_id,
                         metadata = %report_share.metadata,
                         %err,
@@ -1158,7 +1158,7 @@ impl VdafOps {
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext)
                     .map_err(|err| {
-                        warn!(?task_id, metadata = %report_share.metadata, %err, "Couldn't decode helper's input share");
+                        info!(?task_id, metadata = %report_share.metadata, %err, "Couldn't decode helper's input share");
                         aggregate_step_failure_counters.input_share_decode_failure.add(1);
                         ReportShareError::VdafPrepError
                     })
@@ -1177,7 +1177,7 @@ impl VdafOps {
                         &input_share,
                     )
                     .map_err(|err| {
-                        warn!(?task_id, nonce = %report_share.metadata.nonce(), %err, "Couldn't prepare_init report share");
+                        info!(?task_id, nonce = %report_share.metadata.nonce(), %err, "Couldn't prepare_init report share");
                         aggregate_step_failure_counters.prepare_init_failure.add(1);
                         ReportShareError::VdafPrepError
                     })
@@ -1439,7 +1439,7 @@ impl VdafOps {
                             }
 
                             Err(err) => {
-                                warn!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
+                                info!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
                                 prepare_step_failure_counter.add(1);
                                 report_aggregation.state =
                                     ReportAggregationState::Failed(ReportShareError::VdafPrepError);
