@@ -201,6 +201,7 @@ pub fn install_tracing_subscriber() -> anyhow::Result<()> {
         .with_target(true)
         .with_file(true)
         .with_line_number(true)
+        .with_ansi(false)
         .pretty();
     let subscriber = Registry::default().with(stdout_filter.and_then(layer));
     tracing::subscriber::set_global_default(subscriber)?;
