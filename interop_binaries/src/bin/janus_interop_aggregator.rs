@@ -243,7 +243,7 @@ async fn main() -> anyhow::Result<()> {
     let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
         Datastore::new(pool, crypter, clock),
         clock,
-        StdDuration::from_secs(5),
+        StdDuration::from_secs(2),
         StdDuration::from_secs(1),
         1,
         100,
@@ -261,7 +261,7 @@ async fn main() -> anyhow::Result<()> {
         TokioRuntime,
         aggregation_job_driver_meter,
         Duration::from_seconds(1),
-        Duration::from_seconds(5),
+        Duration::from_seconds(2),
         10,
         Duration::from_seconds(1),
         aggregation_job_driver.make_incomplete_job_acquirer_callback(
@@ -283,7 +283,7 @@ async fn main() -> anyhow::Result<()> {
         TokioRuntime,
         collect_job_driver_meter,
         Duration::from_seconds(1),
-        Duration::from_seconds(5),
+        Duration::from_seconds(2),
         10,
         Duration::from_seconds(1),
         collect_job_driver.make_incomplete_job_acquirer_callback(

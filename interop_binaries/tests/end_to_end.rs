@@ -1,3 +1,4 @@
+use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use base64::URL_SAFE_NO_PAD;
 use futures::future::join_all;
 use interop_binaries::{
@@ -394,7 +395,12 @@ async fn run(
         .expect("\"handle\" value is not a string");
 
     // Send /internal/test/collect_poll requests to the collector, polling until it is completed.
-    for _ in 0..30 {
+    let mut backoff = ExponentialBackoffBuilder::new()
+        .with_initial_interval(StdDuration::from_millis(500))
+        .with_max_interval(StdDuration::from_millis(500))
+        .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
+        .build();
+    loop {
         let collect_poll_response = http_client
             .post(
                 local_collector_endpoint
@@ -422,8 +428,12 @@ async fn run(
             .as_str()
             .expect("\"status\" value is not a string");
         if status == "in progress" {
-            tokio::time::sleep(StdDuration::from_millis(500)).await;
-            continue;
+            if let Some(duration) = backoff.next_backoff() {
+                tokio::time::sleep(duration).await;
+                continue;
+            } else {
+                panic!("timed out fetching aggregation result");
+            }
         }
         assert_eq!(
             status,
@@ -436,8 +446,6 @@ async fn run(
             .expect("completed collect_poll response is missing \"result\"")
             .clone();
     }
-
-    panic!("timed out fetching aggregation result");
 }
 
 #[tokio::test]
