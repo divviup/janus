@@ -1,5 +1,5 @@
-use crate::message::Nonce;
 use assert_matches::assert_matches;
+use janus_messages::Nonce;
 use prio::{
     codec::Encode,
     vdaf::{self, PrepareTransition, VdafError},

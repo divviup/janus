@@ -7,12 +7,13 @@ use janus_client::{Client, ClientParameters};
 use janus_collector::{test_util::collect_with_rewritten_url, Collector, CollectorParameters};
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
-    message::{Duration, HpkeConfig, Interval, Role, TaskId},
     retries::test_http_request_exponential_backoff,
     task::{AuthenticationToken, VdafInstance},
-    time::{Clock, RealClock},
+    time::{Clock, RealClock, TimeExt},
 };
+use janus_messages::{Duration, HpkeConfig, Interval, Role, TaskId};
 use janus_server::{
+    messages::DurationExt,
     task::{test_util::generate_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     SecretBytes,
 };

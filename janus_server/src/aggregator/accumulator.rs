@@ -4,9 +4,10 @@ use super::Error;
 use crate::datastore::{self, models::BatchUnitAggregation, Transaction};
 use derivative::Derivative;
 use janus_core::{
-    message::{Duration, Interval, Nonce, NonceChecksum, TaskId, Time},
-    time::Clock,
+    nonce::NonceChecksumExt,
+    time::{Clock, TimeExt},
 };
+use janus_messages::{Duration, Interval, Nonce, NonceChecksum, TaskId, Time};
 use prio::vdaf::{self, Aggregatable};
 use std::collections::HashMap;
 use tracing::debug;

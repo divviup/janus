@@ -2,7 +2,7 @@ use std::future::Future;
 use tokio::task::JoinHandle;
 
 pub mod hpke;
-pub mod message;
+pub mod nonce;
 pub mod retries;
 pub mod task;
 #[cfg(feature = "test-util")]

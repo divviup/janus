@@ -5,11 +5,8 @@ use clap::{
 };
 use derivative::Derivative;
 use janus_collector::{default_http_client, Collector, CollectorParameters};
-use janus_core::{
-    hpke::HpkePrivateKey,
-    message::{Duration, HpkeConfig, Interval, TaskId, Time},
-    task::AuthenticationToken,
-};
+use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
+use janus_messages::{Duration, HpkeConfig, Interval, TaskId, Time};
 use prio::{
     codec::Decode,
     vdaf::{self, prio3::Prio3},

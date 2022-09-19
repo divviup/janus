@@ -5,11 +5,11 @@ use base64::URL_SAFE_NO_PAD;
 use derivative::Derivative;
 use janus_core::{
     hpke::HpkePrivateKey,
-    message::{
-        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
-        Interval, Role, TaskId,
-    },
     task::{url_ensure_trailing_slash, AuthenticationToken},
+};
+use janus_messages::{
+    Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
+    Role, TaskId,
 };
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -561,16 +561,14 @@ impl TryFrom<SerializedHpkeKeypair> for (HpkeConfig, HpkePrivateKey) {
 // This is public to allow use in integration tests.
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use std::iter;
-
     use super::{
         AuthenticationToken, SecretBytes, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
-    use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key,
-        message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
-    };
+    use crate::messages::DurationExt;
+    use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
+    use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
     use rand::{thread_rng, Rng};
+    use std::iter;
 
     impl VdafInstance {
         /// Returns the expected length of a VDAF verification key for a VDAF of this type.
@@ -655,11 +653,9 @@ mod tests {
         test_util::{generate_auth_token, new_dummy_task},
         SecretBytes, Task, PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
-    use crate::{config::test_util::roundtrip_encoding, task::VdafInstance};
-    use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key,
-        message::{Duration, Interval, Role, TaskId, Time},
-    };
+    use crate::{config::test_util::roundtrip_encoding, messages::DurationExt, task::VdafInstance};
+    use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
+    use janus_messages::{Duration, Interval, Role, TaskId, Time};
     use serde_test::{assert_tokens, Token};
 
     #[test]

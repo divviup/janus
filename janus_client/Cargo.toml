@@ -14,6 +14,7 @@ backoff = { version = "0.4.0", features = ["tokio"] }
 derivative = "2.2.0"
 http = "0.2.8"
 janus_core = { version = "0.1", path = "../janus_core" }
+janus_messages = { version = "0.1", path = "../janus_messages" }
 prio = { version = "0.8.2", features = ["multithreaded"] }
 reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls"] }
 thiserror = "1.0"

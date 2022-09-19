@@ -8,10 +8,6 @@ use crate::{
         },
         Datastore,
     },
-    message::{
-        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
-    },
     task::{Task, VdafInstance, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::{anyhow, Context, Result};
@@ -21,11 +17,14 @@ use futures::{
     try_join,
 };
 use http::header::CONTENT_TYPE;
+use janus_core::time::Clock;
 use janus_core::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    message::{Duration, Report, Role},
     task::DAP_AUTH_HEADER,
-    time::Clock,
+};
+use janus_messages::{
+    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
+    Duration, PrepareStep, PrepareStepResult, Report, ReportShare, ReportShareError, Role,
 };
 use opentelemetry::metrics::{BoundCounter, Meter};
 use prio::{
@@ -850,10 +849,6 @@ mod tests {
             },
             test_util::ephemeral_datastore,
         },
-        message::{
-            AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-            AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
-        },
         task::{test_util::new_dummy_task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
@@ -863,11 +858,16 @@ mod tests {
             self, associated_data_for_report_share,
             test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
-        message::{Duration, HpkeConfig, Interval, Nonce, NonceChecksum, Report, Role, TaskId},
+        nonce::{NonceChecksumExt, NonceExt},
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
-        time::MockClock,
+        time::{MockClock, TimeExt},
         Runtime,
+    };
+    use janus_messages::{
+        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
+        AggregateInitializeResp, AggregationJobId, Duration, HpkeConfig, Interval, Nonce,
+        NonceChecksum, PrepareStep, PrepareStepResult, Report, ReportShare, Role, TaskId,
     };
     use mockito::mock;
     use opentelemetry::global::meter;

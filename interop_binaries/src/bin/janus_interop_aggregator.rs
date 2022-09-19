@@ -6,12 +6,8 @@ use interop_binaries::{
     status::{ERROR, SUCCESS},
     AddTaskResponse, AggregatorAddTaskRequest, HpkeConfigRegistry,
 };
-use janus_core::{
-    message::{Duration, HpkeConfig, Role, TaskId},
-    task::AuthenticationToken,
-    time::RealClock,
-    TokioRuntime,
-};
+use janus_core::{task::AuthenticationToken, time::RealClock, TokioRuntime};
+use janus_messages::{Duration, HpkeConfig, Role, TaskId};
 use janus_server::{
     aggregator::{
         aggregate_share::CollectJobDriver, aggregation_job_creator::AggregationJobCreator,
@@ -220,7 +216,7 @@ async fn main() -> anyhow::Result<()> {
         connection_pool_timeouts_secs: 30,
     };
     let pool = database_pool(&db_config, None).await?;
-    let clock = janus_core::time::RealClock::default();
+    let clock = RealClock::default();
     let client = pool.get().await?;
     client
         .batch_execute(include_str!("../../../db/schema.sql"))
