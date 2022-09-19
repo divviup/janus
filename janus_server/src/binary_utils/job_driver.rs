@@ -10,7 +10,11 @@ use opentelemetry::{
     metrics::{Meter, Unit},
     KeyValue,
 };
-use std::{fmt::Debug, future::Future, sync::Arc};
+use std::{
+    fmt::{Debug, Display},
+    future::Future,
+    sync::Arc,
+};
 use tokio::{
     sync::Semaphore,
     time::{self, Instant},
@@ -57,7 +61,7 @@ impl<
 where
     C: Clock,
     R: Runtime + Send + Sync + 'static,
-    JobStepperError: Debug + Send + Sync + 'static,
+    JobStepperError: Debug + Display + Send + Sync + 'static,
     JobAcquirer: Fn(usize) -> JobAcquirerFuture + Send + Sync + 'static,
     JobAcquirerFuture: Future<Output = Result<Vec<Lease<AcquiredJob>>, datastore::Error>> + Send,
     JobStepper: Fn(Lease<AcquiredJob>) -> JobStepperFuture + Send + Sync + 'static,
@@ -136,8 +140,8 @@ where
             let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
             let leases = match leases {
                 Ok(leases) => leases,
-                Err(err) => {
-                    error!(?err, "Couldn't acquire jobs");
+                Err(error) => {
+                    error!(%error, "Couldn't acquire jobs");
 
                     // Go ahead and step job discovery delay in this error case to ensure we don't
                     // tightly loop running transactions that will fail without any delay.
@@ -195,12 +199,12 @@ where
                         .await
                         {
                             Ok(Ok(_)) => debug!("Job stepped"),
-                            Ok(Err(err)) => {
-                                error!(?err, "Couldn't step job");
+                            Ok(Err(error)) => {
+                                error!(%error, "Couldn't step job");
                                 status = "error"
                             }
-                            Err(err) => {
-                                error!(?err, "Stepping job timed out");
+                            Err(_err) => {
+                                error!("Stepping job timed out");
                                 status = "error"
                             }
                         }
