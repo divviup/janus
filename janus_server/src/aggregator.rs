@@ -1015,14 +1015,14 @@ impl VdafOps {
         // but this exercises HPKE decryption and saves us the trouble of
         // storing reports we can't use. We don't inform the client if this
         // fails.
-        if let Err(err) = hpke::open(
+        if let Err(error) = hpke::open(
             hpke_config,
             hpke_private_key,
             &HpkeApplicationInfo::new(Label::InputShare, Role::Client, task.role),
             leader_report,
             &report.associated_data(),
         ) {
-            info!(report.task_id = ?report.task_id(), report.metadata = ?report.metadata(), ?err, "Report decryption failed");
+            info!(report.task_id = ?report.task_id(), report.metadata = ?report.metadata(), %error, "Report decryption failed");
             upload_decrypt_failure_counter.add(1);
             return Ok(());
         }
@@ -1138,11 +1138,11 @@ impl VdafOps {
                     &report_share.encrypted_input_share,
                     &report_share.associated_data(task_id),
                 )
-                .map_err(|err| {
+                .map_err(|error| {
                     info!(
                         ?task_id,
                         metadata = %report_share.metadata,
-                        %err,
+                        %error,
                         "Couldn't decrypt helper's report share"
                     );
                     aggregate_step_failure_counters.decrypt_failure.add(1);
@@ -1157,8 +1157,8 @@ impl VdafOps {
             // an error code for "client report data can't be decoded" & use it here.
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext)
-                    .map_err(|err| {
-                        info!(?task_id, metadata = %report_share.metadata, %err, "Couldn't decode helper's input share");
+                    .map_err(|error| {
+                        info!(?task_id, metadata = %report_share.metadata, %error, "Couldn't decode helper's input share");
                         aggregate_step_failure_counters.input_share_decode_failure.add(1);
                         ReportShareError::VdafPrepError
                     })
@@ -1176,8 +1176,8 @@ impl VdafOps {
                         &report_share.metadata.nonce().get_encoded(),
                         &input_share,
                     )
-                    .map_err(|err| {
-                        info!(?task_id, nonce = %report_share.metadata.nonce(), %err, "Couldn't prepare_init report share");
+                    .map_err(|error| {
+                        info!(?task_id, nonce = %report_share.metadata.nonce(), %error, "Couldn't prepare_init report share");
                         aggregate_step_failure_counters.prepare_init_failure.add(1);
                         ReportShareError::VdafPrepError
                     })
@@ -1438,8 +1438,8 @@ impl VdafOps {
                                 });
                             }
 
-                            Err(err) => {
-                                info!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
+                            Err(error) => {
+                                info!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %error, "Prepare step failed");
                                 prepare_step_failure_counter.add(1);
                                 report_aggregation.state =
                                     ReportAggregationState::Failed(ReportShareError::VdafPrepError);
@@ -2010,9 +2010,9 @@ where
             .map(Instant::now)
             .and(filter)
             .map(move |start: Instant, result: Result<T, Error>| {
-                let error_code = if let Err(err) = &result {
-                    warn!(%err, endpoint = name, "Error handling aggregator endpoint");
-                    err.error_code()
+                let error_code = if let Err(error) = &result {
+                    warn!(%error, endpoint = name, "Error handling endpoint");
+                    error.error_code()
                 } else {
                     ""
                 };

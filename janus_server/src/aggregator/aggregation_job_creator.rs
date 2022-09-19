@@ -131,8 +131,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     })
                     .collect::<HashMap<_, _>>(),
 
-                Err(err) => {
-                    error!(?err, "Couldn't update tasks");
+                Err(error) => {
+                    error!(%error, "Couldn't update tasks");
                     task_update_time_recorder.record(
                         start.elapsed().as_secs_f64(),
                         &[KeyValue::new("status", "error")],
@@ -197,8 +197,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 _ = aggregation_job_creation_ticker.tick() => {
                     info!(task_id = ?task.id, "Creating aggregation jobs for task");
                     let (start, mut status) = (Instant::now(), "success");
-                    if let Err(err) = self.create_aggregation_jobs_for_task(&task).await {
-                        error!(task_id = ?task.id, ?err, "Couldn't create aggregation jobs for task");
+                    if let Err(error) = self.create_aggregation_jobs_for_task(&task).await {
+                        error!(task_id = ?task.id, %error, "Couldn't create aggregation jobs for task");
                         status = "error";
                     }
                     job_creation_time_recorder.record(start.elapsed().as_secs_f64(), &[KeyValue::new("status", status)]);

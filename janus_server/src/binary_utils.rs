@@ -108,7 +108,7 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
         || async {
             pool.get().await.map_err(|error| match error {
                 PoolError::Timeout(TimeoutType::Create) | PoolError::Backend(_) => {
-                    tracing::debug!(?error, "transient error connecting to database");
+                    tracing::debug!(%error, "transient error connecting to database");
                     backoff::Error::transient(error)
                 }
                 _ => backoff::Error::permanent(error),

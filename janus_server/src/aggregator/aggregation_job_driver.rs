@@ -333,8 +333,8 @@ impl AggregationJobDriver {
                 &associated_data,
             ) {
                 Ok(leader_input_share_bytes) => leader_input_share_bytes,
-                Err(err) => {
-                    info!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decrypt leader's encrypted input share");
+                Err(error) => {
+                    info!(report_nonce = %report_aggregation.nonce, %error, "Couldn't decrypt leader's encrypted input share");
                     self.aggregate_step_failure_counters.decrypt_failure.add(1);
                     report_aggregation.state =
                         ReportAggregationState::Failed(ReportShareError::HpkeDecryptError);
@@ -347,9 +347,9 @@ impl AggregationJobDriver {
                 &leader_input_share_bytes,
             ) {
                 Ok(leader_input_share) => leader_input_share,
-                Err(err) => {
+                Err(error) => {
                     // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): is moving to Invalid on a decoding error appropriate?
-                    info!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decode leader's input share");
+                    info!(report_nonce = %report_aggregation.nonce, %error, "Couldn't decode leader's input share");
                     self.aggregate_step_failure_counters
                         .input_share_decode_failure
                         .add(1);
@@ -368,8 +368,8 @@ impl AggregationJobDriver {
                 &leader_input_share,
             ) {
                 Ok(prep_state_and_share) => prep_state_and_share,
-                Err(err) => {
-                    info!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
+                Err(error) => {
+                    info!(report_nonce = %report_aggregation.nonce, %error, "Couldn't initialize leader's preparation state");
                     self.aggregate_step_failure_counters
                         .prepare_init_failure
                         .add(1);
@@ -472,8 +472,8 @@ impl AggregationJobDriver {
                     .prepare_step(prep_state.clone(), prep_msg.clone())
                 {
                     Ok(leader_transition) => leader_transition,
-                    Err(err) => {
-                        info!(report_nonce = %report_aggregation.nonce, ?err, "Prepare step failed");
+                    Err(error) => {
+                        info!(report_nonce = %report_aggregation.nonce, %error, "Prepare step failed");
                         self.aggregate_step_failure_counters
                             .prepare_step_failure
                             .add(1);
@@ -601,8 +601,8 @@ impl AggregationJobDriver {
                             Ok(prep_msg) => {
                                 ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg))
                             }
-                            Err(err) => {
-                                info!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute prepare message");
+                            Err(error) => {
+                                info!(report_nonce = %report_aggregation.nonce, %error, "Couldn't compute prepare message");
                                 self.aggregate_step_failure_counters
                                     .prepare_message_failure
                                     .add(1);
@@ -631,8 +631,8 @@ impl AggregationJobDriver {
                                 report_aggregation.state =
                                     ReportAggregationState::Finished(out_share)
                             }
-                            Err(err) => {
-                                warn!(report_nonce = %report_aggregation.nonce, ?err, "Could not update batch unit aggregation");
+                            Err(error) => {
+                                warn!(report_nonce = %report_aggregation.nonce, %error, "Could not update batch unit aggregation");
                                 self.aggregate_step_failure_counters
                                     .accumulate_failure
                                     .add(1);
@@ -650,7 +650,7 @@ impl AggregationJobDriver {
                 PrepareStepResult::Failed(err) => {
                     // If the helper failed, we move to FAILED immediately.
                     // TODO(#236): is it correct to just record the transition error that the helper reports?
-                    info!(report_nonce = %report_aggregation.nonce, helper_err = ?err, "Helper couldn't step report aggregation");
+                    info!(report_nonce = %report_aggregation.nonce, helper_error = ?err, "Helper couldn't step report aggregation");
                     self.aggregate_step_failure_counters
                         .helper_step_failure
                         .add(1);

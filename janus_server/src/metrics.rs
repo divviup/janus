@@ -143,8 +143,8 @@ pub fn install_metrics_exporter(
                             // `header()` call, and its arguments are always valid.
                             .unwrap()
                             .into_response(),
-                        Err(err) => {
-                            tracing::error!(%err, "Failed to encode Prometheus metrics");
+                        Err(error) => {
+                            tracing::error!(%error, "Failed to encode Prometheus metrics");
                             StatusCode::INTERNAL_SERVER_ERROR.into_response()
                         }
                     }
