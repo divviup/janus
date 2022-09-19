@@ -5,7 +5,7 @@ use base64::display::Base64Display;
 use derivative::Derivative;
 use janus_core::{
     hpke::{associated_data_for_aggregate_share, associated_data_for_report_share},
-    message::{HpkeCiphertext, Interval, Nonce, NonceChecksum, ReportMetadata, TaskId, Time},
+    message::{HpkeCiphertext, Interval, Nonce, NonceChecksum, ReportMetadata, TaskId},
 };
 use num_enum::TryFromPrimitive;
 use postgres_types::{FromSql, ToSql};
@@ -397,7 +397,7 @@ impl Decode for AggregateShareResp {
 #[cfg(feature = "test-util")]
 pub mod test_util {
     use super::*;
-    use janus_core::message::{Report, ReportMetadata};
+    use janus_core::message::{Report, ReportMetadata, Time};
 
     pub fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
         Report::new(
