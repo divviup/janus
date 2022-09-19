@@ -1,14 +1,13 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
-use super::Error;
 use crate::{
+    aggregator::Error,
     datastore::{
         self,
         models::AcquiredCollectJob,
         models::{BatchUnitAggregation, CollectJobState, Lease},
         Datastore, Transaction,
     },
-    message::{AggregateShareReq, AggregateShareResp, BatchSelector},
     task::{Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use derivative::Derivative;
@@ -16,10 +15,10 @@ use futures::{future::BoxFuture, try_join};
 use http::header::CONTENT_TYPE;
 #[cfg(test)]
 use janus_core::test_util::dummy_vdaf;
-use janus_core::{
-    message::{query_type::TimeInterval, Duration, Interval, ReportIdChecksum, Role},
-    task::DAP_AUTH_HEADER,
-    time::Clock,
+use janus_core::{report_id::ReportIdChecksumExt, task::DAP_AUTH_HEADER, time::Clock};
+use janus_messages::{
+    query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
+    Interval, ReportIdChecksum, Role,
 };
 use opentelemetry::metrics::{BoundCounter, Meter};
 use prio::{
@@ -458,19 +457,22 @@ mod tests {
             },
             test_util::ephemeral_datastore,
         },
+        messages::TimeExt,
         task::VdafInstance,
     };
     use assert_matches::assert_matches;
     use http::StatusCode;
     use janus_core::{
-        message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Report, ReportMetadata, Role},
         test_util::{
             dummy_vdaf::{AggregateShare, AggregationParam, OutputShare},
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
         },
-        time::MockClock,
+        time::{MockClock, TimeExt as CoreTimeExt},
         Runtime,
+    };
+    use janus_messages::{
+        Duration, HpkeCiphertext, HpkeConfigId, Interval, Report, ReportMetadata, Role,
     };
     use mockito::mock;
     use opentelemetry::global::meter;

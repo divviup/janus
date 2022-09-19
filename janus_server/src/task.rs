@@ -5,11 +5,11 @@ use base64::URL_SAFE_NO_PAD;
 use derivative::Derivative;
 use janus_core::{
     hpke::HpkePrivateKey,
-    message::{
-        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
-        Interval, Role, TaskId,
-    },
     task::{url_ensure_trailing_slash, AuthenticationToken},
+};
+use janus_messages::{
+    Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
+    Role, TaskId,
 };
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -563,10 +563,9 @@ pub mod test_util {
     use super::{
         AuthenticationToken, SecretBytes, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
-    use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key,
-        message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
-    };
+    use crate::messages::DurationExt;
+    use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
+    use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
     use rand::{distributions::Standard, random, thread_rng, Rng};
 
     impl VdafInstance {
@@ -653,11 +652,9 @@ mod tests {
     use super::{
         test_util::generate_auth_token, SecretBytes, Task, PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
-    use crate::{config::test_util::roundtrip_encoding, task::VdafInstance};
-    use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key,
-        message::{Duration, Interval, Role, Time},
-    };
+    use crate::{config::test_util::roundtrip_encoding, messages::DurationExt, task::VdafInstance};
+    use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
+    use janus_messages::{Duration, Interval, Role, Time};
     use rand::random;
     use serde_test::{assert_tokens, Token};
 

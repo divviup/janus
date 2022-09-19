@@ -7,10 +7,8 @@ use interop_binaries::{
     NumberAsString, VdafObject,
 };
 use janus_client::ClientParameters;
-use janus_core::{
-    message::{Duration, Role, TaskId, Time},
-    time::{MockClock, RealClock},
-};
+use janus_core::time::{MockClock, RealClock};
+use janus_messages::{Duration, Role, TaskId, Time};
 use janus_server::task::VdafInstance;
 use prio::{
     codec::Decode,
