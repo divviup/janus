@@ -395,9 +395,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "3.2.20"
+version = "3.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b71c3ce99b7611011217b366d923f1d0a7e07a92bb2dbf1e84508c673ca3bd"
+checksum = "86447ad904c7fb335a790c9d7fe3d0d971dc523b8ccd1561a520de9a85302750"
 dependencies = [
  "atty",
  "bitflags",
@@ -407,7 +407,7 @@ dependencies = [
  "once_cell",
  "strsim 0.10.0",
  "termcolor",
- "textwrap 0.15.0",
+ "textwrap 0.15.1",
 ]
 
 [[package]]
@@ -695,7 +695,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "base64",
- "clap 3.2.20",
+ "clap 3.2.22",
  "getrandom",
  "hex",
  "hpke 0.8.0",
@@ -1571,6 +1571,7 @@ dependencies = [
  "interop_binaries",
  "itertools",
  "janus_client",
+ "janus_collector",
  "janus_core",
  "janus_server",
  "k8s-openapi",
@@ -1596,11 +1597,12 @@ dependencies = [
  "backoff",
  "base64",
  "build_script_utils",
- "clap 3.2.20",
+ "clap 3.2.22",
  "futures",
  "hex",
  "interop_binaries",
  "janus_client",
+ "janus_collector",
  "janus_core",
  "janus_server",
  "lazy_static",
@@ -1655,6 +1657,31 @@ dependencies = [
  "mockito",
  "prio",
  "reqwest",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "janus_collector"
+version = "0.1.12"
+dependencies = [
+ "anyhow",
+ "assert_matches",
+ "backoff",
+ "base64",
+ "chrono",
+ "clap 3.2.22",
+ "derivative",
+ "janus_core",
+ "mockito",
+ "prio",
+ "rand",
+ "reqwest",
+ "retry-after",
  "thiserror",
  "tokio",
  "tracing",
@@ -2879,6 +2906,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4389f1d5789befaf6029ebd9f7dac4af7f7e3d61b69d4f30e2ac02b57e7712b0"
 
 [[package]]
+name = "retry-after"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "128d55dc93b909e04874b53878316eb687633459706f8fc647de333cc0620caa"
+dependencies = [
+ "chrono",
+ "http",
+ "thiserror",
+]
+
+[[package]]
 name = "ring"
 version = "0.16.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3457,9 +3495,9 @@ dependencies = [
 
 [[package]]
 name = "textwrap"
-version = "0.15.0"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1141d4d61095b28419e22cb0bbf02755f5e54e0526f97f1e3d1d160e60885fb"
+checksum = "949517c0cf1bf4ee812e2e07e08ab448e3ae0d23472aee8a06c985f0c8815b16"
 
 [[package]]
 name = "thiserror"

@@ -45,6 +45,7 @@ http = "0.2"
 integration_tests = { path = ".", features = ["daphne"] }
 itertools = "0.10"
 janus_client = { path = "../janus_client" }
+janus_collector = { path = "../janus_collector", features = ["test-util"] }
 janus_server = { path = "../janus_server", features = ["test-util"] }
 prio = { version = "0.8.2", features = ["multithreaded"] }
 tempfile = "3"
