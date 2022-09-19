@@ -40,7 +40,7 @@ use prio::{
     },
 };
 use std::{fmt, sync::Arc};
-use tracing::warn;
+use tracing::{info, warn};
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -279,7 +279,7 @@ impl AggregationJobDriver {
             {
                 Some(leader_encrypted_input_share) => leader_encrypted_input_share,
                 None => {
-                    warn!(report_nonce = %report_aggregation.nonce, "Client report missing leader encrypted input share");
+                    info!(report_nonce = %report_aggregation.nonce, "Client report missing leader encrypted input share");
                     self.aggregate_step_failure_counters
                         .missing_leader_input_share
                         .add(1);
@@ -295,7 +295,7 @@ impl AggregationJobDriver {
             {
                 Some(helper_encrypted_input_share) => helper_encrypted_input_share,
                 None => {
-                    warn!(report_nonce = %report_aggregation.nonce, "Client report missing helper encrypted input share");
+                    info!(report_nonce = %report_aggregation.nonce, "Client report missing helper encrypted input share");
                     self.aggregate_step_failure_counters
                         .missing_helper_input_share
                         .add(1);
@@ -312,7 +312,7 @@ impl AggregationJobDriver {
             {
                 Some((hpke_config, hpke_private_key)) => (hpke_config, hpke_private_key),
                 None => {
-                    warn!(report_nonce = %report_aggregation.nonce, hpke_config_id = %leader_encrypted_input_share.config_id(), "Leader encrypted input share references unknown HPKE config ID");
+                    info!(report_nonce = %report_aggregation.nonce, hpke_config_id = %leader_encrypted_input_share.config_id(), "Leader encrypted input share references unknown HPKE config ID");
                     self.aggregate_step_failure_counters
                         .unknown_hpke_config_id
                         .add(1);
@@ -334,7 +334,7 @@ impl AggregationJobDriver {
             ) {
                 Ok(leader_input_share_bytes) => leader_input_share_bytes,
                 Err(err) => {
-                    warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decrypt leader's encrypted input share");
+                    info!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decrypt leader's encrypted input share");
                     self.aggregate_step_failure_counters.decrypt_failure.add(1);
                     report_aggregation.state =
                         ReportAggregationState::Failed(ReportShareError::HpkeDecryptError);
@@ -349,7 +349,7 @@ impl AggregationJobDriver {
                 Ok(leader_input_share) => leader_input_share,
                 Err(err) => {
                     // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): is moving to Invalid on a decoding error appropriate?
-                    warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decode leader's input share");
+                    info!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decode leader's input share");
                     self.aggregate_step_failure_counters
                         .input_share_decode_failure
                         .add(1);
@@ -369,7 +369,7 @@ impl AggregationJobDriver {
             ) {
                 Ok(prep_state_and_share) => prep_state_and_share,
                 Err(err) => {
-                    warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
+                    info!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
                     self.aggregate_step_failure_counters
                         .prepare_init_failure
                         .add(1);
@@ -473,7 +473,7 @@ impl AggregationJobDriver {
                 {
                     Ok(leader_transition) => leader_transition,
                     Err(err) => {
-                        warn!(report_nonce = %report_aggregation.nonce, ?err, "Prepare step failed");
+                        info!(report_nonce = %report_aggregation.nonce, ?err, "Prepare step failed");
                         self.aggregate_step_failure_counters
                             .prepare_step_failure
                             .add(1);
@@ -602,7 +602,7 @@ impl AggregationJobDriver {
                                 ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg))
                             }
                             Err(err) => {
-                                warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute prepare message");
+                                info!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute prepare message");
                                 self.aggregate_step_failure_counters
                                     .prepare_message_failure
                                     .add(1);
@@ -650,7 +650,7 @@ impl AggregationJobDriver {
                 PrepareStepResult::Failed(err) => {
                     // If the helper failed, we move to FAILED immediately.
                     // TODO(#236): is it correct to just record the transition error that the helper reports?
-                    warn!(report_nonce = %report_aggregation.nonce, helper_err = ?err, "Helper couldn't step report aggregation");
+                    info!(report_nonce = %report_aggregation.nonce, helper_err = ?err, "Helper couldn't step report aggregation");
                     self.aggregate_step_failure_counters
                         .helper_step_failure
                         .add(1);
