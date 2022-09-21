@@ -1406,16 +1406,16 @@ pub mod query_type {
         /// The type of a batch identifier.
         type BatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode + Send + Sync;
 
-        /// The type of a batch identifier as it appears in an [`AggregateInitializeReq`]. Will
-        /// either be the same type as [`BatchIdentifier`], or `()`.
+        /// The type of a batch identifier as it appears in an `AggregateInitializeReq`. Will
+        /// either be the same type as `BatchIdentifier`, or `()`.
         type AggregateInitializeReqBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
 
-        /// The type of a batch identifier as it appears in a [`CollectResp`]. Will either be the
-        /// same type as [`BatchIdentifier`], or `()`.
+        /// The type of a batch identifier as it appears in a `CollectResp`. Will either be the
+        /// same type as `BatchIdentifier`, or `()`.
         type CollectRespBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
 
-        /// Computes the [`CollectRespBatchIdentifier`] corresponding to the given
-        /// [`BatchIdentifier`].
+        /// Computes the `CollectRespBatchIdentifier` corresponding to the given
+        /// `BatchIdentifier`.
         fn collect_resp_batch_identifier_from(
             batch_identifier: Self::BatchIdentifier,
         ) -> Self::CollectRespBatchIdentifier;
