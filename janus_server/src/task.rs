@@ -344,9 +344,6 @@ impl Task {
     }
 }
 
-#[cfg(feature = "test-util")]
-impl Task {}
-
 fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
     let mut list = f.debug_list();
     for url in urls {

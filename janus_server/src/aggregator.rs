@@ -35,7 +35,7 @@ use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
     message::{
         query_type::TimeInterval, CollectReq, CollectResp, HpkeConfig, HpkeConfigId, Interval,
-        Nonce, NonceChecksum, Report, Role, TaskId,
+        Nonce, NonceChecksum, Report, Role, TaskId, Time,
     },
     task::DAP_AUTH_HEADER,
     time::Clock,
@@ -95,26 +95,26 @@ pub enum Error {
     #[error("invalid message: {0}")]
     Message(#[from] janus_core::message::Error),
     /// Corresponds to `reportTooLate`, §3.1
-    #[error("task {1}: stale report: {0}")]
-    ReportTooLate(Nonce, TaskId),
+    #[error("task {0}: report {1} too late: {2}")]
+    ReportTooLate(TaskId, Nonce, Time),
     /// Corresponds to `reportTooEarly`, §3.1. A report was rejected becuase the timestamp is too far in the future, §4.3.4.
-    #[error("task {1}: report from the future: {0}")]
-    ReportTooEarly(Nonce, TaskId),
+    #[error("task {0}: report {1} too early: {2}")]
+    ReportTooEarly(TaskId, Nonce, Time),
     /// Corresponds to `unrecognizedMessage`, §3.1
-    #[error("task {1:?}: unrecognized message: {0}")]
-    UnrecognizedMessage(&'static str, Option<TaskId>),
+    #[error("task {0:?}: unrecognized message: {1}")]
+    UnrecognizedMessage(Option<TaskId>, &'static str),
     /// Corresponds to `unrecognizedTask`, §3.1
     #[error("task {0}: unrecognized task")]
     UnrecognizedTask(TaskId),
     /// An attempt was made to act on an unknown aggregation job.
-    #[error("task {1}: unrecognized aggregation job: {0:?}")]
-    UnrecognizedAggregationJob(AggregationJobId, TaskId),
+    #[error("task {0}: unrecognized aggregation job: {1}")]
+    UnrecognizedAggregationJob(TaskId, AggregationJobId),
     /// An attempt was made to act on an unknown collect job.
     #[error("unrecognized collect job: {0}")]
     UnrecognizedCollectJob(Uuid),
     /// Corresponds to `outdatedHpkeConfig`, §3.1
-    #[error("task {1}: outdated HPKE config: {0}")]
-    OutdatedHpkeConfig(HpkeConfigId, TaskId),
+    #[error("task {0}: outdated HPKE config: {1}")]
+    OutdatedHpkeConfig(TaskId, HpkeConfigId),
     /// Corresponds to `unauthorizedRequest`, §3.1
     #[error("task {0}: unauthorized request")]
     UnauthorizedRequest(TaskId),
@@ -125,11 +125,11 @@ pub enum Error {
     #[error("VDAF error: {0}")]
     Vdaf(#[from] vdaf::VdafError),
     /// A collect or aggregate share request was rejected because the interval is invalid, per §4.6
-    #[error("task {1}: invalid batch interval: {0}")]
-    BatchInvalid(Interval, TaskId),
+    #[error("task {0}: invalid batch interval: {1}")]
+    BatchInvalid(TaskId, Interval),
     /// There are not enough reports in the batch interval to meet the task's minimum batch size.
-    #[error("task {1}: insufficient number of reports ({0})")]
-    InsufficientBatchSize(u64, TaskId),
+    #[error("task {0}: insufficient number of reports ({1})")]
+    InsufficientBatchSize(TaskId, u64),
     #[error("URL parse error: {0}")]
     Url(#[from] url::ParseError),
     /// The checksum or report count in one aggregator's aggregate share does not match the other
@@ -173,8 +173,8 @@ impl Error {
             Error::InvalidConfiguration(_) => "invalid_configuration",
             Error::MessageDecode(_) => "message_decode",
             Error::Message(_) => "message",
-            Error::ReportTooLate(_, _) => "report_too_late",
-            Error::ReportTooEarly(_, _) => "report_too_early",
+            Error::ReportTooLate(_, _, _) => "report_too_late",
+            Error::ReportTooEarly(_, _, _) => "report_too_early",
             Error::UnrecognizedMessage(_, _) => "unrecognized_message",
             Error::UnrecognizedTask(_) => "unrecognized_task",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",
@@ -316,9 +316,9 @@ impl<C: Clock> Aggregator<C> {
 
     async fn handle_hpke_config(&self, task_id_base64: &[u8]) -> Result<Vec<u8>, Error> {
         let task_id_bytes = base64::decode_config(task_id_base64, base64::URL_SAFE_NO_PAD)
-            .map_err(|_| Error::UnrecognizedMessage("task_id", None))?;
+            .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
         let task_id = TaskId::get_decoded(&task_id_bytes)
-            .map_err(|_| Error::UnrecognizedMessage("task_id", None))?;
+            .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
         let task_aggregator = self.task_aggregator_for(&task_id).await?;
         Ok(task_aggregator.handle_hpke_config().get_encoded())
     }
@@ -705,8 +705,8 @@ impl TaskAggregator {
             .validate_batch_interval(req.batch_selector().batch_interval())
         {
             return Err(Error::BatchInvalid(
-                *req.batch_selector().batch_interval(),
                 self.task.id,
+                *req.batch_selector().batch_interval(),
             ));
         }
 
@@ -996,8 +996,8 @@ impl VdafOps {
         // §4.2.2 The leader's report is the first one
         if report.encrypted_input_shares().len() != 2 {
             return Err(Error::UnrecognizedMessage(
-                "unexpected number of encrypted shares in report",
                 Some(*report.task_id()),
+                "unexpected number of encrypted shares in report",
             ));
         }
         let leader_report = &report.encrypted_input_shares()[0];
@@ -1007,7 +1007,7 @@ impl VdafOps {
             .hpke_keys
             .get(leader_report.config_id())
             .ok_or_else(|| {
-                Error::OutdatedHpkeConfig(*leader_report.config_id(), *report.task_id())
+                Error::OutdatedHpkeConfig(*report.task_id(), *leader_report.config_id())
             })?;
 
         let report_deadline = clock.now().add(task.tolerable_clock_skew)?;
@@ -1015,8 +1015,9 @@ impl VdafOps {
         // §4.2.4: reject reports from too far in the future
         if report.metadata().time().is_after(report_deadline) {
             return Err(Error::ReportTooEarly(
-                *report.metadata().nonce(),
                 *report.task_id(),
+                *report.metadata().nonce(),
+                *report.metadata().time(),
             ));
         }
 
@@ -1052,8 +1053,12 @@ impl VdafOps {
                     if existing_client_report.is_some() {
                         // TODO(#34): change this error type.
                         return Err(datastore::Error::User(
-                            Error::ReportTooLate(*report.metadata().nonce(), *report.task_id())
-                                .into(),
+                            Error::ReportTooLate(
+                                *report.task_id(),
+                                *report.metadata().nonce(),
+                                *report.metadata().time(),
+                            )
+                            .into(),
                         ));
                     }
 
@@ -1061,8 +1066,12 @@ impl VdafOps {
                     // that has already been collected.
                     if !conflicting_collect_jobs.is_empty() {
                         return Err(datastore::Error::User(
-                            Error::ReportTooLate(*report.metadata().nonce(), *report.task_id())
-                                .into(),
+                            Error::ReportTooLate(
+                                *report.task_id(),
+                                *report.metadata().nonce(),
+                                *report.metadata().time(),
+                            )
+                            .into(),
                         ));
                     }
 
@@ -1105,8 +1114,8 @@ impl VdafOps {
         for share in req.report_shares() {
             if !seen_nonces.insert(share.metadata().nonce()) {
                 return Err(Error::UnrecognizedMessage(
-                    "aggregate request contains duplicate nonce",
                     Some(task_id),
+                    "aggregate request contains duplicate nonce",
                 ));
             }
         }
@@ -1351,7 +1360,7 @@ impl VdafOps {
                             *req.job_id(),
                         ),
                     )?;
-                    let mut aggregation_job = aggregation_job.ok_or_else(|| datastore::Error::User(Error::UnrecognizedAggregationJob(*req.job_id(), task_id).into()))?;
+                    let mut aggregation_job = aggregation_job.ok_or_else(|| datastore::Error::User(Error::UnrecognizedAggregationJob(task_id, *req.job_id()).into()))?;
 
                     // Handle each transition in the request.
                     let mut report_aggregations = report_aggregations.into_iter();
@@ -1365,8 +1374,8 @@ impl VdafOps {
                         let mut report_aggregation = loop {
                             let mut report_agg = report_aggregations.next().ok_or_else(|| {
                                 datastore::Error::User(Error::UnrecognizedMessage(
-                                    "leader sent unexpected, duplicate, or out-of-order prepare steps",
                                     Some(task_id),
+                                    "leader sent unexpected, duplicate, or out-of-order prepare steps",
                                 ).into())
                             })?;
                             if &report_agg.nonce != prep_step.nonce() {
@@ -1401,8 +1410,8 @@ impl VdafOps {
                                 _ => {
                                     return Err(datastore::Error::User(
                                         Error::UnrecognizedMessage(
-                                            "leader sent prepare step for non-WAITING report aggregation",
                                             Some(task_id),
+                                            "leader sent prepare step for non-WAITING report aggregation",
                                         ).into()
                                     ));
                                 },
@@ -1419,8 +1428,8 @@ impl VdafOps {
                             _ => {
                                 return Err(datastore::Error::User(
                                     Error::UnrecognizedMessage(
-                                        "leader sent non-Continued prepare step",
                                         Some(task_id),
+                                        "leader sent non-Continued prepare step",
                                     ).into()
                                 ));
                             }
@@ -1563,7 +1572,7 @@ impl VdafOps {
     {
         // §4.5: check that the batch interval meets the requirements from §4.6
         if !task.validate_batch_interval(req.query().batch_interval()) {
-            return Err(Error::BatchInvalid(*req.query().batch_interval(), task.id));
+            return Err(Error::BatchInvalid(task.id, *req.query().batch_interval()));
         }
 
         Ok(datastore
@@ -2052,10 +2061,10 @@ where
                         StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
                     Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
-                    Err(Error::ReportTooLate(_, task_id)) => {
+                    Err(Error::ReportTooLate(task_id, _, _)) => {
                         build_problem_details_response(DapProblemType::ReportTooLate, Some(task_id))
                     }
-                    Err(Error::UnrecognizedMessage(_, task_id)) => {
+                    Err(Error::UnrecognizedMessage(task_id, _)) => {
                         build_problem_details_response(DapProblemType::UnrecognizedMessage, task_id)
                     }
                     Err(Error::UnrecognizedTask(task_id)) => {
@@ -2065,18 +2074,18 @@ where
                             Some(task_id),
                         )
                     }
-                    Err(Error::UnrecognizedAggregationJob(_, task_id)) => {
+                    Err(Error::UnrecognizedAggregationJob(task_id, _)) => {
                         build_problem_details_response(
                             DapProblemType::UnrecognizedAggregationJob,
                             Some(task_id),
                         )
                     }
                     Err(Error::UnrecognizedCollectJob(_)) => StatusCode::NOT_FOUND.into_response(),
-                    Err(Error::OutdatedHpkeConfig(_, task_id)) => build_problem_details_response(
+                    Err(Error::OutdatedHpkeConfig(task_id, _)) => build_problem_details_response(
                         DapProblemType::OutdatedConfig,
                         Some(task_id),
                     ),
-                    Err(Error::ReportTooEarly(_, task_id)) => build_problem_details_response(
+                    Err(Error::ReportTooEarly(task_id, _, _)) => build_problem_details_response(
                         DapProblemType::ReportTooEarly,
                         Some(task_id),
                     ),
@@ -2084,10 +2093,10 @@ where
                         DapProblemType::UnauthorizedRequest,
                         Some(task_id),
                     ),
-                    Err(Error::BatchInvalid(_, task_id)) => {
+                    Err(Error::BatchInvalid(task_id, _)) => {
                         build_problem_details_response(DapProblemType::BatchInvalid, Some(task_id))
                     }
-                    Err(Error::InsufficientBatchSize(_, task_id)) => {
+                    Err(Error::InsufficientBatchSize(task_id, _)) => {
                         build_problem_details_response(
                             DapProblemType::InsufficientBatchSize,
                             Some(task_id),
@@ -2193,7 +2202,7 @@ pub fn aggregator_filter<C: Clock>(
             |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
                 let task_id_b64 = query_params
                     .get("task_id")
-                    .ok_or(Error::UnrecognizedMessage("task_id", None))?;
+                    .ok_or(Error::UnrecognizedMessage(None, "task_id"))?;
                 let hpke_config_bytes = aggregator.handle_hpke_config(task_id_b64.as_ref()).await?;
                 http::Response::builder()
                     .header(CACHE_CONTROL, "max-age=86400")
@@ -2538,8 +2547,10 @@ mod tests {
             random(),
             vec![],
         );
+        let public_share = Vec::new(); // TODO(#473): fill out public_share once possible
         let message = b"this is a message";
-        let associated_data = associated_data_for_report_share(task.id, &report_metadata);
+        let associated_data =
+            associated_data_for_report_share(task.id, &report_metadata, &public_share);
 
         let leader_ciphertext = hpke::seal(
             &hpke_key.0,
@@ -2559,6 +2570,7 @@ mod tests {
         Report::new(
             task.id,
             report_metadata,
+            public_share,
             vec![leader_ciphertext, helper_ciphertext],
         )
     }
@@ -2629,7 +2641,8 @@ mod tests {
         let bad_report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            vec![report.encrypted_input_shares()[0].clone()],
+            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::from([report.encrypted_input_shares()[0].clone()]),
         );
         let mut response =
             drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
@@ -2655,7 +2668,8 @@ mod tests {
         let bad_report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            vec![
+            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::from([
                 HpkeCiphertext::new(
                     HpkeConfigId::from(101),
                     report.encrypted_input_shares()[0]
@@ -2664,7 +2678,7 @@ mod tests {
                     report.encrypted_input_shares()[0].payload().to_vec(),
                 ),
                 report.encrypted_input_shares()[1].clone(),
-            ],
+            ]),
         );
         let mut response =
             drive_filter(Method::POST, "/upload", &bad_report.get_encoded(), &filter)
@@ -2699,6 +2713,7 @@ mod tests {
                 *report.metadata().nonce(),
                 report.metadata().extensions().to_vec(),
             ),
+            Vec::new(), // TODO(#473): fill out public_share once possible
             report.encrypted_input_shares().to_vec(),
         );
         let mut response =
@@ -2761,6 +2776,7 @@ mod tests {
                         random(),
                         Vec::new(),
                     ),
+                    Vec::new(), // TODO(#473): fill out public_share once possible
                     report.encrypted_input_shares().to_vec(),
                 )
                 .get_encoded(),
@@ -2879,9 +2895,10 @@ mod tests {
 
         // should reject duplicate reports.
         // TODO(#34): change this error type.
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooLate(stale_nonce, task_id)) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooLate(task_id, stale_nonce, stale_time)) => {
             assert_eq!(&task_id, report.task_id());
             assert_eq!(report.metadata().nonce(), &stale_nonce);
+            assert_eq!(report.metadata().time(), &stale_time);
         });
     }
 
@@ -2889,12 +2906,13 @@ mod tests {
     async fn upload_wrong_number_of_encrypted_shares() {
         install_test_trace_subscriber();
 
-        let (aggregator, _, mut report, _, _db_handle) = setup_upload_test().await;
+        let (aggregator, _, report, _, _db_handle) = setup_upload_test().await;
 
-        report = Report::new(
+        let report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            vec![report.encrypted_input_shares()[0].clone()],
+            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::from([report.encrypted_input_shares()[0].clone()]),
         );
 
         assert_matches!(
@@ -2907,17 +2925,18 @@ mod tests {
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
-        let (aggregator, task, mut report, _, _db_handle) = setup_upload_test().await;
+        let (aggregator, task, report, _, _db_handle) = setup_upload_test().await;
 
         let unused_hpke_config_id = (0..)
             .map(HpkeConfigId::from)
             .find(|id| !task.hpke_keys.contains_key(id))
             .unwrap();
 
-        report = Report::new(
+        let report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            vec![
+            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::from([
                 HpkeCiphertext::new(
                     unused_hpke_config_id,
                     report.encrypted_input_shares()[0]
@@ -2926,10 +2945,10 @@ mod tests {
                     report.encrypted_input_shares()[0].payload().to_vec(),
                 ),
                 report.encrypted_input_shares()[1].clone(),
-            ],
+            ]),
         );
 
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::OutdatedHpkeConfig(config_id, task_id)) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::OutdatedHpkeConfig(task_id, config_id)) => {
             assert_eq!(&task_id, report.task_id());
             assert_eq!(config_id, unused_hpke_config_id);
         });
@@ -2958,7 +2977,8 @@ mod tests {
         Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            vec![leader_ciphertext, helper_ciphertext],
+            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::from([leader_ciphertext, helper_ciphertext]),
         )
     }
 
@@ -2981,6 +3001,7 @@ mod tests {
                     *report.metadata().nonce(),
                     report.metadata().extensions().to_vec(),
                 ),
+                Vec::new(), // TODO(#473): fill out public_share once possible
                 report.encrypted_input_shares().to_vec(),
             ),
             &task.hpke_keys.values().next().unwrap().0,
@@ -3014,13 +3035,15 @@ mod tests {
                     *report.metadata().nonce(),
                     report.metadata().extensions().to_vec(),
                 ),
+                Vec::new(), // TODO(#473): fill out public_share once possible
                 report.encrypted_input_shares().to_vec(),
             ),
             &task.hpke_keys.values().next().unwrap().0,
         );
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooEarly(nonce, task_id)) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooEarly(task_id, nonce, time)) => {
             assert_eq!(&task_id, report.task_id());
             assert_eq!(report.metadata().nonce(), &nonce);
+            assert_eq!(report.metadata().time(), &time);
         });
     }
 
@@ -3049,9 +3072,10 @@ mod tests {
             .unwrap();
 
         // Try to upload the report, verify that we get the expected error.
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err(), Error::ReportTooLate(err_nonce, err_task_id) => {
-            assert_eq!(report.metadata().nonce(), &err_nonce);
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err(), Error::ReportTooLate(err_task_id, err_nonce, err_time) => {
             assert_eq!(task_id, err_task_id);
+            assert_eq!(report.metadata().nonce(), &err_nonce);
+            assert_eq!(report.metadata().time(), &err_time);
         });
     }
 
@@ -3292,13 +3316,14 @@ mod tests {
             random(),
             Vec::new(),
         );
+        let public_share_2 = Vec::new(); // TODO(#473): fill out public_share once possible
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
         let report_share_2 = generate_helper_report_share_for_plaintext(
             &report_metadata_2,
             &hpke_key.0,
             &input_share_bytes,
-            &associated_data_for_report_share(task_id, &report_metadata_2),
+            &associated_data_for_report_share(task_id, &report_metadata_2, &public_share_2),
         );
 
         // report_share_3 has an unknown HPKE config ID.
@@ -6424,7 +6449,9 @@ mod tests {
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let associated_data = associated_data_for_report_share(task_id, report_metadata);
+        let public_share = Vec::new(); // TODO(#473): fill out public_share once possible
+        let associated_data =
+            associated_data_for_report_share(task_id, report_metadata, &public_share);
         generate_helper_report_share_for_plaintext(
             report_metadata,
             cfg,

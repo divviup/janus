@@ -219,8 +219,12 @@ where
             random(),
             Vec::new(), // No extensions supported yet
         );
-        let associated_data =
-            associated_data_for_report_share(self.parameters.task_id, &report_metadata);
+        let public_share = Vec::new(); // TODO(#473): fill out public_share once possible
+        let associated_data = associated_data_for_report_share(
+            self.parameters.task_id,
+            &report_metadata,
+            &public_share,
+        );
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
             (&self.leader_hpke_config, Role::Leader),
@@ -241,6 +245,7 @@ where
         Ok(Report::new(
             self.parameters.task_id,
             report_metadata,
+            public_share,
             encrypted_input_shares,
         ))
     }

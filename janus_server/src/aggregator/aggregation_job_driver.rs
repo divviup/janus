@@ -324,7 +324,8 @@ impl AggregationJobDriver {
             };
             let hpke_application_info =
                 HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
-            let associated_data = associated_data_for_report_share(task.id, report.metadata());
+            let associated_data =
+                associated_data_for_report_share(task.id, report.metadata(), report.public_share());
             let leader_input_share_bytes = match hpke::open(
                 hpke_config,
                 hpke_private_key,
@@ -428,7 +429,7 @@ impl AggregationJobDriver {
             lease,
             task,
             aggregation_job,
-            stepped_aggregations,
+            &stepped_aggregations,
             report_aggregations_to_write,
             resp.prepare_steps(),
         )
@@ -529,7 +530,7 @@ impl AggregationJobDriver {
             lease,
             task,
             aggregation_job,
-            stepped_aggregations,
+            &stepped_aggregations,
             report_aggregations_to_write,
             resp.prepare_steps(),
         )
@@ -544,7 +545,7 @@ impl AggregationJobDriver {
         lease: Lease<AcquiredAggregationJob>,
         task: Task,
         aggregation_job: AggregationJob<L, A>,
-        stepped_aggregations: Vec<SteppedAggregation<L, A>>,
+        stepped_aggregations: &[SteppedAggregation<L, A>],
         mut report_aggregations_to_write: Vec<ReportAggregation<L, A>>,
         prep_steps: &[PrepareStep],
     ) -> Result<()>
@@ -570,19 +571,18 @@ impl AggregationJobDriver {
             task.min_batch_duration,
             &aggregation_job.aggregation_param,
         );
-        for (stepped_aggregation, helper_prep_step) in
-            stepped_aggregations.into_iter().zip(prep_steps)
-        {
-            let (mut report_aggregation, leader_transition) = (
-                stepped_aggregation.report_aggregation,
-                stepped_aggregation.leader_transition,
+        for (stepped_aggregation, helper_prep_step) in stepped_aggregations.iter().zip(prep_steps) {
+            let (report_aggregation, leader_transition) = (
+                &stepped_aggregation.report_aggregation,
+                &stepped_aggregation.leader_transition,
             );
             if helper_prep_step.nonce() != &report_aggregation.nonce {
                 return Err(anyhow!(
                     "missing, duplicate, out-of-order, or unexpected prepare steps in response"
                 ));
             }
-            match helper_prep_step.result() {
+
+            let new_state = match helper_prep_step.result() {
                 PrepareStepResult::Continued(payload) => {
                     // If the leader continued too, combine the leader's prepare share with the
                     // helper's to compute next round's prepare message. Prepare to store the
@@ -591,14 +591,15 @@ impl AggregationJobDriver {
                     if let PrepareTransition::Continue(leader_prep_state, leader_prep_share) =
                         leader_transition
                     {
+                        let leader_prep_state = leader_prep_state.clone();
                         let helper_prep_share =
                             A::PrepareShare::get_decoded_with_param(&leader_prep_state, payload)
                                 .context("couldn't decode helper's prepare message");
                         let prep_msg = helper_prep_share.and_then(|helper_prep_share| {
-                            vdaf.prepare_preprocess([leader_prep_share, helper_prep_share])
+                            vdaf.prepare_preprocess([leader_prep_share.clone(), helper_prep_share])
                                 .context("couldn't preprocess leader & helper prepare shares into prepare message")
                         });
-                        report_aggregation.state = match prep_msg {
+                        match prep_msg {
                             Ok(prep_msg) => {
                                 ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg))
                             }
@@ -615,7 +616,7 @@ impl AggregationJobDriver {
                         self.aggregate_step_failure_counters
                             .continue_mismatch
                             .add(1);
-                        report_aggregation.state = ReportAggregationState::Invalid;
+                        ReportAggregationState::Invalid
                     }
                 }
 
@@ -624,27 +625,23 @@ impl AggregationJobDriver {
                     // If the leader didn't finish too, we transition to INVALID.
                     if let PrepareTransition::Finish(out_share) = leader_transition {
                         match accumulator.update(
-                            &out_share,
+                            out_share,
                             &report_aggregation.time,
                             &report_aggregation.nonce,
                         ) {
-                            Ok(_) => {
-                                report_aggregation.state =
-                                    ReportAggregationState::Finished(out_share)
-                            }
+                            Ok(_) => ReportAggregationState::Finished(out_share.clone()),
                             Err(error) => {
                                 warn!(report_nonce = %report_aggregation.nonce, %error, "Could not update batch unit aggregation");
                                 self.aggregate_step_failure_counters
                                     .accumulate_failure
                                     .add(1);
-                                report_aggregation.state =
-                                    ReportAggregationState::Failed(ReportShareError::VdafPrepError);
+                                ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                             }
                         }
                     } else {
                         warn!(report_nonce = %report_aggregation.nonce, "Helper finished but leader did not");
                         self.aggregate_step_failure_counters.finish_mismatch.add(1);
-                        report_aggregation.state = ReportAggregationState::Invalid;
+                        ReportAggregationState::Invalid
                     }
                 }
 
@@ -655,10 +652,14 @@ impl AggregationJobDriver {
                     self.aggregate_step_failure_counters
                         .helper_step_failure
                         .add(1);
-                    report_aggregation.state = ReportAggregationState::Failed(*err);
+                    ReportAggregationState::Failed(*err)
                 }
-            }
-            report_aggregations_to_write.push(report_aggregation);
+            };
+
+            report_aggregations_to_write.push(ReportAggregation {
+                state: new_state,
+                ..report_aggregation.clone()
+            });
         }
 
         // Determine if we've finished the aggregation job (i.e. if all report aggregations are in
@@ -1681,6 +1682,8 @@ mod tests {
         assert_eq!(hpke_configs.len(), 2);
         assert_eq!(input_shares.len(), 2);
 
+        let public_share = Vec::new(); // TODO(#473): fill out public_share once possible
+
         let encrypted_input_shares: Vec<_> = [Role::Leader, Role::Helper]
             .into_iter()
             .map(|role| {
@@ -1691,13 +1694,18 @@ mod tests {
                         .get(role.index().unwrap())
                         .unwrap()
                         .get_encoded(),
-                    &associated_data_for_report_share(task_id, report_metadata),
+                    &associated_data_for_report_share(task_id, report_metadata, &public_share),
                 )
             })
             .collect::<Result<_, _>>()
             .unwrap();
 
-        Report::new(task_id, report_metadata.clone(), encrypted_input_shares)
+        Report::new(
+            task_id,
+            report_metadata.clone(),
+            public_share,
+            encrypted_input_shares,
+        )
     }
 
     #[tokio::test]

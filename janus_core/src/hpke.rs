@@ -41,10 +41,12 @@ impl TryFrom<&HpkeConfig> for hpke_dispatch::Config {
 pub fn associated_data_for_report_share(
     task_id: TaskId,
     report_metadata: &ReportMetadata,
+    public_share: &[u8],
 ) -> Vec<u8> {
     let mut associated_data = Vec::new();
     task_id.encode(&mut associated_data);
     report_metadata.encode(&mut associated_data);
+    associated_data.extend(public_share);
     associated_data
 }
 

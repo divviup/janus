@@ -886,19 +886,19 @@ impl Encode for HpkeCiphertext {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.config_id.encode(bytes);
         encode_u16_items(bytes, &(), &self.encapsulated_key);
-        encode_u16_items(bytes, &(), &self.payload);
+        encode_u16_items(bytes, &(), &self.payload); // TODO(#471): should be encode_u32_items
     }
 }
 
 impl Decode for HpkeCiphertext {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let config_id = HpkeConfigId::decode(bytes)?;
-        let encapsulated_context = decode_u16_items(&(), bytes)?;
-        let payload = decode_u16_items(&(), bytes)?;
+        let encapsulated_key = decode_u16_items(&(), bytes)?;
+        let payload = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
 
         Ok(Self {
             config_id,
-            encapsulated_key: encapsulated_context,
+            encapsulated_key,
             payload,
         })
     }
@@ -1086,6 +1086,7 @@ impl Decode for ReportMetadata {
 pub struct Report {
     task_id: TaskId,
     metadata: ReportMetadata,
+    public_share: Vec<u8>,
     encrypted_input_shares: Vec<HpkeCiphertext>,
 }
 
@@ -1097,11 +1098,13 @@ impl Report {
     pub fn new(
         task_id: TaskId,
         metadata: ReportMetadata,
+        public_share: Vec<u8>,
         encrypted_input_shares: Vec<HpkeCiphertext>,
     ) -> Self {
         Self {
             task_id,
             metadata,
+            public_share,
             encrypted_input_shares,
         }
     }
@@ -1116,6 +1119,10 @@ impl Report {
         &self.metadata
     }
 
+    pub fn public_share(&self) -> &[u8] {
+        &self.public_share
+    }
+
     /// Get this report's encrypted input shares.
     pub fn encrypted_input_shares(&self) -> &[HpkeCiphertext] {
         &self.encrypted_input_shares
@@ -1123,7 +1130,7 @@ impl Report {
 
     /// Get the authenticated additional data associated with this report.
     pub fn associated_data(&self) -> Vec<u8> {
-        associated_data_for_report_share(self.task_id, &self.metadata)
+        associated_data_for_report_share(self.task_id, &self.metadata, &self.public_share)
     }
 }
 
@@ -1131,7 +1138,8 @@ impl Encode for Report {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.metadata.encode(bytes);
-        encode_u16_items(bytes, &(), &self.encrypted_input_shares);
+        encode_u16_items(bytes, &(), &self.public_share); // TODO(#471): should be encode_u32_items
+        encode_u16_items(bytes, &(), &self.encrypted_input_shares); // TODO(#471): should be encode_u32_items
     }
 }
 
@@ -1139,11 +1147,13 @@ impl Decode for Report {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let metadata = ReportMetadata::decode(bytes)?;
-        let encrypted_input_shares = decode_u16_items(&(), bytes)?;
+        let public_share = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+        let encrypted_input_shares = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
 
         Ok(Self {
             task_id,
             metadata,
+            public_share,
             encrypted_input_shares,
         })
     }
@@ -1156,6 +1166,7 @@ impl Report {
         Report::new(
             task_id,
             ReportMetadata::new(when, random(), Vec::new()),
+            Vec::new(),
             Vec::new(),
         )
     }
@@ -1905,6 +1916,7 @@ mod tests {
                         Vec::new(),
                     ),
                     Vec::new(),
+                    Vec::new(),
                 ),
                 concat!(
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
@@ -1916,6 +1928,10 @@ mod tests {
                             // extensions
                             "0000", // length
                         ),
+                    ),
+                    concat!(
+                        // public_share
+                        "0000", // length
                     ),
                     concat!(
                         // encrypted_input_shares
@@ -1931,6 +1947,7 @@ mod tests {
                         Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                         Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                     ),
+                    Vec::from("3210"),
                     Vec::from([
                         HpkeCiphertext::new(
                             HpkeConfigId::from(42),
@@ -1962,6 +1979,11 @@ mod tests {
                                 ),
                             )
                         ),
+                    ),
+                    concat!(
+                        // public_share
+                        "0004",     // length
+                        "33323130", // opaque data
                     ),
                     concat!(
                         // encrypted_input_shares

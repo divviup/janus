@@ -59,7 +59,7 @@ impl ReportShare {
     }
 
     pub(crate) fn associated_data(&self, task_id: TaskId) -> Vec<u8> {
-        associated_data_for_report_share(task_id, &self.metadata)
+        associated_data_for_report_share(task_id, &self.metadata, &self.public_share)
     }
 }
 
@@ -270,7 +270,6 @@ impl<Q: QueryType> AggregateInitializeReq<Q> {
     /// This method would typically be used for code which is generic over the query type.
     /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
     /// [`Self::new_fixed_size`].
-
     pub fn new(
         task_id: TaskId,
         job_id: AggregationJobId,

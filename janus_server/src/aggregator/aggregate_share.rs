@@ -362,13 +362,13 @@ where
 
     let total_aggregate_share = match total_aggregate_share {
         Some(share) => share,
-        None => return Err(Error::InsufficientBatchSize(0, task.id)),
+        None => return Err(Error::InsufficientBatchSize(task.id, 0)),
     };
 
     // §4.6: refuse to service aggregate share requests if there are too few reports
     // included.
     if total_report_count < task.min_batch_size {
-        return Err(Error::InsufficientBatchSize(total_report_count, task.id));
+        return Err(Error::InsufficientBatchSize(task.id, total_report_count));
     }
 
     Ok((total_aggregate_share, total_report_count, total_checksum))
@@ -417,7 +417,7 @@ where
         .any(|interval| interval != &collect_interval)
     {
         return Err(datastore::Error::User(
-            Error::BatchInvalid(collect_interval, task.id).into(),
+            Error::BatchInvalid(task.id, collect_interval).into(),
         ));
     }
 
@@ -532,6 +532,7 @@ mod tests {
                     tx.put_client_report(&Report::new(
                         task_id,
                         report_metadata.clone(),
+                        Vec::new(), // TODO(#473): fill out public_share once possible
                         Vec::new(),
                     ))
                     .await?;
@@ -571,7 +572,7 @@ mod tests {
             .step_collect_job(ds.clone(), lease.clone())
             .await
             .unwrap_err();
-        assert_matches!(error, Error::InsufficientBatchSize(0, error_task_id) => {
+        assert_matches!(error, Error::InsufficientBatchSize(error_task_id, 0) => {
             assert_eq!(task_id, error_task_id)
         });
 
@@ -761,6 +762,7 @@ mod tests {
                     tx.put_client_report(&Report::new(
                         task_id,
                         report_metadata.clone(),
+                        Vec::new(), // TODO(#473): fill out public_share once possible
                         Vec::new(),
                     ))
                     .await?;
@@ -916,7 +918,8 @@ mod tests {
                         tx.put_client_report(&Report::new(
                             task_id,
                             report_metadata.clone(),
-                            vec![],
+                            Vec::new(), // TODO(#473): fill out public_share once possible
+                            Vec::new(),
                         ))
                         .await?;
                         tx.put_report_aggregation(&ReportAggregation::<
