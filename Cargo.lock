@@ -1640,6 +1640,7 @@ dependencies = [
  "janus_core",
  "mockito",
  "prio",
+ "rand",
  "reqwest",
  "thiserror",
  "tokio",

@@ -4,12 +4,10 @@
 //! it times out waiting for the process to do so.
 
 use janus_core::{
-    message::{Role, TaskId},
-    task::VdafInstance,
-    test_util::install_test_trace_subscriber,
-    time::RealClock,
+    message::Role, task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock,
 };
-use janus_server::{datastore::test_util::ephemeral_datastore, task::test_util::new_dummy_task};
+use janus_server::{datastore::test_util::ephemeral_datastore, task::Task};
+use rand::random;
 use reqwest::Url;
 use serde_yaml::Mapping;
 use std::{
@@ -123,8 +121,8 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         format!("{}", health_check_listen_address).into(),
     );
 
-    let task_id = TaskId::random();
-    let task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
+    let task_id = random();
+    let task = Task::new_dummy(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
     datastore.put_task(&task).await.unwrap();
 
     // Save the above configuration to a temporary file, so that we can pass

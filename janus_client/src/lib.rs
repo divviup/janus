@@ -15,6 +15,7 @@ use prio::{
     codec::{Decode, Encode},
     vdaf,
 };
+use rand::random;
 use std::{
     fmt::{self, Formatter},
     io::Cursor,
@@ -206,13 +207,18 @@ where
         let input_shares = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
-        let report_metadata = ReportMetadata::generate(
-            &self.clock,
-            self.parameters.min_batch_duration,
-            // No extensions supported yet
-            vec![],
-        )
-        .map_err(|_| Error::InvalidParameter("Error rounding time down to min_batch_duration"))?;
+        let time = self
+            .clock
+            .now()
+            .to_batch_unit_interval_start(self.parameters.min_batch_duration)
+            .map_err(|_| {
+                Error::InvalidParameter("couldn't round time down to min_batch_duration")
+            })?;
+        let report_metadata = ReportMetadata::new(
+            time,
+            random(),
+            Vec::new(), // No extensions supported yet
+        );
         let associated_data =
             associated_data_for_report_share(self.parameters.task_id, &report_metadata);
 
@@ -274,10 +280,8 @@ mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key,
-        message::{TaskId, Time},
-        retries::test_http_request_exponential_backoff,
-        test_util::install_test_trace_subscriber,
+        hpke::test_util::generate_test_hpke_config_and_private_key, message::Time,
+        retries::test_http_request_exponential_backoff, test_util::install_test_trace_subscriber,
         time::MockClock,
     };
     use mockito::mock;
@@ -291,7 +295,7 @@ mod tests {
         let server_url = Url::parse(&mockito::server_url()).unwrap();
         Client::new(
             ClientParameters::new_with_backoff(
-                TaskId::random(),
+                random(),
                 Vec::from([server_url.clone(), server_url]),
                 Duration::from_seconds(1),
                 test_http_request_exponential_backoff(),
@@ -307,7 +311,7 @@ mod tests {
     #[test]
     fn aggregator_endpoints_end_in_slash() {
         let client_parameters = ClientParameters::new(
-            TaskId::random(),
+            random(),
             Vec::from([
                 "http://leader_endpoint/foo/bar".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
@@ -374,8 +378,7 @@ mod tests {
     async fn upload_bad_min_batch_duration() {
         install_test_trace_subscriber();
 
-        let client_parameters =
-            ClientParameters::new(TaskId::random(), vec![], Duration::from_seconds(0));
+        let client_parameters = ClientParameters::new(random(), vec![], Duration::from_seconds(0));
         let client = Client::new(
             client_parameters,
             Prio3::new_aes128_count(2).unwrap(),
@@ -398,19 +401,19 @@ mod tests {
         client.clock = MockClock::new(Time::from_seconds_since_epoch(101));
         assert_eq!(
             client.prepare_report(&1).unwrap().metadata().time(),
-            Time::from_seconds_since_epoch(100),
+            &Time::from_seconds_since_epoch(100),
         );
 
         client.clock = MockClock::new(Time::from_seconds_since_epoch(5200));
         assert_eq!(
             client.prepare_report(&1).unwrap().metadata().time(),
-            Time::from_seconds_since_epoch(5200),
+            &Time::from_seconds_since_epoch(5200),
         );
 
         client.clock = MockClock::new(Time::from_seconds_since_epoch(9814));
         assert_eq!(
             client.prepare_report(&1).unwrap().metadata().time(),
-            Time::from_seconds_since_epoch(9800),
+            &Time::from_seconds_since_epoch(9800),
         );
     }
 }

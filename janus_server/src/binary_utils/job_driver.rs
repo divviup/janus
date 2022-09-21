@@ -260,6 +260,7 @@ mod tests {
         time::MockClock,
     };
     use opentelemetry::global::meter;
+    use rand::random;
     use tokio::sync::Mutex;
 
     #[tokio::test]
@@ -307,13 +308,13 @@ mod tests {
             // First job finder call: acquire some jobs.
             vec![
                 IncompleteJob {
-                    task_id: TaskId::random(),
-                    job_id: AggregationJobId::random(),
+                    task_id: random(),
+                    job_id: random(),
                     lease_expiry: Time::from_seconds_since_epoch(100),
                 },
                 IncompleteJob {
-                    task_id: TaskId::random(),
-                    job_id: AggregationJobId::random(),
+                    task_id: random(),
+                    job_id: random(),
                     lease_expiry: Time::from_seconds_since_epoch(200),
                 },
             ],
@@ -324,13 +325,13 @@ mod tests {
             // re-acquired (it doesn't matter if the task and job IDs change).
             vec![
                 IncompleteJob {
-                    task_id: TaskId::random(),
-                    job_id: AggregationJobId::random(),
+                    task_id: random(),
+                    job_id: random(),
                     lease_expiry: Time::from_seconds_since_epoch(300),
                 },
                 IncompleteJob {
-                    task_id: TaskId::random(),
-                    job_id: AggregationJobId::random(),
+                    task_id: random(),
+                    job_id: random(),
                     lease_expiry: Time::from_seconds_since_epoch(400),
                 },
             ],

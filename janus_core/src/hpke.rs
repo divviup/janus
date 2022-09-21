@@ -1,12 +1,12 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
 use crate::message::{
-    HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
-    Interval, ReportMetadata, Role, TaskId,
+    query_type::QueryType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId,
+    HpkeKemId, HpkePublicKey, ReportMetadata, Role, TaskId,
 };
 use derivative::Derivative;
 use hpke_dispatch::{HpkeError, Kem, Keypair};
-use prio::codec::{encode_u16_items, Encode};
+use prio::codec::Encode;
 use std::{fmt::Debug, str::FromStr};
 
 #[derive(Debug, thiserror::Error)]
@@ -23,13 +23,13 @@ impl TryFrom<&HpkeConfig> for hpke_dispatch::Config {
 
     fn try_from(config: &HpkeConfig) -> Result<Self, Self::Error> {
         Ok(Self {
-            aead: (config.aead_id() as u16)
+            aead: (*config.aead_id() as u16)
                 .try_into()
                 .map_err(|_| Self::Error::InvalidConfiguration("did not recognize aead"))?,
-            kdf: (config.kdf_id() as u16)
+            kdf: (*config.kdf_id() as u16)
                 .try_into()
                 .map_err(|_| Self::Error::InvalidConfiguration("did not recognize kdf"))?,
-            kem: (config.kem_id() as u16)
+            kem: (*config.kem_id() as u16)
                 .try_into()
                 .map_err(|_| Self::Error::InvalidConfiguration("did not recognize kem"))?,
         })
@@ -42,19 +42,21 @@ pub fn associated_data_for_report_share(
     task_id: TaskId,
     report_metadata: &ReportMetadata,
 ) -> Vec<u8> {
-    let mut associated_data = vec![];
+    let mut associated_data = Vec::new();
     task_id.encode(&mut associated_data);
-    report_metadata.time().encode(&mut associated_data);
-    report_metadata.nonce().encode(&mut associated_data);
-    encode_u16_items(&mut associated_data, &(), report_metadata.extensions());
+    report_metadata.encode(&mut associated_data);
     associated_data
 }
 
 /// Construct the HPKE associated data for sealing or opening an aggregate share.
-pub fn associated_data_for_aggregate_share(task_id: TaskId, batch_interval: Interval) -> Vec<u8> {
+pub fn associated_data_for_aggregate_share<Q: QueryType>(
+    task_id: TaskId,
+    batch_identifier: &Q::BatchIdentifier,
+) -> Vec<u8> {
     let mut associated_data = Vec::new();
     task_id.encode(&mut associated_data);
-    batch_interval.encode(&mut associated_data);
+    Q::CODE.encode(&mut associated_data);
+    batch_identifier.encode(&mut associated_data);
     associated_data
 }
 
@@ -141,14 +143,14 @@ pub fn seal(
     associated_data: &[u8],
 ) -> Result<HpkeCiphertext, Error> {
     let output = hpke_dispatch::Config::try_from(recipient_config)?.base_mode_seal(
-        recipient_config.public_key().as_bytes(),
+        recipient_config.public_key().as_ref(),
         &application_info.0,
         plaintext,
         associated_data,
     )?;
 
     Ok(HpkeCiphertext::new(
-        recipient_config.id(),
+        *recipient_config.id(),
         output.encapped_key,
         output.ciphertext,
     ))
@@ -167,7 +169,7 @@ pub fn open(
     hpke_dispatch::Config::try_from(recipient_config)?
         .base_mode_open(
             &recipient_private_key.0,
-            ciphertext.encapsulated_context(),
+            ciphertext.encapsulated_key(),
             &application_info.0,
             ciphertext.payload(),
             associated_data,
@@ -196,7 +198,7 @@ pub fn generate_hpke_config_and_private_key(
             kem_id,
             kdf_id,
             aead_id,
-            HpkePublicKey::new(public_key),
+            HpkePublicKey::from(public_key),
         ),
         HpkePrivateKey::new(private_key),
     )
@@ -336,7 +338,7 @@ mod tests {
             kem_id,
             kdf_id,
             aead_id,
-            HpkePublicKey::new(public_key),
+            HpkePublicKey::from(public_key),
         );
         let hpke_private_key = HpkePrivateKey::new(private_key);
         let application_info =
@@ -446,7 +448,7 @@ mod tests {
                     kem_id,
                     kdf_id,
                     aead_id,
-                    HpkePublicKey::new(test_vector.serialized_public_key.clone()),
+                    HpkePublicKey::from(test_vector.serialized_public_key.clone()),
                 );
                 let hpke_private_key = HpkePrivateKey(test_vector.serialized_private_key.clone());
                 let application_info = HpkeApplicationInfo(test_vector.info.clone());

@@ -18,6 +18,7 @@ use prio::{
     codec::{Decode, Encode},
     vdaf::{self, prio3::Prio3},
 };
+use rand::random;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -100,7 +101,7 @@ struct Handle(String);
 
 impl Handle {
     fn generate() -> Handle {
-        let randomness = rand::random::<[u8; 32]>();
+        let randomness: [u8; 32] = random();
         Handle(base64::encode_config(randomness, URL_SAFE_NO_PAD))
     }
 }
@@ -152,7 +153,7 @@ where
     V::AggregationParam: Send + Sync + 'static,
     for<'a> Vec<u8>: From<&'a V::AggregateShare>,
 {
-    let collector = Collector::new(collector_params, vdaf, http_client);
+    let collector = Collector::new(collector_params, vdaf, http_client.clone());
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let handle = spawn(async move {
         let vdaf_result = collector.collect(batch_interval, &agg_param).await?;

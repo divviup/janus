@@ -23,7 +23,7 @@ use futures::{
 use http::header::CONTENT_TYPE;
 use janus_core::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    message::{Duration, Report, Role},
+    message::{query_type::TimeInterval, Duration, Report, Role},
     task::DAP_AUTH_HEADER,
     time::Clock,
 };
@@ -262,8 +262,8 @@ impl AggregationJobDriver {
             .zip(client_reports.into_iter())
             .collect();
         for (report_aggregation, client_report) in &reports {
-            assert_eq!(report_aggregation.task_id, client_report.task_id());
-            assert_eq!(report_aggregation.nonce, client_report.metadata().nonce());
+            assert_eq!(&report_aggregation.task_id, client_report.task_id());
+            assert_eq!(&report_aggregation.nonce, client_report.metadata().nonce());
         }
 
         // Compute report shares to send to helper, and decrypt our input shares & initialize
@@ -308,7 +308,7 @@ impl AggregationJobDriver {
             // Decrypt leader input share & transform into our first transition.
             let (hpke_config, hpke_private_key) = match task
                 .hpke_keys
-                .get(&leader_encrypted_input_share.config_id())
+                .get(leader_encrypted_input_share.config_id())
             {
                 Some((hpke_config, hpke_private_key)) => (hpke_config, hpke_private_key),
                 None => {
@@ -380,10 +380,11 @@ impl AggregationJobDriver {
                 }
             };
 
-            report_shares.push(ReportShare {
-                metadata: report.metadata().clone(),
-                encrypted_input_share: helper_encrypted_input_share.clone(),
-            });
+            report_shares.push(ReportShare::new(
+                report.metadata().clone(),
+                Vec::new(), // TODO(#473): fill out public_share once possible
+                helper_encrypted_input_share.clone(),
+            ));
             stepped_aggregations.push(SteppedAggregation {
                 report_aggregation,
                 leader_transition: PrepareTransition::Continue(prep_state, prep_share),
@@ -393,17 +394,20 @@ impl AggregationJobDriver {
         // Construct request, send it to the helper, and process the response.
         // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
         // unexepected cases such as unknown/unexpected content type.
-        let req = AggregateInitializeReq {
-            task_id: task.id,
-            job_id: aggregation_job.aggregation_job_id,
-            agg_param: aggregation_job.aggregation_param.get_encoded(),
+        let req = AggregateInitializeReq::new_time_interval(
+            task.id,
+            aggregation_job.aggregation_job_id,
+            aggregation_job.aggregation_param.get_encoded(),
             report_shares,
-        };
+        );
 
         let response = self
             .http_client
             .post(task.aggregator_url(Role::Helper)?.join("aggregate")?)
-            .header(CONTENT_TYPE, AggregateInitializeReq::MEDIA_TYPE)
+            .header(
+                CONTENT_TYPE,
+                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .header(
                 DAP_AUTH_HEADER,
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -426,7 +430,7 @@ impl AggregationJobDriver {
             aggregation_job,
             stepped_aggregations,
             report_aggregations_to_write,
-            resp.prepare_steps,
+            resp.prepare_steps(),
         )
         .await
     }
@@ -484,10 +488,10 @@ impl AggregationJobDriver {
                     }
                 };
 
-                prepare_steps.push(PrepareStep {
-                    nonce: report_aggregation.nonce,
-                    result: PrepareStepResult::Continued(prep_msg.get_encoded()),
-                });
+                prepare_steps.push(PrepareStep::new(
+                    report_aggregation.nonce,
+                    PrepareStepResult::Continued(prep_msg.get_encoded()),
+                ));
                 stepped_aggregations.push(SteppedAggregation {
                     report_aggregation,
                     leader_transition,
@@ -498,11 +502,8 @@ impl AggregationJobDriver {
         // Construct request, send it to the helper, and process the response.
         // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
         // unexepected cases such as unknown/unexpected content type.
-        let req = AggregateContinueReq {
-            task_id: task.id,
-            job_id: aggregation_job.aggregation_job_id,
-            prepare_steps,
-        };
+        let req =
+            AggregateContinueReq::new(task.id, aggregation_job.aggregation_job_id, prepare_steps);
 
         let response = self
             .http_client
@@ -530,7 +531,7 @@ impl AggregationJobDriver {
             aggregation_job,
             stepped_aggregations,
             report_aggregations_to_write,
-            resp.prepare_steps,
+            resp.prepare_steps(),
         )
         .await
     }
@@ -545,7 +546,7 @@ impl AggregationJobDriver {
         aggregation_job: AggregationJob<L, A>,
         stepped_aggregations: Vec<SteppedAggregation<L, A>>,
         mut report_aggregations_to_write: Vec<ReportAggregation<L, A>>,
-        prep_steps: Vec<PrepareStep>,
+        prep_steps: &[PrepareStep],
     ) -> Result<()>
     where
         A: 'static,
@@ -576,12 +577,12 @@ impl AggregationJobDriver {
                 stepped_aggregation.report_aggregation,
                 stepped_aggregation.leader_transition,
             );
-            if helper_prep_step.nonce != report_aggregation.nonce {
+            if helper_prep_step.nonce() != &report_aggregation.nonce {
                 return Err(anyhow!(
                     "missing, duplicate, out-of-order, or unexpected prepare steps in response"
                 ));
             }
-            match helper_prep_step.result {
+            match helper_prep_step.result() {
                 PrepareStepResult::Continued(payload) => {
                     // If the leader continued too, combine the leader's prepare share with the
                     // helper's to compute next round's prepare message. Prepare to store the
@@ -591,7 +592,7 @@ impl AggregationJobDriver {
                         leader_transition
                     {
                         let helper_prep_share =
-                            A::PrepareShare::get_decoded_with_param(&leader_prep_state, &payload)
+                            A::PrepareShare::get_decoded_with_param(&leader_prep_state, payload)
                                 .context("couldn't decode helper's prepare message");
                         let prep_msg = helper_prep_share.and_then(|helper_prep_share| {
                             vdaf.prepare_preprocess([leader_prep_share, helper_prep_share])
@@ -624,8 +625,8 @@ impl AggregationJobDriver {
                     if let PrepareTransition::Finish(out_share) = leader_transition {
                         match accumulator.update(
                             &out_share,
-                            report_aggregation.time,
-                            report_aggregation.nonce,
+                            &report_aggregation.time,
+                            &report_aggregation.nonce,
                         ) {
                             Ok(_) => {
                                 report_aggregation.state =
@@ -654,7 +655,7 @@ impl AggregationJobDriver {
                     self.aggregate_step_failure_counters
                         .helper_step_failure
                         .add(1);
-                    report_aggregation.state = ReportAggregationState::Failed(err);
+                    report_aggregation.state = ReportAggregationState::Failed(*err);
                 }
             }
             report_aggregations_to_write.push(report_aggregation);
@@ -854,9 +855,9 @@ mod tests {
         },
         message::{
             AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-            AggregateInitializeResp, AggregationJobId, PrepareStep, PrepareStepResult, ReportShare,
+            AggregateInitializeResp, PrepareStep, PrepareStepResult, ReportShare,
         },
-        task::{test_util::new_dummy_task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
     use http::header::CONTENT_TYPE;
@@ -866,11 +867,12 @@ mod tests {
             test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         message::{
-            Duration, HpkeConfig, Interval, NonceChecksum, Report, ReportMetadata, Role, TaskId,
+            query_type::TimeInterval, Duration, HpkeConfig, Interval, NonceChecksum, Report,
+            ReportMetadata, Role, TaskId,
         },
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
-        time::MockClock,
+        time::{Clock, MockClock},
         Runtime,
     };
     use mockito::mock;
@@ -882,6 +884,7 @@ mod tests {
             Aggregator, PrepareTransition,
         },
     };
+    use rand::random;
     use reqwest::Url;
     use std::{str, sync::Arc};
 
@@ -901,15 +904,22 @@ mod tests {
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
-        let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
+        let task_id = random();
+        let mut task =
+            Task::new_dummy(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         task.aggregator_endpoints = vec![
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
 
-        let report_metadata =
-            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let report_metadata = ReportMetadata::new(
+            clock
+                .now()
+                .to_batch_unit_interval_start(task.min_batch_duration)
+                .unwrap(),
+            random(),
+            Vec::new(),
+        );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -931,7 +941,7 @@ mod tests {
             &transcript.input_shares,
         );
 
-        let aggregation_job_id = AggregationJobId::random();
+        let aggregation_job_id = random();
 
         ds.run_tx(|tx| {
             let (task, report) = (task.clone(), report.clone());
@@ -955,8 +965,8 @@ mod tests {
                 > {
                     aggregation_job_id,
                     task_id,
-                    time: report.metadata().time(),
-                    nonce: report.metadata().nonce(),
+                    time: *report.metadata().time(),
+                    nonce: *report.metadata().nonce(),
                     ord: 0,
                     state: ReportAggregationState::Start,
                 })
@@ -970,30 +980,26 @@ mod tests {
         let helper_vdaf_msg = assert_matches!(
             &transcript.prepare_transitions[Role::Helper.index().unwrap()][0],
             PrepareTransition::Continue(_, prep_share) => prep_share);
-        let helper_responses = vec![
+        let helper_responses = Vec::from([
             (
-                AggregateInitializeReq::MEDIA_TYPE,
+                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
                 AggregateInitializeResp::MEDIA_TYPE,
-                AggregateInitializeResp {
-                    prepare_steps: vec![PrepareStep {
-                        nonce: report.metadata().nonce(),
-                        result: PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
-                    }],
-                }
+                AggregateInitializeResp::new(Vec::from([PrepareStep::new(
+                    *report.metadata().nonce(),
+                    PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
+                )]))
                 .get_encoded(),
             ),
             (
                 AggregateContinueReq::MEDIA_TYPE,
                 AggregateContinueResp::MEDIA_TYPE,
-                AggregateContinueResp {
-                    prepare_steps: vec![PrepareStep {
-                        nonce: report.metadata().nonce(),
-                        result: PrepareStepResult::Finished,
-                    }],
-                }
+                AggregateContinueResp::new(Vec::from([PrepareStep::new(
+                    *report.metadata().nonce(),
+                    PrepareStepResult::Finished,
+                )]))
                 .get_encoded(),
             ),
-        ];
+        ]);
         let mocked_aggregates: Vec<_> = helper_responses
             .into_iter()
             .map(|(req_content_type, resp_content_type, resp_body)| {
@@ -1058,8 +1064,8 @@ mod tests {
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
                 task_id,
-                time: report.metadata().time(),
-                nonce: report.metadata().nonce(),
+                time: *report.metadata().time(),
+                nonce: *report.metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Finished(leader_output_share),
             };
@@ -1067,7 +1073,7 @@ mod tests {
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
-                let report_nonce = report.metadata().nonce();
+                let report_nonce = *report.metadata().nonce();
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
@@ -1105,15 +1111,22 @@ mod tests {
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
-        let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
+        let task_id = random();
+        let mut task =
+            Task::new_dummy(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         task.aggregator_endpoints = vec![
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
 
-        let report_metadata =
-            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let report_metadata = ReportMetadata::new(
+            clock
+                .now()
+                .to_batch_unit_interval_start(task.min_batch_duration)
+                .unwrap(),
+            random(),
+            Vec::new(),
+        );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -1134,7 +1147,7 @@ mod tests {
             &[leader_hpke_config, &helper_hpke_config],
             &transcript.input_shares,
         );
-        let aggregation_job_id = AggregationJobId::random();
+        let aggregation_job_id = random();
 
         let lease = ds
             .run_tx(|tx| {
@@ -1159,8 +1172,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        time: report.metadata().time(),
-                        nonce: report.metadata().nonce(),
+                        time: *report.metadata().time(),
+                        nonce: *report.metadata().nonce(),
                         ord: 0,
                         state: ReportAggregationState::Start,
                     })
@@ -1181,35 +1194,37 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let leader_request = AggregateInitializeReq {
+        let leader_request = AggregateInitializeReq::new_time_interval(
             task_id,
-            job_id: aggregation_job_id,
-            agg_param: ().get_encoded(),
-            report_shares: vec![ReportShare {
-                metadata: report.metadata().clone(),
-                encrypted_input_share: report
+            aggregation_job_id,
+            ().get_encoded(),
+            Vec::from([ReportShare::new(
+                report.metadata().clone(),
+                Vec::new(), // TODO(#473): fill out public_share once possible
+                report
                     .encrypted_input_shares()
                     .get(Role::Helper.index().unwrap())
                     .unwrap()
                     .clone(),
-            }],
-        };
+            )]),
+        );
         let helper_vdaf_msg = assert_matches!(
             &transcript.prepare_transitions[Role::Helper.index().unwrap()][0],
             PrepareTransition::Continue(_, prep_share) => prep_share);
-        let helper_response = AggregateInitializeResp {
-            prepare_steps: vec![PrepareStep {
-                nonce: report.metadata().nonce(),
-                result: PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
-            }],
-        };
+        let helper_response = AggregateInitializeResp::new(Vec::from([PrepareStep::new(
+            *report.metadata().nonce(),
+            PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
+        )]));
         let mocked_aggregate_failure = mock("POST", "/aggregate").with_status(500).create();
         let mocked_aggregate_success = mock("POST", "/aggregate")
             .match_header(
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
             )
-            .match_header(CONTENT_TYPE.as_str(), AggregateInitializeReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .match_body(leader_request.get_encoded())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateInitializeResp::MEDIA_TYPE)
@@ -1249,8 +1264,8 @@ mod tests {
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
                 task_id,
-                time: report.metadata().time(),
-                nonce: report.metadata().nonce(),
+                time: *report.metadata().time(),
+                nonce: *report.metadata().nonce(),
 
                 ord: 0,
                 state: ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
@@ -1259,7 +1274,7 @@ mod tests {
         let (got_aggregation_job, got_report_aggregation) = ds
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
-                let report_nonce = report.metadata().nonce();
+                let report_nonce = *report.metadata().nonce();
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
@@ -1298,14 +1313,21 @@ mod tests {
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
-        let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
+        let task_id = random();
+        let mut task =
+            Task::new_dummy(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         task.aggregator_endpoints = vec![
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        let report_metadata =
-            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let report_metadata = ReportMetadata::new(
+            clock
+                .now()
+                .to_batch_unit_interval_start(task.min_batch_duration)
+                .unwrap(),
+            random(),
+            Vec::new(),
+        );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -1326,7 +1348,7 @@ mod tests {
             &[leader_hpke_config, &helper_hpke_config],
             &transcript.input_shares,
         );
-        let aggregation_job_id = AggregationJobId::random();
+        let aggregation_job_id = random();
 
         let leader_prep_state = assert_matches!(
             &transcript.prepare_transitions[Role::Leader.index().unwrap()][0],
@@ -1365,8 +1387,8 @@ mod tests {
                     > {
                         aggregation_job_id,
                         task_id,
-                        time: report.metadata().time(),
-                        nonce: report.metadata().nonce(),
+                        time: *report.metadata().time(),
+                        nonce: *report.metadata().nonce(),
                         ord: 0,
                         state: ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
                     })
@@ -1387,20 +1409,18 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let leader_request = AggregateContinueReq {
+        let leader_request = AggregateContinueReq::new(
             task_id,
-            job_id: aggregation_job_id,
-            prepare_steps: vec![PrepareStep {
-                nonce: report.metadata().nonce(),
-                result: PrepareStepResult::Continued(prep_msg.get_encoded()),
-            }],
-        };
-        let helper_response = AggregateContinueResp {
-            prepare_steps: vec![PrepareStep {
-                nonce: report.metadata().nonce(),
-                result: PrepareStepResult::Finished,
-            }],
-        };
+            aggregation_job_id,
+            Vec::from([PrepareStep::new(
+                *report.metadata().nonce(),
+                PrepareStepResult::Continued(prep_msg.get_encoded()),
+            )]),
+        );
+        let helper_response = AggregateContinueResp::new(Vec::from([PrepareStep::new(
+            *report.metadata().nonce(),
+            PrepareStepResult::Finished,
+        )]));
         let mocked_aggregate_failure = mock("POST", "/aggregate").with_status(500).create();
         let mocked_aggregate_success = mock("POST", "/aggregate")
             .match_header(
@@ -1446,8 +1466,8 @@ mod tests {
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
                 task_id,
-                time: report.metadata().time(),
-                nonce: report.metadata().nonce(),
+                time: *report.metadata().time(),
+                nonce: *report.metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Finished(leader_output_share),
             };
@@ -1465,7 +1485,7 @@ mod tests {
             aggregation_param: (),
             aggregate_share: leader_aggregate_share,
             report_count: 1,
-            checksum: NonceChecksum::from_nonce(report.metadata().nonce()),
+            checksum: NonceChecksum::for_nonce(report.metadata().nonce()),
         }]);
 
         let (got_aggregation_job, got_report_aggregation, got_batch_unit_aggregations) = ds
@@ -1486,7 +1506,7 @@ mod tests {
                             Role::Leader,
                             task_id,
                             aggregation_job_id,
-                            report_metadata.nonce(),
+                            *report_metadata.nonce(),
                         )
                         .await?
                         .unwrap();
@@ -1519,14 +1539,21 @@ mod tests {
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
-        let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
+        let task_id = random();
+        let mut task =
+            Task::new_dummy(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         task.aggregator_endpoints = vec![
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
-        let report_metadata =
-            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let report_metadata = ReportMetadata::new(
+            clock
+                .now()
+                .to_batch_unit_interval_start(task.min_batch_duration)
+                .unwrap(),
+            random(),
+            Vec::new(),
+        );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -1547,7 +1574,7 @@ mod tests {
             &[leader_hpke_config, &helper_hpke_config],
             &input_shares,
         );
-        let aggregation_job_id = AggregationJobId::random();
+        let aggregation_job_id = random();
 
         let aggregation_job = AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
             aggregation_job_id,
@@ -1559,8 +1586,8 @@ mod tests {
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
                 aggregation_job_id,
                 task_id,
-                time: report.metadata().time(),
-                nonce: report.metadata().nonce(),
+                time: *report.metadata().time(),
+                nonce: *report.metadata().nonce(),
                 ord: 0,
                 state: ReportAggregationState::Start,
             };
@@ -1611,7 +1638,7 @@ mod tests {
         let (got_aggregation_job, got_report_aggregation, got_leases) = ds
             .run_tx(|tx| {
                 let vdaf = Arc::clone(&vdaf);
-                let report_nonce = report.metadata().nonce();
+                let report_nonce = *report.metadata().nonce();
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
@@ -1681,14 +1708,15 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        let task_id = TaskId::random();
-        let mut task = new_dummy_task(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
+        let task_id = random();
+        let mut task =
+            Task::new_dummy(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
         task.aggregator_endpoints = vec![
             Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
             Url::parse(&mockito::server_url()).unwrap(),
         ];
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let aggregation_job_id = AggregationJobId::random();
+        let aggregation_job_id = random();
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -1696,8 +1724,14 @@ mod tests {
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let report_metadata =
-            ReportMetadata::generate(&clock, task.min_batch_duration, vec![]).unwrap();
+        let report_metadata = ReportMetadata::new(
+            clock
+                .now()
+                .to_batch_unit_interval_start(task.min_batch_duration)
+                .unwrap(),
+            random(),
+            Vec::new(),
+        );
         let transcript = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
@@ -1740,8 +1774,8 @@ mod tests {
                 > {
                     aggregation_job_id,
                     task_id,
-                    time: report.metadata().time(),
-                    nonce: report.metadata().nonce(),
+                    time: *report.metadata().time(),
+                    nonce: *report.metadata().nonce(),
                     ord: 0,
                     state: ReportAggregationState::Start,
                 })
@@ -1779,7 +1813,10 @@ mod tests {
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
             )
-            .match_header(CONTENT_TYPE.as_str(), AggregateInitializeReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(500)
             .expect(3)
             .create();
@@ -1791,7 +1828,10 @@ mod tests {
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
             )
-            .match_header(CONTENT_TYPE.as_str(), AggregateInitializeReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(500)
             .expect(1)
             .create();
