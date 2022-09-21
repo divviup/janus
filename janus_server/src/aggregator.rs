@@ -2911,8 +2911,7 @@ mod tests {
 
         let unused_hpke_config_id = (0..)
             .map(HpkeConfigId::from)
-            .filter(|id| !task.hpke_keys.contains_key(id))
-            .next()
+            .find(|id| !task.hpke_keys.contains_key(id))
             .unwrap();
 
         report = Report::new(
