@@ -13,11 +13,12 @@
 //!     task::AuthenticationToken,
 //! };
 //! use prio::vdaf::prio3::Prio3;
+//! use rand::random;
 //! use url::Url;
 //!
 //! # async fn run() {
 //! // Supply DAP task paramenters.
-//! # let task_id = TaskId::random();
+//! # let task_id = random();
 //! # let (hpke_config, private_key) = janus_core::hpke::generate_hpke_config_and_private_key(
 //! #     janus_core::message::HpkeConfigId::from(0),
 //! #     janus_core::message::HpkeKemId::X25519HkdfSha256,
@@ -37,7 +38,7 @@
 //! let vdaf = Prio3::new_aes128_count(2).unwrap();
 //! // Use the default HTTP client as-is.
 //! let http_client = default_http_client().unwrap();
-//! let collector = Collector::new(parameters, vdaf, &http_client);
+//! let collector = Collector::new(parameters, vdaf, http_client);
 //!
 //! // Specify the time interval over which the aggregation should be calculated.
 //! let interval = Interval::new(
@@ -54,7 +55,10 @@ use backoff::{backoff::Backoff, ExponentialBackoff};
 use derivative::Derivative;
 use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey},
-    message::{CollectReq, CollectResp, HpkeConfig, Interval, Role, TaskId},
+    message::{
+        query_type::TimeInterval, CollectReq, CollectResp, HpkeConfig, Interval, Query, Role,
+        TaskId,
+    },
     retries::{http_request_exponential_backoff, retry_http_request},
     task::{url_ensure_trailing_slash, AuthenticationToken, DAP_AUTH_HEADER},
 };
@@ -261,12 +265,12 @@ where
     pub fn new(
         parameters: CollectorParameters,
         vdaf_collector: V,
-        http_client: &reqwest::Client,
+        http_client: reqwest::Client,
     ) -> Collector<V> {
         Collector {
             parameters,
             vdaf_collector,
-            http_client: http_client.clone(),
+            http_client,
         }
     }
 
@@ -277,11 +281,11 @@ where
         batch_interval: Interval,
         aggregation_parameter: &V::AggregationParam,
     ) -> Result<CollectJob<V::AggregationParam>, Error> {
-        let collect_request = CollectReq {
-            task_id: self.parameters.task_id,
-            batch_interval,
-            agg_param: aggregation_parameter.get_encoded(),
-        };
+        let collect_request = CollectReq::new(
+            self.parameters.task_id,
+            Query::new_time_interval(batch_interval),
+            aggregation_parameter.get_encoded(),
+        );
         let url = self.parameters.collect_endpoint()?;
 
         let response = retry_http_request(
@@ -290,7 +294,7 @@ where
                 let mut request = self
                     .http_client
                     .post(url.clone())
-                    .header(CONTENT_TYPE, CollectReq::MEDIA_TYPE)
+                    .header(CONTENT_TYPE, CollectReq::<TimeInterval>::MEDIA_TYPE)
                     .body(collect_request.get_encoded());
                 match &self.parameters.authentication {
                     Authentication::DapAuthToken(token) => {
@@ -367,21 +371,23 @@ where
             .headers()
             .get(CONTENT_TYPE)
             .ok_or(Error::BadContentType(None))?;
-        if content_type != CollectResp::MEDIA_TYPE {
+        if content_type != CollectResp::<TimeInterval>::MEDIA_TYPE {
             return Err(Error::BadContentType(Some(content_type.clone())));
         }
 
-        let collect_response = CollectResp::get_decoded(&response.bytes().await?)?;
-        if collect_response.encrypted_agg_shares.len() != 2 {
+        let collect_response = CollectResp::<TimeInterval>::get_decoded(&response.bytes().await?)?;
+        if collect_response.encrypted_aggregate_shares().len() != 2 {
             return Err(Error::AggregateShareCount(
-                collect_response.encrypted_agg_shares.len(),
+                collect_response.encrypted_aggregate_shares().len(),
             ));
         }
 
-        let associated_data =
-            associated_data_for_aggregate_share(self.parameters.task_id, job.batch_interval);
+        let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
+            self.parameters.task_id,
+            &job.batch_interval,
+        );
         let aggregate_shares_bytes = collect_response
-            .encrypted_agg_shares
+            .encrypted_aggregate_shares()
             .iter()
             .zip([Role::Leader, Role::Helper])
             .map(|(encrypted_aggregate_share, role)| {
@@ -506,7 +512,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, Label},
-        message::{Duration, HpkeCiphertext, Nonce, Time},
+        message::{Duration, HpkeCiphertext, Time},
         retries::test_http_request_exponential_backoff,
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
@@ -515,7 +521,7 @@ mod tests {
         field::Field64,
         vdaf::{prio3::Prio3, AggregateShare},
     };
-    use rand::{thread_rng, Rng};
+    use rand::{random, thread_rng, Rng};
 
     fn setup_collector<V: vdaf::Collector>(vdaf_collector: V) -> Collector<V>
     where
@@ -524,7 +530,7 @@ mod tests {
         let server_url = Url::parse(&mockito::server_url()).unwrap();
         let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
         let parameters = CollectorParameters::new(
-            TaskId::random(),
+            random(),
             server_url,
             AuthenticationToken::from(b"token".to_vec()),
             hpke_config,
@@ -532,7 +538,7 @@ mod tests {
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff());
-        Collector::new(parameters, vdaf_collector, &default_http_client().unwrap())
+        Collector::new(parameters, vdaf_collector, default_http_client().unwrap())
     }
 
     fn random_verify_key() -> [u8; 16] {
@@ -545,14 +551,17 @@ mod tests {
         transcript: &VdafTranscript<L, V>,
         parameters: &CollectorParameters,
         batch_interval: Interval,
-    ) -> CollectResp
+    ) -> CollectResp<TimeInterval>
     where
         for<'a> Vec<u8>: From<&'a V::AggregateShare>,
     {
-        let associated_data =
-            associated_data_for_aggregate_share(parameters.task_id, batch_interval);
-        CollectResp {
-            encrypted_agg_shares: vec![
+        let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
+            parameters.task_id,
+            &batch_interval,
+        );
+        CollectResp::new_time_interval(
+            1,
+            vec![
                 hpke::seal(
                     &parameters.hpke_config,
                     &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
@@ -568,14 +577,14 @@ mod tests {
                 )
                 .unwrap(),
             ],
-        }
+        )
     }
 
     #[test]
     fn leader_endpoint_end_in_slash() {
         let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
         let collector_parameters = CollectorParameters::new(
-            TaskId::random(),
+            random(),
             "http://example.com/dap".parse().unwrap(),
             AuthenticationToken::from(b"token".to_vec()),
             hpke_config.clone(),
@@ -588,7 +597,7 @@ mod tests {
         );
 
         let collector_parameters = CollectorParameters::new(
-            TaskId::random(),
+            random(),
             "http://example.com".parse().unwrap(),
             AuthenticationToken::from(b"token".to_vec()),
             hpke_config,
@@ -606,7 +615,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), Nonce::generate(), &1);
+        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), &random(), &1);
         let collector = setup_collector(vdaf);
 
         let batch_interval = Interval::new(
@@ -619,12 +628,18 @@ mod tests {
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
         let mocked_collect_start_error = mock("POST", "/collect")
-            .match_header(CONTENT_TYPE.as_str(), CollectReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(500)
             .expect(3)
             .create();
         let mocked_collect_start_success = mock("POST", "/collect")
-            .match_header(CONTENT_TYPE.as_str(), CollectReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(303)
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
@@ -639,7 +654,10 @@ mod tests {
             .create();
         let mocked_collect_complete = mock("GET", "/collect_job/1")
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), CollectResp::MEDIA_TYPE)
+            .with_header(
+                CONTENT_TYPE.as_str(),
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_body(collect_resp.get_encoded())
             .expect(1)
             .create();
@@ -669,7 +687,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let vdaf = Prio3::new_aes128_sum(2, 8).unwrap();
-        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), Nonce::generate(), &144);
+        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), &random(), &144);
         let collector = setup_collector(vdaf);
 
         let batch_interval = Interval::new(
@@ -682,14 +700,20 @@ mod tests {
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
         let mocked_collect_start_success = mock("POST", "/collect")
-            .match_header(CONTENT_TYPE.as_str(), CollectReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(303)
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
             .create();
         let mocked_collect_complete = mock("GET", "/collect_job/1")
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), CollectResp::MEDIA_TYPE)
+            .with_header(
+                CONTENT_TYPE.as_str(),
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_body(collect_resp.get_encoded())
             .expect(1)
             .create();
@@ -713,7 +737,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let vdaf = Prio3::new_aes128_histogram(2, &[25, 50, 75, 100]).unwrap();
-        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), Nonce::generate(), &80);
+        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), &random(), &80);
         let collector = setup_collector(vdaf);
 
         let batch_interval = Interval::new(
@@ -726,14 +750,20 @@ mod tests {
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
         let mocked_collect_start_success = mock("POST", "/collect")
-            .match_header(CONTENT_TYPE.as_str(), CollectReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(303)
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
             .create();
         let mocked_collect_complete = mock("GET", "/collect_job/1")
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), CollectResp::MEDIA_TYPE)
+            .with_header(
+                CONTENT_TYPE.as_str(),
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_body(collect_resp.get_encoded())
             .expect(1)
             .create();
@@ -760,7 +790,10 @@ mod tests {
         let collector = setup_collector(vdaf);
 
         let mock_server_error = mock("POST", "/collect")
-            .match_header(CONTENT_TYPE.as_str(), CollectReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(500)
             .expect_at_least(1)
             .create();
@@ -779,7 +812,10 @@ mod tests {
         mock_server_error.assert();
 
         let mock_server_no_location = mock("POST", "/collect")
-            .match_header(CONTENT_TYPE.as_str(), CollectReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(303)
             .expect_at_least(1)
             .create();
@@ -807,7 +843,10 @@ mod tests {
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
         let mock_collect_start = mock("POST", "/collect")
-            .match_header(CONTENT_TYPE.as_str(), CollectReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(303)
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
@@ -834,7 +873,10 @@ mod tests {
 
         let mock_collect_job_bad_message_bytes = mock("GET", "/collect_job/1")
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), CollectResp::MEDIA_TYPE)
+            .with_header(
+                CONTENT_TYPE.as_str(),
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_body(b"")
             .expect_at_least(1)
             .create();
@@ -846,13 +888,11 @@ mod tests {
 
         let mock_collect_job_bad_share_count = mock("GET", "/collect_job/1")
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), CollectResp::MEDIA_TYPE)
-            .with_body(
-                CollectResp {
-                    encrypted_agg_shares: vec![],
-                }
-                .get_encoded(),
+            .with_header(
+                CONTENT_TYPE.as_str(),
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
+            .with_body(CollectResp::new_time_interval(0, Vec::new()).get_encoded())
             .expect_at_least(1)
             .create();
 
@@ -863,14 +903,18 @@ mod tests {
 
         let mock_collect_job_bad_ciphertext = mock("GET", "/collect_job/1")
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), CollectResp::MEDIA_TYPE)
+            .with_header(
+                CONTENT_TYPE.as_str(),
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_body(
-                CollectResp {
-                    encrypted_agg_shares: vec![
-                        HpkeCiphertext::new(collector.parameters.hpke_config.id(), vec![], vec![]),
-                        HpkeCiphertext::new(collector.parameters.hpke_config.id(), vec![], vec![]),
-                    ],
-                }
+                CollectResp::new_time_interval(
+                    1,
+                    Vec::from([
+                        HpkeCiphertext::new(*collector.parameters.hpke_config.id(), vec![], vec![]),
+                        HpkeCiphertext::new(*collector.parameters.hpke_config.id(), vec![], vec![]),
+                    ]),
+                )
                 .get_encoded(),
             )
             .expect_at_least(1)
@@ -881,10 +925,13 @@ mod tests {
 
         mock_collect_job_bad_ciphertext.assert();
 
-        let associated_data =
-            associated_data_for_aggregate_share(collector.parameters.task_id, batch_interval);
-        let collect_resp = CollectResp {
-            encrypted_agg_shares: vec![
+        let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
+            collector.parameters.task_id,
+            &batch_interval,
+        );
+        let collect_resp = CollectResp::new_time_interval(
+            1,
+            Vec::from([
                 hpke::seal(
                     &collector.parameters.hpke_config,
                     &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
@@ -899,11 +946,14 @@ mod tests {
                     &associated_data,
                 )
                 .unwrap(),
-            ],
-        };
+            ]),
+        );
         let mock_collect_job_bad_shares = mock("GET", "/collect_job/1")
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), CollectResp::MEDIA_TYPE)
+            .with_header(
+                CONTENT_TYPE.as_str(),
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_body(collect_resp.get_encoded())
             .expect_at_least(1)
             .create();
@@ -913,8 +963,9 @@ mod tests {
 
         mock_collect_job_bad_shares.assert();
 
-        let collect_resp = CollectResp {
-            encrypted_agg_shares: vec![
+        let collect_resp = CollectResp::new_time_interval(
+            1,
+            Vec::from([
                 hpke::seal(
                     &collector.parameters.hpke_config,
                     &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
@@ -932,11 +983,14 @@ mod tests {
                     &associated_data,
                 )
                 .unwrap(),
-            ],
-        };
+            ]),
+        );
         let mock_collect_job_unshard_failure = mock("GET", "/collect_job/1")
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), CollectResp::MEDIA_TYPE)
+            .with_header(
+                CONTENT_TYPE.as_str(),
+                CollectResp::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_body(collect_resp.get_encoded())
             .expect_at_least(1)
             .create();
@@ -964,7 +1018,10 @@ mod tests {
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
         let mock_collect_start = mock("POST", "/collect")
-            .match_header(CONTENT_TYPE.as_str(), CollectReq::MEDIA_TYPE)
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
             .with_status(303)
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)

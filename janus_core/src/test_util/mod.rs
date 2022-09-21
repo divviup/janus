@@ -37,7 +37,7 @@ pub fn run_vdaf<const L: usize, V: vdaf::Aggregator<L> + vdaf::Client>(
     vdaf: &V,
     verify_key: &[u8; L],
     aggregation_param: &V::AggregationParam,
-    nonce: Nonce,
+    nonce: &Nonce,
     measurement: &V::Measurement,
 ) -> VdafTranscript<L, V>
 where

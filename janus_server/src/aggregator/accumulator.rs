@@ -27,7 +27,7 @@ impl<const L: usize, A: vdaf::Aggregator<L>> Accumulation<L, A>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
-    fn update(&mut self, output_share: &A::OutputShare, nonce: Nonce) -> Result<(), Error> {
+    fn update(&mut self, output_share: &A::OutputShare, nonce: &Nonce) -> Result<(), Error> {
         self.aggregate_share.accumulate(output_share)?;
         self.report_count += 1;
         self.checksum.update(nonce);
@@ -76,8 +76,8 @@ where
     pub(super) fn update(
         &mut self,
         output_share: &A::OutputShare,
-        report_time: Time,
-        nonce: Nonce,
+        report_time: &Time,
+        nonce: &Nonce,
     ) -> Result<(), datastore::Error> {
         let key = report_time
             .to_batch_unit_interval_start(self.min_batch_duration)
@@ -92,7 +92,7 @@ where
                 Accumulation {
                     aggregate_share: A::AggregateShare::from(output_share.clone()),
                     report_count: 1,
-                    checksum: NonceChecksum::from_nonce(nonce),
+                    checksum: NonceChecksum::for_nonce(nonce),
                 },
             );
         }
@@ -139,7 +139,7 @@ where
                 batch_unit_aggregation.report_count += accumulation.report_count;
                 batch_unit_aggregation
                     .checksum
-                    .combine(accumulation.checksum);
+                    .combine(&accumulation.checksum);
 
                 tx.update_batch_unit_aggregation(&batch_unit_aggregations[0])
                     .await?;
@@ -150,7 +150,7 @@ where
                 );
                 tx.put_batch_unit_aggregation::<L, A>(&BatchUnitAggregation {
                     task_id: self.task_id,
-                    unit_interval_start: unit_interval.start(),
+                    unit_interval_start: *unit_interval.start(),
                     aggregation_param: self.aggregation_param.clone(),
                     aggregate_share: accumulation.aggregate_share.clone(),
                     report_count: accumulation.report_count,

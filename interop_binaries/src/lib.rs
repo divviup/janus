@@ -161,7 +161,7 @@ pub struct AddTaskResponse {
 impl From<Task> for AggregatorAddTaskRequest {
     fn from(task: Task) -> Self {
         Self {
-            task_id: base64::encode_config(task.id.as_bytes(), URL_SAFE_NO_PAD),
+            task_id: base64::encode_config(task.id.as_ref(), URL_SAFE_NO_PAD),
             leader: task.aggregator_url(Role::Leader).unwrap().clone(),
             helper: task.aggregator_url(Role::Helper).unwrap().clone(),
             vdaf: task.vdaf.clone().into(),

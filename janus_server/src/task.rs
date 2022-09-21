@@ -255,7 +255,7 @@ impl Task {
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
         let hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_keys
             .into_iter()
-            .map(|(cfg, key)| (cfg.id(), (cfg, key)))
+            .map(|(cfg, key)| (*cfg.id(), (cfg, key)))
             .collect();
         if hpke_configs.is_empty() {
             return Err(Error::InvalidParameter("hpke_configs"));
@@ -279,7 +279,7 @@ impl Task {
     }
 
     /// Returns true if `batch_interval` is valid, per §4.6 of draft-gpew-priv-ppm.
-    pub(crate) fn validate_batch_interval(&self, batch_interval: Interval) -> bool {
+    pub(crate) fn validate_batch_interval(&self, batch_interval: &Interval) -> bool {
         // Batch interval should be greater than task's minimum batch duration
         batch_interval.duration().as_seconds() >= self.min_batch_duration.as_seconds()
             // Batch interval start must be a multiple of minimum batch duration
@@ -373,7 +373,7 @@ struct SerializedTask {
 
 impl Serialize for Task {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let id = base64::encode_config(self.id.as_bytes(), URL_SAFE_NO_PAD);
+        let id = base64::encode_config(self.id.as_ref(), URL_SAFE_NO_PAD);
         let vdaf_verify_keys: Vec<_> = self
             .vdaf_verify_keys
             .iter()
@@ -420,13 +420,12 @@ impl<'de> Deserialize<'de> for Task {
         let serialized_task = SerializedTask::deserialize(deserializer)?;
 
         // task_id
-        let task_id_bytes =
-            base64::decode_config(serialized_task.id, URL_SAFE_NO_PAD).map_err(D::Error::custom)?;
-        let task_id = TaskId::new(
-            task_id_bytes
+        let task_id_bytes: [u8; TaskId::ENCODED_LEN] =
+            base64::decode_config(serialized_task.id, URL_SAFE_NO_PAD)
+                .map_err(D::Error::custom)?
                 .try_into()
-                .map_err(|_| D::Error::custom("task_id length incorrect"))?,
-        );
+                .map_err(|_| D::Error::custom("task_id length incorrect"))?;
+        let task_id = TaskId::from(task_id_bytes);
 
         // vdaf_verify_keys
         let vdaf_verify_keys: Vec<_> = serialized_task
@@ -506,11 +505,11 @@ struct SerializedHpkeConfig {
 impl From<HpkeConfig> for SerializedHpkeConfig {
     fn from(cfg: HpkeConfig) -> Self {
         Self {
-            id: cfg.id(),
-            kem_id: cfg.kem_id(),
-            kdf_id: cfg.kdf_id(),
-            aead_id: cfg.aead_id(),
-            public_key: base64::encode_config(cfg.public_key().as_bytes(), URL_SAFE_NO_PAD),
+            id: *cfg.id(),
+            kem_id: *cfg.kem_id(),
+            kdf_id: *cfg.kdf_id(),
+            aead_id: *cfg.aead_id(),
+            public_key: base64::encode_config(cfg.public_key().as_ref(), URL_SAFE_NO_PAD),
         }
     }
 }
@@ -520,7 +519,7 @@ impl TryFrom<SerializedHpkeConfig> for HpkeConfig {
 
     fn try_from(cfg: SerializedHpkeConfig) -> Result<Self, Self::Error> {
         let public_key =
-            HpkePublicKey::new(base64::decode_config(cfg.public_key, URL_SAFE_NO_PAD)?);
+            HpkePublicKey::from(base64::decode_config(cfg.public_key, URL_SAFE_NO_PAD)?);
         Ok(Self::new(
             cfg.id,
             cfg.kem_id,
@@ -561,8 +560,6 @@ impl TryFrom<SerializedHpkeKeypair> for (HpkeConfig, HpkePrivateKey) {
 // This is public to allow use in integration tests.
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use std::iter;
-
     use super::{
         AuthenticationToken, SecretBytes, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
@@ -570,7 +567,7 @@ pub mod test_util {
         hpke::test_util::generate_test_hpke_config_and_private_key,
         message::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId},
     };
-    use rand::{thread_rng, Rng};
+    use rand::{distributions::Standard, random, thread_rng, Rng};
 
     impl VdafInstance {
         /// Returns the expected length of a VDAF verification key for a VDAF of this type.
@@ -588,61 +585,63 @@ pub mod test_util {
         }
     }
 
-    /// Create a dummy [`Task`] from the provided [`TaskId`], with
-    /// dummy values for the other fields. This is pub because it is needed for
-    /// integration tests.
-    pub fn new_dummy_task(task_id: TaskId, vdaf: VdafInstance, role: Role) -> Task {
-        let (aggregator_config_0, aggregator_private_key_0) =
-            generate_test_hpke_config_and_private_key();
-        let (mut aggregator_config_1, aggregator_private_key_1) =
-            generate_test_hpke_config_and_private_key();
-        aggregator_config_1 = HpkeConfig::new(
-            HpkeConfigId::from(1),
-            aggregator_config_1.kem_id(),
-            aggregator_config_1.kdf_id(),
-            aggregator_config_1.aead_id(),
-            aggregator_config_1.public_key().clone(),
-        );
+    impl Task {
+        /// Create a dummy [`Task`] from the provided [`TaskId`], with
+        /// dummy values for the other fields. This is pub because it is needed for
+        /// integration tests.
+        pub fn new_dummy(task_id: TaskId, vdaf: VdafInstance, role: Role) -> Task {
+            let (aggregator_config_0, aggregator_private_key_0) =
+                generate_test_hpke_config_and_private_key();
+            let (mut aggregator_config_1, aggregator_private_key_1) =
+                generate_test_hpke_config_and_private_key();
+            aggregator_config_1 = HpkeConfig::new(
+                HpkeConfigId::from(1),
+                *aggregator_config_1.kem_id(),
+                *aggregator_config_1.kdf_id(),
+                *aggregator_config_1.aead_id(),
+                aggregator_config_1.public_key().clone(),
+            );
 
-        let vdaf_verify_key = SecretBytes::new(
-            iter::repeat_with(|| thread_rng().gen())
-                .take(vdaf.verify_key_length())
-                .collect(),
-        );
+            let vdaf_verify_key = SecretBytes::new(
+                thread_rng()
+                    .sample_iter(Standard)
+                    .take(vdaf.verify_key_length())
+                    .collect(),
+            );
 
-        let collector_auth_tokens = if role == Role::Leader {
-            Vec::from([generate_auth_token(), generate_auth_token()])
-        } else {
-            Vec::new()
-        };
+            let collector_auth_tokens = if role == Role::Leader {
+                Vec::from([generate_auth_token(), generate_auth_token()])
+            } else {
+                Vec::new()
+            };
 
-        Task::new(
-            task_id,
-            Vec::from([
-                "http://leader_endpoint".parse().unwrap(),
-                "http://helper_endpoint".parse().unwrap(),
-            ]),
-            vdaf,
-            role,
-            Vec::from([vdaf_verify_key]),
-            0,
-            0,
-            Duration::from_hours(8).unwrap(),
-            Duration::from_minutes(10).unwrap(),
-            generate_test_hpke_config_and_private_key().0,
-            Vec::from([generate_auth_token(), generate_auth_token()]),
-            collector_auth_tokens,
-            Vec::from([
-                (aggregator_config_0, aggregator_private_key_0),
-                (aggregator_config_1, aggregator_private_key_1),
-            ]),
-        )
-        .unwrap()
+            Task::new(
+                task_id,
+                Vec::from([
+                    "http://leader_endpoint".parse().unwrap(),
+                    "http://helper_endpoint".parse().unwrap(),
+                ]),
+                vdaf,
+                role,
+                Vec::from([vdaf_verify_key]),
+                0,
+                0,
+                Duration::from_hours(8).unwrap(),
+                Duration::from_minutes(10).unwrap(),
+                generate_test_hpke_config_and_private_key().0,
+                Vec::from([generate_auth_token(), generate_auth_token()]),
+                collector_auth_tokens,
+                Vec::from([
+                    (aggregator_config_0, aggregator_private_key_0),
+                    (aggregator_config_1, aggregator_private_key_1),
+                ]),
+            )
+            .unwrap()
+        }
     }
 
     pub fn generate_auth_token() -> AuthenticationToken {
-        let mut buf = [0; 16];
-        thread_rng().fill(&mut buf);
+        let buf: [u8; 16] = random();
         base64::encode_config(&buf, base64::URL_SAFE_NO_PAD)
             .into_bytes()
             .into()
@@ -652,19 +651,19 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use super::{
-        test_util::{generate_auth_token, new_dummy_task},
-        SecretBytes, Task, PRIO3_AES128_VERIFY_KEY_LENGTH,
+        test_util::generate_auth_token, SecretBytes, Task, PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
     use crate::{config::test_util::roundtrip_encoding, task::VdafInstance};
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
-        message::{Duration, Interval, Role, TaskId, Time},
+        message::{Duration, Interval, Role, Time},
     };
+    use rand::random;
     use serde_test::{assert_tokens, Token};
 
     #[test]
     fn validate_batch_interval() {
-        let mut task = new_dummy_task(TaskId::random(), VdafInstance::Fake, Role::Leader);
+        let mut task = Task::new_dummy(random(), VdafInstance::Fake, Role::Leader);
         let min_batch_duration_secs = 3600;
         task.min_batch_duration = Duration::from_seconds(min_batch_duration_secs);
 
@@ -725,7 +724,7 @@ mod tests {
         for test_case in test_cases {
             assert_eq!(
                 test_case.expected,
-                task.validate_batch_interval(test_case.input),
+                task.validate_batch_interval(&test_case.input),
                 "test case: {}",
                 test_case.name
             );
@@ -827,8 +826,8 @@ mod tests {
 
     #[test]
     fn task_serialization() {
-        roundtrip_encoding(new_dummy_task(
-            TaskId::random(),
+        roundtrip_encoding(Task::new_dummy(
+            random(),
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
         ));
@@ -838,7 +837,7 @@ mod tests {
     fn collector_auth_tokens() {
         // As leader, we receive an error if no collector auth token is specified.
         Task::new(
-            TaskId::random(),
+            random(),
             Vec::from([
                 "http://leader_endpoint".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
@@ -859,7 +858,7 @@ mod tests {
 
         // As leader, we receive no error if a collector auth token is specified.
         Task::new(
-            TaskId::random(),
+            random(),
             Vec::from([
                 "http://leader_endpoint".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
@@ -880,7 +879,7 @@ mod tests {
 
         // As helper, we receive no error if no collector auth token is specified.
         Task::new(
-            TaskId::random(),
+            random(),
             Vec::from([
                 "http://leader_endpoint".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
@@ -901,7 +900,7 @@ mod tests {
 
         // As helper, we receive an error if a collector auth token is specified.
         Task::new(
-            TaskId::random(),
+            random(),
             Vec::from([
                 "http://leader_endpoint".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
@@ -924,7 +923,7 @@ mod tests {
     #[test]
     fn aggregator_endpoints_end_in_slash() {
         let task = Task::new(
-            TaskId::random(),
+            random(),
             Vec::from([
                 "http://leader_endpoint/foo/bar".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),

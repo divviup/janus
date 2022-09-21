@@ -3,7 +3,7 @@ use base64::STANDARD_NO_PAD;
 use clap::Parser;
 use deadpool_postgres::Pool;
 use janus_core::{
-    message::{CollectReq, CollectResp, HpkeConfig, Report},
+    message::{query_type::TimeInterval, CollectReq, CollectResp, HpkeConfig, Report},
     time::{Clock, RealClock},
 };
 use janus_server::{
@@ -312,9 +312,9 @@ fn decode_dap_message(message_file: &str, media_type: &str) -> Result<Box<dyn De
     let decoded = match media_type {
         "hpke-config" => Box::new(HpkeConfig::decode(&mut binary_message)?) as Box<dyn Debug>,
         "report" => Box::new(Report::decode(&mut binary_message)?) as Box<dyn Debug>,
-        "aggregate-initialize-req" => {
-            Box::new(AggregateInitializeReq::decode(&mut binary_message)?) as Box<dyn Debug>
-        }
+        "aggregate-initialize-req" => Box::new(AggregateInitializeReq::<TimeInterval>::decode(
+            &mut binary_message,
+        )?) as Box<dyn Debug>,
         "aggregate-initialize-resp" => {
             Box::new(AggregateInitializeResp::decode(&mut binary_message)?) as Box<dyn Debug>
         }
@@ -324,14 +324,18 @@ fn decode_dap_message(message_file: &str, media_type: &str) -> Result<Box<dyn De
         "aggregate-continue-resp" => {
             Box::new(AggregateContinueResp::decode(&mut binary_message)?) as Box<dyn Debug>
         }
-        "aggregate-share-req" => {
-            Box::new(AggregateShareReq::decode(&mut binary_message)?) as Box<dyn Debug>
-        }
+        "aggregate-share-req" => Box::new(AggregateShareReq::<TimeInterval>::decode(
+            &mut binary_message,
+        )?) as Box<dyn Debug>,
         "aggregate-share-resp" => {
             Box::new(AggregateShareResp::decode(&mut binary_message)?) as Box<dyn Debug>
         }
-        "collect-req" => Box::new(CollectReq::decode(&mut binary_message)?) as Box<dyn Debug>,
-        "collect-resp" => Box::new(CollectResp::decode(&mut binary_message)?) as Box<dyn Debug>,
+        "collect-req" => {
+            Box::new(CollectReq::<TimeInterval>::decode(&mut binary_message)?) as Box<dyn Debug>
+        }
+        "collect-resp" => {
+            Box::new(CollectResp::<TimeInterval>::decode(&mut binary_message)?) as Box<dyn Debug>
+        }
         _ => return Err(anyhow!("unknown media type")),
     };
 
@@ -431,12 +435,7 @@ mod tests {
     use super::{fetch_datastore_keys, Config, KubernetesSecretOptions, Options};
     use base64::STANDARD_NO_PAD;
     use clap::IntoApp;
-    use janus_core::{
-        message::{Role, TaskId},
-        task::VdafInstance,
-        test_util::kubernetes,
-        time::RealClock,
-    };
+    use janus_core::{message::Role, task::VdafInstance, test_util::kubernetes, time::RealClock};
     use janus_server::{
         binary_utils::CommonBinaryOptions,
         config::test_util::{
@@ -444,8 +443,9 @@ mod tests {
         },
         config::CommonConfig,
         datastore::test_util::{ephemeral_datastore, ephemeral_db_handle},
-        task::test_util::new_dummy_task,
+        task::Task,
     };
+    use rand::random;
     use ring::aead::{UnboundKey, AES_128_GCM};
     use std::{
         collections::HashMap,
@@ -540,13 +540,13 @@ mod tests {
     #[tokio::test]
     async fn provision_tasks() {
         let tasks = Vec::from([
-            new_dummy_task(
-                TaskId::random(),
+            Task::new_dummy(
+                random(),
                 VdafInstance::Prio3Aes128Count.into(),
                 Role::Leader,
             ),
-            new_dummy_task(
-                TaskId::random(),
+            Task::new_dummy(
+                random(),
                 VdafInstance::Prio3Aes128Sum { bits: 64 }.into(),
                 Role::Helper,
             ),

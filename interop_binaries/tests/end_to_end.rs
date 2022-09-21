@@ -12,6 +12,7 @@ use janus_core::{
 };
 use janus_server::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use prio::codec::Encode;
+use rand::random;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
@@ -73,7 +74,7 @@ async fn run(
     .await;
 
     // Generate a random TaskId, random authentication tokens, and a VDAF verification key.
-    let task_id = TaskId::random();
+    let task_id: TaskId = random();
     let aggregator_auth_token = base64::encode_config(rand::random::<[u8; 16]>(), URL_SAFE_NO_PAD);
     let collector_auth_token = base64::encode_config(rand::random::<[u8; 16]>(), URL_SAFE_NO_PAD);
     let verify_key = rand::random::<[u8; PRIO3_AES128_VERIFY_KEY_LENGTH]>();

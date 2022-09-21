@@ -78,11 +78,14 @@ impl TypedValueParser for TaskIdValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let task_id_bytes = base64::decode_config(input, URL_SAFE_NO_PAD)
-            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?;
-        Ok(TaskId::new(task_id_bytes.try_into().map_err(|_| {
-            clap::Error::raw(ErrorKind::ValueValidation, "task ID length incorrect")
-        })?))
+        let task_id_bytes: [u8; TaskId::ENCODED_LEN] =
+            base64::decode_config(input, URL_SAFE_NO_PAD)
+                .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
+                .try_into()
+                .map_err(|_| {
+                    clap::Error::raw(ErrorKind::ValueValidation, "task ID length incorrect")
+                })?;
+        Ok(TaskId::from(task_id_bytes))
     }
 }
 
@@ -284,7 +287,7 @@ fn install_tracing_subscriber() -> anyhow::Result<()> {
 async fn run_collection_generic<V: vdaf::Collector>(
     parameters: CollectorParameters,
     vdaf: V,
-    http_client: &reqwest::Client,
+    http_client: reqwest::Client,
     interval: Interval,
     agg_param: &V::AggregationParam,
 ) -> Result<(), janus_collector::Error>
@@ -316,27 +319,27 @@ async fn run(options: Options) -> Result<(), Error> {
     match (options.vdaf, options.length, options.bits, options.buckets) {
         (VdafType::Count, None, None, None) => {
             let vdaf = Prio3::new_aes128_count(2).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, &http_client, interval, &())
+            run_collection_generic(parameters, vdaf, http_client, interval, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::CountVec, Some(length), None, None) => {
             let vdaf =
                 Prio3::new_aes128_count_vec(2, length).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, &http_client, interval, &())
+            run_collection_generic(parameters, vdaf, http_client, interval, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::Sum, None, Some(bits), None) => {
             let vdaf = Prio3::new_aes128_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, &http_client, interval, &())
+            run_collection_generic(parameters, vdaf, http_client, interval, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }
         (VdafType::Histogram, None, None, Some(ref buckets)) => {
             let vdaf = Prio3::new_aes128_histogram(2, &buckets.0)
                 .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, &http_client, interval, &())
+            run_collection_generic(parameters, vdaf, http_client, interval, &())
                 .await
                 .map_err(|err| Error::Anyhow(err.into()))
         }

@@ -4,7 +4,7 @@ use janus_client::{Client, ClientParameters};
 use janus_collector::{test_util::collect_with_rewritten_url, Collector, CollectorParameters};
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
-    message::{Duration, HpkeConfig, Interval, Role, TaskId},
+    message::{Duration, HpkeConfig, Interval, Role},
     retries::test_http_request_exponential_backoff,
     task::{AuthenticationToken, VdafInstance},
     time::{Clock, RealClock},
@@ -14,7 +14,7 @@ use janus_server::{
     SecretBytes,
 };
 use prio::vdaf::prio3::Prio3;
-use rand::{thread_rng, Rng};
+use rand::random;
 use reqwest::Url;
 use std::iter;
 use tokio::time::{self};
@@ -22,15 +22,13 @@ use tokio::time::{self};
 // Returns (leader_task, helper_task).
 pub fn create_test_tasks(collector_hpke_config: &HpkeConfig) -> (Task, Task) {
     // Generate parameters.
-    let task_id = TaskId::random();
-    let mut buf = [0; 4];
-    thread_rng().fill(&mut buf);
+    let task_id = random();
+    let buf: [u8; 4] = random();
     let endpoints = Vec::from([
         Url::parse(&format!("http://leader-{}:8080/", hex::encode(buf))).unwrap(),
         Url::parse(&format!("http://helper-{}:8080/", hex::encode(buf))).unwrap(),
     ]);
-    let mut vdaf_verify_key = [0u8; PRIO3_AES128_VERIFY_KEY_LENGTH];
-    thread_rng().fill(&mut vdaf_verify_key[..]);
+    let vdaf_verify_key: [u8; PRIO3_AES128_VERIFY_KEY_LENGTH] = random();
     let vdaf_verify_keys = Vec::from([SecretBytes::new(vdaf_verify_key.to_vec())]);
     let aggregator_auth_tokens = Vec::from([generate_auth_token()]);
 
@@ -176,7 +174,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     let collector = Collector::new(
         collector_params,
         vdaf,
-        &janus_collector::default_http_client().unwrap(),
+        janus_collector::default_http_client().unwrap(),
     );
     let aggregate_result =
         collect_with_rewritten_url(&collector, batch_interval, &(), "127.0.0.1", leader_port)
