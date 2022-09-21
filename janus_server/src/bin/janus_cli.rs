@@ -21,7 +21,7 @@ use janus_server::{
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
 use prio::codec::Decode;
-use rand::{thread_rng, Rng};
+use rand::{distributions::Standard, thread_rng, Rng};
 use ring::aead::AES_128_GCM;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -269,8 +269,10 @@ async fn create_datastore_key(
 
     // Generate a random datastore key & encode it into unpadded base64 as will be expected by
     // consumers of the secret we are about to write.
-    let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
-    thread_rng().fill(&mut key_bytes[..]);
+    let key_bytes: Vec<_> = thread_rng()
+        .sample_iter(Standard)
+        .take(AES_128_GCM.key_len())
+        .collect();
     let secret_content = base64::encode_config(&key_bytes, STANDARD_NO_PAD);
 
     // Write the secret.

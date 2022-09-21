@@ -25,7 +25,7 @@ use janus_server::{
 };
 use opentelemetry::global::meter;
 use prio::codec::Decode;
-use rand::{thread_rng, Rng};
+use rand::random;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use serde::Serialize;
 use std::{
@@ -209,10 +209,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "/".to_string());
 
     // Make an ephemeral datastore key.
-    let mut key_bytes = [0u8; 16];
-    thread_rng().fill(&mut key_bytes);
+    let key_bytes: [u8; 16] = random();
     let datastore_key = LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &key_bytes).unwrap());
-    let crypter = Crypter::new(vec![datastore_key]);
+    let crypter = Crypter::new(Vec::from([datastore_key]));
 
     // Connect to database, apply schema, and set up datastore.
     let db_config = DbConfig {

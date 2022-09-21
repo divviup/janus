@@ -78,13 +78,12 @@ impl TypedValueParser for TaskIdValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let task_id_bytes: [u8; TaskId::ENCODED_LEN] =
-            base64::decode_config(input, URL_SAFE_NO_PAD)
-                .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
-                .try_into()
-                .map_err(|_| {
-                    clap::Error::raw(ErrorKind::ValueValidation, "task ID length incorrect")
-                })?;
+        let task_id_bytes: [u8; TaskId::LEN] = base64::decode_config(input, URL_SAFE_NO_PAD)
+            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
+            .try_into()
+            .map_err(|_| {
+                clap::Error::raw(ErrorKind::ValueValidation, "task ID length incorrect")
+            })?;
         Ok(TaskId::from(task_id_bytes))
     }
 }
