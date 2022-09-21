@@ -208,11 +208,11 @@ pub fn generate_hpke_config_and_private_key(
 pub mod test_util {
     use super::{generate_hpke_config_and_private_key, HpkePrivateKey};
     use crate::message::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId};
-    use rand::{thread_rng, Rng};
+    use rand::random;
 
     pub fn generate_test_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
         generate_hpke_config_and_private_key(
-            HpkeConfigId::from(thread_rng().gen::<u8>()),
+            HpkeConfigId::from(random::<u8>()),
             HpkeKemId::X25519HkdfSha256,
             HpkeKdfId::HkdfSha256,
             HpkeAeadId::Aes128Gcm,

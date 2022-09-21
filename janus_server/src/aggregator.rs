@@ -2907,14 +2907,20 @@ mod tests {
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
-        let (aggregator, _, mut report, _, _db_handle) = setup_upload_test().await;
+        let (aggregator, task, mut report, _, _db_handle) = setup_upload_test().await;
+
+        let unused_hpke_config_id = (0..)
+            .map(HpkeConfigId::from)
+            .filter(|id| !task.hpke_keys.contains_key(id))
+            .next()
+            .unwrap();
 
         report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
             vec![
                 HpkeCiphertext::new(
-                    HpkeConfigId::from(101),
+                    unused_hpke_config_id,
                     report.encrypted_input_shares()[0]
                         .encapsulated_key()
                         .to_vec(),
@@ -2926,7 +2932,7 @@ mod tests {
 
         assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::OutdatedHpkeConfig(config_id, task_id)) => {
             assert_eq!(&task_id, report.task_id());
-            assert_eq!(config_id, HpkeConfigId::from(101));
+            assert_eq!(config_id, unused_hpke_config_id);
         });
     }
 
