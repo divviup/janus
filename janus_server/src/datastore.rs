@@ -751,7 +751,7 @@ impl<C: Clock> Transaction<'_, C> {
 
                 Ok(Report::new(
                     task_id,
-                    ReportMetadata::new(time, nonce, extensions),
+                    ReportMetadata::new(nonce, time, extensions),
                     Vec::new(), // TODO(#473): fill out public_share once possible
                     input_shares,
                 ))
@@ -3450,8 +3450,8 @@ mod tests {
         let report = Report::new(
             random(),
             ReportMetadata::new(
-                Time::from_seconds_since_epoch(12345),
                 Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                Time::from_seconds_since_epoch(12345),
                 vec![
                     Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
                     Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
@@ -3534,25 +3534,25 @@ mod tests {
 
         let first_unaggregated_report = Report::new(
             task_id,
-            ReportMetadata::new(when, random(), Vec::new()),
+            ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(), // TODO(#473): fill out public_share once possible
             Vec::new(),
         );
         let second_unaggregated_report = Report::new(
             task_id,
-            ReportMetadata::new(when, random(), Vec::new()),
+            ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(), // TODO(#473): fill out public_share once possible
             Vec::new(),
         );
         let aggregated_report = Report::new(
             task_id,
-            ReportMetadata::new(when, random(), Vec::new()),
+            ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(), // TODO(#473): fill out public_share once possible
             Vec::new(),
         );
         let unrelated_report = Report::new(
             unrelated_task_id,
-            ReportMetadata::new(when, random(), Vec::new()),
+            ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(), // TODO(#473): fill out public_share once possible
             Vec::new(),
         );
@@ -3659,25 +3659,25 @@ mod tests {
 
         let first_unaggregated_report = Report::new(
             task_id,
-            ReportMetadata::new(Time::from_seconds_since_epoch(12345), random(), Vec::new()),
+            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12345), Vec::new()),
             Vec::new(), // TODO(#473): fill out public_share once possible
             Vec::new(),
         );
         let second_unaggregated_report = Report::new(
             task_id,
-            ReportMetadata::new(Time::from_seconds_since_epoch(12346), random(), Vec::new()),
+            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12346), Vec::new()),
             Vec::new(), // TODO(#473): fill out public_share once possible
             Vec::new(),
         );
         let aggregated_report = Report::new(
             task_id,
-            ReportMetadata::new(Time::from_seconds_since_epoch(12347), random(), Vec::new()),
+            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12347), Vec::new()),
             Vec::new(), // TODO(#473): fill out public_share once possible
             Vec::new(),
         );
         let unrelated_report = Report::new(
             unrelated_task_id,
-            ReportMetadata::new(Time::from_seconds_since_epoch(12348), random(), Vec::new()),
+            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12348), Vec::new()),
             Vec::new(), // TODO(#473): fill out public_share once possible
             Vec::new(),
         );
@@ -3898,8 +3898,8 @@ mod tests {
         let task_id = random();
         let report_share = ReportShare::new(
             ReportMetadata::new(
-                Time::from_seconds_since_epoch(12345),
                 Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                Time::from_seconds_since_epoch(12345),
                 Vec::from([
                     Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
                     Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
@@ -4476,7 +4476,7 @@ mod tests {
                         tx.put_report_share(
                             task_id,
                             &ReportShare::new(
-                                ReportMetadata::new(time, nonce, Vec::new()),
+                                ReportMetadata::new(nonce, time, Vec::new()),
                                 Vec::from("public_share"),
                                 HpkeCiphertext::new(
                                     HpkeConfigId::from(12),
@@ -4653,7 +4653,7 @@ mod tests {
                         tx.put_report_share(
                             task_id,
                             &ReportShare::new(
-                                ReportMetadata::new(time, nonce, Vec::new()),
+                                ReportMetadata::new(nonce, time, Vec::new()),
                                 Vec::from("public_share"),
                                 HpkeCiphertext::new(
                                     HpkeConfigId::from(12),

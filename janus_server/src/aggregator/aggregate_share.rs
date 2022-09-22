@@ -522,11 +522,11 @@ mod tests {
                     .await?;
 
                     let report_metadata = ReportMetadata::new(
+                        random(),
                         clock
                             .now()
                             .to_batch_unit_interval_start(task.min_batch_duration)
                             .unwrap(),
-                        random(),
                         Vec::new(),
                     );
                     tx.put_client_report(&Report::new(
@@ -752,11 +752,11 @@ mod tests {
                     .await?;
 
                     let report_metadata = ReportMetadata::new(
+                        random(),
                         clock
                             .now()
                             .to_batch_unit_interval_start(task.min_batch_duration)
                             .unwrap(),
-                        random(),
                         Vec::new(),
                     );
                     tx.put_client_report(&Report::new(
@@ -908,11 +908,11 @@ mod tests {
                     // can be picked up and the anti-replay check has something to check.
                     for i in 0..10 {
                         let report_metadata = ReportMetadata::new(
+                            random(),
                             clock
                                 .now()
                                 .to_batch_unit_interval_start(task.min_batch_duration)
                                 .unwrap(),
-                            random(),
                             Vec::new(),
                         );
                         tx.put_client_report(&Report::new(

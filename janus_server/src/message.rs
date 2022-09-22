@@ -801,8 +801,8 @@ mod tests {
                 report_shares: vec![
                     ReportShare {
                         metadata: ReportMetadata::new(
-                            Time::from_seconds_since_epoch(54321),
                             Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                            Time::from_seconds_since_epoch(54321),
                             vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                         ),
                         public_share: Vec::new(),
@@ -814,8 +814,8 @@ mod tests {
                     },
                     ReportShare {
                         metadata: ReportMetadata::new(
-                            Time::from_seconds_since_epoch(73542),
                             Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                            Time::from_seconds_since_epoch(73542),
                             vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
                         ),
                         public_share: Vec::from("0123"),
@@ -842,8 +842,8 @@ mod tests {
                     concat!(
                         concat!(
                             // metadata
+                            "0102030405060708090A0B0C0D0E0F10", // nonce
                             "000000000000D431",                 // time
-                            "0102030405060708090a0b0c0d0e0f10", // nonce
                             concat!(
                                 // extensions
                                 "0008", // length
@@ -880,8 +880,8 @@ mod tests {
                     concat!(
                         concat!(
                             // metadata
-                            "0000000000011F46",                 // time
                             "100F0E0D0C0B0A090807060504030201", // nonce
+                            "0000000000011F46",                 // time
                             concat!(
                                 // extensions
                                 "0008", // length
@@ -928,8 +928,8 @@ mod tests {
                 report_shares: vec![
                     ReportShare {
                         metadata: ReportMetadata::new(
-                            Time::from_seconds_since_epoch(54321),
                             Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                            Time::from_seconds_since_epoch(54321),
                             vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                         ),
                         public_share: Vec::new(),
@@ -941,8 +941,8 @@ mod tests {
                     },
                     ReportShare {
                         metadata: ReportMetadata::new(
-                            Time::from_seconds_since_epoch(73542),
                             Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                            Time::from_seconds_since_epoch(73542),
                             vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
                         ),
                         public_share: Vec::from("0123"),
@@ -970,8 +970,8 @@ mod tests {
                     concat!(
                         concat!(
                             // metadata
+                            "0102030405060708090A0B0C0D0E0F10", // nonce
                             "000000000000D431",                 // time
-                            "0102030405060708090a0b0c0d0e0f10", // nonce
                             concat!(
                                 // extensions
                                 "0008", // length
@@ -1008,8 +1008,8 @@ mod tests {
                     concat!(
                         concat!(
                             // metadata
-                            "0000000000011F46",                 // time
                             "100F0E0D0C0B0A090807060504030201", // nonce
+                            "0000000000011F46",                 // time
                             concat!(
                                 // extensions
                                 "0008", // length

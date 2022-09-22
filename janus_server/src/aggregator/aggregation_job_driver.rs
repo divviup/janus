@@ -914,11 +914,11 @@ mod tests {
         ];
 
         let report_metadata = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
@@ -1121,11 +1121,11 @@ mod tests {
         ];
 
         let report_metadata = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
@@ -1322,11 +1322,11 @@ mod tests {
             Url::parse(&mockito::server_url()).unwrap(),
         ];
         let report_metadata = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
@@ -1548,11 +1548,11 @@ mod tests {
             Url::parse(&mockito::server_url()).unwrap(),
         ];
         let report_metadata = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
@@ -1733,11 +1733,11 @@ mod tests {
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let report_metadata = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript = run_vdaf(

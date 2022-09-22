@@ -1028,29 +1028,29 @@ impl Decode for HpkeConfig {
 /// DAP protocol message representing client report metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportMetadata {
-    time: Time,
     nonce: Nonce,
+    time: Time,
     extensions: Vec<Extension>,
 }
 
 impl ReportMetadata {
     /// Construct a report's metadata from its components.
-    pub fn new(time: Time, nonce: Nonce, extensions: Vec<Extension>) -> Self {
+    pub fn new(nonce: Nonce, time: Time, extensions: Vec<Extension>) -> Self {
         Self {
-            time,
             nonce,
+            time,
             extensions,
         }
-    }
-
-    /// Retrieve the client timestamp from this report metadata.
-    pub fn time(&self) -> &Time {
-        &self.time
     }
 
     /// Retrieve the nonce from this report metadata.
     pub fn nonce(&self) -> &Nonce {
         &self.nonce
+    }
+
+    /// Retrieve the client timestamp from this report metadata.
+    pub fn time(&self) -> &Time {
+        &self.time
     }
 
     /// Retrieve the extensions from this report metadata.
@@ -1061,21 +1061,21 @@ impl ReportMetadata {
 
 impl Encode for ReportMetadata {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.time.encode(bytes);
         self.nonce.encode(bytes);
+        self.time.encode(bytes);
         encode_u16_items(bytes, &(), &self.extensions);
     }
 }
 
 impl Decode for ReportMetadata {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let time = Time::decode(bytes)?;
         let nonce = Nonce::decode(bytes)?;
+        let time = Time::decode(bytes)?;
         let extensions = decode_u16_items(&(), bytes)?;
 
         Ok(Self {
-            time,
             nonce,
+            time,
             extensions,
         })
     }
@@ -1165,7 +1165,7 @@ impl Report {
         use rand::random;
         Report::new(
             task_id,
-            ReportMetadata::new(when, random(), Vec::new()),
+            ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(),
             Vec::new(),
         )
@@ -1864,14 +1864,13 @@ mod tests {
         roundtrip_encoding(&[
             (
                 ReportMetadata::new(
-                    Time::from_seconds_since_epoch(12345),
                     Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                    Time::from_seconds_since_epoch(12345),
                     Vec::new(),
                 ),
                 concat!(
-                    // nonce
+                    "0102030405060708090A0B0C0D0E0F10", // nonce
                     "0000000000003039",                 // time
-                    "0102030405060708090a0b0c0d0e0f10", // nonce
                     concat!(
                         // extensions
                         "0000", // length
@@ -1880,13 +1879,13 @@ mod tests {
             ),
             (
                 ReportMetadata::new(
-                    Time::from_seconds_since_epoch(54321),
                     Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                    Time::from_seconds_since_epoch(54321),
                     Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                 ),
                 concat!(
+                    "100F0E0D0C0B0A090807060504030201", // nonce
                     "000000000000D431",                 // time
-                    "100f0e0d0c0b0a090807060504030201", // nonce
                     concat!(
                         // extensions
                         "0008", // length
@@ -1911,8 +1910,8 @@ mod tests {
                 Report::new(
                     TaskId::from([u8::MIN; TaskId::LEN]),
                     ReportMetadata::new(
-                        Time::from_seconds_since_epoch(12345),
                         Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                        Time::from_seconds_since_epoch(12345),
                         Vec::new(),
                     ),
                     Vec::new(),
@@ -1922,8 +1921,8 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
                         // metadata
+                        "0102030405060708090A0B0C0D0E0F10", // nonce
                         "0000000000003039",                 // time
-                        "0102030405060708090a0b0c0d0e0f10", // nonce
                         concat!(
                             // extensions
                             "0000", // length
@@ -1943,8 +1942,8 @@ mod tests {
                 Report::new(
                     TaskId::from([u8::MAX; TaskId::LEN]),
                     ReportMetadata::new(
-                        Time::from_seconds_since_epoch(54321),
                         Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                        Time::from_seconds_since_epoch(54321),
                         Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                     ),
                     Vec::from("3210"),
@@ -1965,8 +1964,8 @@ mod tests {
                     "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
                     concat!(
                         // metadata
-                        "000000000000D431",                 // time
                         "100f0e0d0c0b0a090807060504030201", // nonce
+                        "000000000000D431",                 // time
                         concat!(
                             // extensions
                             "0008", // length

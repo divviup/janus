@@ -215,8 +215,8 @@ where
                 Error::InvalidParameter("couldn't round time down to min_batch_duration")
             })?;
         let report_metadata = ReportMetadata::new(
-            time,
             random(),
+            time,
             Vec::new(), // No extensions supported yet
         );
         let public_share = Vec::new(); // TODO(#473): fill out public_share once possible

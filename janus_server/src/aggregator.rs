@@ -2543,8 +2543,8 @@ mod tests {
 
         let hpke_key = current_hpke_key(&task.hpke_keys);
         let report_metadata = ReportMetadata::new(
-            clock.now().sub(task.tolerable_clock_skew).unwrap(),
             random(),
+            clock.now().sub(task.tolerable_clock_skew).unwrap(),
             vec![],
         );
         let public_share = Vec::new(); // TODO(#473): fill out public_share once possible
@@ -2709,8 +2709,8 @@ mod tests {
         let bad_report = Report::new(
             *report.task_id(),
             ReportMetadata::new(
-                bad_report_time,
                 *report.metadata().nonce(),
+                bad_report_time,
                 report.metadata().extensions().to_vec(),
             ),
             Vec::new(), // TODO(#473): fill out public_share once possible
@@ -2769,11 +2769,11 @@ mod tests {
                 Report::new(
                     *report.task_id(),
                     ReportMetadata::new(
+                        random(),
                         clock
                             .now()
                             .to_batch_unit_interval_start(task.min_batch_duration)
                             .unwrap(),
-                        random(),
                         Vec::new(),
                     ),
                     Vec::new(), // TODO(#473): fill out public_share once possible
@@ -2993,12 +2993,12 @@ mod tests {
             Report::new(
                 *report.task_id(),
                 ReportMetadata::new(
+                    *report.metadata().nonce(),
                     aggregator
                         .clock
                         .now()
                         .add(task.tolerable_clock_skew)
                         .unwrap(),
-                    *report.metadata().nonce(),
                     report.metadata().extensions().to_vec(),
                 ),
                 Vec::new(), // TODO(#473): fill out public_share once possible
@@ -3025,6 +3025,7 @@ mod tests {
             Report::new(
                 *report.task_id(),
                 ReportMetadata::new(
+                    *report.metadata().nonce(),
                     aggregator
                         .clock
                         .now()
@@ -3032,7 +3033,6 @@ mod tests {
                         .unwrap()
                         .add(Duration::from_seconds(1))
                         .unwrap(),
-                    *report.metadata().nonce(),
                     report.metadata().extensions().to_vec(),
                 ),
                 Vec::new(), // TODO(#473): fill out public_share once possible
@@ -3261,11 +3261,11 @@ mod tests {
 
         // report_share_0 is a "happy path" report.
         let report_metadata_0 = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let input_share = run_vdaf(
@@ -3286,11 +3286,11 @@ mod tests {
 
         // report_share_1 fails decryption.
         let report_metadata_1 = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let encrypted_input_share = report_share_0.encrypted_input_share();
@@ -3309,11 +3309,11 @@ mod tests {
 
         // report_share_2 fails decoding.
         let report_metadata_2 = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let public_share_2 = Vec::new(); // TODO(#473): fill out public_share once possible
@@ -3328,11 +3328,11 @@ mod tests {
 
         // report_share_3 has an unknown HPKE config ID.
         let report_metadata_3 = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let wrong_hpke_config = loop {
@@ -3351,11 +3351,11 @@ mod tests {
 
         // report_share_4 has already been aggregated.
         let report_metadata_4 = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let input_share = run_vdaf(
@@ -3379,11 +3379,11 @@ mod tests {
             task.min_batch_duration.as_seconds() / 2,
         ));
         let report_metadata_5 = ReportMetadata::new(
+            random(),
             past_clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let input_share = run_vdaf(
@@ -3530,11 +3530,11 @@ mod tests {
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
             &ReportMetadata::new(
+                random(),
                 clock
                     .now()
                     .to_batch_unit_interval_start(task.min_batch_duration)
                     .unwrap(),
-                random(),
                 Vec::new(),
             ),
             &hpke_key.0,
@@ -3601,11 +3601,11 @@ mod tests {
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
             task_id,
             &ReportMetadata::new(
+                random(),
                 clock
                     .now()
                     .to_batch_unit_interval_start(task.min_batch_duration)
                     .unwrap(),
-                random(),
                 Vec::new(),
             ),
             &hpke_key.0,
@@ -3669,8 +3669,8 @@ mod tests {
 
         let report_share = ReportShare::new(
             ReportMetadata::new(
-                Time::from_seconds_since_epoch(54321),
                 Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                Time::from_seconds_since_epoch(54321),
                 Vec::new(),
             ),
             Vec::new(), // TODO(#473): fill out public_share when possible
@@ -3749,11 +3749,11 @@ mod tests {
 
         // report_share_0 is a "happy path" report.
         let report_metadata_0 = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript_0 = run_vdaf(
@@ -3783,11 +3783,11 @@ mod tests {
 
         // report_share_1 is omitted by the leader's request.
         let report_metadata_1 = ReportMetadata::new(
+            random(),
             clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript_1 = run_vdaf(
@@ -3810,11 +3810,11 @@ mod tests {
             task.min_batch_duration.as_seconds() / 2,
         ));
         let report_metadata_2 = ReportMetadata::new(
+            random(),
             past_clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript_2 = run_vdaf(
@@ -4072,11 +4072,11 @@ mod tests {
 
         // report_share_0 is a "happy path" report.
         let report_metadata_0 = ReportMetadata::new(
+            random(),
             first_batch_unit_interval_clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript_0 = run_vdaf(
@@ -4099,11 +4099,11 @@ mod tests {
         // report_share_1 is another "happy path" report to exercise in-memory accumulation of
         // output shares
         let report_metadata_1 = ReportMetadata::new(
+            random(),
             first_batch_unit_interval_clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript_1 = run_vdaf(
@@ -4125,11 +4125,11 @@ mod tests {
 
         // report share 2 aggregates successfully, but into a distinct batch unit aggregation.
         let report_metadata_2 = ReportMetadata::new(
+            random(),
             second_batch_unit_interval_clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript_2 = run_vdaf(
@@ -4332,11 +4332,11 @@ mod tests {
         // batch_unit_aggregations rows created earlier.
         // report_share_3 gets aggreated into the first batch unit interval.
         let report_metadata_3 = ReportMetadata::new(
+            random(),
             first_batch_unit_interval_clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript_3 = run_vdaf(
@@ -4358,11 +4358,11 @@ mod tests {
 
         // report_share_4 gets aggregated into the second batch unit interval
         let report_metadata_4 = ReportMetadata::new(
+            random(),
             second_batch_unit_interval_clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript_4 = run_vdaf(
@@ -4384,11 +4384,11 @@ mod tests {
 
         // report share 5 also gets aggregated into the second batch unit interval
         let report_metadata_5 = ReportMetadata::new(
+            random(),
             second_batch_unit_interval_clock
                 .now()
                 .to_batch_unit_interval_start(task.min_batch_duration)
                 .unwrap(),
-            random(),
             Vec::new(),
         );
         let transcript_5 = run_vdaf(
@@ -4601,8 +4601,8 @@ mod tests {
         let task_id = random();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
-            Time::from_seconds_since_epoch(54321),
             Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            Time::from_seconds_since_epoch(54321),
             Vec::new(),
         );
         let task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Helper);
@@ -4710,8 +4710,8 @@ mod tests {
         let task_id = random();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
-            Time::from_seconds_since_epoch(54321),
             Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            Time::from_seconds_since_epoch(54321),
             vec![],
         );
         let task = Task::new_dummy(task_id, VdafInstance::FakeFailsPrepStep, Role::Helper);
@@ -4867,8 +4867,8 @@ mod tests {
         let task_id = random();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
-            Time::from_seconds_since_epoch(54321),
             Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            Time::from_seconds_since_epoch(54321),
             vec![],
         );
         let task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Helper);
@@ -4978,13 +4978,13 @@ mod tests {
         let task_id = random();
         let aggregation_job_id = random();
         let report_metadata_0 = ReportMetadata::new(
-            Time::from_seconds_since_epoch(54321),
             Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            Time::from_seconds_since_epoch(54321),
             vec![],
         );
         let report_metadata_1 = ReportMetadata::new(
-            Time::from_seconds_since_epoch(54321),
             Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+            Time::from_seconds_since_epoch(54321),
             vec![],
         );
 
@@ -5132,8 +5132,8 @@ mod tests {
         let task_id = random();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
-            Time::from_seconds_since_epoch(54321),
             Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+            Time::from_seconds_since_epoch(54321),
             vec![],
         );
 
