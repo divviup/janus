@@ -29,7 +29,7 @@ use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
     vdaf,
 };
-use rand::{thread_rng, Rng};
+use rand::random;
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{
     collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
@@ -210,9 +210,9 @@ impl<C: Clock> Transaction<'_, C> {
         for (ord, token) in task.aggregator_auth_tokens.iter().enumerate() {
             let ord = i64::try_from(ord)?;
 
-            let mut row_id = [0; TaskId::ENCODED_LEN + size_of::<i64>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_ref());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
+            let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
+            row_id[..TaskId::LEN].copy_from_slice(task.id.as_ref());
+            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
             let encrypted_aggregator_auth_token = self.crypter.encrypt(
                 "task_aggregator_auth_tokens",
@@ -242,9 +242,9 @@ impl<C: Clock> Transaction<'_, C> {
         for (ord, token) in task.collector_auth_tokens.iter().enumerate() {
             let ord = i64::try_from(ord)?;
 
-            let mut row_id = [0; TaskId::ENCODED_LEN + size_of::<i64>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_ref());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
+            let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
+            row_id[..TaskId::LEN].copy_from_slice(task.id.as_ref());
+            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
             let encrypted_collector_auth_token = self.crypter.encrypt(
                 "task_collector_auth_tokens",
@@ -272,10 +272,9 @@ impl<C: Clock> Transaction<'_, C> {
         let mut hpke_configs: Vec<Vec<u8>> = Vec::new();
         let mut hpke_private_keys: Vec<Vec<u8>> = Vec::new();
         for (hpke_config, hpke_private_key) in task.hpke_keys.values() {
-            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task.id.as_ref());
-            row_id[TaskId::ENCODED_LEN..]
-                .copy_from_slice(&u8::from(*hpke_config.id()).to_be_bytes());
+            let mut row_id = [0u8; TaskId::LEN + size_of::<u8>()];
+            row_id[..TaskId::LEN].copy_from_slice(task.id.as_ref());
+            row_id[TaskId::LEN..].copy_from_slice(&u8::from(*hpke_config.id()).to_be_bytes());
 
             let encrypted_hpke_private_key = self.crypter.encrypt(
                 "task_hpke_keys",
@@ -634,9 +633,9 @@ impl<C: Clock> Transaction<'_, C> {
             let ord: i64 = row.get("ord");
             let encrypted_aggregator_auth_token: Vec<u8> = row.get("token");
 
-            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task_id.as_ref());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
+            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
+            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
+            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
             aggregator_auth_tokens.push(AuthenticationToken::from(self.crypter.decrypt(
                 "task_aggregator_auth_tokens",
@@ -652,9 +651,9 @@ impl<C: Clock> Transaction<'_, C> {
             let ord: i64 = row.get("ord");
             let encrypted_collector_auth_token: Vec<u8> = row.get("token");
 
-            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<i64>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task_id.as_ref());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&ord.to_be_bytes());
+            let mut row_id = [0u8; TaskId::LEN + size_of::<i64>()];
+            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
+            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
             collector_auth_tokens.push(AuthenticationToken::from(self.crypter.decrypt(
                 "task_collector_auth_tokens",
@@ -671,9 +670,9 @@ impl<C: Clock> Transaction<'_, C> {
             let config = HpkeConfig::get_decoded(row.get("config"))?;
             let encrypted_private_key: Vec<u8> = row.get("private_key");
 
-            let mut row_id = [0u8; TaskId::ENCODED_LEN + size_of::<u8>()];
-            row_id[..TaskId::ENCODED_LEN].copy_from_slice(task_id.as_ref());
-            row_id[TaskId::ENCODED_LEN..].copy_from_slice(&config_id.to_be_bytes());
+            let mut row_id = [0u8; TaskId::LEN + size_of::<u8>()];
+            row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
+            row_id[TaskId::LEN..].copy_from_slice(&config_id.to_be_bytes());
 
             let private_key = HpkePrivateKey::new(self.crypter.decrypt(
                 "task_hpke_keys",
@@ -796,7 +795,7 @@ impl<C: Clock> Transaction<'_, C> {
         rows.into_iter()
             .map(|row| {
                 let time = Time::from_naive_date_time(row.get("nonce_time"));
-                let nonce_bytes: [u8; Nonce::ENCODED_LEN] = row
+                let nonce_bytes: [u8; Nonce::LEN] = row
                     .get::<_, Vec<u8>>("nonce_rand")
                     .try_into()
                     .map_err(|err| {
@@ -858,7 +857,7 @@ impl<C: Clock> Transaction<'_, C> {
         rows.into_iter()
             .map(|row| {
                 let time = Time::from_naive_date_time(row.get("nonce_time"));
-                let nonce_bytes: [u8; Nonce::ENCODED_LEN] = row
+                let nonce_bytes: [u8; Nonce::LEN] = row
                     .get::<_, Vec<u8>>("nonce_rand")
                     .try_into()
                     .map_err(|err| {
@@ -2227,7 +2226,7 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     let time = Time::from_naive_date_time(row.get("nonce_time"));
-    let nonce_bytes: [u8; Nonce::ENCODED_LEN] = row
+    let nonce_bytes: [u8; Nonce::LEN] = row
         .get::<_, Vec<u8>>("nonce_rand")
         .try_into()
         .map_err(|err| Error::DbState(format!("couldn't convert nonce_rand value: {err:?}")))?;
@@ -2420,8 +2419,7 @@ impl Crypter {
         value: &[u8],
     ) -> Result<Vec<u8>, Error> {
         // Generate a random nonce, compute AAD.
-        let mut nonce_bytes = [0u8; aead::NONCE_LEN];
-        thread_rng().fill(&mut nonce_bytes);
+        let nonce_bytes: [u8; aead::NONCE_LEN] = random();
         let nonce = aead::Nonce::assume_unique_for_key(nonce_bytes);
         let aad = aead::Aad::from(Self::aad_bytes_for(table, row, column)?);
 
@@ -2668,12 +2666,11 @@ pub mod models {
         /// intended for use in unit tests.
         #[cfg(test)]
         pub fn new(leased: T, lease_expiry_time: Time) -> Self {
-            use rand::{thread_rng, Rng};
-
+            use rand::random;
             Self {
                 leased,
                 lease_expiry_time,
-                lease_token: LeaseToken(thread_rng().gen()),
+                lease_token: LeaseToken(random()),
                 lease_attempts: 1,
             }
         }
@@ -3092,7 +3089,7 @@ pub mod test_util {
     use deadpool_postgres::{Manager, Pool};
     use janus_core::time::Clock;
     use lazy_static::lazy_static;
-    use rand::{thread_rng, Rng};
+    use rand::{distributions::Standard, thread_rng, Rng};
     use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
     use std::{
         env::{self, VarError},
@@ -3273,9 +3270,10 @@ pub mod test_util {
     }
 
     pub fn generate_aead_key_bytes() -> Vec<u8> {
-        let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
-        thread_rng().fill(&mut key_bytes[..]);
-        key_bytes
+        thread_rng()
+            .sample_iter(Standard)
+            .take(AES_128_GCM.key_len())
+            .collect()
     }
 
     pub fn generate_aead_key() -> LessSafeKey {
@@ -3316,7 +3314,7 @@ mod tests {
             AggregateShare, PrepareTransition,
         },
     };
-    use rand::{distributions::Standard, random};
+    use rand::{distributions::Standard, random, thread_rng, Rng};
     use std::{
         collections::{BTreeSet, HashMap, HashSet},
         iter, mem,
@@ -4291,8 +4289,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let original_lease_token =
-            mem::replace(&mut lease.lease_token, LeaseToken::new(thread_rng().gen()));
+        let original_lease_token = mem::replace(&mut lease.lease_token, LeaseToken::new(random()));
         ds.run_tx(|tx| {
             let lease = lease.clone();
             Box::pin(async move { tx.release_aggregation_job(&lease).await })
@@ -6152,8 +6149,7 @@ mod tests {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let input_shares = vdaf.shard(&measurement).unwrap();
-        let mut verify_key = [0u8; L];
-        thread_rng().fill(&mut verify_key[..]);
+        let verify_key: [u8; L] = random();
 
         let (mut prep_states, prep_shares): (Vec<_>, Vec<_>) = input_shares
             .iter()

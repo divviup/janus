@@ -420,7 +420,7 @@ impl<'de> Deserialize<'de> for Task {
         let serialized_task = SerializedTask::deserialize(deserializer)?;
 
         // task_id
-        let task_id_bytes: [u8; TaskId::ENCODED_LEN] =
+        let task_id_bytes: [u8; TaskId::LEN] =
             base64::decode_config(serialized_task.id, URL_SAFE_NO_PAD)
                 .map_err(D::Error::custom)?
                 .try_into()

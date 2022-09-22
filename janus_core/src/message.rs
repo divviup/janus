@@ -362,21 +362,21 @@ impl ToSql for Interval {
 
 /// DAP protocol message representing an ID uniquely identifying a batch, for fixed-size tasks.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BatchId([u8; Self::ENCODED_LEN]);
+pub struct BatchId([u8; Self::LEN]);
 
 impl BatchId {
-    /// ENCODED_LEN is the length of a batch ID in bytes when encoded.
-    pub const ENCODED_LEN: usize = 32;
+    /// LEN is the length of a batch ID in bytes.
+    pub const LEN: usize = 32;
 }
 
-impl From<[u8; Self::ENCODED_LEN]> for BatchId {
-    fn from(batch_id: [u8; Self::ENCODED_LEN]) -> Self {
+impl From<[u8; Self::LEN]> for BatchId {
+    fn from(batch_id: [u8; Self::LEN]) -> Self {
         Self(batch_id)
     }
 }
 
-impl AsRef<[u8; Self::ENCODED_LEN]> for BatchId {
-    fn as_ref(&self) -> &[u8; Self::ENCODED_LEN] {
+impl AsRef<[u8; Self::LEN]> for BatchId {
+    fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
     }
 }
@@ -409,7 +409,7 @@ impl Encode for BatchId {
 
 impl Decode for BatchId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let mut batch_id = [0; Self::ENCODED_LEN];
+        let mut batch_id = [0; Self::LEN];
         bytes.read_exact(&mut batch_id)?;
         Ok(Self(batch_id))
     }
@@ -423,21 +423,21 @@ impl Distribution<BatchId> for Standard {
 
 /// DAP protocol message representing a nonce uniquely identifying a client report.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Nonce([u8; Self::ENCODED_LEN]);
+pub struct Nonce([u8; Self::LEN]);
 
 impl Nonce {
-    /// ENCODED_LEN is the length of a nonce in bytes when encoded.
-    pub const ENCODED_LEN: usize = 16;
+    /// LEN is the length of a nonce in bytes.
+    pub const LEN: usize = 16;
 }
 
-impl From<[u8; Self::ENCODED_LEN]> for Nonce {
-    fn from(nonce: [u8; Self::ENCODED_LEN]) -> Self {
+impl From<[u8; Self::LEN]> for Nonce {
+    fn from(nonce: [u8; Self::LEN]) -> Self {
         Self(nonce)
     }
 }
 
-impl AsRef<[u8; Self::ENCODED_LEN]> for Nonce {
-    fn as_ref(&self) -> &[u8; Self::ENCODED_LEN] {
+impl AsRef<[u8; Self::LEN]> for Nonce {
+    fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
     }
 }
@@ -470,7 +470,7 @@ impl Encode for Nonce {
 
 impl Decode for Nonce {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let mut nonce = [0; Self::ENCODED_LEN];
+        let mut nonce = [0; Self::LEN];
         bytes.read_exact(&mut nonce)?;
         Ok(Self(nonce))
     }
@@ -645,11 +645,11 @@ impl From<HpkeConfigId> for u8 {
 
 /// DAP protocol message representing an identifier for a DAP task.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct TaskId([u8; Self::ENCODED_LEN]);
+pub struct TaskId([u8; Self::LEN]);
 
 impl TaskId {
-    /// ENCODED_LEN is the length of a task ID in bytes when encoded.
-    pub const ENCODED_LEN: usize = 32;
+    /// LEN is the length of a task ID in bytes.
+    pub const LEN: usize = 32;
 }
 
 impl Debug for TaskId {
@@ -680,20 +680,20 @@ impl Encode for TaskId {
 
 impl Decode for TaskId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let mut decoded = [0u8; Self::ENCODED_LEN];
+        let mut decoded = [0u8; Self::LEN];
         bytes.read_exact(&mut decoded)?;
         Ok(Self(decoded))
     }
 }
 
-impl From<[u8; Self::ENCODED_LEN]> for TaskId {
-    fn from(task_id: [u8; TaskId::ENCODED_LEN]) -> Self {
+impl From<[u8; Self::LEN]> for TaskId {
+    fn from(task_id: [u8; TaskId::LEN]) -> Self {
         Self(task_id)
     }
 }
 
-impl AsRef<[u8; Self::ENCODED_LEN]> for TaskId {
-    fn as_ref(&self) -> &[u8; Self::ENCODED_LEN] {
+impl AsRef<[u8; Self::LEN]> for TaskId {
+    fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
     }
 }
@@ -1625,7 +1625,7 @@ mod tests {
     fn roundtrip_batch_id() {
         roundtrip_encoding(&[
             (
-                BatchId::from([u8::MIN; BatchId::ENCODED_LEN]),
+                BatchId::from([u8::MIN; BatchId::LEN]),
                 "0000000000000000000000000000000000000000000000000000000000000000",
             ),
             (
@@ -1636,7 +1636,7 @@ mod tests {
                 "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F",
             ),
             (
-                BatchId::from([u8::MAX; TaskId::ENCODED_LEN]),
+                BatchId::from([u8::MAX; TaskId::LEN]),
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
             ),
         ])
@@ -1679,7 +1679,7 @@ mod tests {
     fn roundtrip_task_id() {
         roundtrip_encoding(&[
             (
-                TaskId::from([u8::MIN; TaskId::ENCODED_LEN]),
+                TaskId::from([u8::MIN; TaskId::LEN]),
                 "0000000000000000000000000000000000000000000000000000000000000000",
             ),
             (
@@ -1690,7 +1690,7 @@ mod tests {
                 "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F",
             ),
             (
-                TaskId::from([u8::MAX; TaskId::ENCODED_LEN]),
+                TaskId::from([u8::MAX; TaskId::LEN]),
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
             ),
         ])
@@ -1909,7 +1909,7 @@ mod tests {
         roundtrip_encoding(&[
             (
                 Report::new(
-                    TaskId::from([u8::MIN; TaskId::ENCODED_LEN]),
+                    TaskId::from([u8::MIN; TaskId::LEN]),
                     ReportMetadata::new(
                         Time::from_seconds_since_epoch(12345),
                         Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -1941,7 +1941,7 @@ mod tests {
             ),
             (
                 Report::new(
-                    TaskId::from([u8::MAX; TaskId::ENCODED_LEN]),
+                    TaskId::from([u8::MAX; TaskId::LEN]),
                     ReportMetadata::new(
                         Time::from_seconds_since_epoch(54321),
                         Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),

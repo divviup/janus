@@ -521,7 +521,7 @@ mod tests {
         field::Field64,
         vdaf::{prio3::Prio3, AggregateShare},
     };
-    use rand::{random, thread_rng, Rng};
+    use rand::random;
 
     fn setup_collector<V: vdaf::Collector>(vdaf_collector: V) -> Collector<V>
     where
@@ -542,9 +542,7 @@ mod tests {
     }
 
     fn random_verify_key() -> [u8; 16] {
-        let mut verify_key = [0u8; 16];
-        thread_rng().fill(&mut verify_key[..]);
-        verify_key
+        random()
     }
 
     fn build_collect_response<const L: usize, V: vdaf::Aggregator<L>>(

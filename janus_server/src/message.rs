@@ -196,15 +196,15 @@ impl Decode for ReportShareError {
 
 /// DAP protocol message representing an identifier for an aggregation job.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AggregationJobId([u8; Self::ENCODED_LEN]);
+pub struct AggregationJobId([u8; Self::LEN]);
 
 impl AggregationJobId {
-    /// ENCODED_LEN is the length of an aggregation job ID in bytes when encoded.
-    const ENCODED_LEN: usize = 32;
+    /// LEN is the length of an aggregation job ID in bytes.
+    pub const LEN: usize = 32;
 }
 
-impl AsRef<[u8; Self::ENCODED_LEN]> for AggregationJobId {
-    fn as_ref(&self) -> &[u8; Self::ENCODED_LEN] {
+impl AsRef<[u8; Self::LEN]> for AggregationJobId {
+    fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
     }
 }
@@ -237,7 +237,7 @@ impl Encode for AggregationJobId {
 
 impl Decode for AggregationJobId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let mut decoded = [0u8; 32];
+        let mut decoded = [0u8; Self::LEN];
         bytes.read_exact(&mut decoded)?;
         Ok(Self(decoded))
     }

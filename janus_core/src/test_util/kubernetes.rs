@@ -1,7 +1,7 @@
 //! Testing framework for functionality that interacts with Kubernetes.
 
 use kube::config::{KubeConfigOptions, Kubeconfig};
-use rand::{thread_rng, Rng};
+use rand::random;
 use std::{
     io::{self, ErrorKind},
     path::{Path, PathBuf},
@@ -122,9 +122,7 @@ impl EphemeralCluster {
         let kubeconfig_path = NamedTempFile::new().unwrap().into_temp_path().to_path_buf();
 
         // Choose a cluster name.
-        let mut randomness = [0u8; 4];
-        thread_rng().fill(&mut randomness);
-        let kind_cluster_name = format!("janus-ephemeral-{}", hex::encode(&randomness));
+        let kind_cluster_name = format!("janus-ephemeral-{}", hex::encode(random::<[u8; 4]>()));
 
         // Use kind to start the cluster, with the node image from kind v0.14.0 for Kubernetes 1.22,
         // matching current regular GKE release channel. This image version should be bumped in

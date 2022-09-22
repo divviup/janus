@@ -5,7 +5,7 @@ use janus_core::{
 };
 use janus_server::task::{Task, VdafInstance};
 use prio::codec::Encode;
-use rand::{thread_rng, Rng};
+use rand::random;
 use serde::{de::Visitor, Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display, marker::PhantomData, str::FromStr};
 use tracing_log::LogTracer;
@@ -242,8 +242,7 @@ impl HpkeConfigRegistry {
 
     /// Choose a random [`HpkeConfigId`], and then get the keypair associated with that ID.
     pub fn get_random_keypair(&mut self) -> (HpkeConfig, HpkePrivateKey) {
-        let id = HpkeConfigId::from(thread_rng().gen::<u8>());
-        self.fetch_keypair(id)
+        self.fetch_keypair(random::<u8>().into())
     }
 }
 
@@ -251,7 +250,7 @@ impl HpkeConfigRegistry {
 pub mod test_util {
     use backoff::{future::retry, ExponentialBackoff};
     use futures::{Future, TryFutureExt};
-    use rand::{thread_rng, Rng};
+    use rand::random;
     use std::{fmt::Debug, time::Duration};
     use url::Url;
 
@@ -372,8 +371,6 @@ pub mod test_util {
     }
 
     pub fn generate_unique_name(prefix: &str) -> String {
-        let mut buf = [0; 4];
-        thread_rng().fill(&mut buf);
-        format!("{}_{}", prefix, hex::encode(buf))
+        format!("{}_{}", prefix, hex::encode(random::<[u8; 4]>()))
     }
 }
