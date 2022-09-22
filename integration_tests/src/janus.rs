@@ -80,6 +80,20 @@ impl<'a> Janus<'a> {
         }
     }
 
+    /// Returns the port of the aggregator on the host.
+    pub fn port(&self) -> u16 {
+        match self {
+            Janus::Container { role: _, container } => {
+                container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
+            }
+            Janus::KubernetesCluster {
+                aggregator_port_forward,
+            } => aggregator_port_forward.local_port(),
+        }
+    }
+}
+
+impl Janus<'static> {
     /// Set up a test case running in a Kubernetes cluster where Janus components and a datastore
     /// are assumed to already be deployed.
     pub async fn new_with_kubernetes_cluster<P>(
@@ -161,18 +175,6 @@ impl<'a> Janus<'a> {
 
         Self::KubernetesCluster {
             aggregator_port_forward,
-        }
-    }
-
-    /// Returns the port of the aggregator on the host.
-    pub fn port(&self) -> u16 {
-        match self {
-            Janus::Container { role: _, container } => {
-                container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT)
-            }
-            Janus::KubernetesCluster {
-                aggregator_port_forward,
-            } => aggregator_port_forward.local_port(),
         }
     }
 }
