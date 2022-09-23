@@ -1444,7 +1444,7 @@ pub mod query_type {
         type BatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
 
         /// The type of a batch identifier as it appears in a `PartialBatchSelector`. Will be either
-        /// either be the same type as `BatchIdentifier`, or `()`.
+        /// the same type as `BatchIdentifier`, or `()`.
         type PartialBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
 
         /// Computes the `PartialBatchIdentifier` corresponding to the given
@@ -1981,7 +1981,7 @@ mod tests {
                     "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
                     concat!(
                         // metadata
-                        "100f0e0d0c0b0a090807060504030201", // report_id
+                        "100F0E0D0C0B0A090807060504030201", // report_id
                         "000000000000D431",                 // time
                         concat!(
                             // extensions
