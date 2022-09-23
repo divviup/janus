@@ -512,7 +512,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, Label},
-        message::{Duration, HpkeCiphertext, Time},
+        message::{Duration, HpkeCiphertext, PartialBatchSelector, Time},
         retries::test_http_request_exponential_backoff,
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
@@ -557,7 +557,8 @@ mod tests {
             parameters.task_id,
             &batch_interval,
         );
-        CollectResp::new_time_interval(
+        CollectResp::new(
+            PartialBatchSelector::new_time_interval(),
             1,
             vec![
                 hpke::seal(
@@ -890,7 +891,10 @@ mod tests {
                 CONTENT_TYPE.as_str(),
                 CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
-            .with_body(CollectResp::new_time_interval(0, Vec::new()).get_encoded())
+            .with_body(
+                CollectResp::new(PartialBatchSelector::new_time_interval(), 0, Vec::new())
+                    .get_encoded(),
+            )
             .expect_at_least(1)
             .create();
 
@@ -906,7 +910,8 @@ mod tests {
                 CollectResp::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(
-                CollectResp::new_time_interval(
+                CollectResp::new(
+                    PartialBatchSelector::new_time_interval(),
                     1,
                     Vec::from([
                         HpkeCiphertext::new(*collector.parameters.hpke_config.id(), vec![], vec![]),
@@ -927,7 +932,8 @@ mod tests {
             collector.parameters.task_id,
             &batch_interval,
         );
-        let collect_resp = CollectResp::new_time_interval(
+        let collect_resp = CollectResp::new(
+            PartialBatchSelector::new_time_interval(),
             1,
             Vec::from([
                 hpke::seal(
@@ -961,7 +967,8 @@ mod tests {
 
         mock_collect_job_bad_shares.assert();
 
-        let collect_resp = CollectResp::new_time_interval(
+        let collect_resp = CollectResp::new(
+            PartialBatchSelector::new_time_interval(),
             1,
             Vec::from([
                 hpke::seal(

@@ -421,38 +421,38 @@ impl Distribution<BatchId> for Standard {
     }
 }
 
-/// DAP protocol message representing a nonce uniquely identifying a client report.
+/// DAP protocol message representing an ID uniquely identifying a client report.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Nonce([u8; Self::LEN]);
+pub struct ReportId([u8; Self::LEN]);
 
-impl Nonce {
-    /// LEN is the length of a nonce in bytes.
+impl ReportId {
+    /// LEN is the length of a report ID in bytes.
     pub const LEN: usize = 16;
 }
 
-impl From<[u8; Self::LEN]> for Nonce {
-    fn from(nonce: [u8; Self::LEN]) -> Self {
-        Self(nonce)
+impl From<[u8; Self::LEN]> for ReportId {
+    fn from(report_id: [u8; Self::LEN]) -> Self {
+        Self(report_id)
     }
 }
 
-impl AsRef<[u8; Self::LEN]> for Nonce {
+impl AsRef<[u8; Self::LEN]> for ReportId {
     fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
     }
 }
 
-impl Debug for Nonce {
+impl Debug for ReportId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Nonce({})",
+            "ReportId({})",
             Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
         )
     }
 }
 
-impl Display for Nonce {
+impl Display for ReportId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -462,69 +462,69 @@ impl Display for Nonce {
     }
 }
 
-impl Encode for Nonce {
+impl Encode for ReportId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.0)
     }
 }
 
-impl Decode for Nonce {
+impl Decode for ReportId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let mut nonce = [0; Self::LEN];
-        bytes.read_exact(&mut nonce)?;
-        Ok(Self(nonce))
+        let mut report_id = [0; Self::LEN];
+        bytes.read_exact(&mut report_id)?;
+        Ok(Self(report_id))
     }
 }
 
-impl Distribution<Nonce> for Standard {
-    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Nonce {
-        Nonce(rng.gen())
+impl Distribution<ReportId> for Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> ReportId {
+        ReportId(rng.gen())
     }
 }
 
-/// Checksum over DAP report nonces, defined in §4.4.4.3.
+/// Checksum over DAP report IDs, defined in §4.4.4.3.
 #[derive(Copy, Clone, Debug, Default, Hash, PartialEq, Eq)]
-pub struct NonceChecksum([u8; SHA256_OUTPUT_LEN]);
+pub struct ReportIdChecksum([u8; SHA256_OUTPUT_LEN]);
 
-impl NonceChecksum {
-    /// Initialize a checksum from a single nonce.
-    pub fn for_nonce(nonce: &Nonce) -> Self {
-        Self(Self::nonce_digest(nonce))
+impl ReportIdChecksum {
+    /// Initialize a checksum from a single report ID.
+    pub fn for_report_id(report_id: &ReportId) -> Self {
+        Self(Self::report_id_digest(report_id))
     }
 
-    /// Compute SHA256 over a nonce.
-    fn nonce_digest(nonce: &Nonce) -> [u8; SHA256_OUTPUT_LEN] {
-        digest(&SHA256, nonce.as_ref())
+    /// Compute the SHA256 hash of a report ID.
+    fn report_id_digest(report_id: &ReportId) -> [u8; SHA256_OUTPUT_LEN] {
+        digest(&SHA256, report_id.as_ref())
             .as_ref()
             .try_into()
             // panic if somehow the digest ring computes isn't 32 bytes long.
             .unwrap()
     }
 
-    /// Incorporate the provided nonce into this checksum.
-    pub fn update(&mut self, nonce: &Nonce) {
-        self.combine(&Self::for_nonce(nonce))
+    /// Incorporate the provided report ID into this checksum.
+    pub fn update(&mut self, report_id: &ReportId) {
+        self.combine(&Self::for_report_id(report_id))
     }
 
     /// Combine another checksum with this one.
-    pub fn combine(&mut self, other: &NonceChecksum) {
+    pub fn combine(&mut self, other: &ReportIdChecksum) {
         self.0.iter_mut().zip(other.0).for_each(|(x, y)| *x ^= y)
     }
 }
 
-impl Display for NonceChecksum {
+impl Display for ReportIdChecksum {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.0))
     }
 }
 
-impl Encode for NonceChecksum {
+impl Encode for ReportIdChecksum {
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.0)
     }
 }
 
-impl Decode for NonceChecksum {
+impl Decode for ReportIdChecksum {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let mut checksum = Self::default();
         bytes.read_exact(&mut checksum.0)?;
@@ -1028,29 +1028,29 @@ impl Decode for HpkeConfig {
 /// DAP protocol message representing client report metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportMetadata {
+    report_id: ReportId,
     time: Time,
-    nonce: Nonce,
     extensions: Vec<Extension>,
 }
 
 impl ReportMetadata {
     /// Construct a report's metadata from its components.
-    pub fn new(time: Time, nonce: Nonce, extensions: Vec<Extension>) -> Self {
+    pub fn new(report_id: ReportId, time: Time, extensions: Vec<Extension>) -> Self {
         Self {
+            report_id,
             time,
-            nonce,
             extensions,
         }
+    }
+
+    /// Retrieve the report ID from this report metadata.
+    pub fn report_id(&self) -> &ReportId {
+        &self.report_id
     }
 
     /// Retrieve the client timestamp from this report metadata.
     pub fn time(&self) -> &Time {
         &self.time
-    }
-
-    /// Retrieve the nonce from this report metadata.
-    pub fn nonce(&self) -> &Nonce {
-        &self.nonce
     }
 
     /// Retrieve the extensions from this report metadata.
@@ -1061,21 +1061,21 @@ impl ReportMetadata {
 
 impl Encode for ReportMetadata {
     fn encode(&self, bytes: &mut Vec<u8>) {
+        self.report_id.encode(bytes);
         self.time.encode(bytes);
-        self.nonce.encode(bytes);
         encode_u16_items(bytes, &(), &self.extensions);
     }
 }
 
 impl Decode for ReportMetadata {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let report_id = ReportId::decode(bytes)?;
         let time = Time::decode(bytes)?;
-        let nonce = Nonce::decode(bytes)?;
         let extensions = decode_u16_items(&(), bytes)?;
 
         Ok(Self {
+            report_id,
             time,
-            nonce,
             extensions,
         })
     }
@@ -1165,7 +1165,7 @@ impl Report {
         use rand::random;
         Report::new(
             task_id,
-            ReportMetadata::new(when, random(), Vec::new()),
+            ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(),
             Vec::new(),
         )
@@ -1301,11 +1301,72 @@ impl<Q: QueryType> Decode for CollectReq<Q> {
     }
 }
 
+/// DAP protocol message representing a partial batch selector, identifying a batch of interest in
+/// cases where some query types can infer the selector.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartialBatchSelector<Q: QueryType> {
+    batch_identifier: Q::PartialBatchIdentifier,
+}
+
+impl<Q: QueryType> PartialBatchSelector<Q> {
+    /// Constructs a new partial batch selector.
+    ///
+    /// This method would typically be used for code which is generic over the query type.
+    /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
+    /// [`Self::new_fixed_size`].
+    pub fn new(batch_identifier: Q::PartialBatchIdentifier) -> Self {
+        Self { batch_identifier }
+    }
+
+    /// Gets the batch identifier associated with this collect response.
+    ///
+    /// This method would typically be used for code which is generic over the query type.
+    /// Query-type specific code will typically call [`Self::batch_id`].
+    pub fn batch_identifier(&self) -> &Q::PartialBatchIdentifier {
+        &self.batch_identifier
+    }
+}
+
+impl PartialBatchSelector<TimeInterval> {
+    /// Constructs a new partial batch selector for a time-interval task.
+    pub fn new_time_interval() -> Self {
+        Self::new(())
+    }
+}
+
+impl PartialBatchSelector<FixedSize> {
+    /// Constructs a new partial batch selector for a fixed-size task.
+    pub fn new_fixed_size(batch_id: BatchId) -> Self {
+        Self::new(batch_id)
+    }
+
+    /// Gets the batch ID associated with this partial batch selector.
+    pub fn batch_id(&self) -> &BatchId {
+        self.batch_identifier()
+    }
+}
+
+impl<Q: QueryType> Encode for PartialBatchSelector<Q> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        Q::CODE.encode(bytes);
+        self.batch_identifier.encode(bytes);
+    }
+}
+
+impl<Q: QueryType> Decode for PartialBatchSelector<Q> {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        query_type::Code::decode_expecting_value(bytes, Q::CODE)?;
+        let batch_identifier = Q::PartialBatchIdentifier::decode(bytes)?;
+
+        Ok(Self { batch_identifier })
+    }
+}
+
 /// DAP protocol message representing a leader's response to the collector's request to provide
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectResp<Q: QueryType> {
-    batch_identifier: Q::CollectRespBatchIdentifier,
+    partial_batch_selector: PartialBatchSelector<Q>,
     report_count: u64,
     encrypted_aggregate_shares: Vec<HpkeCiphertext>,
 }
@@ -1315,28 +1376,21 @@ impl<Q: QueryType> CollectResp<Q> {
     pub const MEDIA_TYPE: &'static str = "application/dap-collect-resp";
 
     /// Constructs a new collect response.
-    ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
-    /// [`Self::new_fixed_size`].
     pub fn new(
-        batch_identifier: Q::CollectRespBatchIdentifier,
+        partial_batch_selector: PartialBatchSelector<Q>,
         report_count: u64,
         encrypted_aggregate_shares: Vec<HpkeCiphertext>,
     ) -> Self {
         Self {
-            batch_identifier,
+            partial_batch_selector,
             report_count,
             encrypted_aggregate_shares,
         }
     }
 
-    /// Gets the batch identifier associated with this collect response.
-    ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &Q::CollectRespBatchIdentifier {
-        &self.batch_identifier
+    /// Gets the batch selector associated with this collect response.
+    pub fn partial_batch_selector(&self) -> &PartialBatchSelector<Q> {
+        &self.partial_batch_selector
     }
 
     /// Gets the report count associated with this collect response.
@@ -1350,36 +1404,9 @@ impl<Q: QueryType> CollectResp<Q> {
     }
 }
 
-impl CollectResp<TimeInterval> {
-    /// Constructs a new collect response for a time-interval task.
-    pub fn new_time_interval(
-        report_count: u64,
-        encrypted_aggregate_shares: Vec<HpkeCiphertext>,
-    ) -> Self {
-        Self::new((), report_count, encrypted_aggregate_shares)
-    }
-}
-
-impl CollectResp<FixedSize> {
-    /// Constructs a new collect response for a fixed-size task.
-    pub fn new_fixed_size(
-        batch_id: BatchId,
-        report_count: u64,
-        encrypted_aggregate_shares: Vec<HpkeCiphertext>,
-    ) -> Self {
-        Self::new(batch_id, report_count, encrypted_aggregate_shares)
-    }
-
-    // Gets the batch ID associated with this collect response.
-    pub fn batch_id(&self) -> &BatchId {
-        self.batch_identifier()
-    }
-}
-
 impl<Q: QueryType> Encode for CollectResp<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        Q::CODE.encode(bytes);
-        self.batch_identifier.encode(bytes);
+        self.partial_batch_selector.encode(bytes);
         self.report_count.encode(bytes);
         encode_u16_items(bytes, &(), &self.encrypted_aggregate_shares); // TODO(#471): should be encode_u32_items
     }
@@ -1387,13 +1414,12 @@ impl<Q: QueryType> Encode for CollectResp<Q> {
 
 impl<Q: QueryType> Decode for CollectResp<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        query_type::Code::decode_expecting_value(bytes, Q::CODE)?;
-        let batch_identifier = Q::CollectRespBatchIdentifier::decode(bytes)?;
+        let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let report_count = u64::decode(bytes)?;
         let encrypted_aggregate_shares = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
 
         Ok(Self {
-            batch_identifier,
+            partial_batch_selector,
             report_count,
             encrypted_aggregate_shares,
         })
@@ -1415,21 +1441,17 @@ pub mod query_type {
         const CODE: Code;
 
         /// The type of a batch identifier.
-        type BatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode + Send + Sync;
+        type BatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
 
-        /// The type of a batch identifier as it appears in an `AggregateInitializeReq`. Will
-        /// either be the same type as `BatchIdentifier`, or `()`.
-        type AggregateInitializeReqBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
+        /// The type of a batch identifier as it appears in a `PartialBatchSelector`. Will be either
+        /// the same type as `BatchIdentifier`, or `()`.
+        type PartialBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
 
-        /// The type of a batch identifier as it appears in a `CollectResp`. Will either be the
-        /// same type as `BatchIdentifier`, or `()`.
-        type CollectRespBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
-
-        /// Computes the `CollectRespBatchIdentifier` corresponding to the given
+        /// Computes the `PartialBatchIdentifier` corresponding to the given
         /// `BatchIdentifier`.
-        fn collect_resp_batch_identifier_from(
+        fn partial_batch_identifier(
             batch_identifier: Self::BatchIdentifier,
-        ) -> Self::CollectRespBatchIdentifier;
+        ) -> Self::PartialBatchIdentifier;
     }
 
     /// Represents a `time-interval` DAP query type.
@@ -1440,13 +1462,9 @@ pub mod query_type {
         const CODE: Code = Code::TimeInterval;
 
         type BatchIdentifier = Interval;
-        type AggregateInitializeReqBatchIdentifier = ();
-        type CollectRespBatchIdentifier = ();
+        type PartialBatchIdentifier = ();
 
-        fn collect_resp_batch_identifier_from(
-            _: Self::BatchIdentifier,
-        ) -> Self::CollectRespBatchIdentifier {
-        }
+        fn partial_batch_identifier(_: Self::BatchIdentifier) -> Self::PartialBatchIdentifier {}
     }
 
     /// Represents a `fixed-size` DAP query type.
@@ -1457,19 +1475,18 @@ pub mod query_type {
         const CODE: Code = Code::FixedSize;
 
         type BatchIdentifier = BatchId;
-        type AggregateInitializeReqBatchIdentifier = BatchId;
-        type CollectRespBatchIdentifier = BatchId;
+        type PartialBatchIdentifier = BatchId;
 
-        fn collect_resp_batch_identifier_from(
+        fn partial_batch_identifier(
             batch_identifier: Self::BatchIdentifier,
-        ) -> Self::CollectRespBatchIdentifier {
+        ) -> Self::PartialBatchIdentifier {
             batch_identifier
         }
     }
 
     /// DAP protocol message representing the type of a query.
     #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
-    #[repr(u16)]
+    #[repr(u8)]
     pub enum Code {
         Reserved = 0,
         TimeInterval = 1,
@@ -1493,13 +1510,13 @@ pub mod query_type {
 
     impl Encode for Code {
         fn encode(&self, bytes: &mut Vec<u8>) {
-            (*self as u16).encode(bytes);
+            (*self as u8).encode(bytes);
         }
     }
 
     impl Decode for Code {
         fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-            let val = u16::decode(bytes)?;
+            let val = u8::decode(bytes)?;
             Self::try_from(val).map_err(|_| {
                 CodecError::Other(anyhow!("unexpected QueryType value {}", val).into())
             })
@@ -1540,7 +1557,7 @@ mod tests {
         test_util::roundtrip_encoding,
         BatchId, CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeAeadId,
         HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
-        Nonce, Query, Report, ReportMetadata, Role, TaskId, Time,
+        PartialBatchSelector, Query, Report, ReportId, ReportMetadata, Role, TaskId, Time,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
@@ -1643,14 +1660,14 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_nonce() {
+    fn roundtrip_report_id() {
         roundtrip_encoding(&[
             (
-                Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 "0102030405060708090a0b0c0d0e0f10",
             ),
             (
-                Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                 "100f0e0d0c0b0a090807060504030201",
             ),
         ])
@@ -1864,14 +1881,13 @@ mod tests {
         roundtrip_encoding(&[
             (
                 ReportMetadata::new(
+                    ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     Time::from_seconds_since_epoch(12345),
-                    Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     Vec::new(),
                 ),
                 concat!(
-                    // nonce
+                    "0102030405060708090A0B0C0D0E0F10", // report_id
                     "0000000000003039",                 // time
-                    "0102030405060708090a0b0c0d0e0f10", // nonce
                     concat!(
                         // extensions
                         "0000", // length
@@ -1880,13 +1896,13 @@ mod tests {
             ),
             (
                 ReportMetadata::new(
+                    ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Time::from_seconds_since_epoch(54321),
-                    Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                 ),
                 concat!(
+                    "100F0E0D0C0B0A090807060504030201", // report_id
                     "000000000000D431",                 // time
-                    "100f0e0d0c0b0a090807060504030201", // nonce
                     concat!(
                         // extensions
                         "0008", // length
@@ -1911,8 +1927,8 @@ mod tests {
                 Report::new(
                     TaskId::from([u8::MIN; TaskId::LEN]),
                     ReportMetadata::new(
+                        ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                         Time::from_seconds_since_epoch(12345),
-                        Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                         Vec::new(),
                     ),
                     Vec::new(),
@@ -1922,8 +1938,8 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
                         // metadata
+                        "0102030405060708090A0B0C0D0E0F10", // report_id
                         "0000000000003039",                 // time
-                        "0102030405060708090a0b0c0d0e0f10", // nonce
                         concat!(
                             // extensions
                             "0000", // length
@@ -1943,8 +1959,8 @@ mod tests {
                 Report::new(
                     TaskId::from([u8::MAX; TaskId::LEN]),
                     ReportMetadata::new(
+                        ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                         Time::from_seconds_since_epoch(54321),
-                        Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                         Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                     ),
                     Vec::from("3210"),
@@ -1965,8 +1981,8 @@ mod tests {
                     "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
                     concat!(
                         // metadata
+                        "100F0E0D0C0B0A090807060504030201", // report_id
                         "000000000000D431",                 // time
-                        "100f0e0d0c0b0a090807060504030201", // nonce
                         concat!(
                             // extensions
                             "0008", // length
@@ -2033,7 +2049,7 @@ mod tests {
                     .unwrap(),
                 },
                 concat!(
-                    "0001", // query_type
+                    "01", // query_type
                     concat!(
                         // batch_interval
                         "000000000000D431", // start
@@ -2050,7 +2066,7 @@ mod tests {
                     .unwrap(),
                 },
                 concat!(
-                    "0001", // query_type
+                    "01", // query_type
                     concat!(
                         // batch_interval
                         "000000000000BF11", // start
@@ -2067,7 +2083,7 @@ mod tests {
                     batch_identifier: BatchId::from([10u8; 32]),
                 },
                 concat!(
-                    "0002",                                                             // query_type
+                    "02",                                                               // query_type
                     "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
                 ),
             ),
@@ -2076,7 +2092,7 @@ mod tests {
                     batch_identifier: BatchId::from([8u8; 32]),
                 },
                 concat!(
-                    "0002",                                                             // query_type
+                    "02",                                                               // query_type
                     "0808080808080808080808080808080808080808080808080808080808080808", // batch_id
                 ),
             ),
@@ -2103,7 +2119,7 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id,
                     concat!(
                         // query
-                        "0001", // query_type
+                        "01", // query_type
                         concat!(
                             // batch_interval
                             "000000000000D431", // start
@@ -2133,7 +2149,7 @@ mod tests {
                     "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D", // task_id
                     concat!(
                         // query
-                        "0001", // query_type
+                        "01", // query_type
                         concat!(
                             // batch_interval
                             "000000000000BF11", // start
@@ -2163,7 +2179,7 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id,
                     concat!(
                         // query
-                        "0002", // query_type
+                        "02", // query_type
                         "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
                     ),
                     concat!(
@@ -2185,7 +2201,7 @@ mod tests {
                     "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D", // task_id
                     concat!(
                         // query
-                        "0002", // query_type
+                        "02", // query_type
                         "0808080808080808080808080808080808080808080808080808080808080808", // batch_id
                     ),
                     concat!(
@@ -2199,17 +2215,49 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_partial_batch_selector() {
+        // TimeInterval.
+        roundtrip_encoding(&[(
+            PartialBatchSelector::new_time_interval(),
+            concat!(
+                "01", // query_type
+            ),
+        )]);
+
+        // FixedSize.
+        roundtrip_encoding(&[
+            (
+                PartialBatchSelector::new_fixed_size(BatchId::from([3u8; 32])),
+                concat!(
+                    "02",                                                               // query_type
+                    "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
+                ),
+            ),
+            (
+                PartialBatchSelector::new_fixed_size(BatchId::from([4u8; 32])),
+                concat!(
+                    "02",                                                               // query_type
+                    "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
+                ),
+            ),
+        ])
+    }
+
+    #[test]
     fn roundtrip_collect_resp() {
         // TimeInterval.
         roundtrip_encoding(&[
             (
-                CollectResp::<TimeInterval> {
-                    batch_identifier: (),
+                CollectResp {
+                    partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 0,
                     encrypted_aggregate_shares: Vec::new(),
                 },
                 concat!(
-                    "0001",             // query_type
+                    concat!(
+                        // partial_batch_selector
+                        "01", // query_type
+                    ),
                     "0000000000000000", // report_count
                     concat!(
                         // encrypted_aggregate_shares
@@ -2218,8 +2266,8 @@ mod tests {
                 ),
             ),
             (
-                CollectResp::<TimeInterval> {
-                    batch_identifier: (),
+                CollectResp {
+                    partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 23,
                     encrypted_aggregate_shares: vec![
                         HpkeCiphertext::new(
@@ -2235,7 +2283,10 @@ mod tests {
                     ],
                 },
                 concat!(
-                    "0001",             // query_type
+                    concat!(
+                        // partial_batch_selector
+                        "01", // query_type
+                    ),
                     "0000000000000017", // report_count
                     concat!(
                         // encrypted_aggregate_shares
@@ -2274,14 +2325,19 @@ mod tests {
         // FixedSize.
         roundtrip_encoding(&[
             (
-                CollectResp::<FixedSize> {
-                    batch_identifier: BatchId::from([3u8; 32]),
+                CollectResp {
+                    partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
+                        [3u8; 32],
+                    )),
                     report_count: 0,
                     encrypted_aggregate_shares: Vec::new(),
                 },
                 concat!(
-                    "0002",                                                             // query_type
-                    "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
+                    concat!(
+                        // partial_batch_selector
+                        "02", // query_type
+                        "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
+                    ),
                     "0000000000000000", // report_count
                     concat!(
                         // encrypted_aggregate_shares
@@ -2290,8 +2346,10 @@ mod tests {
                 ),
             ),
             (
-                CollectResp::<FixedSize> {
-                    batch_identifier: BatchId::from([4u8; 32]),
+                CollectResp {
+                    partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
+                        [4u8; 32],
+                    )),
                     report_count: 23,
                     encrypted_aggregate_shares: vec![
                         HpkeCiphertext::new(
@@ -2307,8 +2365,11 @@ mod tests {
                     ],
                 },
                 concat!(
-                    "0002",                                                             // query_type
-                    "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
+                    concat!(
+                        // partial_batch_selector
+                        "02", // query_type
+                        "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
+                    ),
                     "0000000000000017", // report_count
                     concat!(
                         // encrypted_aggregate_shares
@@ -2348,9 +2409,9 @@ mod tests {
     #[test]
     fn roundtrip_code() {
         roundtrip_encoding(&[
-            (query_type::Code::Reserved, "0000"),
-            (query_type::Code::TimeInterval, "0001"),
-            (query_type::Code::FixedSize, "0002"),
+            (query_type::Code::Reserved, "00"),
+            (query_type::Code::TimeInterval, "01"),
+            (query_type::Code::FixedSize, "02"),
         ])
     }
 }

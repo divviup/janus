@@ -17,7 +17,7 @@ use http::header::CONTENT_TYPE;
 #[cfg(test)]
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{
-    message::{query_type::TimeInterval, Duration, Interval, NonceChecksum, Role},
+    message::{query_type::TimeInterval, Duration, Interval, ReportIdChecksum, Role},
     task::DAP_AUTH_HEADER,
     time::Clock,
 };
@@ -63,7 +63,7 @@ impl CollectJobDriver {
 
     /// Step the provided collect job, for which a lease should have been acquired (though this
     /// should be idempotent). If the collect job runs to completion, the leader share, helper
-    /// share, report count and report nonce checksum will be written to the `collect_jobs` table,
+    /// share, report count and report ID checksum will be written to the `collect_jobs` table,
     /// and a subsequent request to the collect job URI will yield the aggregate shares. The collect
     /// job's lease is released, though it won't matter since the job will no longer be eligible to
     /// be run.
@@ -317,7 +317,7 @@ impl CollectJobDriver {
 pub(crate) async fn compute_aggregate_share<const L: usize, A: vdaf::Aggregator<L>>(
     task: &Task,
     batch_unit_aggregations: &[BatchUnitAggregation<L, A>],
-) -> Result<(A::AggregateShare, u64, NonceChecksum), Error>
+) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error>
 where
     Vec<u8>: for<'a> From<&'a A::AggregateShare>,
     for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
@@ -344,7 +344,7 @@ where
     // In either case, we go ahead and service the aggregate share request with whatever batch unit
     // aggregations are available now.
     let mut total_report_count = 0;
-    let mut total_checksum = NonceChecksum::default();
+    let mut total_checksum = ReportIdChecksum::default();
     let mut total_aggregate_share: Option<A::AggregateShare> = None;
 
     for batch_unit_aggregation in batch_unit_aggregations {
@@ -522,11 +522,11 @@ mod tests {
                     .await?;
 
                     let report_metadata = ReportMetadata::new(
+                        random(),
                         clock
                             .now()
                             .to_batch_unit_interval_start(task.min_batch_duration)
                             .unwrap(),
-                        random(),
                         Vec::new(),
                     );
                     tx.put_client_report(&Report::new(
@@ -544,7 +544,7 @@ mod tests {
                         aggregation_job_id,
                         task_id,
                         time: *report_metadata.time(),
-                        nonce: *report_metadata.nonce(),
+                        report_id: *report_metadata.report_id(),
                         ord: 0,
                         state: ReportAggregationState::Finished(OutputShare()),
                     })
@@ -589,7 +589,7 @@ mod tests {
                     aggregation_param,
                     aggregate_share: AggregateShare(0),
                     report_count: 5,
-                    checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
+                    checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                 })
                 .await?;
 
@@ -602,7 +602,7 @@ mod tests {
                     aggregation_param,
                     aggregate_share: AggregateShare(0),
                     report_count: 5,
-                    checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
+                    checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                 })
                 .await?;
 
@@ -617,7 +617,7 @@ mod tests {
             BatchSelector::new_time_interval(batch_interval),
             aggregation_param.get_encoded(),
             10,
-            NonceChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
+            ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
         );
 
         // Simulate helper failing to service the aggregate share request.
@@ -752,11 +752,11 @@ mod tests {
                     .await?;
 
                     let report_metadata = ReportMetadata::new(
+                        random(),
                         clock
                             .now()
                             .to_batch_unit_interval_start(task.min_batch_duration)
                             .unwrap(),
-                        random(),
                         Vec::new(),
                     );
                     tx.put_client_report(&Report::new(
@@ -774,7 +774,7 @@ mod tests {
                         aggregation_job_id,
                         task_id,
                         time: *report_metadata.time(),
-                        nonce: *report_metadata.nonce(),
+                        report_id: *report_metadata.report_id(),
                         ord: 0,
                         state: ReportAggregationState::Finished(OutputShare()),
                     })
@@ -789,7 +789,7 @@ mod tests {
                         aggregation_param,
                         aggregate_share: AggregateShare(0),
                         report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[3; 32]).unwrap(),
+                        checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                     })
                     .await?;
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
@@ -801,7 +801,7 @@ mod tests {
                         aggregation_param,
                         aggregate_share: AggregateShare(0),
                         report_count: 5,
-                        checksum: NonceChecksum::get_decoded(&[2; 32]).unwrap(),
+                        checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     })
                     .await?;
 
@@ -908,11 +908,11 @@ mod tests {
                     // can be picked up and the anti-replay check has something to check.
                     for i in 0..10 {
                         let report_metadata = ReportMetadata::new(
+                            random(),
                             clock
                                 .now()
                                 .to_batch_unit_interval_start(task.min_batch_duration)
                                 .unwrap(),
-                            random(),
                             Vec::new(),
                         );
                         tx.put_client_report(&Report::new(
@@ -929,7 +929,7 @@ mod tests {
                             aggregation_job_id,
                             task_id,
                             time: *report_metadata.time(),
-                            nonce: *report_metadata.nonce(),
+                            report_id: *report_metadata.report_id(),
                             ord: i,
                             state: ReportAggregationState::Finished(OutputShare()),
                         })
@@ -945,7 +945,7 @@ mod tests {
                         aggregation_param,
                         aggregate_share: AggregateShare(0),
                         report_count: 10,
-                        checksum: NonceChecksum::get_decoded(&[0xff; 32]).unwrap(),
+                        checksum: ReportIdChecksum::get_decoded(&[0xff; 32]).unwrap(),
                     })
                     .await?;
 

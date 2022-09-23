@@ -1,4 +1,4 @@
-use crate::message::Nonce;
+use crate::message::ReportId;
 use assert_matches::assert_matches;
 use prio::{
     codec::Encode,
@@ -37,7 +37,7 @@ pub fn run_vdaf<const L: usize, V: vdaf::Aggregator<L> + vdaf::Client>(
     vdaf: &V,
     verify_key: &[u8; L],
     aggregation_param: &V::AggregationParam,
-    nonce: &Nonce,
+    report_id: &ReportId,
     measurement: &V::Measurement,
 ) -> VdafTranscript<L, V>
 where
@@ -45,7 +45,7 @@ where
 {
     // Shard inputs into input shares, and initialize the initial PrepareTransitions.
     let input_shares = vdaf.shard(measurement).unwrap();
-    let encoded_nonce = nonce.get_encoded();
+    let encoded_report_id = report_id.get_encoded();
     let mut prep_trans: Vec<Vec<PrepareTransition<V, L>>> = input_shares
         .iter()
         .enumerate()
@@ -54,7 +54,7 @@ where
                 verify_key,
                 agg_id,
                 aggregation_param,
-                &encoded_nonce,
+                &encoded_report_id,
                 input_share,
             )?;
             Ok(vec![PrepareTransition::Continue(prep_state, prep_share)])

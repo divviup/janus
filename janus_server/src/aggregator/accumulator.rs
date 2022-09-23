@@ -4,7 +4,7 @@ use super::Error;
 use crate::datastore::{self, models::BatchUnitAggregation, Transaction};
 use derivative::Derivative;
 use janus_core::{
-    message::{Duration, Interval, Nonce, NonceChecksum, TaskId, Time},
+    message::{Duration, Interval, ReportId, ReportIdChecksum, TaskId, Time},
     time::Clock,
 };
 use prio::vdaf::{self, Aggregatable};
@@ -20,17 +20,17 @@ where
     #[derivative(Debug = "ignore")]
     aggregate_share: A::AggregateShare,
     report_count: u64,
-    checksum: NonceChecksum,
+    checksum: ReportIdChecksum,
 }
 
 impl<const L: usize, A: vdaf::Aggregator<L>> Accumulation<L, A>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
-    fn update(&mut self, output_share: &A::OutputShare, nonce: &Nonce) -> Result<(), Error> {
+    fn update(&mut self, output_share: &A::OutputShare, report_id: &ReportId) -> Result<(), Error> {
         self.aggregate_share.accumulate(output_share)?;
         self.report_count += 1;
-        self.checksum.update(nonce);
+        self.checksum.update(report_id);
 
         Ok(())
     }
@@ -77,14 +77,14 @@ where
         &mut self,
         output_share: &A::OutputShare,
         report_time: &Time,
-        nonce: &Nonce,
+        report_id: &ReportId,
     ) -> Result<(), datastore::Error> {
         let key = report_time
             .to_batch_unit_interval_start(self.min_batch_duration)
             .map_err(|e| datastore::Error::User(e.into()))?;
         if let Some(accumulation) = self.accumulations.get_mut(&key) {
             accumulation
-                .update(output_share, nonce)
+                .update(output_share, report_id)
                 .map_err(|e| datastore::Error::User(e.into()))?;
         } else {
             self.accumulations.insert(
@@ -92,7 +92,7 @@ where
                 Accumulation {
                     aggregate_share: A::AggregateShare::from(output_share.clone()),
                     report_count: 1,
-                    checksum: NonceChecksum::for_nonce(nonce),
+                    checksum: ReportIdChecksum::for_report_id(report_id),
                 },
             );
         }
