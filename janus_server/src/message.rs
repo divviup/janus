@@ -798,7 +798,7 @@ mod tests {
                 ),
                 concat!(
                     // partial_batch_selector
-                    "0001", // query_type
+                    "01", // query_type
                 ),
                 concat!(
                     // report_shares
@@ -930,7 +930,7 @@ mod tests {
                 ),
                 concat!(
                     // partial_batch_selector
-                    "0002", // query_type
+                    "02", // query_type
                     "0202020202020202020202020202020202020202020202020202020202020202", // batch_id
                 ),
                 concat!(
@@ -1174,7 +1174,7 @@ mod tests {
                     .unwrap(),
                 },
                 concat!(
-                    "0001", // query_type
+                    "01", // query_type
                     concat!(
                         // batch_interval
                         "000000000000D431", // start
@@ -1191,7 +1191,7 @@ mod tests {
                     .unwrap(),
                 },
                 concat!(
-                    "0001", // query_type
+                    "01", // query_type
                     concat!(
                         // batch_interval
                         "000000000000C685", // start
@@ -1209,7 +1209,7 @@ mod tests {
                 },
                 concat!(
                     // batch_selector
-                    "0002", // query_type
+                    "02", // query_type
                     "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // batch_id
                 ),
             ),
@@ -1218,7 +1218,7 @@ mod tests {
                     batch_identifier: BatchId::from([7u8; 32]),
                 },
                 concat!(
-                    "0002",                                                             // query_type
+                    "02",                                                               // query_type
                     "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
                 ),
             ),
@@ -1247,7 +1247,7 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
                         // batch_selector
-                        "0001", // query_type
+                        "01", // query_type
                         concat!(
                             // batch_interval
                             "000000000000D431", // start
@@ -1281,7 +1281,7 @@ mod tests {
                     "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
                     concat!(
                         // batch_selector
-                        "0001", // query_type
+                        "01", // query_type
                         concat!(
                             // batch_interval
                             "000000000000C685", // start
@@ -1315,7 +1315,7 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
                         // batch_selector
-                        "0002", // query_type
+                        "02", // query_type
                         "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // batch_id
                     ),
                     concat!(
@@ -1341,7 +1341,7 @@ mod tests {
                     "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
                     concat!(
                         // batch_selector
-                        "0002", // query_type
+                        "02", // query_type
                         "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
                     ),
                     concat!(

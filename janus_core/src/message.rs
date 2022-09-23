@@ -1486,7 +1486,7 @@ pub mod query_type {
 
     /// DAP protocol message representing the type of a query.
     #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
-    #[repr(u16)]
+    #[repr(u8)]
     pub enum Code {
         Reserved = 0,
         TimeInterval = 1,
@@ -1510,13 +1510,13 @@ pub mod query_type {
 
     impl Encode for Code {
         fn encode(&self, bytes: &mut Vec<u8>) {
-            (*self as u16).encode(bytes);
+            (*self as u8).encode(bytes);
         }
     }
 
     impl Decode for Code {
         fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-            let val = u16::decode(bytes)?;
+            let val = u8::decode(bytes)?;
             Self::try_from(val).map_err(|_| {
                 CodecError::Other(anyhow!("unexpected QueryType value {}", val).into())
             })
@@ -2049,7 +2049,7 @@ mod tests {
                     .unwrap(),
                 },
                 concat!(
-                    "0001", // query_type
+                    "01", // query_type
                     concat!(
                         // batch_interval
                         "000000000000D431", // start
@@ -2066,7 +2066,7 @@ mod tests {
                     .unwrap(),
                 },
                 concat!(
-                    "0001", // query_type
+                    "01", // query_type
                     concat!(
                         // batch_interval
                         "000000000000BF11", // start
@@ -2083,7 +2083,7 @@ mod tests {
                     batch_identifier: BatchId::from([10u8; 32]),
                 },
                 concat!(
-                    "0002",                                                             // query_type
+                    "02",                                                               // query_type
                     "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
                 ),
             ),
@@ -2092,7 +2092,7 @@ mod tests {
                     batch_identifier: BatchId::from([8u8; 32]),
                 },
                 concat!(
-                    "0002",                                                             // query_type
+                    "02",                                                               // query_type
                     "0808080808080808080808080808080808080808080808080808080808080808", // batch_id
                 ),
             ),
@@ -2119,7 +2119,7 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id,
                     concat!(
                         // query
-                        "0001", // query_type
+                        "01", // query_type
                         concat!(
                             // batch_interval
                             "000000000000D431", // start
@@ -2149,7 +2149,7 @@ mod tests {
                     "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D", // task_id
                     concat!(
                         // query
-                        "0001", // query_type
+                        "01", // query_type
                         concat!(
                             // batch_interval
                             "000000000000BF11", // start
@@ -2179,7 +2179,7 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id,
                     concat!(
                         // query
-                        "0002", // query_type
+                        "02", // query_type
                         "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
                     ),
                     concat!(
@@ -2201,7 +2201,7 @@ mod tests {
                     "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D", // task_id
                     concat!(
                         // query
-                        "0002", // query_type
+                        "02", // query_type
                         "0808080808080808080808080808080808080808080808080808080808080808", // batch_id
                     ),
                     concat!(
@@ -2220,7 +2220,7 @@ mod tests {
         roundtrip_encoding(&[(
             PartialBatchSelector::new_time_interval(),
             concat!(
-                "0001", // query_type
+                "01", // query_type
             ),
         )]);
 
@@ -2229,14 +2229,14 @@ mod tests {
             (
                 PartialBatchSelector::new_fixed_size(BatchId::from([3u8; 32])),
                 concat!(
-                    "0002",                                                             // query_type
+                    "02",                                                               // query_type
                     "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
                 ),
             ),
             (
                 PartialBatchSelector::new_fixed_size(BatchId::from([4u8; 32])),
                 concat!(
-                    "0002",                                                             // query_type
+                    "02",                                                               // query_type
                     "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
                 ),
             ),
@@ -2256,7 +2256,7 @@ mod tests {
                 concat!(
                     concat!(
                         // partial_batch_selector
-                        "0001", // query_type
+                        "01", // query_type
                     ),
                     "0000000000000000", // report_count
                     concat!(
@@ -2285,7 +2285,7 @@ mod tests {
                 concat!(
                     concat!(
                         // partial_batch_selector
-                        "0001", // query_type
+                        "01", // query_type
                     ),
                     "0000000000000017", // report_count
                     concat!(
@@ -2335,7 +2335,7 @@ mod tests {
                 concat!(
                     concat!(
                         // partial_batch_selector
-                        "0002", // query_type
+                        "02", // query_type
                         "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
                     ),
                     "0000000000000000", // report_count
@@ -2367,7 +2367,7 @@ mod tests {
                 concat!(
                     concat!(
                         // partial_batch_selector
-                        "0002", // query_type
+                        "02", // query_type
                         "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
                     ),
                     "0000000000000017", // report_count
@@ -2409,9 +2409,9 @@ mod tests {
     #[test]
     fn roundtrip_code() {
         roundtrip_encoding(&[
-            (query_type::Code::Reserved, "0000"),
-            (query_type::Code::TimeInterval, "0001"),
-            (query_type::Code::FixedSize, "0002"),
+            (query_type::Code::Reserved, "00"),
+            (query_type::Code::TimeInterval, "01"),
+            (query_type::Code::FixedSize, "02"),
         ])
     }
 }
