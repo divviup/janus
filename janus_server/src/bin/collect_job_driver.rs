@@ -1,5 +1,6 @@
 use anyhow::Context;
-use janus_core::{message::Duration, time::RealClock, TokioRuntime};
+use janus_core::{time::RealClock, TokioRuntime};
+use janus_messages::Duration;
 use janus_server::{
     aggregator::aggregate_share::CollectJobDriver,
     binary_utils::{

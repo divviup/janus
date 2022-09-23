@@ -6,10 +6,10 @@ use interop_binaries::{
     testcontainer::{Aggregator, Client, Collector},
 };
 use janus_core::{
-    message::{Duration, TaskId},
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
-    time::{Clock, RealClock},
+    time::{Clock, RealClock, TimeExt},
 };
+use janus_messages::{Duration, TaskId};
 use janus_server::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use prio::codec::Encode;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};

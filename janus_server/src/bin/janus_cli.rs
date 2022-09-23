@@ -1,33 +1,22 @@
 use anyhow::{anyhow, Context, Result};
 use base64::STANDARD_NO_PAD;
 use deadpool_postgres::Pool;
-use janus_core::{
-    message::{CollectReq, CollectResp, HpkeConfig, Report},
-    time::{Clock, RealClock},
-};
+use janus_core::time::{Clock, RealClock};
 use janus_server::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
     datastore::{self, Datastore},
-    message::{
-        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, AggregateShareReq, AggregateShareResp,
-    },
     metrics::install_metrics_exporter,
     task::Task,
-    trace::{install_trace_subscriber, TraceConfiguration},
+    trace::install_trace_subscriber,
 };
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
-use prio::codec::Decode;
 use rand::{thread_rng, Rng};
 use ring::aead::AES_128_GCM;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    fmt::Debug,
-    fs::File,
-    io::{stdin, Cursor, Read},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -75,27 +64,6 @@ enum Command {
 
         #[structopt(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
-    },
-
-    /// Decode a single Distributed Aggregation Protocol message.
-    DecodeDapMessage {
-        /// Path to file containing message to debug. Pass "-" to read from stdin.
-        message_file: String,
-
-        /// Media type of the message to decode.
-        #[structopt(long, short = "t", required = true, possible_values(&[
-            "hpke-config",
-            "report",
-            "aggregate-initialize-req",
-            "aggregate-initialize-resp",
-            "aggregate-continue-req",
-            "aggregate-continue-resp",
-            "aggregate-share-req",
-            "aggregate-share-resp",
-            "collect-req",
-            "collect-resp",
-        ]))]
-        media_type: String,
     },
 }
 
@@ -162,16 +130,6 @@ impl Command {
                     &kubernetes_secret_options.datastore_keys_secret_name,
                 )
                 .await
-            }
-
-            Command::DecodeDapMessage {
-                message_file,
-                media_type,
-            } => {
-                install_trace_subscriber(&TraceConfiguration::default())?;
-                let decoded = decode_dap_message(message_file, media_type)?;
-                println!("{decoded:#?}");
-                Ok(())
             }
         }
     }
@@ -295,49 +253,6 @@ async fn create_datastore_key(
     Ok(())
 }
 
-/// Decode the contents of `message_file` as a DAP message with `media_type`, returning the decoded
-/// object.
-fn decode_dap_message(message_file: &str, media_type: &str) -> Result<Box<dyn Debug>> {
-    let mut reader = if message_file.eq("-") {
-        Box::new(stdin()) as Box<dyn Read>
-    } else {
-        Box::new(File::open(message_file)?) as Box<dyn Read>
-    };
-
-    let mut message_buf = vec![];
-    reader.read_to_end(&mut message_buf)?;
-
-    let mut binary_message = Cursor::new(message_buf.as_slice());
-
-    let decoded = match media_type {
-        "hpke-config" => Box::new(HpkeConfig::decode(&mut binary_message)?) as Box<dyn Debug>,
-        "report" => Box::new(Report::decode(&mut binary_message)?) as Box<dyn Debug>,
-        "aggregate-initialize-req" => {
-            Box::new(AggregateInitializeReq::decode(&mut binary_message)?) as Box<dyn Debug>
-        }
-        "aggregate-initialize-resp" => {
-            Box::new(AggregateInitializeResp::decode(&mut binary_message)?) as Box<dyn Debug>
-        }
-        "aggregate-continue-req" => {
-            Box::new(AggregateContinueReq::decode(&mut binary_message)?) as Box<dyn Debug>
-        }
-        "aggregate-continue-resp" => {
-            Box::new(AggregateContinueResp::decode(&mut binary_message)?) as Box<dyn Debug>
-        }
-        "aggregate-share-req" => {
-            Box::new(AggregateShareReq::decode(&mut binary_message)?) as Box<dyn Debug>
-        }
-        "aggregate-share-resp" => {
-            Box::new(AggregateShareResp::decode(&mut binary_message)?) as Box<dyn Debug>
-        }
-        "collect-req" => Box::new(CollectReq::decode(&mut binary_message)?) as Box<dyn Debug>,
-        "collect-resp" => Box::new(CollectResp::decode(&mut binary_message)?) as Box<dyn Debug>,
-        _ => return Err(anyhow!("unknown media type")),
-    };
-
-    Ok(decoded)
-}
-
 #[derive(Debug, StructOpt)]
 struct KubernetesSecretOptions {
     /// The Kubernetes namespace where secrets are stored.
@@ -430,12 +345,8 @@ impl BinaryConfig for Config {
 mod tests {
     use super::{fetch_datastore_keys, Config, KubernetesSecretOptions};
     use base64::STANDARD_NO_PAD;
-    use janus_core::{
-        message::{Role, TaskId},
-        task::VdafInstance,
-        test_util::kubernetes,
-        time::RealClock,
-    };
+    use janus_core::{task::VdafInstance, test_util::kubernetes, time::RealClock};
+    use janus_messages::{Role, TaskId};
     use janus_server::{
         binary_utils::CommonBinaryOptions,
         config::test_util::{

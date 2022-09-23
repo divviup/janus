@@ -3,16 +3,13 @@ use crate::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
     datastore::{self, Datastore},
-    message::AggregationJobId,
     task::{Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::Result;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use janus_core::{
-    message::{Nonce, Role, TaskId, Time},
-    time::Clock,
-};
+use janus_core::time::{Clock, TimeExt};
+use janus_messages::{AggregationJobId, Nonce, Role, TaskId, Time};
 use opentelemetry::{
     metrics::{Unit, ValueRecorder},
     KeyValue,
@@ -448,19 +445,19 @@ mod tests {
     use super::AggregationJobCreator;
     use crate::{
         datastore::{test_util::ephemeral_datastore, Transaction},
-        message::{test_util::new_dummy_report, AggregationJobId},
+        messages::{test_util::new_dummy_report, TimeExt},
         task::{test_util::new_dummy_task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use futures::{future::try_join_all, TryFutureExt};
     use janus_core::{
-        message::{Interval, Nonce, Report, Role, TaskId, Time},
         task::VdafInstance,
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
         },
-        time::{Clock, MockClock},
+        time::{Clock, MockClock, TimeExt as CoreTimeExt},
     };
+    use janus_messages::{AggregationJobId, Interval, Nonce, Report, Role, TaskId, Time};
     use prio::{
         codec::ParameterizedDecode,
         vdaf::{
@@ -899,7 +896,7 @@ mod tests {
                         task_id,
                         Interval::new(
                             report_time,
-                            janus_core::message::Duration::from_seconds(
+                            janus_messages::Duration::from_seconds(
                                 task.min_batch_duration.as_seconds() * 2,
                             ),
                         )

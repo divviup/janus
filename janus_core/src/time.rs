@@ -1,7 +1,7 @@
 //! Utilities for timestamps and durations.
 
-use crate::message::{Duration, Time};
 use chrono::Utc;
+use janus_messages::{Duration, Time};
 use std::{
     fmt::{Debug, Formatter},
     sync::{Arc, Mutex},
@@ -53,7 +53,11 @@ impl MockClock {
 
     pub fn advance(&self, dur: Duration) {
         let mut current_time = self.current_time.lock().unwrap();
-        *current_time = current_time.add(dur).unwrap();
+        *current_time = current_time
+            .as_seconds_since_epoch()
+            .checked_add(dur.as_seconds())
+            .map(Time::from_seconds_since_epoch)
+            .unwrap();
     }
 }
 
@@ -70,5 +74,35 @@ impl Default for MockClock {
             // Sunday, September 9, 2001 1:46:40 AM UTC
             current_time: Arc::new(Mutex::new(Time::from_seconds_since_epoch(1000000000))),
         }
+    }
+}
+
+/// Extension methods on [`Time`].
+pub trait TimeExt: Sized {
+    /// Compute the start of the batch interval containing this Time, given the batch unit duration.
+    fn to_batch_unit_interval_start(
+        &self,
+        min_batch_duration: Duration,
+    ) -> Result<Self, janus_messages::Error>;
+}
+
+impl TimeExt for Time {
+    /// Compute the start of the batch interval containing this Time, given the batch unit duration.
+    fn to_batch_unit_interval_start(
+        &self,
+        min_batch_duration: Duration,
+    ) -> Result<Self, janus_messages::Error> {
+        let rem = self
+            .as_seconds_since_epoch()
+            .checked_rem(min_batch_duration.as_seconds())
+            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
+                "remainder would overflow/underflow",
+            ))?;
+        self.as_seconds_since_epoch()
+            .checked_sub(rem)
+            .map(Time::from_seconds_since_epoch)
+            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
+                "operation would underflow",
+            ))
     }
 }

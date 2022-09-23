@@ -3,25 +3,21 @@
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectJob, AggregateShareJob, AggregationJob, AggregatorRole,
     BatchUnitAggregation, CollectJob, CollectJobState, CollectJobStateCode, Lease, LeaseToken,
-    ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
+    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
 };
 #[cfg(test)]
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
 use crate::{
-    message::{AggregateShareReq, AggregationJobId, ReportShare},
+    messages::{IntervalExt, TimeExt},
     task::{self, Task, VdafInstance},
     SecretBytes,
 };
 use anyhow::anyhow;
 use futures::try_join;
-use janus_core::{
-    hpke::HpkePrivateKey,
-    message::{
-        Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, Nonce, NonceChecksum, Report,
-        Role, TaskId, Time,
-    },
-    task::AuthenticationToken,
-    time::Clock,
+use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken, time::Clock};
+use janus_messages::{
+    AggregateShareReq, AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval,
+    Nonce, NonceChecksum, Report, ReportShare, Role, TaskId, Time,
 };
 use opentelemetry::{metrics::BoundCounter, KeyValue};
 use postgres_types::{Json, ToSql};
@@ -1470,7 +1466,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    &batch_interval,
+                    /* batch_interval */ &SqlInterval::from(batch_interval),
                     /* aggregation_param */ &encoded_aggregation_parameter,
                 ],
             )
@@ -1555,7 +1551,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    /* interval */ &interval,
+                    /* collect_jobs.batchinterval */ &SqlInterval::from(interval),
                 ],
             )
             .await?
@@ -1576,7 +1572,8 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let batch_interval = row.try_get("batch_interval")?;
+        let sql_interval: SqlInterval = row.try_get("batch_interval")?;
+        let batch_interval = sql_interval.as_interval();
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectJobStateCode = row.get("state");
         let helper_aggregate_share_bytes: Option<Vec<u8>> = row.get("helper_aggregate_share");
@@ -1654,7 +1651,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* collect_job_id */ &collect_job_id,
                     /* task_id */ &task_id.as_bytes(),
-                    &batch_interval,
+                    /* batch_interval */ &SqlInterval::from(batch_interval),
                     /* aggregation_param */ &encoded_aggregation_parameter,
                 ],
             )
@@ -2032,7 +2029,7 @@ ORDER BY id DESC
                 &stmt,
                 &[
                     /* task_id */ &request.task_id.as_bytes(),
-                    /* batch_interval */ &request.batch_interval,
+                    /* batch_interval */ &SqlInterval::from(request.batch_interval),
                     /* aggregation_param */ &request.aggregation_param,
                 ],
             )
@@ -2088,10 +2085,15 @@ ORDER BY id DESC
             .await?
             .into_iter()
             .map(|row| {
-                let batch_interval = row.get("batch_interval");
+                let batch_interval: SqlInterval = row.get("batch_interval");
                 let aggregation_param =
                     A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                Self::aggregate_share_job_from_row(task_id, batch_interval, aggregation_param, row)
+                Self::aggregate_share_job_from_row(
+                    task_id,
+                    batch_interval.as_interval(),
+                    aggregation_param,
+                    row,
+                )
             })
             .collect()
     }
@@ -2129,16 +2131,21 @@ ORDER BY id DESC
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    /* interval */ &interval,
+                    /* interval */ &SqlInterval::from(interval),
                 ],
             )
             .await?
             .into_iter()
             .map(|row| {
-                let batch_interval = row.get("batch_interval");
+                let batch_interval: SqlInterval = row.get("batch_interval");
                 let aggregation_param =
                     A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                Self::aggregate_share_job_from_row(task_id, batch_interval, aggregation_param, row)
+                Self::aggregate_share_job_from_row(
+                    task_id,
+                    batch_interval.as_interval(),
+                    aggregation_param,
+                    row,
+                )
             })
             .collect()
     }
@@ -2196,7 +2203,7 @@ ORDER BY id DESC
                 &stmt,
                 &[
                     /* task_id */ &job.task_id.as_bytes(),
-                    /* batch_interval */ &job.batch_interval,
+                    /* batch_interval */ &SqlInterval::from(job.batch_interval),
                     /* aggregation_param */ &encoded_aggregation_param,
                     /* aggregate_share */ &encoded_aggregate_share,
                     &report_count,
@@ -2521,7 +2528,7 @@ pub enum Error {
     #[error("integer conversion failed: {0}")]
     TryFromInt(#[from] std::num::TryFromIntError),
     #[error(transparent)]
-    Message(#[from] janus_core::message::Error),
+    Message(#[from] janus_messages::Error),
 }
 
 impl Error {
@@ -2550,12 +2557,18 @@ impl From<ring::error::Unspecified> for Error {
 pub mod models {
     use super::Error;
     use crate::{
-        message::{AggregationJobId, ReportShareError},
+        messages::{DurationExt, IntervalExt, TimeExt},
         task::{self, VdafInstance},
     };
     use derivative::Derivative;
-    use janus_core::message::{HpkeCiphertext, Interval, Nonce, NonceChecksum, Role, TaskId, Time};
-    use postgres_types::{FromSql, ToSql};
+    use janus_messages::{
+        AggregationJobId, Duration, HpkeCiphertext, Interval, Nonce, NonceChecksum,
+        ReportShareError, Role, TaskId, Time,
+    };
+    use postgres_protocol::types::{
+        range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
+    };
+    use postgres_types::{accepts, to_sql_checked, FromSql, ToSql};
     use prio::{codec::Encode, vdaf};
     use uuid::Uuid;
 
@@ -3088,6 +3101,120 @@ pub mod models {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
     }
+
+    /// The SQL timestamp epoch, midnight UTC on 2000-01-01.
+    const SQL_EPOCH_TIME: Time = Time::from_seconds_since_epoch(946_684_800);
+
+    /// Wrapper around [`janus_messages::Interval`] that supports conversions to/from SQL.
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    pub(crate) struct SqlInterval(Interval);
+
+    impl SqlInterval {
+        pub(crate) fn as_interval(&self) -> Interval {
+            self.0
+        }
+    }
+
+    impl From<Interval> for SqlInterval {
+        fn from(interval: Interval) -> Self {
+            Self(interval)
+        }
+    }
+
+    impl<'a> FromSql<'a> for SqlInterval {
+        fn from_sql(
+            _: &postgres_types::Type,
+            raw: &'a [u8],
+        ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+            match range_from_sql(raw)? {
+            Range::Empty => Err("Interval cannot represent an empty timestamp range".into()),
+            Range::Nonempty(RangeBound::Inclusive(None), _)
+            | Range::Nonempty(RangeBound::Exclusive(None), _)
+            | Range::Nonempty(_, RangeBound::Inclusive(None))
+            | Range::Nonempty(_, RangeBound::Exclusive(None)) => {
+                Err("Interval cannot represent a timestamp range with a null bound".into())
+            }
+            Range::Nonempty(RangeBound::Unbounded, _) | Range::Nonempty(_, RangeBound::Unbounded) => {
+                Err("Interval cannot represent an unbounded timestamp range".into())
+            }
+            Range::Nonempty(RangeBound::Exclusive(_), _) | Range::Nonempty(_, RangeBound::Inclusive(_)) => {
+                Err("Interval can only represent timestamp ranges that are closed at the start and open at the end".into())
+            }
+            Range::Nonempty(RangeBound::Inclusive(Some(start_raw)), RangeBound::Exclusive(Some(end_raw))) => {
+                // These timestamps represent the number of microseconds before (if negative) or
+                // after (if positive) midnight, 1/1/2000.
+                let start_timestamp = timestamp_from_sql(start_raw)?;
+                let end_timestamp = timestamp_from_sql(end_raw)?;
+
+                // Convert from SQL timestamp representation to the internal representation.
+                let negative = start_timestamp < 0;
+                let abs_start_us = start_timestamp.unsigned_abs();
+                let abs_start_duration = Duration::from_microseconds(abs_start_us);
+                let time = if negative {
+                    SQL_EPOCH_TIME.sub(abs_start_duration).map_err(|_| "Interval cannot represent timestamp ranges starting before the Unix epoch")?
+                } else {
+                    SQL_EPOCH_TIME.add(abs_start_duration).map_err(|_| "overflow when converting to Interval")?
+                };
+
+                if end_timestamp < start_timestamp {
+                    return Err("timestamp range ends before it starts".into());
+                }
+                let duration_us = end_timestamp.abs_diff(start_timestamp);
+                let duration = Duration::from_microseconds(duration_us);
+
+                Ok(SqlInterval(Interval::new(time, duration)?))
+            }
+        }
+        }
+
+        accepts!(TS_RANGE);
+    }
+
+    fn time_to_sql_timestamp(time: Time) -> Result<i64, Error> {
+        if time.is_after(SQL_EPOCH_TIME) {
+            let absolute_difference_us = time.difference(SQL_EPOCH_TIME)?.as_microseconds()?;
+            Ok(absolute_difference_us.try_into()?)
+        } else {
+            let absolute_difference_us = SQL_EPOCH_TIME.difference(time)?.as_microseconds()?;
+            Ok(-i64::try_from(absolute_difference_us)?)
+        }
+    }
+
+    impl ToSql for SqlInterval {
+        fn to_sql(
+            &self,
+            _: &postgres_types::Type,
+            out: &mut bytes::BytesMut,
+        ) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
+            // Convert the interval start and end to SQL timestamps.
+            let start_sql_usec = time_to_sql_timestamp(self.0.start())
+                .map_err(|_| "millisecond timestamp of Interval start overflowed")?;
+            let end_sql_usec = time_to_sql_timestamp(self.0.end())
+                .map_err(|_| "millisecond timestamp of Interval end overflowed")?;
+
+            range_to_sql(
+                |out| {
+                    timestamp_to_sql(start_sql_usec, out);
+                    Ok(postgres_protocol::types::RangeBound::Inclusive(
+                        postgres_protocol::IsNull::No,
+                    ))
+                },
+                |out| {
+                    timestamp_to_sql(end_sql_usec, out);
+                    Ok(postgres_protocol::types::RangeBound::Exclusive(
+                        postgres_protocol::IsNull::No,
+                    ))
+                },
+                out,
+            )?;
+
+            Ok(postgres_types::IsNull::No)
+        }
+
+        accepts!(TS_RANGE);
+
+        to_sql_checked!();
+    }
 }
 
 #[cfg(feature = "test-util")]
@@ -3296,7 +3423,7 @@ mod tests {
             models::{AggregationJobState, CollectJobState},
             test_util::{ephemeral_datastore, generate_aead_key},
         },
-        message::{test_util::new_dummy_report, ReportShareError},
+        messages::{test_util::new_dummy_report, DurationExt},
         task::{test_util::new_dummy_task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
@@ -3304,12 +3431,14 @@ mod tests {
     use futures::future::try_join_all;
     use janus_core::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
-        message::{Duration, ExtensionType, HpkeConfigId, Interval, Role, Time},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
         },
         time::MockClock,
+    };
+    use janus_messages::{
+        Duration, ExtensionType, HpkeConfigId, Interval, ReportShareError, Role, Time,
     };
     use prio::{
         field::{Field128, Field64},
@@ -6166,7 +6295,7 @@ mod tests {
                             &[],
                         )
                         .await?
-                        .get::<_, Interval>("interval");
+                        .get::<_, SqlInterval>("interval");
                     let ref_interval = Interval::new(
                         Time::from_naive_date_time(
                             NaiveDate::from_ymd(2020, 1, 1).and_hms(10, 0, 0),
@@ -6174,7 +6303,7 @@ mod tests {
                         Duration::from_minutes(30).unwrap(),
                     )
                     .unwrap();
-                    assert_eq!(interval, ref_interval);
+                    assert_eq!(interval.as_interval(), ref_interval);
 
                     let interval = tx
                         .tx
@@ -6183,14 +6312,14 @@ mod tests {
                             &[],
                         )
                         .await?
-                        .get::<_, Interval>("interval");
+                        .get::<_, SqlInterval>("interval");
                     let ref_interval = Interval::new(
                         Time::from_naive_date_time(
                             NaiveDate::from_ymd(1970, 2, 3).and_hms(23, 0, 0),
                         ),
                         Duration::from_hours(1).unwrap(),
                     )?;
-                    assert_eq!(interval, ref_interval);
+                    assert_eq!(interval.as_interval(), ref_interval);
 
                     let res = tx
                         .tx
@@ -6199,7 +6328,7 @@ mod tests {
                             &[],
                         )
                         .await?
-                        .try_get::<_, Interval>("interval");
+                        .try_get::<_, SqlInterval>("interval");
                     assert!(res.is_err());
 
                     let ok = tx
@@ -6210,13 +6339,15 @@ mod tests {
                             lower_inc(interval) AND
                             NOT upper_inc(interval)) AS ok
                             FROM (VALUES ($1::tsrange)) AS temp (interval)",
-                            &[&Interval::new(
-                                Time::from_naive_date_time(
-                                    NaiveDate::from_ymd(1972, 7, 21).and_hms(5, 30, 0),
-                                ),
-                                Duration::from_minutes(30).unwrap(),
-                            )
-                            .unwrap()],
+                            &[&SqlInterval::from(
+                                Interval::new(
+                                    Time::from_naive_date_time(
+                                        NaiveDate::from_ymd(1972, 7, 21).and_hms(5, 30, 0),
+                                    ),
+                                    Duration::from_minutes(30).unwrap(),
+                                )
+                                .unwrap(),
+                            )],
                         )
                         .await?
                         .get::<_, bool>("ok");
@@ -6230,13 +6361,15 @@ mod tests {
                             lower_inc(interval) AND
                             NOT upper_inc(interval)) AS ok
                             FROM (VALUES ($1::tsrange)) AS temp (interval)",
-                            &[&Interval::new(
-                                Time::from_naive_date_time(
-                                    NaiveDate::from_ymd(2021, 10, 5).and_hms(0, 0, 0),
-                                ),
-                                Duration::from_hours(24).unwrap(),
-                            )
-                            .unwrap()],
+                            &[&SqlInterval::from(
+                                Interval::new(
+                                    Time::from_naive_date_time(
+                                        NaiveDate::from_ymd(2021, 10, 5).and_hms(0, 0, 0),
+                                    ),
+                                    Duration::from_hours(24).unwrap(),
+                                )
+                                .unwrap(),
+                            )],
                         )
                         .await?
                         .get::<_, bool>("ok");

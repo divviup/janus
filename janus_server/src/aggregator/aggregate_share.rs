@@ -1,14 +1,13 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
-use super::Error;
 use crate::{
+    aggregator::Error,
     datastore::{
         self,
         models::AcquiredCollectJob,
         models::{BatchUnitAggregation, CollectJobState, Lease},
         Datastore, Transaction,
     },
-    message::{AggregateShareReq, AggregateShareResp},
     task::{Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use derivative::Derivative;
@@ -16,10 +15,9 @@ use futures::{future::BoxFuture, try_join};
 use http::header::CONTENT_TYPE;
 #[cfg(test)]
 use janus_core::test_util::dummy_vdaf;
-use janus_core::{
-    message::{Duration, Interval, NonceChecksum, Role},
-    task::DAP_AUTH_HEADER,
-    time::Clock,
+use janus_core::{nonce::NonceChecksumExt, task::DAP_AUTH_HEADER, time::Clock};
+use janus_messages::{
+    AggregateShareReq, AggregateShareResp, Duration, Interval, NonceChecksum, Role,
 };
 use opentelemetry::metrics::{BoundCounter, Meter};
 use prio::{
@@ -460,13 +458,13 @@ mod tests {
             },
             test_util::ephemeral_datastore,
         },
-        message::AggregationJobId,
+        messages::TimeExt,
         task::{test_util::new_dummy_task, VdafInstance},
     };
     use assert_matches::assert_matches;
     use http::StatusCode;
     use janus_core::{
-        message::{Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role, TaskId},
+        nonce::NonceExt,
         test_util::{
             dummy_vdaf::{AggregateShare, AggregationParam, OutputShare},
             install_test_trace_subscriber,
@@ -474,6 +472,10 @@ mod tests {
         },
         time::MockClock,
         Runtime,
+    };
+    use janus_messages::{
+        AggregationJobId, Duration, HpkeCiphertext, HpkeConfigId, Interval, Nonce, Report, Role,
+        TaskId,
     };
     use mockito::mock;
     use opentelemetry::global::meter;

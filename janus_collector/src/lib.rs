@@ -8,22 +8,23 @@
 //!
 //! ```no_run
 //! use janus_collector::{Collector, CollectorParameters, default_http_client};
-//! use janus_core::{
-//!     message::{Duration, HpkeConfig, Interval, TaskId, Time},
-//!     task::AuthenticationToken,
+//! use janus_core::{hpke::generate_hpke_config_and_private_key, task::AuthenticationToken};
+//! use janus_messages::{
+//!     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Interval, TaskId,
+//!     Time,
 //! };
 //! use prio::vdaf::prio3::Prio3;
 //! use url::Url;
 //!
 //! # async fn run() {
 //! // Supply DAP task paramenters.
-//! # let task_id = TaskId::random();
-//! # let (hpke_config, private_key) = janus_core::hpke::generate_hpke_config_and_private_key(
-//! #     janus_core::message::HpkeConfigId::from(0),
-//! #     janus_core::message::HpkeKemId::X25519HkdfSha256,
-//! #     janus_core::message::HpkeKdfId::HkdfSha256,
-//! #     janus_core::message::HpkeAeadId::Aes128Gcm,
-//! # );
+//! let task_id = TaskId::random();
+//! let (hpke_config, private_key) = janus_core::hpke::generate_hpke_config_and_private_key(
+//!     HpkeConfigId::from(0),
+//!     HpkeKemId::X25519HkdfSha256,
+//!     HpkeKdfId::HkdfSha256,
+//!     HpkeAeadId::Aes128Gcm,
+//! );
 //! let authentication_token = AuthenticationToken::from(b"my-authentication-token".to_vec());
 //! let parameters = CollectorParameters::new(
 //!     task_id,
@@ -54,10 +55,10 @@ use backoff::{backoff::Backoff, ExponentialBackoff};
 use derivative::Derivative;
 use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey},
-    message::{CollectReq, CollectResp, HpkeConfig, Interval, Role, TaskId},
     retries::{http_request_exponential_backoff, retry_http_request},
     task::{url_ensure_trailing_slash, AuthenticationToken, DAP_AUTH_HEADER},
 };
+use janus_messages::{CollectReq, CollectResp, HpkeConfig, Interval, Role, TaskId};
 use prio::{
     codec::{Decode, Encode},
     vdaf,
@@ -477,7 +478,7 @@ where
 #[cfg(feature = "test-util")]
 pub mod test_util {
     use crate::{Collector, Error};
-    use janus_core::message::Interval;
+    use janus_messages::Interval;
     use prio::vdaf;
 
     pub async fn collect_with_rewritten_url<V: vdaf::Collector>(
@@ -506,11 +507,12 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, Label},
-        message::{Duration, HpkeCiphertext, Nonce, Time},
+        nonce::NonceExt,
         retries::test_http_request_exponential_backoff,
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
         time::RealClock,
     };
+    use janus_messages::{Duration, HpkeCiphertext, Nonce, Time};
     use mockito::mock;
     use prio::{
         field::Field64,

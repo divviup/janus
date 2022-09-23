@@ -1,11 +1,8 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
 use crate::datastore::{self, models::Lease};
-use janus_core::{
-    message::{Duration, Time},
-    time::Clock,
-    Runtime,
-};
+use janus_core::{time::Clock, Runtime};
+use janus_messages::{Duration, Time};
 use opentelemetry::{
     metrics::{Meter, Unit},
     KeyValue,
@@ -249,12 +246,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{message::AggregationJobId, task::VdafInstance};
+    use crate::task::VdafInstance;
     use janus_core::{
-        message::TaskId,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::MockClock,
     };
+    use janus_messages::{AggregationJobId, TaskId};
     use opentelemetry::global::meter;
     use tokio::sync::Mutex;
 

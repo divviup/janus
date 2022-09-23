@@ -5,9 +5,9 @@ use integration_tests::{daphne::Daphne, janus::Janus};
 use interop_binaries::test_util::generate_network_name;
 use janus_core::{
     hpke::test_util::generate_test_hpke_config_and_private_key,
-    message::Role,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
+use janus_messages::Role;
 
 mod common;
 

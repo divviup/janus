@@ -1,8 +1,6 @@
 use base64::URL_SAFE_NO_PAD;
-use janus_core::{
-    hpke::{generate_hpke_config_and_private_key, HpkePrivateKey},
-    message::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role},
-};
+use janus_core::hpke::{generate_hpke_config_and_private_key, HpkePrivateKey};
+use janus_messages::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role};
 use janus_server::task::{Task, VdafInstance};
 use prio::codec::Encode;
 use rand::{thread_rng, Rng};

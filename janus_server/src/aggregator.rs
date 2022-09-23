@@ -18,11 +18,7 @@ use crate::{
         },
         Datastore,
     },
-    message::{
-        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId,
-        PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
-    },
+    messages::TimeExt,
     task::{Task, VdafInstance, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use bytes::Bytes;
@@ -32,13 +28,18 @@ use http::{
     HeaderMap, StatusCode,
 };
 use janus_core::{
-    hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
-    message::{
-        CollectReq, CollectResp, HpkeConfig, HpkeConfigId, Interval, Nonce, NonceChecksum, Report,
-        Role, TaskId,
+    hpke::{
+        self, associated_data_for_aggregate_share, associated_data_for_report_share,
+        HpkeApplicationInfo, Label,
     },
     task::DAP_AUTH_HEADER,
     time::Clock,
+};
+use janus_messages::{
+    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
+    AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq, CollectResp, HpkeConfig,
+    HpkeConfigId, Interval, Nonce, NonceChecksum, PrepareStep, PrepareStepResult, Report,
+    ReportShare, ReportShareError, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{BoundCounter, Meter, Unit, ValueRecorder},
@@ -93,7 +94,7 @@ pub enum Error {
     MessageDecode(#[from] prio::codec::CodecError),
     /// Error handling a message.
     #[error("invalid message: {0}")]
-    Message(#[from] janus_core::message::Error),
+    Message(#[from] janus_messages::Error),
     /// Corresponds to `reportTooLate`, §3.1
     #[error("task {1:?}: stale report: {0}")]
     ReportTooLate(Nonce, TaskId),
@@ -1017,7 +1018,11 @@ impl VdafOps {
             hpke_private_key,
             &HpkeApplicationInfo::new(Label::InputShare, Role::Client, task.role),
             leader_report,
-            &report.associated_data(),
+            &associated_data_for_report_share(
+                report.task_id(),
+                report.nonce(),
+                report.extensions(),
+            ),
         ) {
             warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
             upload_decrypt_failure_counter.add(1);
@@ -1131,7 +1136,11 @@ impl VdafOps {
                     hpke_private_key,
                     &HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Helper),
                     &report_share.encrypted_input_share,
-                    &report_share.associated_data(task_id),
+                    &associated_data_for_report_share(
+                        task_id,
+                        report_share.nonce,
+                        &report_share.extensions,
+                    ),
                 )
                 .map_err(|err| {
                     warn!(
@@ -1856,7 +1865,10 @@ impl VdafOps {
             &task.collector_hpke_config,
             &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
             &<Vec<u8>>::from(&aggregate_share_job.helper_aggregate_share),
-            &aggregate_share_req.associated_data_for_aggregate_share(),
+            &associated_data_for_aggregate_share(
+                aggregate_share_req.task_id,
+                aggregate_share_req.batch_interval,
+            ),
         )?;
 
         Ok(AggregateShareResp {
@@ -2361,6 +2373,7 @@ mod tests {
             models::BatchUnitAggregation,
             test_util::{ephemeral_datastore, DbHandle},
         },
+        messages::{DurationExt, TimeExt},
         task::{
             test_util::{generate_auth_token, new_dummy_task},
             VdafInstance,
@@ -2370,18 +2383,18 @@ mod tests {
     use http::Method;
     use hyper::body;
     use janus_core::{
-        hpke::associated_data_for_report_share,
         hpke::{
-            associated_data_for_aggregate_share,
+            associated_data_for_aggregate_share, associated_data_for_report_share,
             test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey, Label,
         },
-        message::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time},
+        nonce::{NonceChecksumExt, NonceExt},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber, run_vdaf,
         },
-        time::MockClock,
+        time::{MockClock, TimeExt as CoreTimeExt},
     };
+    use janus_messages::{Duration, HpkeCiphertext, HpkeConfig, TaskId, Time};
     use opentelemetry::global::meter;
     use prio::{
         codec::Decode,
@@ -2893,7 +2906,8 @@ mod tests {
 
     fn reencrypt_report(report: Report, hpke_config: &HpkeConfig) -> Report {
         let message = b"this is a message";
-        let associated_data = report.associated_data();
+        let associated_data =
+            associated_data_for_report_share(report.task_id(), report.nonce(), report.extensions());
 
         let leader_ciphertext = hpke::seal(
             hpke_config,
@@ -5995,7 +6009,7 @@ mod tests {
                     &collector_hpke_recipient,
                     &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
                     &aggregate_share_resp.encrypted_aggregate_share,
-                    &request.associated_data_for_aggregate_share(),
+                    &associated_data_for_aggregate_share(request.task_id, request.batch_interval),
                 )
                 .unwrap();
 
