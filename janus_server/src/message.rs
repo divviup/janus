@@ -699,8 +699,8 @@ mod tests {
                     result: PrepareStepResult::Finished,
                 },
                 concat!(
-                    "100F0E0DC0B0A090807060504030201", // report_id
-                    "01",                              // prepare_step_result
+                    "100F0E0D0C0B0A090807060504030201", // report_id
+                    "01",                               // prepare_step_result
                 ),
             ),
             (
