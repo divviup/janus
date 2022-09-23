@@ -35,7 +35,7 @@ use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
     message::{
         query_type::TimeInterval, CollectReq, CollectResp, HpkeConfig, HpkeConfigId, Interval,
-        Report, ReportId, ReportIdChecksum, Role, TaskId, Time,
+        PartialBatchSelector, Report, ReportId, ReportIdChecksum, Role, TaskId, Time,
     },
     task::DAP_AUTH_HEADER,
     time::Clock,
@@ -1724,7 +1724,8 @@ impl VdafOps {
                     &associated_data,
                 )?;
 
-                Ok(Some(CollectResp::new_time_interval(
+                Ok(Some(CollectResp::new(
+                    PartialBatchSelector::new_time_interval(),
                     0, // TODO(#469): fill out report_count once possible
                     vec![
                         encrypted_leader_aggregate_share,
@@ -3093,8 +3094,13 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let request =
-            AggregateInitializeReq::new_time_interval(task_id, random(), Vec::new(), Vec::new());
+        let request = AggregateInitializeReq::new(
+            task_id,
+            random(),
+            Vec::new(),
+            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
+        );
 
         let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
@@ -3172,8 +3178,13 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let request =
-            AggregateInitializeReq::new_time_interval(task_id, random(), Vec::new(), Vec::new());
+        let request = AggregateInitializeReq::new(
+            task_id,
+            random(),
+            Vec::new(),
+            PartialBatchSelector::new_time_interval(),
+            Vec::new(),
+        );
 
         let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
@@ -3429,10 +3440,11 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregateInitializeReq::new_time_interval(
+        let request = AggregateInitializeReq::new(
             task_id,
             random(),
             Vec::new(),
+            PartialBatchSelector::new_time_interval(),
             Vec::from([
                 report_share_0.clone(),
                 report_share_1.clone(),
@@ -3557,10 +3569,11 @@ mod tests {
             &hpke_key.0,
             &(),
         );
-        let request = AggregateInitializeReq::new_time_interval(
+        let request = AggregateInitializeReq::new(
             task_id,
             random(),
             AggregationParam(0).get_encoded(),
+            PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone()]),
         );
 
@@ -3631,10 +3644,11 @@ mod tests {
             &hpke_key.0,
             &(),
         );
-        let request = AggregateInitializeReq::new_time_interval(
+        let request = AggregateInitializeReq::new(
             task_id,
             random(),
             AggregationParam(0).get_encoded(),
+            PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone()]),
         );
 
@@ -3705,10 +3719,11 @@ mod tests {
             ),
         );
 
-        let request = AggregateInitializeReq::new_time_interval(
+        let request = AggregateInitializeReq::new(
             task_id,
             random(),
             AggregationParam(0).get_encoded(),
+            PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone(), report_share]),
         );
 

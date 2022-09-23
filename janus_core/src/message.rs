@@ -1301,11 +1301,72 @@ impl<Q: QueryType> Decode for CollectReq<Q> {
     }
 }
 
+/// DAP protocol message representing a partial batch selector, identifying a batch of interest in
+/// cases where some query types can infer the selector.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartialBatchSelector<Q: QueryType> {
+    batch_identifier: Q::PartialBatchIdentifier,
+}
+
+impl<Q: QueryType> PartialBatchSelector<Q> {
+    /// Constructs a new partial batch selector.
+    ///
+    /// This method would typically be used for code which is generic over the query type.
+    /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
+    /// [`Self::new_fixed_size`].
+    pub fn new(batch_identifier: Q::PartialBatchIdentifier) -> Self {
+        Self { batch_identifier }
+    }
+
+    /// Gets the batch identifier associated with this collect response.
+    ///
+    /// This method would typically be used for code which is generic over the query type.
+    /// Query-type specific code will typically call [`Self::batch_id`].
+    pub fn batch_identifier(&self) -> &Q::PartialBatchIdentifier {
+        &self.batch_identifier
+    }
+}
+
+impl PartialBatchSelector<TimeInterval> {
+    /// Constructs a new partial batch selector for a time-interval task.
+    pub fn new_time_interval() -> Self {
+        Self::new(())
+    }
+}
+
+impl PartialBatchSelector<FixedSize> {
+    /// Constructs a new partial batch selector for a fixed-size task.
+    pub fn new_fixed_size(batch_id: BatchId) -> Self {
+        Self::new(batch_id)
+    }
+
+    /// Gets the batch ID associated with this partial batch selector.
+    pub fn batch_id(&self) -> &BatchId {
+        self.batch_identifier()
+    }
+}
+
+impl<Q: QueryType> Encode for PartialBatchSelector<Q> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        Q::CODE.encode(bytes);
+        self.batch_identifier.encode(bytes);
+    }
+}
+
+impl<Q: QueryType> Decode for PartialBatchSelector<Q> {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        query_type::Code::decode_expecting_value(bytes, Q::CODE)?;
+        let batch_identifier = Q::PartialBatchIdentifier::decode(bytes)?;
+
+        Ok(Self { batch_identifier })
+    }
+}
+
 /// DAP protocol message representing a leader's response to the collector's request to provide
 /// aggregate shares for a given batch interval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectResp<Q: QueryType> {
-    batch_identifier: Q::CollectRespBatchIdentifier,
+    partial_batch_selector: PartialBatchSelector<Q>,
     report_count: u64,
     encrypted_aggregate_shares: Vec<HpkeCiphertext>,
 }
@@ -1315,28 +1376,21 @@ impl<Q: QueryType> CollectResp<Q> {
     pub const MEDIA_TYPE: &'static str = "application/dap-collect-resp";
 
     /// Constructs a new collect response.
-    ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
-    /// [`Self::new_fixed_size`].
     pub fn new(
-        batch_identifier: Q::CollectRespBatchIdentifier,
+        partial_batch_selector: PartialBatchSelector<Q>,
         report_count: u64,
         encrypted_aggregate_shares: Vec<HpkeCiphertext>,
     ) -> Self {
         Self {
-            batch_identifier,
+            partial_batch_selector,
             report_count,
             encrypted_aggregate_shares,
         }
     }
 
-    /// Gets the batch identifier associated with this collect response.
-    ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &Q::CollectRespBatchIdentifier {
-        &self.batch_identifier
+    /// Gets the batch selector associated with this collect response.
+    pub fn partial_batch_selector(&self) -> &PartialBatchSelector<Q> {
+        &self.partial_batch_selector
     }
 
     /// Gets the report count associated with this collect response.
@@ -1350,36 +1404,9 @@ impl<Q: QueryType> CollectResp<Q> {
     }
 }
 
-impl CollectResp<TimeInterval> {
-    /// Constructs a new collect response for a time-interval task.
-    pub fn new_time_interval(
-        report_count: u64,
-        encrypted_aggregate_shares: Vec<HpkeCiphertext>,
-    ) -> Self {
-        Self::new((), report_count, encrypted_aggregate_shares)
-    }
-}
-
-impl CollectResp<FixedSize> {
-    /// Constructs a new collect response for a fixed-size task.
-    pub fn new_fixed_size(
-        batch_id: BatchId,
-        report_count: u64,
-        encrypted_aggregate_shares: Vec<HpkeCiphertext>,
-    ) -> Self {
-        Self::new(batch_id, report_count, encrypted_aggregate_shares)
-    }
-
-    // Gets the batch ID associated with this collect response.
-    pub fn batch_id(&self) -> &BatchId {
-        self.batch_identifier()
-    }
-}
-
 impl<Q: QueryType> Encode for CollectResp<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        Q::CODE.encode(bytes);
-        self.batch_identifier.encode(bytes);
+        self.partial_batch_selector.encode(bytes);
         self.report_count.encode(bytes);
         encode_u16_items(bytes, &(), &self.encrypted_aggregate_shares); // TODO(#471): should be encode_u32_items
     }
@@ -1387,13 +1414,12 @@ impl<Q: QueryType> Encode for CollectResp<Q> {
 
 impl<Q: QueryType> Decode for CollectResp<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        query_type::Code::decode_expecting_value(bytes, Q::CODE)?;
-        let batch_identifier = Q::CollectRespBatchIdentifier::decode(bytes)?;
+        let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let report_count = u64::decode(bytes)?;
         let encrypted_aggregate_shares = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
 
         Ok(Self {
-            batch_identifier,
+            partial_batch_selector,
             report_count,
             encrypted_aggregate_shares,
         })
@@ -1415,21 +1441,17 @@ pub mod query_type {
         const CODE: Code;
 
         /// The type of a batch identifier.
-        type BatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode + Send + Sync;
+        type BatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
 
-        /// The type of a batch identifier as it appears in an `AggregateInitializeReq`. Will
+        /// The type of a batch identifier as it appears in a `PartialBatchSelector`. Will be either
         /// either be the same type as `BatchIdentifier`, or `()`.
-        type AggregateInitializeReqBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
+        type PartialBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
 
-        /// The type of a batch identifier as it appears in a `CollectResp`. Will either be the
-        /// same type as `BatchIdentifier`, or `()`.
-        type CollectRespBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
-
-        /// Computes the `CollectRespBatchIdentifier` corresponding to the given
+        /// Computes the `PartialBatchIdentifier` corresponding to the given
         /// `BatchIdentifier`.
-        fn collect_resp_batch_identifier_from(
+        fn partial_batch_identifier(
             batch_identifier: Self::BatchIdentifier,
-        ) -> Self::CollectRespBatchIdentifier;
+        ) -> Self::PartialBatchIdentifier;
     }
 
     /// Represents a `time-interval` DAP query type.
@@ -1440,13 +1462,9 @@ pub mod query_type {
         const CODE: Code = Code::TimeInterval;
 
         type BatchIdentifier = Interval;
-        type AggregateInitializeReqBatchIdentifier = ();
-        type CollectRespBatchIdentifier = ();
+        type PartialBatchIdentifier = ();
 
-        fn collect_resp_batch_identifier_from(
-            _: Self::BatchIdentifier,
-        ) -> Self::CollectRespBatchIdentifier {
-        }
+        fn partial_batch_identifier(_: Self::BatchIdentifier) -> Self::PartialBatchIdentifier {}
     }
 
     /// Represents a `fixed-size` DAP query type.
@@ -1457,12 +1475,11 @@ pub mod query_type {
         const CODE: Code = Code::FixedSize;
 
         type BatchIdentifier = BatchId;
-        type AggregateInitializeReqBatchIdentifier = BatchId;
-        type CollectRespBatchIdentifier = BatchId;
+        type PartialBatchIdentifier = BatchId;
 
-        fn collect_resp_batch_identifier_from(
+        fn partial_batch_identifier(
             batch_identifier: Self::BatchIdentifier,
-        ) -> Self::CollectRespBatchIdentifier {
+        ) -> Self::PartialBatchIdentifier {
             batch_identifier
         }
     }
@@ -1540,7 +1557,7 @@ mod tests {
         test_util::roundtrip_encoding,
         BatchId, CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeAeadId,
         HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
-        Query, Report, ReportId, ReportMetadata, Role, TaskId, Time,
+        PartialBatchSelector, Query, Report, ReportId, ReportMetadata, Role, TaskId, Time,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
@@ -2198,17 +2215,49 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_partial_batch_selector() {
+        // TimeInterval.
+        roundtrip_encoding(&[(
+            PartialBatchSelector::new_time_interval(),
+            concat!(
+                "0001", // query_type
+            ),
+        )]);
+
+        // FixedSize.
+        roundtrip_encoding(&[
+            (
+                PartialBatchSelector::new_fixed_size(BatchId::from([3u8; 32])),
+                concat!(
+                    "0002",                                                             // query_type
+                    "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
+                ),
+            ),
+            (
+                PartialBatchSelector::new_fixed_size(BatchId::from([4u8; 32])),
+                concat!(
+                    "0002",                                                             // query_type
+                    "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
+                ),
+            ),
+        ])
+    }
+
+    #[test]
     fn roundtrip_collect_resp() {
         // TimeInterval.
         roundtrip_encoding(&[
             (
-                CollectResp::<TimeInterval> {
-                    batch_identifier: (),
+                CollectResp {
+                    partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 0,
                     encrypted_aggregate_shares: Vec::new(),
                 },
                 concat!(
-                    "0001",             // query_type
+                    concat!(
+                        // partial_batch_selector
+                        "0001", // query_type
+                    ),
                     "0000000000000000", // report_count
                     concat!(
                         // encrypted_aggregate_shares
@@ -2217,8 +2266,8 @@ mod tests {
                 ),
             ),
             (
-                CollectResp::<TimeInterval> {
-                    batch_identifier: (),
+                CollectResp {
+                    partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 23,
                     encrypted_aggregate_shares: vec![
                         HpkeCiphertext::new(
@@ -2234,7 +2283,10 @@ mod tests {
                     ],
                 },
                 concat!(
-                    "0001",             // query_type
+                    concat!(
+                        // partial_batch_selector
+                        "0001", // query_type
+                    ),
                     "0000000000000017", // report_count
                     concat!(
                         // encrypted_aggregate_shares
@@ -2273,14 +2325,19 @@ mod tests {
         // FixedSize.
         roundtrip_encoding(&[
             (
-                CollectResp::<FixedSize> {
-                    batch_identifier: BatchId::from([3u8; 32]),
+                CollectResp {
+                    partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
+                        [3u8; 32],
+                    )),
                     report_count: 0,
                     encrypted_aggregate_shares: Vec::new(),
                 },
                 concat!(
-                    "0002",                                                             // query_type
-                    "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
+                    concat!(
+                        // partial_batch_selector
+                        "0002", // query_type
+                        "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
+                    ),
                     "0000000000000000", // report_count
                     concat!(
                         // encrypted_aggregate_shares
@@ -2289,8 +2346,10 @@ mod tests {
                 ),
             ),
             (
-                CollectResp::<FixedSize> {
-                    batch_identifier: BatchId::from([4u8; 32]),
+                CollectResp {
+                    partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
+                        [4u8; 32],
+                    )),
                     report_count: 23,
                     encrypted_aggregate_shares: vec![
                         HpkeCiphertext::new(
@@ -2306,8 +2365,11 @@ mod tests {
                     ],
                 },
                 concat!(
-                    "0002",                                                             // query_type
-                    "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
+                    concat!(
+                        // partial_batch_selector
+                        "0002", // query_type
+                        "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
+                    ),
                     "0000000000000017", // report_count
                     concat!(
                         // encrypted_aggregate_shares

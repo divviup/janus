@@ -23,7 +23,7 @@ use futures::{
 use http::header::CONTENT_TYPE;
 use janus_core::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    message::{query_type::TimeInterval, Duration, Report, Role},
+    message::{query_type::TimeInterval, Duration, PartialBatchSelector, Report, Role},
     task::DAP_AUTH_HEADER,
     time::Clock,
 };
@@ -399,10 +399,11 @@ impl AggregationJobDriver {
         // Construct request, send it to the helper, and process the response.
         // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
         // unexepected cases such as unknown/unexpected content type.
-        let req = AggregateInitializeReq::new_time_interval(
+        let req = AggregateInitializeReq::new(
             task.id,
             aggregation_job.aggregation_job_id,
             aggregation_job.aggregation_param.get_encoded(),
+            PartialBatchSelector::new_time_interval(),
             report_shares,
         );
 
@@ -872,8 +873,8 @@ mod tests {
             test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         message::{
-            query_type::TimeInterval, Duration, HpkeConfig, Interval, Report, ReportIdChecksum,
-            ReportMetadata, Role, TaskId,
+            query_type::TimeInterval, Duration, HpkeConfig, Interval, PartialBatchSelector, Report,
+            ReportIdChecksum, ReportMetadata, Role, TaskId,
         },
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
@@ -1199,10 +1200,11 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let leader_request = AggregateInitializeReq::new_time_interval(
+        let leader_request = AggregateInitializeReq::new(
             task_id,
             aggregation_job_id,
             ().get_encoded(),
+            PartialBatchSelector::new_time_interval(),
             Vec::from([ReportShare::new(
                 report.metadata().clone(),
                 Vec::new(), // TODO(#473): fill out public_share once possible

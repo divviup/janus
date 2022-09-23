@@ -7,7 +7,8 @@ use janus_core::{
     hpke::{associated_data_for_aggregate_share, associated_data_for_report_share},
     message::{
         query_type::{self, FixedSize, QueryType, TimeInterval},
-        BatchId, HpkeCiphertext, Interval, ReportId, ReportIdChecksum, ReportMetadata, TaskId,
+        BatchId, HpkeCiphertext, Interval, PartialBatchSelector, ReportId, ReportIdChecksum,
+        ReportMetadata, TaskId,
     },
 };
 use num_enum::TryFromPrimitive;
@@ -257,7 +258,7 @@ pub struct AggregateInitializeReq<Q: QueryType> {
     job_id: AggregationJobId,
     #[derivative(Debug = "ignore")]
     aggregation_parameter: Vec<u8>,
-    batch_identifier: Q::AggregateInitializeReqBatchIdentifier,
+    partial_batch_selector: PartialBatchSelector<Q>,
     report_shares: Vec<ReportShare>,
 }
 
@@ -266,22 +267,18 @@ impl<Q: QueryType> AggregateInitializeReq<Q> {
     pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-initialize-req";
 
     /// Constructs an aggregate initialization request from its components.
-    ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
-    /// [`Self::new_fixed_size`].
     pub fn new(
         task_id: TaskId,
         job_id: AggregationJobId,
         aggregation_parameter: Vec<u8>,
-        batch_identifier: Q::AggregateInitializeReqBatchIdentifier,
+        partial_batch_selector: PartialBatchSelector<Q>,
         report_shares: Vec<ReportShare>,
     ) -> Self {
         Self {
             task_id,
             job_id,
             aggregation_parameter,
-            batch_identifier,
+            partial_batch_selector,
             report_shares,
         }
     }
@@ -301,12 +298,9 @@ impl<Q: QueryType> AggregateInitializeReq<Q> {
         &self.aggregation_parameter
     }
 
-    /// Gets the batch identifier associated with this aggregate initialization request.
-    ///
-    /// This method would typically be used for code which is generic over the query type.
-    /// Query-type specific code will typically call [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &Q::AggregateInitializeReqBatchIdentifier {
-        &self.batch_identifier
+    /// Gets the partial batch selector associated with this aggregate initialization request.
+    pub fn batch_identifier(&self) -> &PartialBatchSelector<Q> {
+        &self.partial_batch_selector
     }
 
     /// Gets the report shares associated with this aggregate initialization request.
@@ -315,49 +309,12 @@ impl<Q: QueryType> AggregateInitializeReq<Q> {
     }
 }
 
-impl AggregateInitializeReq<TimeInterval> {
-    /// Constructs a new aggregate initialization request for a time-interval task.
-    pub fn new_time_interval(
-        task_id: TaskId,
-        job_id: AggregationJobId,
-        aggregation_parameter: Vec<u8>,
-        report_shares: Vec<ReportShare>,
-    ) -> Self {
-        Self::new(task_id, job_id, aggregation_parameter, (), report_shares)
-    }
-}
-
-impl AggregateInitializeReq<FixedSize> {
-    /// Constructs a new aggregate initialization request for a fixed-size task.
-    pub fn new_fixed_size(
-        task_id: TaskId,
-        job_id: AggregationJobId,
-        aggregation_parameter: Vec<u8>,
-        batch_id: BatchId,
-        report_shares: Vec<ReportShare>,
-    ) -> Self {
-        Self::new(
-            task_id,
-            job_id,
-            aggregation_parameter,
-            batch_id,
-            report_shares,
-        )
-    }
-
-    /// Gets the batch ID associated with this aggregate initialization request.
-    pub fn batch_id(&self) -> &BatchId {
-        self.batch_identifier()
-    }
-}
-
 impl<Q: QueryType> Encode for AggregateInitializeReq<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.job_id.encode(bytes);
         encode_u16_items(bytes, &(), &self.aggregation_parameter);
-        Q::CODE.encode(bytes);
-        self.batch_identifier.encode(bytes);
+        self.partial_batch_selector.encode(bytes);
         encode_u16_items(bytes, &(), &self.report_shares); // TODO(#471): should be encode_u32_items
     }
 }
@@ -367,14 +324,14 @@ impl<Q: QueryType> Decode for AggregateInitializeReq<Q> {
         let task_id = TaskId::decode(bytes)?;
         let job_id = AggregationJobId::decode(bytes)?;
         let aggregation_parameter = decode_u16_items(&(), bytes)?;
-        query_type::Code::decode_expecting_value(bytes, Q::CODE)?;
-        let batch_identifier = Q::AggregateInitializeReqBatchIdentifier::decode(bytes)?;
+        let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let report_shares = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+
         Ok(Self {
             task_id,
             job_id,
             aggregation_parameter,
-            batch_identifier,
+            partial_batch_selector,
             report_shares,
         })
     }
@@ -797,11 +754,11 @@ mod tests {
     fn roundtrip_aggregate_initialize_req() {
         // TimeInterval.
         roundtrip_encoding(&[(
-            AggregateInitializeReq::<TimeInterval> {
+            AggregateInitializeReq {
                 task_id: TaskId::from([u8::MAX; 32]),
                 job_id: AggregationJobId([u8::MIN; 32]),
                 aggregation_parameter: Vec::from("012345"),
-                batch_identifier: (),
+                partial_batch_selector: PartialBatchSelector::new_time_interval(),
                 report_shares: vec![
                     ReportShare {
                         metadata: ReportMetadata::new(
@@ -839,7 +796,10 @@ mod tests {
                     "0006",         // length
                     "303132333435", // opaque data
                 ),
-                "0001", // query_type
+                concat!(
+                    // partial_batch_selector
+                    "0001", // query_type
+                ),
                 concat!(
                     // report_shares
                     "006A", // length
@@ -928,7 +888,9 @@ mod tests {
                 task_id: TaskId::from([u8::MAX; 32]),
                 job_id: AggregationJobId([u8::MIN; 32]),
                 aggregation_parameter: Vec::from("012345"),
-                batch_identifier: BatchId::from([2u8; 32]),
+                partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
+                    [2u8; 32],
+                )),
                 report_shares: vec![
                     ReportShare {
                         metadata: ReportMetadata::new(
@@ -966,8 +928,11 @@ mod tests {
                     "0006",         // length
                     "303132333435", // opaque data
                 ),
-                "0002", // query_type
-                "0202020202020202020202020202020202020202020202020202020202020202", // batch_id
+                concat!(
+                    // partial_batch_selector
+                    "0002", // query_type
+                    "0202020202020202020202020202020202020202020202020202020202020202", // batch_id
+                ),
                 concat!(
                     // report_shares
                     "006A", // length
