@@ -59,7 +59,7 @@ pub struct ClientParameters {
     #[derivative(Debug(format_with = "fmt_vector_of_urls"))]
     aggregator_endpoints: Vec<Url>,
     /// The minimum batch duration of the task. This value is shared by all
-    /// parties in the protocol, and is used to compute report nonces.
+    /// parties in the protocol, and is used to compute report timestamps.
     min_batch_duration: Duration,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn report_nonce_time() {
+    fn report_timestamp() {
         install_test_trace_subscriber();
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let mut client = setup_client(vdaf);

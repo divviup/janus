@@ -9,7 +9,7 @@ use anyhow::Result;
 use futures::future::try_join_all;
 use itertools::Itertools;
 use janus_core::{
-    message::{Nonce, Role, TaskId, Time},
+    message::{ReportId, Role, TaskId, Time},
     time::Clock,
 };
 use opentelemetry::{
@@ -273,28 +273,27 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .run_tx(|tx| {
                 Box::pin(async move {
                     // Find some unaggregated client reports, and group them by their batch unit.
-                    let nonces_by_batch_unit = tx
-                        .get_unaggregated_client_report_nonces_for_task(task_id)
+                    let report_ids_by_batch_unit = tx
+                        .get_unaggregated_client_report_ids_for_task(task_id)
                         .await?
                         .into_iter()
-                        .map(|(time, nonce)| {
+                        .map(|(time, report_id)| {
                             time.to_batch_unit_interval_start(min_batch_duration)
-                                .map(|rounded_time| (rounded_time, (time, nonce)))
+                                .map(|rounded_time| (rounded_time, (time, report_id)))
                                 .map_err(datastore::Error::from)
                         })
-                        .collect::<Result<Vec<(Time, (Time, Nonce))>, _>>()?
+                        .collect::<Result<Vec<(Time, (Time, ReportId))>, _>>()?
                         .into_iter()
                         .into_group_map();
 
                     // Generate aggregation jobs & report aggregations based on the reports we read.
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::new();
-                    for (batch_unit_start, report_times_and_nonces) in nonces_by_batch_unit {
-                        for agg_job_nonces in
-                            report_times_and_nonces.chunks(max_aggregation_job_size)
+                    for (batch_unit_start, report_times_and_ids) in report_ids_by_batch_unit {
+                        for agg_job_reports in report_times_and_ids.chunks(max_aggregation_job_size)
                         {
                             if batch_unit_start >= current_batch_unit_start
-                                && agg_job_nonces.len() < min_aggregation_job_size
+                                && agg_job_reports.len() < min_aggregation_job_size
                             {
                                 continue;
                             }
@@ -303,7 +302,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             debug!(
                                 ?task_id,
                                 ?aggregation_job_id,
-                                report_count = agg_job_nonces.len(),
+                                report_count = agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
                             agg_jobs.push(AggregationJob::<L, A> {
@@ -313,14 +312,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 state: AggregationJobState::InProgress,
                             });
 
-                            for (ord, (report_time, report_nonce)) in
-                                agg_job_nonces.iter().enumerate()
+                            for (ord, (report_time, report_id)) in
+                                agg_job_reports.iter().enumerate()
                             {
                                 report_aggs.push(ReportAggregation::<L, A> {
                                     aggregation_job_id,
                                     task_id,
                                     time: *report_time,
-                                    nonce: *report_nonce,
+                                    report_id: *report_id,
                                     ord: i64::try_from(ord)?,
                                     state: ReportAggregationState::Start,
                                 });
@@ -377,38 +376,33 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Find some client reports that are covered by a collect request,
                     // but haven't been aggregated yet, and group them by their batch unit.
                     let result_vec = tx
-                        .get_unaggregated_client_report_nonces_by_collect_for_task::<L, A>(task_id)
+                        .get_unaggregated_client_report_ids_by_collect_for_task::<L, A>(task_id)
                         .await?
                         .into_iter()
-                        .map(|(report_time, report_nonce, aggregation_param)| {
+                        .map(|(report_time, report_id, aggregation_param)| {
                             report_time
                                 .to_batch_unit_interval_start(min_batch_duration)
                                 .map(|rounded_time| {
-                                    (
-                                        (rounded_time, aggregation_param),
-                                        (report_time, report_nonce),
-                                    )
+                                    ((rounded_time, aggregation_param), (report_time, report_id))
                                 })
                                 .map_err(datastore::Error::from)
                         })
-                        .collect::<Result<Vec<((Time, _), (Time, Nonce))>, _>>()?;
+                        .collect::<Result<Vec<((Time, _), (Time, ReportId))>, _>>()?;
                     let report_count = result_vec.len();
                     let result_map = result_vec.into_iter().into_group_map();
 
                     // Generate aggregation jobs and report aggregations.
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::with_capacity(report_count);
-                    for ((_batch_unit_start, aggregation_param), report_times_and_nonces) in
-                        result_map
+                    for ((_batch_unit_start, aggregation_param), report_times_and_ids) in result_map
                     {
-                        for agg_job_nonces in
-                            report_times_and_nonces.chunks(max_aggregation_job_size)
+                        for agg_job_reports in report_times_and_ids.chunks(max_aggregation_job_size)
                         {
                             let aggregation_job_id = random();
                             debug!(
                                 ?task_id,
                                 ?aggregation_job_id,
-                                report_count = agg_job_nonces.len(),
+                                report_count = agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
                             agg_jobs.push(AggregationJob::<L, A> {
@@ -418,12 +412,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 state: AggregationJobState::InProgress,
                             });
 
-                            for (ord, (time, nonce)) in agg_job_nonces.iter().enumerate() {
+                            for (ord, (time, report_id)) in agg_job_reports.iter().enumerate() {
                                 report_aggs.push(ReportAggregation::<L, A> {
                                     aggregation_job_id,
                                     task_id,
                                     time: *time,
-                                    nonce: *nonce,
+                                    report_id: *report_id,
                                     ord: i64::try_from(ord)?,
                                     state: ReportAggregationState::Start,
                                 });
@@ -464,7 +458,7 @@ mod tests {
     };
     use futures::{future::try_join_all, TryFutureExt};
     use janus_core::{
-        message::{Interval, Nonce, Report, Role, TaskId, Time},
+        message::{Interval, Report, ReportId, Role, TaskId, Time},
         task::VdafInstance,
         test_util::{
             dummy_vdaf::{self, AggregationParam},
@@ -578,12 +572,12 @@ mod tests {
                 .unwrap();
         assert!(helper_agg_jobs.is_empty());
         assert_eq!(leader_agg_jobs.len(), 1);
-        let nonces = leader_agg_jobs.into_iter().next().unwrap().1;
+        let report_times_and_ids = leader_agg_jobs.into_iter().next().unwrap().1;
         assert_eq!(
-            nonces,
+            report_times_and_ids,
             HashSet::from([(
                 *leader_report.metadata().time(),
-                *leader_report.metadata().nonce()
+                *leader_report.metadata().report_id()
             )])
         );
     }
@@ -638,11 +632,11 @@ mod tests {
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
-        let all_nonces: HashSet<Nonce> = cur_batch_unit_reports
+        let all_report_ids: HashSet<ReportId> = cur_batch_unit_reports
             .iter()
             .chain(&small_batch_unit_reports)
             .chain(&big_batch_unit_reports)
-            .map(|report| *report.metadata().nonce())
+            .map(|report| *report.metadata().report_id())
             .collect();
 
         ds.run_tx(|tx| {
@@ -691,10 +685,10 @@ mod tests {
             })
             .await
             .unwrap();
-        let mut seen_nonces = HashSet::new();
-        for (_, times_and_nonces) in agg_jobs {
-            // All nonces for aggregation job are in the same batch unit.
-            let batch_units: HashSet<Time> = times_and_nonces
+        let mut seen_report_ids = HashSet::new();
+        for (_, times_and_ids) in agg_jobs {
+            // All report IDs for aggregation job are in the same batch unit.
+            let batch_units: HashSet<Time> = times_and_ids
                 .iter()
                 .map(|(time, _)| {
                     time.to_batch_unit_interval_start(task.min_batch_duration)
@@ -705,23 +699,22 @@ mod tests {
             let batch_unit = batch_units.into_iter().next().unwrap();
 
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
-            assert!(times_and_nonces.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             // If we are in the current batch unit, the batch is at least MIN_AGGREGATION_JOB_SIZE in size.
             assert!(
-                batch_unit < current_batch_unit
-                    || times_and_nonces.len() >= MIN_AGGREGATION_JOB_SIZE
+                batch_unit < current_batch_unit || times_and_ids.len() >= MIN_AGGREGATION_JOB_SIZE
             );
 
-            // Nonces are non-repeated across or inside aggregation jobs.
-            for (_, nonce) in times_and_nonces {
-                assert!(!seen_nonces.contains(&nonce));
-                seen_nonces.insert(nonce);
+            // Report IDs are non-repeated across or inside aggregation jobs.
+            for (_, report_id) in times_and_ids {
+                assert!(!seen_report_ids.contains(&report_id));
+                seen_report_ids.insert(report_id);
             }
         }
 
         // Every client report was added to some aggregation job.
-        assert_eq!(all_nonces, seen_nonces);
+        assert_eq!(all_report_ids, seen_report_ids);
     }
 
     #[tokio::test]
@@ -805,17 +798,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(agg_jobs.len(), 1);
-        let nonces = agg_jobs.into_iter().next().unwrap().1;
+        let report_ids = agg_jobs.into_iter().next().unwrap().1;
         assert_eq!(
-            nonces,
+            report_ids,
             HashSet::from([
                 (
                     *first_report.metadata().time(),
-                    *first_report.metadata().nonce()
+                    *first_report.metadata().report_id()
                 ),
                 (
                     *second_report.metadata().time(),
-                    *second_report.metadata().nonce()
+                    *second_report.metadata().report_id()
                 )
             ])
         );
@@ -968,15 +961,15 @@ mod tests {
             .unwrap()
             .collect::<Vec<(
                 AggregationJobId,
-                Vec<(Time, Nonce)>,
+                Vec<(Time, ReportId)>,
                 <dummy_vdaf::Vdaf as Vdaf>::AggregationParam,
             )>>();
 
         let mut seen_pairs = Vec::new();
         let mut aggregation_jobs_per_aggregation_param = HashMap::new();
-        for (_aggregation_job_id, times_and_nonces, aggregation_param) in agg_jobs.iter() {
-            // Check that all nonces for an aggregation job are in the same batch unit.
-            let batch_units: HashSet<Time> = times_and_nonces
+        for (_aggregation_job_id, times_and_ids, aggregation_param) in agg_jobs.iter() {
+            // Check that all report IDs for an aggregation job are in the same batch unit.
+            let batch_units: HashSet<Time> = times_and_ids
                 .iter()
                 .map(|(time, _)| {
                     time.to_batch_unit_interval_start(task.min_batch_duration)
@@ -985,14 +978,14 @@ mod tests {
                 .collect();
             assert_eq!(batch_units.len(), 1);
 
-            assert!(times_and_nonces.len() <= MAX_AGGREGATION_JOB_SIZE);
+            assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             *aggregation_jobs_per_aggregation_param
                 .entry(*aggregation_param)
                 .or_default() += 1;
 
-            for (_, nonce) in times_and_nonces {
-                seen_pairs.push((*nonce, *aggregation_param));
+            for (_, report_id) in times_and_ids {
+                seen_pairs.push((*report_id, *aggregation_param));
             }
         }
         assert_eq!(agg_jobs.len(), 5);
@@ -1002,11 +995,11 @@ mod tests {
         );
         let mut expected_pairs = Vec::with_capacity(MAX_AGGREGATION_JOB_SIZE * 3 + 2);
         for report in batch_1_reports.iter() {
-            expected_pairs.push((*report.metadata().nonce(), AggregationParam(11)));
+            expected_pairs.push((*report.metadata().report_id(), AggregationParam(11)));
         }
         for report in batch_2_reports.iter() {
-            expected_pairs.push((*report.metadata().nonce(), AggregationParam(7)));
-            expected_pairs.push((*report.metadata().nonce(), AggregationParam(11)));
+            expected_pairs.push((*report.metadata().report_id(), AggregationParam(7)));
+            expected_pairs.push((*report.metadata().report_id(), AggregationParam(11)));
         }
         seen_pairs.sort();
         expected_pairs.sort();
@@ -1048,10 +1041,13 @@ mod tests {
     }
 
     /// Test helper function that reads all aggregation jobs for a given task ID, with VDAF
-    /// Prio3Aes128Count, returning a map from aggregation job ID to the report nonces included in
-    /// the aggregation job. The container used to store the nonces is up to the caller; ordered
-    /// containers will store nonces in the order they are included in the aggregate job.
-    async fn read_aggregate_jobs_for_task_prio3_count<T: FromIterator<(Time, Nonce)>, C: Clock>(
+    /// Prio3Aes128Count, returning a map from aggregation job ID to the report IDs included in
+    /// the aggregation job. The container used to store the report IDs is up to the caller; ordered
+    /// containers will store report IDs in the order they are included in the aggregate job.
+    async fn read_aggregate_jobs_for_task_prio3_count<
+        T: FromIterator<(Time, ReportId)>,
+        C: Clock,
+    >(
         tx: &Transaction<'_, C>,
         task_id: TaskId,
     ) -> HashMap<AggregationJobId, T> {
@@ -1060,21 +1056,22 @@ mod tests {
             tx, task_id, vdaf,
         )
         .await
-        .map(|(agg_job_id, nonces, _aggregation_param)| (agg_job_id, nonces))
+        .map(|(agg_job_id, report_id, _aggregation_param)| (agg_job_id, report_id))
         .collect()
     }
 
-    /// Test helper function that reads all aggregation jobs for a given task ID, returning an iterator
-    /// of tuples containing aggregation job IDs, the report nonces included in the aggregation job, and
-    /// aggregation parameters. The container used to store the nonces is up to the caller; ordered
-    /// containers will store nonces in the order they are included in the aggregate job.
+    /// Test helper function that reads all aggregation jobs for a given task ID, returning an
+    /// iterator of tuples containing aggregation job IDs, the report IDs included in the
+    /// aggregation job, and aggregation parameters. The container used to store the report IDs is
+    /// up to the caller; ordered containers will store report IDs in the order they are included in
+    /// the aggregate job.
     async fn read_aggregate_jobs_for_task_generic<const L: usize, A, T, C: Clock>(
         tx: &Transaction<'_, C>,
         task_id: TaskId,
         vdaf: A,
     ) -> impl Iterator<Item = (AggregationJobId, T, A::AggregationParam)>
     where
-        T: FromIterator<(Time, Nonce)>,
+        T: FromIterator<(Time, ReportId)>,
         A: Aggregator<L>,
         for<'a> Vec<u8>: From<&'a <A as Vdaf>::AggregateShare>,
         <A as Aggregator<L>>::PrepareState: for<'a> ParameterizedDecode<(&'a A, usize)>,
@@ -1109,7 +1106,7 @@ mod tests {
                 agg_job_id,
                 report_aggs
                     .into_iter()
-                    .map(|ra| (ra.time, ra.nonce))
+                    .map(|ra| (ra.time, ra.report_id))
                     .collect::<T>(),
                 aggregation_param,
             )

@@ -61,8 +61,8 @@ struct UploadRequest {
     helper: Url,
     vdaf: VdafObject,
     measurement: Measurement,
-    #[serde(default)]
-    nonce_time: Option<u64>,
+    #[serde(default, rename = "nonceTime")]
+    timestamp: Option<u64>,
     min_batch_duration: u64,
 }
 
@@ -109,9 +109,9 @@ where
     .await
     .context("failed to fetch helper's HPKE configuration")?;
 
-    match request.nonce_time {
-        Some(nonce_time) => {
-            let clock = MockClock::new(Time::from_seconds_since_epoch(nonce_time));
+    match request.timestamp {
+        Some(timestamp) => {
+            let clock = MockClock::new(Time::from_seconds_since_epoch(timestamp));
             let client = janus_client::Client::new(
                 client_parameters,
                 vdaf_client,

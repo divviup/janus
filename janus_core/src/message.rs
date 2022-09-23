@@ -421,38 +421,38 @@ impl Distribution<BatchId> for Standard {
     }
 }
 
-/// DAP protocol message representing a nonce uniquely identifying a client report.
+/// DAP protocol message representing an ID uniquely identifying a client report.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Nonce([u8; Self::LEN]);
+pub struct ReportId([u8; Self::LEN]);
 
-impl Nonce {
-    /// LEN is the length of a nonce in bytes.
+impl ReportId {
+    /// LEN is the length of a report ID in bytes.
     pub const LEN: usize = 16;
 }
 
-impl From<[u8; Self::LEN]> for Nonce {
-    fn from(nonce: [u8; Self::LEN]) -> Self {
-        Self(nonce)
+impl From<[u8; Self::LEN]> for ReportId {
+    fn from(report_id: [u8; Self::LEN]) -> Self {
+        Self(report_id)
     }
 }
 
-impl AsRef<[u8; Self::LEN]> for Nonce {
+impl AsRef<[u8; Self::LEN]> for ReportId {
     fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
     }
 }
 
-impl Debug for Nonce {
+impl Debug for ReportId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Nonce({})",
+            "ReportId({})",
             Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
         )
     }
 }
 
-impl Display for Nonce {
+impl Display for ReportId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -462,69 +462,69 @@ impl Display for Nonce {
     }
 }
 
-impl Encode for Nonce {
+impl Encode for ReportId {
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.0)
     }
 }
 
-impl Decode for Nonce {
+impl Decode for ReportId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let mut nonce = [0; Self::LEN];
-        bytes.read_exact(&mut nonce)?;
-        Ok(Self(nonce))
+        let mut report_id = [0; Self::LEN];
+        bytes.read_exact(&mut report_id)?;
+        Ok(Self(report_id))
     }
 }
 
-impl Distribution<Nonce> for Standard {
-    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Nonce {
-        Nonce(rng.gen())
+impl Distribution<ReportId> for Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> ReportId {
+        ReportId(rng.gen())
     }
 }
 
-/// Checksum over DAP report nonces, defined in §4.4.4.3.
+/// Checksum over DAP report IDs, defined in §4.4.4.3.
 #[derive(Copy, Clone, Debug, Default, Hash, PartialEq, Eq)]
-pub struct NonceChecksum([u8; SHA256_OUTPUT_LEN]);
+pub struct ReportIdChecksum([u8; SHA256_OUTPUT_LEN]);
 
-impl NonceChecksum {
-    /// Initialize a checksum from a single nonce.
-    pub fn for_nonce(nonce: &Nonce) -> Self {
-        Self(Self::nonce_digest(nonce))
+impl ReportIdChecksum {
+    /// Initialize a checksum from a single report ID.
+    pub fn for_report_id(report_id: &ReportId) -> Self {
+        Self(Self::report_id_digest(report_id))
     }
 
-    /// Compute SHA256 over a nonce.
-    fn nonce_digest(nonce: &Nonce) -> [u8; SHA256_OUTPUT_LEN] {
-        digest(&SHA256, nonce.as_ref())
+    /// Compute the SHA256 hash of a report ID.
+    fn report_id_digest(report_id: &ReportId) -> [u8; SHA256_OUTPUT_LEN] {
+        digest(&SHA256, report_id.as_ref())
             .as_ref()
             .try_into()
             // panic if somehow the digest ring computes isn't 32 bytes long.
             .unwrap()
     }
 
-    /// Incorporate the provided nonce into this checksum.
-    pub fn update(&mut self, nonce: &Nonce) {
-        self.combine(&Self::for_nonce(nonce))
+    /// Incorporate the provided report ID into this checksum.
+    pub fn update(&mut self, report_id: &ReportId) {
+        self.combine(&Self::for_report_id(report_id))
     }
 
     /// Combine another checksum with this one.
-    pub fn combine(&mut self, other: &NonceChecksum) {
+    pub fn combine(&mut self, other: &ReportIdChecksum) {
         self.0.iter_mut().zip(other.0).for_each(|(x, y)| *x ^= y)
     }
 }
 
-impl Display for NonceChecksum {
+impl Display for ReportIdChecksum {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.0))
     }
 }
 
-impl Encode for NonceChecksum {
+impl Encode for ReportIdChecksum {
     fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&self.0)
     }
 }
 
-impl Decode for NonceChecksum {
+impl Decode for ReportIdChecksum {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let mut checksum = Self::default();
         bytes.read_exact(&mut checksum.0)?;
@@ -1028,24 +1028,24 @@ impl Decode for HpkeConfig {
 /// DAP protocol message representing client report metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportMetadata {
-    nonce: Nonce,
+    report_id: ReportId,
     time: Time,
     extensions: Vec<Extension>,
 }
 
 impl ReportMetadata {
     /// Construct a report's metadata from its components.
-    pub fn new(nonce: Nonce, time: Time, extensions: Vec<Extension>) -> Self {
+    pub fn new(report_id: ReportId, time: Time, extensions: Vec<Extension>) -> Self {
         Self {
-            nonce,
+            report_id,
             time,
             extensions,
         }
     }
 
-    /// Retrieve the nonce from this report metadata.
-    pub fn nonce(&self) -> &Nonce {
-        &self.nonce
+    /// Retrieve the report ID from this report metadata.
+    pub fn report_id(&self) -> &ReportId {
+        &self.report_id
     }
 
     /// Retrieve the client timestamp from this report metadata.
@@ -1061,7 +1061,7 @@ impl ReportMetadata {
 
 impl Encode for ReportMetadata {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.nonce.encode(bytes);
+        self.report_id.encode(bytes);
         self.time.encode(bytes);
         encode_u16_items(bytes, &(), &self.extensions);
     }
@@ -1069,12 +1069,12 @@ impl Encode for ReportMetadata {
 
 impl Decode for ReportMetadata {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let nonce = Nonce::decode(bytes)?;
+        let report_id = ReportId::decode(bytes)?;
         let time = Time::decode(bytes)?;
         let extensions = decode_u16_items(&(), bytes)?;
 
         Ok(Self {
-            nonce,
+            report_id,
             time,
             extensions,
         })
@@ -1540,7 +1540,7 @@ mod tests {
         test_util::roundtrip_encoding,
         BatchId, CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeAeadId,
         HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
-        Nonce, Query, Report, ReportMetadata, Role, TaskId, Time,
+        Query, Report, ReportId, ReportMetadata, Role, TaskId, Time,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
@@ -1643,14 +1643,14 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_nonce() {
+    fn roundtrip_report_id() {
         roundtrip_encoding(&[
             (
-                Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 "0102030405060708090a0b0c0d0e0f10",
             ),
             (
-                Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                 "100f0e0d0c0b0a090807060504030201",
             ),
         ])
@@ -1864,12 +1864,12 @@ mod tests {
         roundtrip_encoding(&[
             (
                 ReportMetadata::new(
-                    Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                    ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     Time::from_seconds_since_epoch(12345),
                     Vec::new(),
                 ),
                 concat!(
-                    "0102030405060708090A0B0C0D0E0F10", // nonce
+                    "0102030405060708090A0B0C0D0E0F10", // report_id
                     "0000000000003039",                 // time
                     concat!(
                         // extensions
@@ -1879,12 +1879,12 @@ mod tests {
             ),
             (
                 ReportMetadata::new(
-                    Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                    ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Time::from_seconds_since_epoch(54321),
                     Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                 ),
                 concat!(
-                    "100F0E0D0C0B0A090807060504030201", // nonce
+                    "100F0E0D0C0B0A090807060504030201", // report_id
                     "000000000000D431",                 // time
                     concat!(
                         // extensions
@@ -1910,7 +1910,7 @@ mod tests {
                 Report::new(
                     TaskId::from([u8::MIN; TaskId::LEN]),
                     ReportMetadata::new(
-                        Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                        ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                         Time::from_seconds_since_epoch(12345),
                         Vec::new(),
                     ),
@@ -1921,7 +1921,7 @@ mod tests {
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
                         // metadata
-                        "0102030405060708090A0B0C0D0E0F10", // nonce
+                        "0102030405060708090A0B0C0D0E0F10", // report_id
                         "0000000000003039",                 // time
                         concat!(
                             // extensions
@@ -1942,7 +1942,7 @@ mod tests {
                 Report::new(
                     TaskId::from([u8::MAX; TaskId::LEN]),
                     ReportMetadata::new(
-                        Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                        ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                         Time::from_seconds_since_epoch(54321),
                         Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                     ),
@@ -1964,7 +1964,7 @@ mod tests {
                     "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
                     concat!(
                         // metadata
-                        "100f0e0d0c0b0a090807060504030201", // nonce
+                        "100f0e0d0c0b0a090807060504030201", // report_id
                         "000000000000D431",                 // time
                         concat!(
                             // extensions

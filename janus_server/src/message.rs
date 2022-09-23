@@ -7,7 +7,7 @@ use janus_core::{
     hpke::{associated_data_for_aggregate_share, associated_data_for_report_share},
     message::{
         query_type::{self, FixedSize, QueryType, TimeInterval},
-        BatchId, HpkeCiphertext, Interval, Nonce, NonceChecksum, ReportMetadata, TaskId,
+        BatchId, HpkeCiphertext, Interval, ReportId, ReportIdChecksum, ReportMetadata, TaskId,
     },
 };
 use num_enum::TryFromPrimitive;
@@ -88,19 +88,19 @@ impl Decode for ReportShare {
 /// DAP protocol message representing the result of a preparation step in a VDAF evaluation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrepareStep {
-    nonce: Nonce,
+    report_id: ReportId,
     result: PrepareStepResult,
 }
 
 impl PrepareStep {
     /// Constructs a new prepare step from its components.
-    pub fn new(nonce: Nonce, result: PrepareStepResult) -> Self {
-        Self { nonce, result }
+    pub fn new(report_id: ReportId, result: PrepareStepResult) -> Self {
+        Self { report_id, result }
     }
 
-    /// Gets the nonce associated with this prepare step.
-    pub fn nonce(&self) -> &Nonce {
-        &self.nonce
+    /// Gets the report ID associated with this prepare step.
+    pub fn report_id(&self) -> &ReportId {
+        &self.report_id
     }
 
     /// Gets the result associated with this prepare step.
@@ -111,17 +111,17 @@ impl PrepareStep {
 
 impl Encode for PrepareStep {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.nonce.encode(bytes);
+        self.report_id.encode(bytes);
         self.result.encode(bytes);
     }
 }
 
 impl Decode for PrepareStep {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let nonce = Nonce::decode(bytes)?;
+        let report_id = ReportId::decode(bytes)?;
         let result = PrepareStepResult::decode(bytes)?;
 
-        Ok(Self { nonce, result })
+        Ok(Self { report_id, result })
     }
 }
 
@@ -582,7 +582,7 @@ pub struct AggregateShareReq<Q: QueryType> {
     #[derivative(Debug = "ignore")]
     aggregation_parameter: Vec<u8>,
     report_count: u64,
-    checksum: NonceChecksum,
+    checksum: ReportIdChecksum,
 }
 
 impl<Q: QueryType> AggregateShareReq<Q> {
@@ -595,7 +595,7 @@ impl<Q: QueryType> AggregateShareReq<Q> {
         batch_selector: BatchSelector<Q>,
         aggregation_parameter: Vec<u8>,
         report_count: u64,
-        checksum: NonceChecksum,
+        checksum: ReportIdChecksum,
     ) -> Self {
         Self {
             task_id,
@@ -627,7 +627,7 @@ impl<Q: QueryType> AggregateShareReq<Q> {
     }
 
     /// Gets the checksum associated with this aggregate share request.
-    pub fn checksum(&self) -> &NonceChecksum {
+    pub fn checksum(&self) -> &ReportIdChecksum {
         &self.checksum
     }
 
@@ -655,7 +655,7 @@ impl<Q: QueryType> Decode for AggregateShareReq<Q> {
         let batch_selector = BatchSelector::decode(bytes)?;
         let aggregation_parameter = decode_u16_items(&(), bytes)?;
         let report_count = u64::decode(bytes)?;
-        let checksum = NonceChecksum::decode(bytes)?;
+        let checksum = ReportIdChecksum::decode(bytes)?;
 
         Ok(Self {
             task_id,
@@ -719,11 +719,13 @@ mod tests {
         roundtrip_encoding(&[
             (
                 PrepareStep {
-                    nonce: Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                    report_id: ReportId::from([
+                        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                    ]),
                     result: PrepareStepResult::Continued(Vec::from("012345")),
                 },
                 concat!(
-                    "0102030405060708090a0b0c0d0e0f10", // nonce
+                    "0102030405060708090A0B0C0D0E0F10", // report_id
                     "00",                               // prepare_step_result
                     concat!(
                         // vdaf_msg
@@ -734,21 +736,23 @@ mod tests {
             ),
             (
                 PrepareStep {
-                    nonce: Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                    report_id: ReportId::from([
+                        16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                    ]),
                     result: PrepareStepResult::Finished,
                 },
                 concat!(
-                    "100f0e0d0c0b0a090807060504030201", // nonce
-                    "01",                               // prepare_step_result
+                    "100F0E0DC0B0A090807060504030201", // report_id
+                    "01",                              // prepare_step_result
                 ),
             ),
             (
                 PrepareStep {
-                    nonce: Nonce::from([255; 16]),
+                    report_id: ReportId::from([255; 16]),
                     result: PrepareStepResult::Failed(ReportShareError::VdafPrepError),
                 },
                 concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // nonce
+                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // report_id
                     "02",                               // prepare_step_result
                     "05",                               // report_share_error
                 ),
@@ -801,7 +805,7 @@ mod tests {
                 report_shares: vec![
                     ReportShare {
                         metadata: ReportMetadata::new(
-                            Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                            ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                             Time::from_seconds_since_epoch(54321),
                             vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                         ),
@@ -814,7 +818,7 @@ mod tests {
                     },
                     ReportShare {
                         metadata: ReportMetadata::new(
-                            Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                            ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542),
                             vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
                         ),
@@ -842,7 +846,7 @@ mod tests {
                     concat!(
                         concat!(
                             // metadata
-                            "0102030405060708090A0B0C0D0E0F10", // nonce
+                            "0102030405060708090A0B0C0D0E0F10", // report_id
                             "000000000000D431",                 // time
                             concat!(
                                 // extensions
@@ -880,7 +884,7 @@ mod tests {
                     concat!(
                         concat!(
                             // metadata
-                            "100F0E0D0C0B0A090807060504030201", // nonce
+                            "100F0E0D0C0B0A090807060504030201", // report_id
                             "0000000000011F46",                 // time
                             concat!(
                                 // extensions
@@ -928,7 +932,7 @@ mod tests {
                 report_shares: vec![
                     ReportShare {
                         metadata: ReportMetadata::new(
-                            Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                            ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                             Time::from_seconds_since_epoch(54321),
                             vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
                         ),
@@ -941,7 +945,7 @@ mod tests {
                     },
                     ReportShare {
                         metadata: ReportMetadata::new(
-                            Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                            ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542),
                             vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
                         ),
@@ -970,7 +974,7 @@ mod tests {
                     concat!(
                         concat!(
                             // metadata
-                            "0102030405060708090A0B0C0D0E0F10", // nonce
+                            "0102030405060708090A0B0C0D0E0F10", // report_id
                             "000000000000D431",                 // time
                             concat!(
                                 // extensions
@@ -1008,7 +1012,7 @@ mod tests {
                     concat!(
                         concat!(
                             // metadata
-                            "100F0E0D0C0B0A090807060504030201", // nonce
+                            "100F0E0D0C0B0A090807060504030201", // report_id
                             "0000000000011F46",                 // time
                             concat!(
                                 // extensions
@@ -1063,13 +1067,13 @@ mod tests {
                 AggregateInitializeResp {
                     prepare_steps: vec![
                         PrepareStep {
-                            nonce: Nonce::from([
+                            report_id: ReportId::from([
                                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                             ]),
                             result: PrepareStepResult::Continued(Vec::from("012345")),
                         },
                         PrepareStep {
-                            nonce: Nonce::from([
+                            report_id: ReportId::from([
                                 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
                             ]),
                             result: PrepareStepResult::Finished,
@@ -1080,7 +1084,7 @@ mod tests {
                     // prepare_steps
                     "002A", // length
                     concat!(
-                        "0102030405060708090a0b0c0d0e0f10", // nonce
+                        "0102030405060708090A0B0C0D0E0F10", // report_id
                         "00",                               // prepare_step_result
                         concat!(
                             // payload
@@ -1089,7 +1093,7 @@ mod tests {
                         ),
                     ),
                     concat!(
-                        "100f0e0d0c0b0a090807060504030201", // nonce
+                        "100F0E0D0C0B0A090807060504030201", // report_id
                         "01",                               // prepare_step_result
                     ),
                 )),
@@ -1105,11 +1109,15 @@ mod tests {
                 job_id: AggregationJobId([u8::MAX; 32]),
                 prepare_steps: vec![
                     PrepareStep {
-                        nonce: Nonce::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                        report_id: ReportId::from([
+                            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+                        ]),
                         result: PrepareStepResult::Continued(Vec::from("012345")),
                     },
                     PrepareStep {
-                        nonce: Nonce::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
+                        report_id: ReportId::from([
+                            16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+                        ]),
                         result: PrepareStepResult::Finished,
                     },
                 ],
@@ -1121,7 +1129,7 @@ mod tests {
                     // prepare_steps
                     "002A", // length
                     concat!(
-                        "0102030405060708090a0b0c0d0e0f10", // nonce
+                        "0102030405060708090A0B0C0D0E0F10", // report_id
                         "00",                               // prepare_step_result
                         concat!(
                             // payload
@@ -1130,7 +1138,7 @@ mod tests {
                         ),
                     ),
                     concat!(
-                        "100f0e0d0c0b0a090807060504030201", // nonce
+                        "100F0E0D0C0B0A090807060504030201", // report_id
                         "01",                               // prepare_step_result
                     )
                 ),
@@ -1154,13 +1162,13 @@ mod tests {
                 AggregateContinueResp {
                     prepare_steps: vec![
                         PrepareStep {
-                            nonce: Nonce::from([
+                            report_id: ReportId::from([
                                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                             ]),
                             result: PrepareStepResult::Continued(Vec::from("012345")),
                         },
                         PrepareStep {
-                            nonce: Nonce::from([
+                            report_id: ReportId::from([
                                 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
                             ]),
                             result: PrepareStepResult::Finished,
@@ -1171,7 +1179,7 @@ mod tests {
                     // prepare_steps
                     "002A", // length
                     concat!(
-                        "0102030405060708090a0b0c0d0e0f10", // nonce
+                        "0102030405060708090A0B0C0D0E0F10", // report_id
                         "00",                               // prepare_step_result
                         concat!(
                             // payload
@@ -1180,7 +1188,7 @@ mod tests {
                         ),
                     ),
                     concat!(
-                        "100f0e0d0c0b0a090807060504030201", // nonce
+                        "100F0E0D0C0B0A090807060504030201", // report_id
                         "01",                               // prepare_step_result
                     ),
                 )),
@@ -1268,7 +1276,7 @@ mod tests {
                     },
                     aggregation_parameter: Vec::new(),
                     report_count: 439,
-                    checksum: NonceChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
+                    checksum: ReportIdChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
                 },
                 concat!(
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
@@ -1302,7 +1310,7 @@ mod tests {
                     },
                     aggregation_parameter: Vec::from("012345"),
                     report_count: 8725,
-                    checksum: NonceChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
+                    checksum: ReportIdChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
                 },
                 concat!(
                     "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
@@ -1336,7 +1344,7 @@ mod tests {
                     },
                     aggregation_parameter: Vec::new(),
                     report_count: 439,
-                    checksum: NonceChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
+                    checksum: ReportIdChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
                 },
                 concat!(
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id
@@ -1362,7 +1370,7 @@ mod tests {
                     },
                     aggregation_parameter: Vec::from("012345"),
                     report_count: 8725,
-                    checksum: NonceChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
+                    checksum: ReportIdChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
                 },
                 concat!(
                     "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id

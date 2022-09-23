@@ -84,8 +84,7 @@ impl Label {
 pub struct HpkeApplicationInfo(Vec<u8>);
 
 impl HpkeApplicationInfo {
-    /// Construct HPKE application info from the provided PPM task ID, label and
-    /// participant roles.
+    /// Construct HPKE application info from the provided label and participant roles.
     pub fn new(label: Label, sender_role: Role, recipient_role: Role) -> Self {
         Self(
             [
@@ -135,15 +134,15 @@ impl FromStr for HpkePrivateKey {
 /// Encrypt `plaintext` using the provided `recipient_config` and return the HPKE ciphertext. The
 /// provided `application_info` and `associated_data` are cryptographically bound to the ciphertext
 /// and are required to successfully decrypt it.
-// In PPM, an HPKE context can only be used once (we have no means of
-// ensuring that sender and recipient "increment" nonces in lockstep), so
-// this method creates a new HPKE context on each call.
 pub fn seal(
     recipient_config: &HpkeConfig,
     application_info: &HpkeApplicationInfo,
     plaintext: &[u8],
     associated_data: &[u8],
 ) -> Result<HpkeCiphertext, Error> {
+    // In DAP, an HPKE context can only be used once (we have no means of ensuring that sender and
+    // recipient "increment" nonces in lockstep), so this method creates a new HPKE context on each
+    // call.
     let output = hpke_dispatch::Config::try_from(recipient_config)?.base_mode_seal(
         recipient_config.public_key().as_ref(),
         &application_info.0,
@@ -440,7 +439,7 @@ mod tests {
 
             for encryption in test_vector.encryptions {
                 if encryption.nonce != test_vector.base_nonce {
-                    // PPM only performs single-shot encryption with each context, ignore any
+                    // DAP only performs single-shot encryption with each context, ignore any
                     // other encryptions in the test vectors.
                     continue;
                 }
