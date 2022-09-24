@@ -36,7 +36,7 @@ fn main() {
                 // any other image metadata (such as exposed ports, the entrypoint, etc), so we can't easily
                 // use it.
                 let client_image_id = {
-                    let client_build_output = Command::new("docker")
+                    let client_build_output = Command::new("docker") 
                         .args([
                             "build",
                             "--quiet",
