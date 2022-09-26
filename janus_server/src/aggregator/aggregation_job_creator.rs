@@ -11,8 +11,8 @@ use itertools::Itertools;
 use janus_core::time::{Clock, TimeExt};
 use janus_messages::{ReportId, Role, TaskId, Time};
 use opentelemetry::{
-    metrics::{Unit, ValueRecorder},
-    KeyValue,
+    metrics::{Histogram, Unit},
+    Context, KeyValue,
 };
 use prio::vdaf;
 use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum};
@@ -88,15 +88,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     pub async fn run(self: Arc<Self>) -> ! {
         // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
-        // Create metric recorders.
+        // Create metric instruments.
         let meter = opentelemetry::global::meter("aggregation_job_creator");
-        let task_update_time_recorder = meter
-            .f64_value_recorder("janus_task_update_time")
+        let task_update_time_histogram = meter
+            .f64_histogram("janus_task_update_time")
             .with_description("Time spent updating tasks.")
             .with_unit(Unit::new("seconds"))
             .init();
-        let job_creation_time_recorder = meter
-            .f64_value_recorder("janus_job_creation_time")
+        let job_creation_time_histogram = meter
+            .f64_histogram("janus_job_creation_time")
             .with_description("Time spent creating aggregation jobs.")
             .with_unit(Unit::new("seconds"))
             .init();
@@ -130,7 +130,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                 Err(error) => {
                     error!(%error, "Couldn't update tasks");
-                    task_update_time_recorder.record(
+                    task_update_time_histogram.record(
+                        &Context::current(),
                         start.elapsed().as_secs_f64(),
                         &[KeyValue::new("status", "error")],
                     );
@@ -159,7 +160,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 job_creation_task_shutdown_handles.insert(task_id, tx);
                 tokio::task::spawn({
                     let (this, job_creation_time_recorder) =
-                        (Arc::clone(&self), job_creation_time_recorder.clone());
+                        (Arc::clone(&self), job_creation_time_histogram.clone());
                     async move {
                         this.run_for_task(rx, job_creation_time_recorder, task)
                             .await
@@ -167,7 +168,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 });
             }
 
-            task_update_time_recorder.record(
+            task_update_time_histogram.record(
+                &Context::current(),
                 start.elapsed().as_secs_f64(),
                 &[KeyValue::new("status", "success")],
             );
@@ -178,7 +180,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     async fn run_for_task(
         &self,
         mut shutdown: Receiver<()>,
-        job_creation_time_recorder: ValueRecorder<f64>,
+        job_creation_time_recorder: Histogram<f64>,
         task: Task,
     ) {
         debug!(task_id = ?task.id, "Job creation worker started");
@@ -198,7 +200,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         error!(task_id = ?task.id, %error, "Couldn't create aggregation jobs for task");
                         status = "error";
                     }
-                    job_creation_time_recorder.record(start.elapsed().as_secs_f64(), &[KeyValue::new("status", status)]);
+                    job_creation_time_recorder.record(&Context::current(), start.elapsed().as_secs_f64(), &[KeyValue::new("status", status)]);
                 }
 
                 _ = &mut shutdown => {
