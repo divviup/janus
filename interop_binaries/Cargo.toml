@@ -34,7 +34,7 @@ janus_core = { path = "../janus_core" }
 janus_messages = { path = "../janus_messages" }
 janus_server = { path = "../janus_server" }
 opentelemetry = { version = "0.18", features = ["metrics"] }
-prio = { version = "0.8.2", features = ["multithreaded"] }
+prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
 regex = { version = "1", optional = true }
 reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls"] }

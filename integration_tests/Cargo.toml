@@ -44,7 +44,7 @@ http = "0.2"
 itertools = "0.10"
 janus_client = { path = "../janus_client" }
 janus_collector = { path = "../janus_collector", features = ["test-util"] }
-prio = { version = "0.8.2", features = ["multithreaded"] }
+prio = { version = "0.10.0", features = ["multithreaded"] }
 tempfile = "3"
 
 [build-dependencies]
