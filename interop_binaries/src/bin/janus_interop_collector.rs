@@ -8,11 +8,8 @@ use interop_binaries::{
     HpkeConfigRegistry, NumberAsString, VdafObject,
 };
 use janus_collector::{Collector, CollectorParameters};
-use janus_core::{
-    hpke::HpkePrivateKey,
-    message::{Duration, HpkeConfig, Interval, TaskId, Time},
-    task::AuthenticationToken,
-};
+use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
+use janus_messages::{Duration, HpkeConfig, Interval, TaskId, Time};
 use janus_server::task::VdafInstance;
 use prio::{
     codec::{Decode, Encode},

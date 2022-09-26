@@ -6,6 +6,7 @@ members = [
     "janus_collector",
     "janus_core",
     "janus_client",
+    "janus_messages",
     "janus_server"
 ]
 resolver = "2"

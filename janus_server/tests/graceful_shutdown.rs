@@ -3,9 +3,8 @@
 //! process. The process should promptly shut down, and this test will fail if
 //! it times out waiting for the process to do so.
 
-use janus_core::{
-    message::Role, task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock,
-};
+use janus_core::{task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock};
+use janus_messages::Role;
 use janus_server::{datastore::test_util::ephemeral_datastore, task::Task};
 use rand::random;
 use reqwest::Url;

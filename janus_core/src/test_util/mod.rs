@@ -1,5 +1,5 @@
-use crate::message::ReportId;
 use assert_matches::assert_matches;
+use janus_messages::ReportId;
 use prio::{
     codec::Encode,
     vdaf::{self, PrepareTransition, VdafError},

@@ -4,12 +4,13 @@ use janus_client::{Client, ClientParameters};
 use janus_collector::{test_util::collect_with_rewritten_url, Collector, CollectorParameters};
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
-    message::{Duration, HpkeConfig, Interval, Role},
     retries::test_http_request_exponential_backoff,
     task::{AuthenticationToken, VdafInstance},
-    time::{Clock, RealClock},
+    time::{Clock, RealClock, TimeExt},
 };
+use janus_messages::{Duration, HpkeConfig, Interval, Role};
 use janus_server::{
+    messages::DurationExt,
     task::{test_util::generate_auth_token, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     SecretBytes,
 };
@@ -17,7 +18,7 @@ use prio::vdaf::prio3::Prio3;
 use rand::random;
 use reqwest::Url;
 use std::iter;
-use tokio::time::{self};
+use tokio::time;
 
 // Returns (leader_task, helper_task).
 pub fn create_test_tasks(collector_hpke_config: &HpkeConfig) -> (Task, Task) {

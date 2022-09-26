@@ -8,10 +8,8 @@ use crate::{
 use anyhow::Result;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use janus_core::{
-    message::{ReportId, Role, TaskId, Time},
-    time::Clock,
-};
+use janus_core::time::{Clock, TimeExt};
+use janus_messages::{ReportId, Role, TaskId, Time};
 use opentelemetry::{
     metrics::{Histogram, Unit},
     Context, KeyValue,
@@ -455,19 +453,20 @@ mod tests {
     use super::AggregationJobCreator;
     use crate::{
         datastore::{test_util::ephemeral_datastore, Transaction},
-        message::AggregationJobId,
+        messages::test_util::new_dummy_report,
+        messages::TimeExt,
         task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use futures::{future::try_join_all, TryFutureExt};
     use janus_core::{
-        message::{Interval, Report, ReportId, Role, TaskId, Time},
         task::VdafInstance,
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
         },
-        time::{Clock, MockClock},
+        time::{Clock, MockClock, TimeExt as CoreTimeExt},
     };
+    use janus_messages::{AggregationJobId, Interval, Report, ReportId, Role, TaskId, Time};
     use prio::{
         codec::ParameterizedDecode,
         vdaf::{
@@ -509,7 +508,7 @@ mod tests {
             VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         );
-        let leader_report = Report::new_dummy(leader_task_id, report_time);
+        let leader_report = new_dummy_report(leader_task_id, report_time);
 
         let helper_task_id = random();
         let helper_task = Task::new_dummy(
@@ -517,7 +516,7 @@ mod tests {
             VdafInstance::Prio3Aes128Count.into(),
             Role::Helper,
         );
-        let helper_report = Report::new_dummy(helper_task_id, report_time);
+        let helper_report = new_dummy_report(helper_task_id, report_time);
 
         ds.run_tx(|tx| {
             let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
@@ -613,7 +612,7 @@ mod tests {
         // aggregation job to be created containing these reports.
         let report_time = clock.now();
         let cur_batch_unit_reports: Vec<Report> =
-            iter::repeat_with(|| Report::new_dummy(task_id, report_time))
+            iter::repeat_with(|| new_dummy_report(task_id, report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE)
                 .collect();
 
@@ -622,7 +621,7 @@ mod tests {
         // expect an aggregation job to be created for these reports.
         let report_time = report_time.sub(task.min_batch_duration).unwrap();
         let small_batch_unit_reports: Vec<Report> =
-            iter::repeat_with(|| Report::new_dummy(task_id, report_time))
+            iter::repeat_with(|| new_dummy_report(task_id, report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE - 1)
                 .collect();
 
@@ -630,7 +629,7 @@ mod tests {
         // reports. We expect these reports will be split into more than one aggregation job.
         let report_time = report_time.sub(task.min_batch_duration).unwrap();
         let big_batch_unit_reports: Vec<Report> =
-            iter::repeat_with(|| Report::new_dummy(task_id, report_time))
+            iter::repeat_with(|| new_dummy_report(task_id, report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
@@ -728,8 +727,8 @@ mod tests {
 
         let task_id = random();
         let task = Task::new_dummy(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
-        let first_report = Report::new_dummy(task_id, clock.now());
-        let second_report = Report::new_dummy(task_id, clock.now());
+        let first_report = new_dummy_report(task_id, clock.now());
+        let second_report = new_dummy_report(task_id, clock.now());
 
         ds.run_tx(|tx| {
             let (task, first_report) = (task.clone(), first_report.clone());
@@ -840,7 +839,7 @@ mod tests {
         // one such collect job)
         let report_time = clock.now().sub(task.min_batch_duration).unwrap();
         let batch_1_reports: Vec<Report> =
-            iter::repeat_with(|| Report::new_dummy(task_id, report_time))
+            iter::repeat_with(|| new_dummy_report(task_id, report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE)
                 .collect();
 
@@ -848,7 +847,7 @@ mod tests {
         // in two aggregation jobs per overlapping collect job. (and there are two such collect jobs)
         let report_time = report_time.sub(task.min_batch_duration).unwrap();
         let batch_2_reports: Vec<Report> =
-            iter::repeat_with(|| Report::new_dummy(task_id, report_time))
+            iter::repeat_with(|| new_dummy_report(task_id, report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
@@ -922,7 +921,7 @@ mod tests {
                         task_id,
                         Interval::new(
                             report_time,
-                            janus_core::message::Duration::from_seconds(
+                            janus_messages::Duration::from_seconds(
                                 task.min_batch_duration.as_seconds() * 2,
                             ),
                         )

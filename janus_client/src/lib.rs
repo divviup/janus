@@ -6,11 +6,11 @@ use http::{header::CONTENT_TYPE, StatusCode};
 use janus_core::{
     hpke::associated_data_for_report_share,
     hpke::{self, HpkeApplicationInfo, Label},
-    message::{Duration, HpkeCiphertext, HpkeConfig, Report, ReportMetadata, Role, TaskId},
     retries::{http_request_exponential_backoff, retry_http_request},
     task::url_ensure_trailing_slash,
-    time::Clock,
+    time::{Clock, TimeExt},
 };
+use janus_messages::{Duration, HpkeCiphertext, HpkeConfig, Report, ReportMetadata, Role, TaskId};
 use prio::{
     codec::{Decode, Encode},
     vdaf,
@@ -250,7 +250,7 @@ where
         ))
     }
 
-    /// Upload a [`janus_core::message::Report`] to the leader, per §4.3.2 of draft-gpew-priv-ppm.
+    /// Upload a [`Report`] to the leader, per §4.3.2 of draft-gpew-priv-ppm.
     /// The provided measurement is sharded into one input share plus one proof share for each
     /// aggregator and then uploaded to the leader.
     #[tracing::instrument(skip(measurement), err)]
@@ -285,10 +285,11 @@ mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use janus_core::{
-        hpke::test_util::generate_test_hpke_config_and_private_key, message::Time,
+        hpke::test_util::generate_test_hpke_config_and_private_key,
         retries::test_http_request_exponential_backoff, test_util::install_test_trace_subscriber,
         time::MockClock,
     };
+    use janus_messages::Time;
     use mockito::mock;
     use prio::vdaf::prio3::Prio3;
     use url::Url;

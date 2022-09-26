@@ -1,6 +1,6 @@
 ARG PROFILE=release
 
-FROM rust:1.63-alpine as builder
+FROM rust:1.64.0-alpine as builder
 ARG PROFILE
 RUN apk add libc-dev protobuf-dev protoc
 WORKDIR /src
@@ -13,6 +13,7 @@ COPY interop_binaries /src/interop_binaries
 COPY janus_collector /src/janus_collector
 COPY janus_core /src/janus_core
 COPY janus_client /src/janus_client
+COPY janus_messages /src/janus_messages
 COPY janus_server /src/janus_server
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --profile $PROFILE -p interop_binaries --bin janus_interop_aggregator && cp /src/target/$PROFILE/janus_interop_aggregator /janus_interop_aggregator
 

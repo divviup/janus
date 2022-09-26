@@ -4,10 +4,10 @@ use interop_binaries::{
     test_util::await_http_server, testcontainer::Aggregator, AggregatorAddTaskRequest,
 };
 use janus_core::{
-    message::Role,
     test_util::kubernetes::{Cluster, PortForward},
     time::RealClock,
 };
+use janus_messages::Role;
 use janus_server::{
     binary_utils::{database_pool, datastore},
     config::DbConfig,
