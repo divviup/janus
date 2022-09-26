@@ -61,7 +61,15 @@ impl<C: Clock> Datastore<C> {
             .with_description("Count of database transactions run, with their status.")
             .init();
 
-        transaction_status_counter.add(&Context::current(), 0, &[]);
+        // Initialize counters with desired status labels. This causes Prometheus to see the first
+        // non-zero value we record.
+        for status in ["success", "error_conflict", "error_db", "error_other"] {
+            transaction_status_counter.add(
+                &Context::current(),
+                0,
+                &[KeyValue::new("status", status)],
+            );
+        }
 
         Self {
             pool,

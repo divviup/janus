@@ -213,6 +213,41 @@ impl From<datastore::Error> for Error {
     }
 }
 
+pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
+    let aggregate_step_failure_counter = meter
+        .u64_counter("janus_step_failures")
+        .with_description(concat!(
+            "Failures while stepping aggregation jobs; these failures are ",
+            "related to individual client reports rather than entire aggregation jobs."
+        ))
+        .init();
+
+    // Initialize counters with desired status labels. This causes Prometheus to see the first
+    // non-zero value we record.
+    for failure_type in [
+        "missing_leader_input_share",
+        "missing_helper_input_share",
+        "prepare_init_failure",
+        "prepare_step_failure",
+        "prepare_message_failure",
+        "unknown_hpke_config_id",
+        "decrypt_failure",
+        "input_share_decode_failure",
+        "continue_mismatch",
+        "accumulate_failure",
+        "finish_mismatch",
+        "helper_step_failure",
+    ] {
+        aggregate_step_failure_counter.add(
+            &Context::current(),
+            0,
+            &[KeyValue::new("type", failure_type)],
+        );
+    }
+
+    aggregate_step_failure_counter
+}
+
 /// Aggregator implements a DAP aggregator.
 pub struct Aggregator<C: Clock> {
     /// Datastore used for durable storage.
@@ -236,16 +271,9 @@ impl<C: Clock> Aggregator<C> {
             .u64_counter("janus_upload_decrypt_failures")
             .with_description("Number of decryption failures in the /upload endpoint.")
             .init();
-        let aggregate_step_failure_counter = meter
-            .u64_counter("janus_step_failures")
-            .with_description(concat!(
-                "Failures while stepping aggregation jobs; these failures are ",
-                "related to individual client reports rather than entire aggregation jobs."
-            ))
-            .init();
-
         upload_decrypt_failure_counter.add(&Context::current(), 0, &[]);
-        aggregate_step_failure_counter.add(&Context::current(), 0, &[]);
+
+        let aggregate_step_failure_counter = aggregate_step_failure_counter(&meter);
 
         Self {
             datastore,

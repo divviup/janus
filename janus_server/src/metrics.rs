@@ -1,42 +1,43 @@
 //! Collection and exporting of application-level metrics for Janus.
 
-use opentelemetry::{
-    runtime::Tokio,
-    sdk::{
-        export::metrics::{aggregation::stateless_temporality_selector, AggregatorSelector},
-        metrics::{
-            aggregators::Aggregator,
-            controllers::{self, BasicController},
-            processors,
-            sdk_api::{Descriptor, InstrumentKind},
-        },
-        Resource,
+use opentelemetry::sdk::{
+    export::metrics::AggregatorSelector,
+    metrics::{
+        aggregators::Aggregator,
+        sdk_api::{Descriptor, InstrumentKind},
     },
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    net::{AddrParseError, IpAddr, Ipv4Addr},
-    str::FromStr,
-    sync::Arc,
-};
+use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 
 #[cfg(feature = "prometheus")]
 use {
     http::StatusCode,
     hyper::Response,
+    opentelemetry::sdk::metrics::{controllers, processors},
     prometheus::{Encoder, TextEncoder},
     std::net::SocketAddr,
+    std::net::{IpAddr, Ipv4Addr},
     tokio::task::JoinHandle,
     warp::{Filter, Reply},
 };
 
 #[cfg(feature = "otlp")]
 use {
-    opentelemetry::KeyValue,
+    opentelemetry::{
+        runtime::Tokio,
+        sdk::{metrics::controllers::BasicController, Resource},
+        KeyValue,
+    },
     opentelemetry_otlp::WithExportConfig,
     opentelemetry_semantic_conventions::resource::SERVICE_NAME,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
+};
+
+#[cfg(any(feature = "otlp", feature = "prometheus"))]
+use {
+    opentelemetry::sdk::export::metrics::aggregation::stateless_temporality_selector,
+    std::str::FromStr,
 };
 
 /// Errors from initializing metrics provider, registry, and exporter.
@@ -140,7 +141,7 @@ pub fn install_metrics_exporter(
 
             let host = config_exporter_host
                 .as_ref()
-                .map(|host| IpAddr::from_str(&host))
+                .map(|host| IpAddr::from_str(host))
                 .unwrap_or_else(|| Ok(Ipv4Addr::UNSPECIFIED.into()))?;
             let port = config_exporter_port.unwrap_or_else(|| 9464);
 

@@ -1,5 +1,5 @@
 use crate::{
-    aggregator::{self, accumulator::Accumulator},
+    aggregator::{self, accumulator::Accumulator, aggregate_step_failure_counter},
     datastore::{
         self,
         models::{
@@ -57,19 +57,12 @@ pub struct AggregationJobDriver {
 
 impl AggregationJobDriver {
     pub fn new(http_client: reqwest::Client, meter: &Meter) -> AggregationJobDriver {
-        let aggregate_step_failure_counter = meter
-            .u64_counter("janus_step_failures")
-            .with_description(concat!(
-                "Failures while stepping aggregation jobs; these failures are ",
-                "related to individual client reports rather than entire aggregation jobs."
-            ))
-            .init();
+        let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
+
         let job_cancel_counter = meter
             .u64_counter("janus_job_cancellations")
             .with_description("Count of cancelled jobs.")
             .init();
-
-        aggregate_step_failure_counter.add(&Context::current(), 0, &[]);
         job_cancel_counter.add(&Context::current(), 0, &[]);
 
         AggregationJobDriver {
