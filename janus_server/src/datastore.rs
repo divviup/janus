@@ -19,7 +19,7 @@ use janus_messages::{
     AggregateShareReq, AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval,
     Nonce, NonceChecksum, Report, ReportShare, Role, TaskId, Time,
 };
-use opentelemetry::{metrics::BoundCounter, KeyValue};
+use opentelemetry::{metrics::Counter, Context, KeyValue};
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -43,10 +43,7 @@ pub struct Datastore<C: Clock> {
     pool: deadpool_postgres::Pool,
     crypter: Crypter,
     clock: C,
-    transaction_success_counter: BoundCounter<u64>,
-    transaction_error_conflict_counter: BoundCounter<u64>,
-    transaction_error_db_counter: BoundCounter<u64>,
-    transaction_error_other_counter: BoundCounter<u64>,
+    transaction_status_counter: Counter<u64>,
 }
 
 impl<C: Clock> Datastore<C> {
@@ -59,27 +56,13 @@ impl<C: Clock> Datastore<C> {
             .with_description("Count of database transactions run, with their status.")
             .init();
 
-        let transaction_success_counter =
-            transaction_status_counter.bind(&[KeyValue::new("status", "success")]);
-        transaction_success_counter.add(0);
-        let transaction_error_conflict_counter =
-            transaction_status_counter.bind(&[KeyValue::new("status", "error_conflict")]);
-        transaction_error_conflict_counter.add(0);
-        let transaction_error_db_counter =
-            transaction_status_counter.bind(&[KeyValue::new("status", "error_db")]);
-        transaction_error_db_counter.add(0);
-        let transaction_error_other_counter =
-            transaction_status_counter.bind(&[KeyValue::new("status", "error_other")]);
-        transaction_error_other_counter.add(0);
+        transaction_status_counter.add(&Context::current(), 0, &[]);
 
         Self {
             pool,
             crypter,
             clock,
-            transaction_success_counter,
-            transaction_error_conflict_counter,
-            transaction_error_db_counter,
-            transaction_error_other_counter,
+            transaction_status_counter,
         }
     }
 
@@ -99,13 +82,29 @@ impl<C: Clock> Datastore<C> {
         loop {
             let rslt = self.run_tx_once(&f).await;
             match rslt.as_ref() {
-                Ok(_) => self.transaction_success_counter.add(1),
+                Ok(_) => self.transaction_status_counter.add(
+                    &Context::current(),
+                    1,
+                    &[KeyValue::new("status", "success")],
+                ),
                 Err(err) if err.is_serialization_failure() => {
-                    self.transaction_error_conflict_counter.add(1);
+                    self.transaction_status_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("status", "error_conflict")],
+                    );
                     continue;
                 }
-                Err(Error::Db(_)) | Err(Error::Pool(_)) => self.transaction_error_db_counter.add(1),
-                Err(_) => self.transaction_error_other_counter.add(1),
+                Err(Error::Db(_)) | Err(Error::Pool(_)) => self.transaction_status_counter.add(
+                    &Context::current(),
+                    1,
+                    &[KeyValue::new("status", "error_db")],
+                ),
+                Err(_) => self.transaction_status_counter.add(
+                    &Context::current(),
+                    1,
+                    &[KeyValue::new("status", "error_other")],
+                ),
             }
             return rslt;
         }

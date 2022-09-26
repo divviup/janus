@@ -48,6 +48,8 @@ jobs:
         toolchain: stable
         profile: minimal
         override: true
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v1
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
     - name: Build
@@ -93,6 +95,8 @@ jobs:
         profile: minimal
         override: true
         components: clippy, rustfmt
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v1
     - name: Format
       run: cargo fmt --message-format human -- --check
     - name: Clippy

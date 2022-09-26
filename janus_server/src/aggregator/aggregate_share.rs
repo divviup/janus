@@ -19,7 +19,10 @@ use janus_core::{nonce::NonceChecksumExt, task::DAP_AUTH_HEADER, time::Clock};
 use janus_messages::{
     AggregateShareReq, AggregateShareResp, Duration, Interval, NonceChecksum, Role,
 };
-use opentelemetry::metrics::{BoundCounter, Meter};
+use opentelemetry::{
+    metrics::{Counter, Meter},
+    Context,
+};
 use prio::{
     codec::{Decode, Encode},
     vdaf::{
@@ -40,7 +43,7 @@ use tracing::{debug, error, warn};
 pub struct CollectJobDriver {
     http_client: reqwest::Client,
     #[derivative(Debug = "ignore")]
-    job_cancel_counter: BoundCounter<u64>,
+    job_cancel_counter: Counter<u64>,
 }
 
 impl CollectJobDriver {
@@ -49,9 +52,8 @@ impl CollectJobDriver {
         let job_cancel_counter = meter
             .u64_counter("janus_job_cancellations")
             .with_description("Count of cancelled jobs.")
-            .init()
-            .bind(&[]);
-        job_cancel_counter.add(0);
+            .init();
+        job_cancel_counter.add(&Context::new(), 0, &[]);
 
         Self {
             http_client,
@@ -299,7 +301,7 @@ impl CollectJobDriver {
                         max_attempts = ?maximum_attempts_before_failure,
                         "Canceling job due to too many failed attempts"
                     );
-                    this.job_cancel_counter.add(1);
+                    this.job_cancel_counter.add(&Context::current(), 1, &[]);
                     return this.cancel_collect_job(datastore, collect_job_lease).await;
                 }
 
