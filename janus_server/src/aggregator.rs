@@ -96,28 +96,32 @@ pub enum Error {
     /// Error handling a message.
     #[error("invalid message: {0}")]
     Message(#[from] janus_messages::Error),
-    /// Corresponds to `reportTooLate`, §3.1
+    /// Corresponds to `reportTooLate`, §3.2
     #[error("task {0}: report {1} too late: {2}")]
     ReportTooLate(TaskId, ReportId, Time),
-    /// Corresponds to `reportTooEarly`, §3.1. A report was rejected becuase the timestamp is too far in the future, §4.3.4.
+    /// Corresponds to `reportTooEarly`, §3.2. A report was rejected becuase the timestamp is too
+    /// far in the future, §4.3.2.
     #[error("task {0}: report {1} too early: {2}")]
     ReportTooEarly(TaskId, ReportId, Time),
-    /// Corresponds to `unrecognizedMessage`, §3.1
+    /// Corresponds to `unrecognizedMessage`, §3.2
     #[error("task {0:?}: unrecognized message: {1}")]
     UnrecognizedMessage(Option<TaskId>, &'static str),
-    /// Corresponds to `unrecognizedTask`, §3.1
+    /// Corresponds to `unrecognizedTask`, §3.2
     #[error("task {0}: unrecognized task")]
     UnrecognizedTask(TaskId),
+    /// Corresponds to `missingTaskID`, §3.2
+    #[error("no task ID in request")]
+    MissingTaskId,
     /// An attempt was made to act on an unknown aggregation job.
     #[error("task {0}: unrecognized aggregation job: {1}")]
     UnrecognizedAggregationJob(TaskId, AggregationJobId),
     /// An attempt was made to act on an unknown collect job.
     #[error("unrecognized collect job: {0}")]
     UnrecognizedCollectJob(Uuid),
-    /// Corresponds to `outdatedHpkeConfig`, §3.1
+    /// Corresponds to `outdatedHpkeConfig`, §3.2
     #[error("task {0}: outdated HPKE config: {1}")]
     OutdatedHpkeConfig(TaskId, HpkeConfigId),
-    /// Corresponds to `unauthorizedRequest`, §3.1
+    /// Corresponds to `unauthorizedRequest`, §3.2
     #[error("task {0}: unauthorized request")]
     UnauthorizedRequest(TaskId),
     /// An error from the datastore.
@@ -126,7 +130,8 @@ pub enum Error {
     /// An error from the underlying VDAF library.
     #[error("VDAF error: {0}")]
     Vdaf(#[from] vdaf::VdafError),
-    /// A collect or aggregate share request was rejected because the interval is invalid, per §4.6
+    /// A collect or aggregate share request was rejected because the interval is invalid, per
+    /// §4.5.6
     #[error("task {0}: invalid batch interval: {1}")]
     BatchInvalid(TaskId, Interval),
     /// There are not enough reports in the batch interval to meet the task's minimum batch size.
@@ -179,6 +184,7 @@ impl Error {
             Error::ReportTooEarly(_, _, _) => "report_too_early",
             Error::UnrecognizedMessage(_, _) => "unrecognized_message",
             Error::UnrecognizedTask(_) => "unrecognized_task",
+            Error::MissingTaskId => "missing_task_id",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",
             Error::UnrecognizedCollectJob(_) => "unrecognized_collect_job",
             Error::OutdatedHpkeConfig(_, _) => "outdated_hpke_config",
@@ -286,7 +292,11 @@ impl<C: Clock> Aggregator<C> {
         }
     }
 
-    async fn handle_hpke_config(&self, task_id_base64: &[u8]) -> Result<Vec<u8>, Error> {
+    async fn handle_hpke_config(&self, task_id_base64: Option<&[u8]>) -> Result<Vec<u8>, Error> {
+        // Task ID is optional in an HPKE config request, but Janus requires it.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
+        let task_id_base64 = task_id_base64.ok_or(Error::MissingTaskId)?;
+
         let task_id_bytes = base64::decode_config(task_id_base64, base64::URL_SAFE_NO_PAD)
             .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
         let task_id = TaskId::get_decoded(&task_id_bytes)
@@ -1908,10 +1918,11 @@ where
     warp::any().map(move || value.clone())
 }
 
-/// Representation of the different problem types defined in Table 1 in §3.1.
+/// Representation of the different problem types defined in Table 1 in §3.2.
 enum DapProblemType {
     UnrecognizedMessage,
     UnrecognizedTask,
+    MissingTaskId,
     UnrecognizedAggregationJob,
     OutdatedConfig,
     ReportTooLate,
@@ -1931,6 +1942,7 @@ impl DapProblemType {
                 "urn:ietf:params:ppm:dap:error:unrecognizedMessage"
             }
             DapProblemType::UnrecognizedTask => "urn:ietf:params:ppm:dap:error:unrecognizedTask",
+            DapProblemType::MissingTaskId => "urn:ietf:params:ppm:dap:error:missingTaskID",
             DapProblemType::UnrecognizedAggregationJob => {
                 "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob"
             }
@@ -1951,6 +1963,17 @@ impl DapProblemType {
         }
     }
 
+    /// Returns the HTTP status code that should be used in responses whose body is a problem
+    /// document of this type.
+    fn http_status(&self) -> StatusCode {
+        match self {
+            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
+            Self::UnrecognizedTask => StatusCode::NOT_FOUND,
+            // So far, 400 Bad Request seems to be the appropriate choice for most problem types.
+            _ => StatusCode::BAD_REQUEST,
+        }
+    }
+
     /// Returns a human-readable summary of a problem type.
     fn description(&self) -> &'static str {
         match self {
@@ -1960,6 +1983,7 @@ impl DapProblemType {
             DapProblemType::UnrecognizedTask => {
                 "An endpoint received a message with an unknown task ID."
             }
+            DapProblemType::MissingTaskId => "HPKE configuration was requested without specifying a task ID.",
             DapProblemType::UnrecognizedAggregationJob => {
                 "An endpoint received a message with an unknown aggregation job ID."
             }
@@ -1986,12 +2010,12 @@ impl DapProblemType {
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
-/// Construct an error response in accordance with §3.1.
+/// Construct an error response in accordance with §3.2.
 // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/209): The handling of the instance,
 // title, detail, and taskid fields are subject to change.
 fn build_problem_details_response(error_type: DapProblemType, task_id: Option<TaskId>) -> Response {
-    // So far, 400 Bad Request seems to be the appropriate choice for each defined problem type.
-    let status = StatusCode::BAD_REQUEST;
+    let status = error_type.http_status();
+
     warp::reply::with_status(
         warp::reply::with_header(
             warp::reply::json(&json!({
@@ -2002,7 +2026,7 @@ fn build_problem_details_response(error_type: DapProblemType, task_id: Option<Ta
                 // The base URI is either "[leader]/upload", "[aggregator]/aggregate",
                 // "[helper]/aggregate_share", or "[leader]/collect". Relative URLs are allowed in
                 // the instance member, thus ".." will always refer to the aggregator's endpoint,
-                // as required by §3.1.
+                // as required by §3.2.
                 "instance": "..",
                 "taskid": task_id.map(|tid| format!("{}", tid)),
             })),
@@ -2064,6 +2088,9 @@ where
                             DapProblemType::UnrecognizedTask,
                             Some(task_id),
                         )
+                    }
+                    Err(Error::MissingTaskId) => {
+                        build_problem_details_response(DapProblemType::MissingTaskId, None)
                     }
                     Err(Error::UnrecognizedAggregationJob(task_id, _)) => {
                         build_problem_details_response(
@@ -2188,10 +2215,9 @@ pub fn aggregator_filter<C: Clock>(
         .and(warp::query::<HashMap<String, String>>())
         .then(
             |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
-                let task_id_b64 = query_params
-                    .get("task_id")
-                    .ok_or(Error::UnrecognizedMessage(None, "task_id"))?;
-                let hpke_config_bytes = aggregator.handle_hpke_config(task_id_b64.as_ref()).await?;
+                let hpke_config_bytes = aggregator
+                    .handle_hpke_config(query_params.get("task_id").map(String::as_ref))
+                    .await?;
                 http::Response::builder()
                     .header(CACHE_CONTROL, "max-age=86400")
                     .header(CONTENT_TYPE, HpkeConfig::MEDIA_TYPE)
@@ -2433,6 +2459,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let task_id = random();
+        let unknown_task_id: TaskId = random();
         let task = Task::new_dummy(
             task_id,
             janus_core::task::VdafInstance::Prio3Aes128Count.into(),
@@ -2447,8 +2474,59 @@ mod tests {
 
         let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
+        // No task ID provided
+        let mut response = warp::test::request()
+            .path("/hpke_config")
+            .method("GET")
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        // The protocol mandates problem type but not HTTP status
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": 400u16,
+                "type": "urn:ietf:params:ppm:dap:error:missingTaskID",
+                "title": "HPKE configuration was requested without specifying a task ID.",
+                "detail": "HPKE configuration was requested without specifying a task ID.",
+                "instance": "..",
+                // TODO()
+                "taskid": serde_json::Value::Null,
+            })
+        );
+
+        // Unknown task ID provided
+        let mut response = warp::test::request()
+            .path(&format!("/hpke_config?task_id={unknown_task_id}"))
+            .method("GET")
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        // Expected status and problem type should be per the protocol
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": 404u16,
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
+                "title": "An endpoint received a message with an unknown task ID.",
+                "detail": "An endpoint received a message with an unknown task ID.",
+                "instance": "..",
+                "taskid": format!("{unknown_task_id}"),
+            })
+        );
+
+        // Recognized task ID provided
         let response = warp::test::request()
-            .path(&format!("/hpke_config?task_id={}", task_id))
+            .path(&format!("/hpke_config?task_id={task_id}"))
             .method("GET")
             .filter(&filter)
             .await
@@ -2485,6 +2563,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(&plaintext, message);
+    }
+
+    #[tokio::test]
+    async fn hpke_config_cors_headers() {
+        install_test_trace_subscriber();
+
+        let task_id = random();
+        let task = Task::new_dummy(
+            task_id,
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        );
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        datastore.put_task(&task).await.unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
         let response = warp::test::request()
@@ -2820,7 +2916,7 @@ mod tests {
         assert_eq!(
             problem_details,
             json!({
-                "status": 400,
+                "status": 404,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
@@ -3121,7 +3217,7 @@ mod tests {
         assert_eq!(
             problem_details,
             json!({
-                "status": 400,
+                "status": 404,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
@@ -5299,13 +5395,13 @@ mod tests {
             .into_response()
             .into_parts();
 
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        assert_eq!(parts.status, StatusCode::NOT_FOUND);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": StatusCode::NOT_FOUND.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
@@ -5951,13 +6047,13 @@ mod tests {
             .into_response()
             .into_parts();
 
-        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        assert_eq!(parts.status, StatusCode::NOT_FOUND);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "status": StatusCode::NOT_FOUND.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "detail": "An endpoint received a message with an unknown task ID.",
