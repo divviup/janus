@@ -5,7 +5,7 @@ use janus_core::{time::Clock, Runtime};
 use janus_messages::{Duration, Time};
 use opentelemetry::{
     metrics::{Meter, Unit},
-    KeyValue,
+    Context, KeyValue,
 };
 use std::{fmt::Debug, future::Future, sync::Arc};
 use tokio::{
@@ -90,15 +90,15 @@ where
     #[tracing::instrument(skip(self))]
     pub async fn run(self: Arc<Self>) -> ! {
         // Create metric recorders.
-        let job_acquire_time_recorder = self
+        let job_acquire_time_histogram = self
             .meter
-            .f64_value_recorder("janus_job_acquire_time")
+            .f64_histogram("janus_job_acquire_time")
             .with_description("Time spent acquiring jobs.")
             .with_unit(Unit::new("seconds"))
             .init();
-        let job_step_time_recorder = self
+        let job_step_time_histogram = self
             .meter
-            .f64_value_recorder("janus_job_step_time")
+            .f64_histogram("janus_job_step_time")
             .with_description("Time spent stepping jobs.")
             .with_unit(Unit::new("seconds"))
             .init();
@@ -139,14 +139,16 @@ where
                     // Go ahead and step job discovery delay in this error case to ensure we don't
                     // tightly loop running transactions that will fail without any delay.
                     job_discovery_delay = self.step_job_discovery_delay(job_discovery_delay);
-                    job_acquire_time_recorder.record(
+                    job_acquire_time_histogram.record(
+                        &Context::current(),
                         start.elapsed().as_secs_f64(),
                         &[KeyValue::new("status", "error")],
                     );
                     continue;
                 }
             };
-            job_acquire_time_recorder.record(
+            job_acquire_time_histogram.record(
+                &Context::current(),
                 start.elapsed().as_secs_f64(),
                 &[KeyValue::new("status", "success")],
             );
@@ -176,10 +178,10 @@ where
                     // Unwrap safety: we have seen that at least `leases.len()` permits are
                     // available, and this task is the only task that acquires permits.
                     let span = info_span!("Job stepper", acquired_job = ?lease.leased());
-                    let (this, permit, job_step_time_recorder) = (
+                    let (this, permit, job_step_time_histogram) = (
                         Arc::clone(&self),
                         Arc::clone(&sem).try_acquire_owned().unwrap(),
-                        job_step_time_recorder.clone(),
+                        job_step_time_histogram.clone(),
                     );
 
                     async move {
@@ -201,7 +203,8 @@ where
                                 status = "error"
                             }
                         }
-                        job_step_time_recorder.record(
+                        job_step_time_histogram.record(
+                            &Context::current(),
                             start.elapsed().as_secs_f64(),
                             &[KeyValue::new("status", status)],
                         );

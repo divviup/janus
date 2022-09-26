@@ -1,5 +1,5 @@
 use crate::{
-    aggregator::{self, accumulator::Accumulator, AggregateStepFailureCounters},
+    aggregator::{self, accumulator::Accumulator, aggregate_step_failure_counter},
     datastore::{
         self,
         models::{
@@ -10,7 +10,7 @@ use crate::{
     },
     task::{Task, VdafInstance, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use derivative::Derivative;
 use futures::{
     future::{try_join_all, BoxFuture, FutureExt},
@@ -26,7 +26,10 @@ use janus_messages::{
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
     Duration, PrepareStep, PrepareStepResult, Report, ReportShare, ReportShareError, Role,
 };
-use opentelemetry::metrics::{BoundCounter, Meter};
+use opentelemetry::{
+    metrics::{Counter, Meter},
+    Context, KeyValue,
+};
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
@@ -46,24 +49,24 @@ use tracing::warn;
 pub struct AggregationJobDriver {
     http_client: reqwest::Client,
     #[derivative(Debug = "ignore")]
-    aggregate_step_failure_counters: AggregateStepFailureCounters,
+    aggregate_step_failure_counter: Counter<u64>,
     #[derivative(Debug = "ignore")]
-    job_cancel_counter: BoundCounter<u64>,
+    job_cancel_counter: Counter<u64>,
 }
 
 impl AggregationJobDriver {
     pub fn new(http_client: reqwest::Client, meter: &Meter) -> AggregationJobDriver {
-        let aggregate_step_failure_counters = AggregateStepFailureCounters::new(meter);
+        let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
+
         let job_cancel_counter = meter
             .u64_counter("janus_job_cancellations")
             .with_description("Count of cancelled jobs.")
-            .init()
-            .bind(&[]);
-        job_cancel_counter.add(0);
+            .init();
+        job_cancel_counter.add(&Context::current(), 0, &[]);
 
         AggregationJobDriver {
             http_client,
-            aggregate_step_failure_counters,
+            aggregate_step_failure_counter,
             job_cancel_counter,
         }
     }
@@ -279,9 +282,11 @@ impl AggregationJobDriver {
                 Some(leader_encrypted_input_share) => leader_encrypted_input_share,
                 None => {
                     warn!(report_nonce = %report_aggregation.nonce, "Client report missing leader encrypted input share");
-                    self.aggregate_step_failure_counters
-                        .missing_leader_input_share
-                        .add(1);
+                    self.aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "missing_leader_input_share")],
+                    );
                     report_aggregation.state = ReportAggregationState::Invalid;
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
@@ -295,9 +300,12 @@ impl AggregationJobDriver {
                 Some(helper_encrypted_input_share) => helper_encrypted_input_share,
                 None => {
                     warn!(report_nonce = %report_aggregation.nonce, "Client report missing helper encrypted input share");
-                    self.aggregate_step_failure_counters
-                        .missing_helper_input_share
-                        .add(1);
+                    self.aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "missing_helper_input_share")],
+                    );
+
                     report_aggregation.state = ReportAggregationState::Invalid;
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
@@ -312,9 +320,11 @@ impl AggregationJobDriver {
                 Some((hpke_config, hpke_private_key)) => (hpke_config, hpke_private_key),
                 None => {
                     warn!(report_nonce = %report_aggregation.nonce, hpke_config_id = %leader_encrypted_input_share.config_id(), "Leader encrypted input share references unknown HPKE config ID");
-                    self.aggregate_step_failure_counters
-                        .unknown_hpke_config_id
-                        .add(1);
+                    self.aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "unknown_hpke_config_id")],
+                    );
                     report_aggregation.state =
                         ReportAggregationState::Failed(ReportShareError::HpkeUnknownConfigId);
                     report_aggregations_to_write.push(report_aggregation);
@@ -335,7 +345,11 @@ impl AggregationJobDriver {
                 Ok(leader_input_share_bytes) => leader_input_share_bytes,
                 Err(err) => {
                     warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decrypt leader's encrypted input share");
-                    self.aggregate_step_failure_counters.decrypt_failure.add(1);
+                    self.aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "decrypt_failure")],
+                    );
                     report_aggregation.state =
                         ReportAggregationState::Failed(ReportShareError::HpkeDecryptError);
                     report_aggregations_to_write.push(report_aggregation);
@@ -350,9 +364,11 @@ impl AggregationJobDriver {
                 Err(err) => {
                     // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): is moving to Invalid on a decoding error appropriate?
                     warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't decode leader's input share");
-                    self.aggregate_step_failure_counters
-                        .input_share_decode_failure
-                        .add(1);
+                    self.aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "input_share_decode_failure")],
+                    );
                     report_aggregation.state = ReportAggregationState::Invalid;
                     report_aggregations_to_write.push(report_aggregation);
                     continue;
@@ -370,9 +386,11 @@ impl AggregationJobDriver {
                 Ok(prep_state_and_share) => prep_state_and_share,
                 Err(err) => {
                     warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't initialize leader's preparation state");
-                    self.aggregate_step_failure_counters
-                        .prepare_init_failure
-                        .add(1);
+                    self.aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "prepare_init_failure")],
+                    );
                     report_aggregation.state =
                         ReportAggregationState::Failed(ReportShareError::VdafPrepError);
                     report_aggregations_to_write.push(report_aggregation);
@@ -475,9 +493,11 @@ impl AggregationJobDriver {
                     Ok(leader_transition) => leader_transition,
                     Err(err) => {
                         warn!(report_nonce = %report_aggregation.nonce, ?err, "Prepare step failed");
-                        self.aggregate_step_failure_counters
-                            .prepare_step_failure
-                            .add(1);
+                        self.aggregate_step_failure_counter.add(
+                            &Context::current(),
+                            1,
+                            &[KeyValue::new("type", "prepare_step_failure")],
+                        );
                         report_aggregation.state =
                             ReportAggregationState::Failed(ReportShareError::VdafPrepError);
                         report_aggregations_to_write.push(report_aggregation);
@@ -604,17 +624,21 @@ impl AggregationJobDriver {
                             }
                             Err(err) => {
                                 warn!(report_nonce = %report_aggregation.nonce, ?err, "Couldn't compute prepare message");
-                                self.aggregate_step_failure_counters
-                                    .prepare_message_failure
-                                    .add(1);
+                                self.aggregate_step_failure_counter.add(
+                                    &Context::current(),
+                                    1,
+                                    &[KeyValue::new("type", "prepare_message_failure")],
+                                );
                                 ReportAggregationState::Failed(ReportShareError::VdafPrepError)
                             }
                         }
                     } else {
                         warn!(report_nonce = %report_aggregation.nonce, "Helper continued but leader did not");
-                        self.aggregate_step_failure_counters
-                            .continue_mismatch
-                            .add(1);
+                        self.aggregate_step_failure_counter.add(
+                            &Context::current(),
+                            1,
+                            &[KeyValue::new("type", "continue_mismatch")],
+                        );
                         report_aggregation.state = ReportAggregationState::Invalid;
                     }
                 }
@@ -630,16 +654,22 @@ impl AggregationJobDriver {
                             }
                             Err(err) => {
                                 warn!(report_nonce = %report_aggregation.nonce, ?err, "Could not update batch unit aggregation");
-                                self.aggregate_step_failure_counters
-                                    .accumulate_failure
-                                    .add(1);
+                                self.aggregate_step_failure_counter.add(
+                                    &Context::current(),
+                                    1,
+                                    &[KeyValue::new("type", "accumulate_failure")],
+                                );
                                 report_aggregation.state =
                                     ReportAggregationState::Failed(ReportShareError::VdafPrepError);
                             }
                         }
                     } else {
                         warn!(report_nonce = %report_aggregation.nonce, "Helper finished but leader did not");
-                        self.aggregate_step_failure_counters.finish_mismatch.add(1);
+                        self.aggregate_step_failure_counter.add(
+                            &Context::current(),
+                            1,
+                            &[KeyValue::new("type", "finish_mismatch")],
+                        );
                         report_aggregation.state = ReportAggregationState::Invalid;
                     }
                 }
@@ -648,9 +678,11 @@ impl AggregationJobDriver {
                     // If the helper failed, we move to FAILED immediately.
                     // TODO(#236): is it correct to just record the transition error that the helper reports?
                     warn!(report_nonce = %report_aggregation.nonce, helper_err = ?err, "Helper couldn't step report aggregation");
-                    self.aggregate_step_failure_counters
-                        .helper_step_failure
-                        .add(1);
+                    self.aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "helper_step_failure")],
+                    );
                     report_aggregation.state = ReportAggregationState::Failed(err);
                 }
             }
@@ -817,7 +849,7 @@ impl AggregationJobDriver {
                     warn!(attempts = ?lease.lease_attempts(),
                         max_attempts = ?maximum_attempts_before_failure,
                         "Canceling job due to too many failed attempts");
-                    this.job_cancel_counter.add(1);
+                    this.job_cancel_counter.add(&Context::current(), 1, &[]);
                     return this.cancel_aggregation_job(datastore, lease).await;
                 }
 

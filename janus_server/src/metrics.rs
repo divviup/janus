@@ -1,8 +1,11 @@
 //! Collection and exporting of application-level metrics for Janus.
 
-use opentelemetry::{
-    metrics::Descriptor,
-    sdk::export::metrics::{Aggregator, AggregatorSelector},
+use opentelemetry::sdk::{
+    export::metrics::AggregatorSelector,
+    metrics::{
+        aggregators::Aggregator,
+        sdk_api::{Descriptor, InstrumentKind},
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::AddrParseError, sync::Arc};
@@ -11,8 +14,10 @@ use std::{collections::HashMap, net::AddrParseError, sync::Arc};
 use {
     http::StatusCode,
     hyper::Response,
+    opentelemetry::sdk::metrics::{controllers, processors},
     prometheus::{Encoder, TextEncoder},
     std::net::SocketAddr,
+    std::net::{IpAddr, Ipv4Addr},
     tokio::task::JoinHandle,
     warp::{Filter, Reply},
 };
@@ -20,12 +25,19 @@ use {
 #[cfg(feature = "otlp")]
 use {
     opentelemetry::{
-        sdk::metrics::controllers::PushController, util::tokio_interval_stream, KeyValue,
+        runtime::Tokio,
+        sdk::{metrics::controllers::BasicController, Resource},
+        KeyValue,
     },
     opentelemetry_otlp::WithExportConfig,
     opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-    std::str::FromStr,
     tonic::metadata::{MetadataKey, MetadataMap, MetadataValue},
+};
+
+#[cfg(any(feature = "otlp", feature = "prometheus"))]
+use {
+    opentelemetry::sdk::export::metrics::aggregation::stateless_temporality_selector,
+    std::str::FromStr,
 };
 
 /// Errors from initializing metrics provider, registry, and exporter.
@@ -79,7 +91,7 @@ pub enum MetricsExporterHandle {
     #[cfg(feature = "prometheus")]
     Prometheus(JoinHandle<()>),
     #[cfg(feature = "otlp")]
-    Otlp(PushController),
+    Otlp(BasicController),
     Noop,
 }
 
@@ -89,17 +101,16 @@ struct CustomAggregatorSelector;
 impl AggregatorSelector for CustomAggregatorSelector {
     fn aggregator_for(&self, descriptor: &Descriptor) -> Option<Arc<dyn Aggregator + Send + Sync>> {
         match descriptor.instrument_kind() {
-            opentelemetry::metrics::InstrumentKind::ValueRecorder => {
+            InstrumentKind::Histogram => {
                 // The following boundaries are copied from the Ruby and Go Prometheus clients.
                 // Buckets could be specialized per-metric by matching on `descriptor.name()`.
-                let boundaries = &[
-                    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-                ][..];
                 Some(Arc::new(
-                    opentelemetry::sdk::metrics::aggregators::histogram(descriptor, boundaries),
+                    opentelemetry::sdk::metrics::aggregators::histogram(&[
+                        0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+                    ]),
                 ))
             }
-            opentelemetry::metrics::InstrumentKind::ValueObserver => Some(Arc::new(
+            InstrumentKind::GaugeObserver => Some(Arc::new(
                 opentelemetry::sdk::metrics::aggregators::last_value(),
             )),
             _ => Some(Arc::new(opentelemetry::sdk::metrics::aggregators::sum())),
@@ -119,17 +130,20 @@ pub fn install_metrics_exporter(
             host: config_exporter_host,
             port: config_exporter_port,
         }) => {
-            let mut builder = opentelemetry_prometheus::exporter()
-                .with_aggregator_selector(CustomAggregatorSelector);
-            if let Some(host) = config_exporter_host {
-                builder = builder.with_host(host.clone());
-            }
-            if let Some(port) = config_exporter_port {
-                builder = builder.with_port(*port);
-            }
-            let exporter = builder.try_init()?;
-            let host = exporter.host().parse()?;
-            let port = exporter.port();
+            let exporter = opentelemetry_prometheus::exporter(
+                controllers::basic(processors::factory(
+                    CustomAggregatorSelector,
+                    stateless_temporality_selector(),
+                ))
+                .build(),
+            )
+            .try_init()?;
+
+            let host = config_exporter_host
+                .as_ref()
+                .map(|host| IpAddr::from_str(host))
+                .unwrap_or_else(|| Ok(Ipv4Addr::UNSPECIFIED.into()))?;
+            let port = config_exporter_port.unwrap_or_else(|| 9464);
 
             let filter = warp::path("metrics").and(warp::get()).map({
                 move || {
@@ -166,22 +180,26 @@ pub fn install_metrics_exporter(
         Some(MetricsExporterConfiguration::Otlp(otlp_config)) => {
             let mut map = MetadataMap::with_capacity(otlp_config.metadata.len());
             for (key, value) in otlp_config.metadata.iter() {
-                map.insert(MetadataKey::from_str(key)?, MetadataValue::from_str(value)?);
+                map.insert(MetadataKey::from_str(key)?, MetadataValue::try_from(value)?);
             }
 
-            let push_controller = opentelemetry_otlp::new_pipeline()
-                .metrics(tokio::spawn, tokio_interval_stream)
-                .with_aggregator_selector(CustomAggregatorSelector)
-                .with_resource([KeyValue::new(SERVICE_NAME, "janus_server")])
+            let basic_controller = opentelemetry_otlp::new_pipeline()
+                .metrics(
+                    CustomAggregatorSelector,
+                    stateless_temporality_selector(),
+                    Tokio,
+                )
+                .with_resource(Resource::new([KeyValue::new(SERVICE_NAME, "janus_server")]))
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()
                         .tonic()
                         .with_endpoint(otlp_config.endpoint.clone()),
                 )
                 .build()?;
+
             // We can't drop the PushController, as that would stop pushes, so return it to the
             // caller.
-            Ok(MetricsExporterHandle::Otlp(push_controller))
+            Ok(MetricsExporterHandle::Otlp(basic_controller))
         }
         #[cfg(not(feature = "otlp"))]
         Some(MetricsExporterConfiguration::Otlp(_)) => Err(Error::Other(

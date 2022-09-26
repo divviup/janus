@@ -42,8 +42,8 @@ use janus_messages::{
     ReportShare, ReportShareError, Role, TaskId,
 };
 use opentelemetry::{
-    metrics::{BoundCounter, Meter, Unit, ValueRecorder},
-    KeyValue,
+    metrics::{Counter, Histogram, Meter, Unit},
+    Context, KeyValue,
 };
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
@@ -214,69 +214,39 @@ impl From<datastore::Error> for Error {
     }
 }
 
-/// Bound counters to record each possible cause of failures when stepping a report's aggregation.
-pub(crate) struct AggregateStepFailureCounters {
-    missing_leader_input_share: BoundCounter<u64>,
-    missing_helper_input_share: BoundCounter<u64>,
-    prepare_init_failure: BoundCounter<u64>,
-    prepare_step_failure: BoundCounter<u64>,
-    prepare_message_failure: BoundCounter<u64>,
-    unknown_hpke_config_id: BoundCounter<u64>,
-    decrypt_failure: BoundCounter<u64>,
-    input_share_decode_failure: BoundCounter<u64>,
-    continue_mismatch: BoundCounter<u64>,
-    accumulate_failure: BoundCounter<u64>,
-    finish_mismatch: BoundCounter<u64>,
-    helper_step_failure: BoundCounter<u64>,
-}
+pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
+    let aggregate_step_failure_counter = meter
+        .u64_counter("janus_step_failures")
+        .with_description(concat!(
+            "Failures while stepping aggregation jobs; these failures are ",
+            "related to individual client reports rather than entire aggregation jobs."
+        ))
+        .init();
 
-impl AggregateStepFailureCounters {
-    fn new(meter: &Meter) -> AggregateStepFailureCounters {
-        let counter = meter
-            .u64_counter("janus_step_failures")
-            .with_description(concat!(
-                "Failures while stepping aggregation jobs; these failures are ",
-                "related to individual client reports rather than entire aggregation jobs."
-            ))
-            .init();
-
-        static TYPE: &str = "type";
-        let counters = AggregateStepFailureCounters {
-            missing_leader_input_share: counter
-                .bind(&[KeyValue::new(TYPE, "missing_leader_input_share")]),
-            missing_helper_input_share: counter
-                .bind(&[KeyValue::new(TYPE, "missing_helper_input_share")]),
-            prepare_init_failure: counter.bind(&[KeyValue::new(TYPE, "prepare_init_failure")]),
-            prepare_step_failure: counter.bind(&[KeyValue::new(TYPE, "prepare_step_failure")]),
-            prepare_message_failure: counter
-                .bind(&[KeyValue::new(TYPE, "prepare_message_failure")]),
-            unknown_hpke_config_id: counter.bind(&[KeyValue::new(TYPE, "unknown_hpke_config_id")]),
-            decrypt_failure: counter.bind(&[KeyValue::new(TYPE, "decrypt_failure")]),
-            input_share_decode_failure: counter
-                .bind(&[KeyValue::new(TYPE, "input_share_decode_failure")]),
-            continue_mismatch: counter.bind(&[KeyValue::new(TYPE, "continue_mismatch")]),
-            accumulate_failure: counter.bind(&[KeyValue::new(TYPE, "accumulate_failure")]),
-            finish_mismatch: counter.bind(&[KeyValue::new(TYPE, "finish_mismatch")]),
-            helper_step_failure: counter.bind(&[KeyValue::new(TYPE, "helper_step_failure")]),
-        };
-
-        // Prime each counter with zeros so that Prometheus will see that as a baseline, and
-        // recognize increases upon the first counter increment.
-        counters.missing_leader_input_share.add(0);
-        counters.missing_helper_input_share.add(0);
-        counters.prepare_init_failure.add(0);
-        counters.prepare_step_failure.add(0);
-        counters.prepare_message_failure.add(0);
-        counters.unknown_hpke_config_id.add(0);
-        counters.decrypt_failure.add(0);
-        counters.input_share_decode_failure.add(0);
-        counters.continue_mismatch.add(0);
-        counters.accumulate_failure.add(0);
-        counters.finish_mismatch.add(0);
-        counters.helper_step_failure.add(0);
-
-        counters
+    // Initialize counters with desired status labels. This causes Prometheus to see the first
+    // non-zero value we record.
+    for failure_type in [
+        "missing_leader_input_share",
+        "missing_helper_input_share",
+        "prepare_init_failure",
+        "prepare_step_failure",
+        "prepare_message_failure",
+        "unknown_hpke_config_id",
+        "decrypt_failure",
+        "input_share_decode_failure",
+        "continue_mismatch",
+        "accumulate_failure",
+        "finish_mismatch",
+        "helper_step_failure",
+    ] {
+        aggregate_step_failure_counter.add(
+            &Context::current(),
+            0,
+            &[KeyValue::new("type", failure_type)],
+        );
     }
+
+    aggregate_step_failure_counter
 }
 
 /// Aggregator implements a PPM aggregator.
@@ -290,10 +260,10 @@ pub struct Aggregator<C: Clock> {
 
     // Metrics.
     /// Counter tracking the number of failed decryptions while handling the /upload endpoint.
-    upload_decrypt_failure_counter: BoundCounter<u64>,
-    /// Counters tracking the number of failures to step client reports through the aggregation
+    upload_decrypt_failure_counter: Counter<u64>,
+    /// Counter tracking the number of failures to step client reports through the aggregation
     /// process.
-    aggregate_step_failure_counters: AggregateStepFailureCounters,
+    aggregate_step_failure_counter: Counter<u64>,
 }
 
 impl<C: Clock> Aggregator<C> {
@@ -301,17 +271,17 @@ impl<C: Clock> Aggregator<C> {
         let upload_decrypt_failure_counter = meter
             .u64_counter("janus_upload_decrypt_failures")
             .with_description("Number of decryption failures in the /upload endpoint.")
-            .init()
-            .bind(&[]);
-        upload_decrypt_failure_counter.add(0);
-        let aggregate_step_failure_counters = AggregateStepFailureCounters::new(&meter);
+            .init();
+        upload_decrypt_failure_counter.add(&Context::current(), 0, &[]);
+
+        let aggregate_step_failure_counter = aggregate_step_failure_counter(&meter);
 
         Self {
             datastore,
             clock,
             task_aggregators: Mutex::new(HashMap::new()),
             upload_decrypt_failure_counter,
-            aggregate_step_failure_counters,
+            aggregate_step_failure_counter,
         }
     }
 
@@ -368,7 +338,7 @@ impl<C: Clock> Aggregator<C> {
         assert_eq!(req.task_id, task_id);
 
         Ok(task_aggregator
-            .handle_aggregate_init(&self.datastore, &self.aggregate_step_failure_counters, req)
+            .handle_aggregate_init(&self.datastore, &self.aggregate_step_failure_counter, req)
             .await?
             .get_encoded())
     }
@@ -400,7 +370,7 @@ impl<C: Clock> Aggregator<C> {
         assert_eq!(req.task_id, task_id);
 
         Ok(task_aggregator
-            .handle_aggregate_continue(&self.datastore, &self.aggregate_step_failure_counters, req)
+            .handle_aggregate_continue(&self.datastore, &self.aggregate_step_failure_counter, req)
             .await?
             .get_encoded())
     }
@@ -629,7 +599,7 @@ impl TaskAggregator {
         &self,
         datastore: &Datastore<C>,
         clock: &C,
-        upload_decrypt_failure_counter: &BoundCounter<u64>,
+        upload_decrypt_failure_counter: &Counter<u64>,
         report: Report,
     ) -> Result<(), Error> {
         self.vdaf_ops
@@ -646,22 +616,22 @@ impl TaskAggregator {
     async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counters: &AggregateStepFailureCounters,
+        aggregate_step_failure_counter: &Counter<u64>,
         req: AggregateInitializeReq,
     ) -> Result<AggregateInitializeResp, Error> {
         self.vdaf_ops
-            .handle_aggregate_init(datastore, aggregate_step_failure_counters, &self.task, req)
+            .handle_aggregate_init(datastore, aggregate_step_failure_counter, &self.task, req)
             .await
     }
 
     async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counters: &AggregateStepFailureCounters,
+        aggregate_step_failure_counter: &Counter<u64>,
         req: AggregateContinueReq,
     ) -> Result<AggregateContinueResp, Error> {
         self.vdaf_ops
-            .handle_aggregate_continue(datastore, aggregate_step_failure_counters, &self.task, req)
+            .handle_aggregate_continue(datastore, aggregate_step_failure_counter, &self.task, req)
             .await
     }
 
@@ -738,7 +708,7 @@ impl VdafOps {
         &self,
         datastore: &Datastore<C>,
         clock: &C,
-        upload_decrypt_failure_counter: &BoundCounter<u64>,
+        upload_decrypt_failure_counter: &Counter<u64>,
         task: &Task,
         report: Report,
     ) -> Result<(), Error> {
@@ -810,7 +780,7 @@ impl VdafOps {
     async fn handle_aggregate_init<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counters: &AggregateStepFailureCounters,
+        aggregate_step_failure_counter: &Counter<u64>,
         task: &Task,
         req: AggregateInitializeReq,
     ) -> Result<AggregateInitializeResp, Error> {
@@ -823,7 +793,7 @@ impl VdafOps {
                 >(
                     datastore,
                     vdaf,
-                    aggregate_step_failure_counters,
+                    aggregate_step_failure_counter,
                     task,
                     verify_key,
                     req,
@@ -838,7 +808,7 @@ impl VdafOps {
                 >(
                     datastore,
                     vdaf,
-                    aggregate_step_failure_counters,
+                    aggregate_step_failure_counter,
                     task,
                     verify_key,
                     req,
@@ -853,7 +823,7 @@ impl VdafOps {
                 >(
                     datastore,
                     vdaf,
-                    aggregate_step_failure_counters,
+                    aggregate_step_failure_counter,
                     task,
                     verify_key,
                     req,
@@ -868,7 +838,7 @@ impl VdafOps {
                 >(
                     datastore,
                     vdaf,
-                    aggregate_step_failure_counters,
+                    aggregate_step_failure_counter,
                     task,
                     verify_key,
                     req,
@@ -882,7 +852,7 @@ impl VdafOps {
                 Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
                     datastore,
                     vdaf,
-                    aggregate_step_failure_counters,
+                    aggregate_step_failure_counter,
                     task,
                     &VerifyKey::new([]),
                     req,
@@ -895,7 +865,7 @@ impl VdafOps {
     async fn handle_aggregate_continue<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        aggregate_step_failure_counters: &AggregateStepFailureCounters,
+        aggregate_step_failure_counter: &Counter<u64>,
         task: &Task,
         req: AggregateContinueReq,
     ) -> Result<AggregateContinueResp, Error> {
@@ -908,7 +878,7 @@ impl VdafOps {
                 >(
                     datastore,
                     Arc::clone(vdaf),
-                    aggregate_step_failure_counters.prepare_step_failure.clone(),
+                    aggregate_step_failure_counter,
                     task,
                     req,
                 )
@@ -922,7 +892,7 @@ impl VdafOps {
                 >(
                     datastore,
                     Arc::clone(vdaf),
-                    aggregate_step_failure_counters.prepare_step_failure.clone(),
+                    aggregate_step_failure_counter,
                     task,
                     req,
                 )
@@ -936,7 +906,7 @@ impl VdafOps {
                 >(
                     datastore,
                     Arc::clone(vdaf),
-                    aggregate_step_failure_counters.prepare_step_failure.clone(),
+                    aggregate_step_failure_counter,
                     task,
                     req,
                 )
@@ -950,7 +920,7 @@ impl VdafOps {
                 >(
                     datastore,
                     Arc::clone(vdaf),
-                    aggregate_step_failure_counters.prepare_step_failure.clone(),
+                    aggregate_step_failure_counter,
                     task,
                     req,
                 )
@@ -963,7 +933,7 @@ impl VdafOps {
                 Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
                     datastore,
                     Arc::clone(vdaf),
-                    aggregate_step_failure_counters.prepare_step_failure.clone(),
+                    aggregate_step_failure_counter,
                     task,
                     req,
                 )
@@ -975,7 +945,7 @@ impl VdafOps {
     async fn handle_upload_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
         datastore: &Datastore<C>,
         clock: &C,
-        upload_decrypt_failure_counter: &BoundCounter<u64>,
+        upload_decrypt_failure_counter: &Counter<u64>,
         task: &Task,
         report: Report,
     ) -> Result<(), Error>
@@ -1025,7 +995,7 @@ impl VdafOps {
             ),
         ) {
             warn!(report.task_id = ?report.task_id(), report.nonce = ?report.nonce(), ?err, "Report decryption failed");
-            upload_decrypt_failure_counter.add(1);
+            upload_decrypt_failure_counter.add(&Context::current(), 1, &[]);
             return Ok(());
         }
 
@@ -1071,7 +1041,7 @@ impl VdafOps {
     async fn handle_aggregate_init_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
         datastore: &Datastore<C>,
         vdaf: &A,
-        aggregate_step_failure_counters: &AggregateStepFailureCounters,
+        aggregate_step_failure_counter: &Counter<u64>,
         task: &Task,
         verify_key: &VerifyKey<L>,
         req: AggregateInitializeReq,
@@ -1123,9 +1093,11 @@ impl VdafOps {
                         config_id = ?report_share.encrypted_input_share.config_id(),
                         "Helper encrypted input share references unknown HPKE config ID"
                     );
-                    aggregate_step_failure_counters
-                        .unknown_hpke_config_id
-                        .add(1);
+                    aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "unknown_hpke_config_id")],
+                    );
                     ReportShareError::HpkeUnknownConfigId
                 });
 
@@ -1149,7 +1121,11 @@ impl VdafOps {
                         %err,
                         "Couldn't decrypt helper's report share"
                     );
-                    aggregate_step_failure_counters.decrypt_failure.add(1);
+                    aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "decrypt_failure")],
+                    );
                     ReportShareError::HpkeDecryptError
                 })
             });
@@ -1163,7 +1139,7 @@ impl VdafOps {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext)
                     .map_err(|err| {
                         warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't decode helper's input share");
-                        aggregate_step_failure_counters.input_share_decode_failure.add(1);
+                        aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "input_share_decode_failure")]);
                         ReportShareError::VdafPrepError
                     })
             });
@@ -1182,7 +1158,7 @@ impl VdafOps {
                     )
                     .map_err(|err| {
                         warn!(?task_id, nonce = %report_share.nonce, %err, "Couldn't prepare_init report share");
-                        aggregate_step_failure_counters.prepare_init_failure.add(1);
+                        aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "prep_init_failure")]);
                         ReportShareError::VdafPrepError
                     })
             });
@@ -1298,7 +1274,7 @@ impl VdafOps {
     async fn handle_aggregate_continue_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
-        prepare_step_failure_counter: BoundCounter<u64>,
+        aggregate_step_failure_counter: &Counter<u64>,
         task: &Task,
         req: AggregateContinueReq,
     ) -> Result<AggregateContinueResp, Error>
@@ -1322,8 +1298,8 @@ impl VdafOps {
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx(|tx| {
-                let (vdaf, prep_steps,prepare_step_failure_counter) =
-                    (Arc::clone(&vdaf), Arc::clone(&prep_steps), prepare_step_failure_counter.clone());
+                let (vdaf, prep_steps, aggregate_step_failure_counter) =
+                    (Arc::clone(&vdaf), Arc::clone(&prep_steps), aggregate_step_failure_counter.clone());
 
                 Box::pin(async move {
                     // Read existing state.
@@ -1436,7 +1412,7 @@ impl VdafOps {
 
                             Err(err) => {
                                 warn!(?task_id, job_id = ?req.job_id, nonce = %prep_step.nonce, %err, "Prepare step failed");
-                                prepare_step_failure_counter.add(1);
+                                aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "prepare_step_failure")]);
                                 report_aggregation.state =
                                     ReportAggregationState::Failed(ReportShareError::VdafPrepError);
                                 response_prep_steps.push(PrepareStep {
@@ -1996,7 +1972,7 @@ fn build_problem_details_response(error_type: DapProblemType, task_id: Option<Ta
 /// (see RFC 7807) and update a metrics counter tracking the error status of the result as well as
 /// timing information. The returned closure is meant to be used in a warp `with` filter.
 fn error_handler<F, T>(
-    response_time_recorder: ValueRecorder<f64>,
+    response_time_recorder: Histogram<f64>,
     name: &'static str,
 ) -> impl Fn(F) -> BoxedFilter<(Response,)>
 where
@@ -2016,6 +1992,7 @@ where
                     ""
                 };
                 response_time_recorder.record(
+                    &Context::current(),
                     start.elapsed().as_secs_f64(),
                     &[
                         KeyValue::new("endpoint", name),
@@ -2114,8 +2091,8 @@ where
 ///
 /// `response_counter` is a `Counter` that will be used to record successes and failures.
 ///
-/// `timing_value_recorder` is a `ValueRecorder` that will be used to record request handling
-/// timings. It is expected the value recorder will be backed by a histogram.
+/// `response_time_recorder` is a `Histogram` that will be used to record request handling
+/// timings.
 ///
 /// `name` is a unique name for this route. This will be used as a metrics label, and will be added
 /// to the tracing span's values as its message.
@@ -2123,7 +2100,7 @@ fn compose_common_wrappers<F1, F2, T>(
     route_filter: F1,
     response_filter: F2,
     cors: Cors,
-    response_time_recorder: ValueRecorder<f64>,
+    response_time_recorder: Histogram<f64>,
     name: &'static str,
 ) -> BoxedFilter<(impl Reply,)>
 where
@@ -2155,7 +2132,7 @@ pub fn aggregator_filter<C: Clock>(
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
     let meter = opentelemetry::global::meter("janus_server");
     let response_time_recorder = meter
-        .f64_value_recorder("janus_aggregator_response_time")
+        .f64_histogram("janus_aggregator_response_time")
         .with_description("Elapsed time handling incoming requests, by endpoint & status.")
         .with_unit(Unit::new("seconds"))
         .init();

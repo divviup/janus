@@ -7,7 +7,21 @@
 Janus is an experimental implementation of the
 [Distributed Aggregation Protocol (DAP) specification](https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap).
 
-It is currently in active development.
+Janus is currently in active development.
+
+## Building
+
+Building Janus with `janus_server`'s `otlp` feature enabled requires the Protocol Buffers compiler,
+`protoc`, be installed on the machine performing the build.
+
+To build Janus, execute `cargo build`. There is also support for building containers with the Janus
+components; see `.github/workflows/ci-build.yml` for example Docker invocations.
+
+## Running tests
+
+Tests require that [`docker`](https://www.docker.com) & [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests and in the `PATH` of the test-runner's environment. The `docker` daemon must be running. CI tests currently use [`kind` 0.14.0](https://github.com/kubernetes-sigs/kind/releases/tag/v0.14.0) and the corresponding [Kubernetes 1.22 node image](kindest/node:v1.22.9@sha256:8135260b959dfe320206eb36b3aeda9cffcb262f4b44cda6b33f7bb73f453105) and using the same versions for local development is recommended.
+
+To run Janus tests, execute `cargo test`.
 
 ## Running janus\_server
 
@@ -16,12 +30,6 @@ The aggregator server requires a connection to a PostgreSQL 14 database. Prepare
 ```bash
 aggregator --config-file <config-file> --role <role>
 ```
-
-## Running tests
-
-Tests require that [`docker`](https://www.docker.com) & [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests and in the `PATH` of the test-runner's environment. The `docker` daemon must be running. CI tests currently use [`kind` 0.14.0](https://github.com/kubernetes-sigs/kind/releases/tag/v0.14.0) and the corresponding [Kubernetes 1.22 node image](kindest/node:v1.22.9@sha256:8135260b959dfe320206eb36b3aeda9cffcb262f4b44cda6b33f7bb73f453105) and using the same versions for local development is recommended.
-
-To run janus tests, execute `cargo test`.
 
 ## Cargo features
 
