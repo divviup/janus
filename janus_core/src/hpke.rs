@@ -1,11 +1,11 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
-use crate::message::{
+use derivative::Derivative;
+use hpke_dispatch::{HpkeError, Kem, Keypair};
+use janus_messages::{
     query_type::QueryType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId,
     HpkeKemId, HpkePublicKey, ReportMetadata, Role, TaskId,
 };
-use derivative::Derivative;
-use hpke_dispatch::{HpkeError, Kem, Keypair};
 use prio::codec::Encode;
 use std::{fmt::Debug, str::FromStr};
 
@@ -18,22 +18,20 @@ pub enum Error {
     InvalidConfiguration(&'static str),
 }
 
-impl TryFrom<&HpkeConfig> for hpke_dispatch::Config {
-    type Error = Error;
-
-    fn try_from(config: &HpkeConfig) -> Result<Self, Self::Error> {
-        Ok(Self {
-            aead: (*config.aead_id() as u16)
-                .try_into()
-                .map_err(|_| Self::Error::InvalidConfiguration("did not recognize aead"))?,
-            kdf: (*config.kdf_id() as u16)
-                .try_into()
-                .map_err(|_| Self::Error::InvalidConfiguration("did not recognize kdf"))?,
-            kem: (*config.kem_id() as u16)
-                .try_into()
-                .map_err(|_| Self::Error::InvalidConfiguration("did not recognize kem"))?,
-        })
-    }
+fn hpke_dispatch_config_from_hpke_config(
+    config: &HpkeConfig,
+) -> Result<hpke_dispatch::Config, Error> {
+    Ok(hpke_dispatch::Config {
+        aead: (*config.aead_id() as u16)
+            .try_into()
+            .map_err(|_| Error::InvalidConfiguration("did not recognize aead"))?,
+        kdf: (*config.kdf_id() as u16)
+            .try_into()
+            .map_err(|_| Error::InvalidConfiguration("did not recognize kdf"))?,
+        kem: (*config.kem_id() as u16)
+            .try_into()
+            .map_err(|_| Error::InvalidConfiguration("did not recognize kem"))?,
+    })
 }
 
 /// Construct the HPKE associated data for sealing or opening data enciphered for a report or report
@@ -143,7 +141,7 @@ pub fn seal(
     // In DAP, an HPKE context can only be used once (we have no means of ensuring that sender and
     // recipient "increment" nonces in lockstep), so this method creates a new HPKE context on each
     // call.
-    let output = hpke_dispatch::Config::try_from(recipient_config)?.base_mode_seal(
+    let output = hpke_dispatch_config_from_hpke_config(recipient_config)?.base_mode_seal(
         recipient_config.public_key().as_ref(),
         &application_info.0,
         plaintext,
@@ -167,7 +165,7 @@ pub fn open(
     ciphertext: &HpkeCiphertext,
     associated_data: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    hpke_dispatch::Config::try_from(recipient_config)?
+    hpke_dispatch_config_from_hpke_config(recipient_config)?
         .base_mode_open(
             &recipient_private_key.0,
             ciphertext.encapsulated_key(),
@@ -208,7 +206,7 @@ pub fn generate_hpke_config_and_private_key(
 #[cfg(feature = "test-util")]
 pub mod test_util {
     use super::{generate_hpke_config_and_private_key, HpkePrivateKey};
-    use crate::message::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId};
+    use janus_messages::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId};
     use rand::random;
 
     pub fn generate_test_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
@@ -224,14 +222,12 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
-    use crate::{
-        hpke::{open, seal, HpkePrivateKey},
-        message::{
-            HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
-            HpkePublicKey, Role,
-        },
-    };
+    use crate::hpke::{open, seal, HpkePrivateKey};
     use hpke_dispatch::{Kem, Keypair};
+    use janus_messages::{
+        HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
+        Role,
+    };
     use serde::Deserialize;
     use std::collections::HashSet;
 

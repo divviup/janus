@@ -8,10 +8,6 @@ use crate::{
         },
         Datastore,
     },
-    message::{
-        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
-    },
     task::{Task, VdafInstance, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::{anyhow, Context, Result};
@@ -23,9 +19,13 @@ use futures::{
 use http::header::CONTENT_TYPE;
 use janus_core::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    message::{query_type::TimeInterval, Duration, PartialBatchSelector, Report, Role},
     task::DAP_AUTH_HEADER,
     time::Clock,
+};
+use janus_messages::{
+    query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
+    AggregateInitializeResp, Duration, PartialBatchSelector, PrepareStep, PrepareStepResult,
+    Report, ReportShare, ReportShareError, Role,
 };
 use opentelemetry::metrics::{BoundCounter, Meter};
 use prio::{
@@ -859,10 +859,6 @@ mod tests {
             },
             test_util::ephemeral_datastore,
         },
-        message::{
-            AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-            AggregateInitializeResp, PrepareStep, PrepareStepResult, ReportShare,
-        },
         task::{Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
@@ -872,14 +868,17 @@ mod tests {
             self, associated_data_for_report_share,
             test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
-        message::{
-            query_type::TimeInterval, Duration, HpkeConfig, Interval, PartialBatchSelector, Report,
-            ReportIdChecksum, ReportMetadata, Role, TaskId,
-        },
+        report_id::ReportIdChecksumExt,
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
-        time::{Clock, MockClock},
+        time::{Clock, MockClock, TimeExt},
         Runtime,
+    };
+    use janus_messages::{
+        query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp,
+        AggregateInitializeReq, AggregateInitializeResp, Duration, HpkeConfig, Interval,
+        PartialBatchSelector, PrepareStep, PrepareStepResult, Report, ReportIdChecksum,
+        ReportMetadata, ReportShare, Role, TaskId,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
