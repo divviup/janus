@@ -271,7 +271,7 @@ pub mod test_util {
                 initial_interval: Duration::from_millis(250),
                 max_interval: Duration::from_millis(250),
                 multiplier: 1.0,
-                max_elapsed_time: Some(Duration::from_secs(10)),
+                max_elapsed_time: Some(Duration::from_secs(30)),
                 ..Default::default()
             },
             operation,
