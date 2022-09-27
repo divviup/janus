@@ -31,10 +31,10 @@ pub enum Error {
 }
 
 /// Identifiers for VDAFs supported by this aggregator, corresponding to
-/// definitions in [draft-irtf-cfrg-vdaf-00][1] and implementations in
+/// definitions in [draft-irtf-cfrg-vdaf-03][1] and implementations in
 /// [`prio::vdaf::prio3`].
 ///
-/// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/00/
+/// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/03/
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VdafInstance {
     Real(janus_core::task::VdafInstance),

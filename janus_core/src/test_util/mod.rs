@@ -19,6 +19,8 @@ pub struct VdafTranscript<const L: usize, V: vdaf::Aggregator<L>>
 where
     for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
+    /// The public share, from the sharding algorithm.
+    pub public_share: V::PublicShare,
     /// The measurement's input shares, from the sharding algorithm.
     pub input_shares: Vec<V::InputShare>,
     /// Prepare transitions sent throughout the protocol run. The outer `Vec` is indexed by
@@ -44,7 +46,7 @@ where
     for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
 {
     // Shard inputs into input shares, and initialize the initial PrepareTransitions.
-    let input_shares = vdaf.shard(measurement).unwrap();
+    let (public_share, input_shares) = vdaf.shard(measurement).unwrap();
     let encoded_report_id = report_id.get_encoded();
     let mut prep_trans: Vec<Vec<PrepareTransition<V, L>>> = input_shares
         .iter()
@@ -55,6 +57,7 @@ where
                 agg_id,
                 aggregation_param,
                 &encoded_report_id,
+                &public_share,
                 input_share,
             )?;
             Ok(vec![PrepareTransition::Continue(prep_state, prep_share)])
@@ -84,6 +87,7 @@ where
         }
         if !agg_shares.is_empty() {
             return VdafTranscript {
+                public_share,
                 input_shares,
                 prepare_transitions: prep_trans,
                 prepare_messages: prep_msgs,

@@ -379,12 +379,31 @@ impl AggregationJobDriver {
                 }
             };
 
+            let public_share = match A::PublicShare::get_decoded_with_param(
+                &vdaf,
+                report.public_share(),
+            ) {
+                Ok(public_share) => public_share,
+                Err(error) => {
+                    info!(report_id = %report_aggregation.report_id, %error, "Couldn't decode public share");
+                    self.aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "public_share_decode_failure")],
+                    );
+                    report_aggregation.state = ReportAggregationState::Invalid;
+                    report_aggregations_to_write.push(report_aggregation);
+                    continue;
+                }
+            };
+
             // Initialize the leader's preparation state from the input share.
             let (prep_state, prep_share) = match vdaf.prepare_init(
                 verify_key.as_bytes(),
                 Role::Leader.index().unwrap(),
                 &aggregation_job.aggregation_param,
                 &report.metadata().report_id().get_encoded(),
+                &public_share,
                 &leader_input_share,
             ) {
                 Ok(prep_state_and_share) => prep_state_and_share,
@@ -404,7 +423,7 @@ impl AggregationJobDriver {
 
             report_shares.push(ReportShare::new(
                 report.metadata().clone(),
-                Vec::new(), // TODO(#473): fill out public_share once possible
+                report.public_share().to_vec(),
                 helper_encrypted_input_share.clone(),
             ));
             stepped_aggregations.push(SteppedAggregation {
@@ -974,6 +993,7 @@ mod tests {
             task_id,
             &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
+            &transcript.public_share,
             &transcript.input_shares,
         );
 
@@ -1181,6 +1201,7 @@ mod tests {
             task_id,
             &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
+            &transcript.public_share,
             &transcript.input_shares,
         );
         let aggregation_job_id = random();
@@ -1237,7 +1258,7 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             Vec::from([ReportShare::new(
                 report.metadata().clone(),
-                Vec::new(), // TODO(#473): fill out public_share once possible
+                report.public_share().to_vec(),
                 report
                     .encrypted_input_shares()
                     .get(Role::Helper.index().unwrap())
@@ -1383,6 +1404,7 @@ mod tests {
             task_id,
             &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
+            &transcript.public_share,
             &transcript.input_shares,
         );
         let aggregation_job_id = random();
@@ -1594,14 +1616,13 @@ mod tests {
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
-        let input_shares = run_vdaf(
+        let transcript = run_vdaf(
             vdaf.as_ref(),
             verify_key.as_bytes(),
             &(),
             report_metadata.report_id(),
             &0,
-        )
-        .input_shares;
+        );
 
         let (leader_hpke_config, _) = task.hpke_keys.iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
@@ -1609,7 +1630,8 @@ mod tests {
             task_id,
             &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
-            &input_shares,
+            &transcript.public_share,
+            &transcript.input_shares,
         );
         let aggregation_job_id = random();
 
@@ -1709,16 +1731,17 @@ mod tests {
 
     /// Returns a report with the given task ID & metadata values and encrypted input shares
     /// corresponding to the given HPKE configs & input shares.
-    fn generate_report<I: Encode>(
+    fn generate_report<P: Encode, I: Encode>(
         task_id: TaskId,
         report_metadata: &ReportMetadata,
         hpke_configs: &[&HpkeConfig],
+        public_share: &P,
         input_shares: &[I],
     ) -> Report {
         assert_eq!(hpke_configs.len(), 2);
         assert_eq!(input_shares.len(), 2);
 
-        let public_share = Vec::new(); // TODO(#473): fill out public_share once possible
+        let public_share = public_share.get_encoded();
 
         let encrypted_input_shares: Vec<_> = [Role::Leader, Role::Helper]
             .into_iter()
@@ -1787,6 +1810,7 @@ mod tests {
             task_id,
             &report_metadata,
             &[leader_hpke_config, &helper_hpke_config],
+            &transcript.public_share,
             &transcript.input_shares,
         );
 

@@ -241,6 +241,7 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
         "unknown_hpke_config_id",
         "decrypt_failure",
         "input_share_decode_failure",
+        "public_share_decode_failure",
         "continue_mismatch",
         "accumulate_failure",
         "finish_mismatch",
@@ -1178,16 +1179,25 @@ impl VdafOps {
                     })
             });
 
+            let public_share = A::PublicShare::get_decoded_with_param(&vdaf, report_share.public_share()).map_err(|error|{
+                info!(?task_id, metadata = ?report_share.metadata(), %error, "Couldnt' decode public share");
+                aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "public_share_decode_failure")]);
+                ReportShareError::VdafPrepError
+            });
+
+            let shares = input_share.and_then(|input_share| Ok((public_share?, input_share)));
+
             // Next, the aggregator runs the preparation-state initialization algorithm for the VDAF
             // associated with the task and computes the first state transition. [...] If either
             // step fails, then the aggregator MUST fail with error `vdaf-prep-error`. (§4.4.2.2)
-            let init_rslt = input_share.and_then(|input_share| {
+            let init_rslt = shares.and_then(|(public_share, input_share)| {
                 vdaf
                     .prepare_init(
                         verify_key.as_bytes(),
                         Role::Helper.index().unwrap(),
                         &agg_param,
                         &report_share.metadata().report_id().get_encoded(),
+                        &public_share,
                         &input_share,
                     )
                     .map_err(|error| {
@@ -2633,7 +2643,7 @@ mod tests {
             clock.now().sub(task.tolerable_clock_skew).unwrap(),
             vec![],
         );
-        let public_share = Vec::new(); // TODO(#473): fill out public_share once possible
+        let public_share = b"public share".to_vec();
         let message = b"this is a message";
         let associated_data =
             associated_data_for_report_share(task.id, &report_metadata, &public_share);
@@ -2727,7 +2737,7 @@ mod tests {
         let bad_report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            report.public_share().to_vec(),
             Vec::from([report.encrypted_input_shares()[0].clone()]),
         );
         let mut response =
@@ -2754,7 +2764,7 @@ mod tests {
         let bad_report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            report.public_share().to_vec(),
             Vec::from([
                 HpkeCiphertext::new(
                     HpkeConfigId::from(101),
@@ -2799,7 +2809,7 @@ mod tests {
                 bad_report_time,
                 report.metadata().extensions().to_vec(),
             ),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            report.public_share().to_vec(),
             report.encrypted_input_shares().to_vec(),
         );
         let mut response =
@@ -2862,7 +2872,7 @@ mod tests {
                             .unwrap(),
                         Vec::new(),
                     ),
-                    Vec::new(), // TODO(#473): fill out public_share once possible
+                    report.public_share().to_vec(),
                     report.encrypted_input_shares().to_vec(),
                 )
                 .get_encoded(),
@@ -2996,7 +3006,7 @@ mod tests {
         let report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            report.public_share().to_vec(),
             Vec::from([report.encrypted_input_shares()[0].clone()]),
         );
 
@@ -3020,7 +3030,7 @@ mod tests {
         let report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            report.public_share().to_vec(),
             Vec::from([
                 HpkeCiphertext::new(
                     unused_hpke_config_id,
@@ -3066,7 +3076,7 @@ mod tests {
         Report::new(
             *report.task_id(),
             report.metadata().clone(),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            report.public_share().to_vec(),
             Vec::from([leader_ciphertext, helper_ciphertext]),
         )
     }
@@ -3090,7 +3100,7 @@ mod tests {
                         .unwrap(),
                     report.metadata().extensions().to_vec(),
                 ),
-                Vec::new(), // TODO(#473): fill out public_share once possible
+                report.public_share().to_vec(),
                 report.encrypted_input_shares().to_vec(),
             ),
             &task.hpke_keys.values().next().unwrap().0,
@@ -3124,7 +3134,7 @@ mod tests {
                         .unwrap(),
                     report.metadata().extensions().to_vec(),
                 ),
-                Vec::new(), // TODO(#473): fill out public_share once possible
+                report.public_share().to_vec(),
                 report.encrypted_input_shares().to_vec(),
             ),
             &task.hpke_keys.values().next().unwrap().0,
@@ -3367,19 +3377,19 @@ mod tests {
                 .unwrap(),
             Vec::new(),
         );
-        let input_share = run_vdaf(
+        let transcript = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
             &(),
             report_metadata_0.report_id(),
             &0,
-        )
-        .input_shares
-        .remove(1);
+        );
+        let input_share = transcript.input_shares[1].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             &report_metadata_0,
             &hpke_key.0,
+            &transcript.public_share,
             &input_share,
         );
 
@@ -3400,13 +3410,15 @@ mod tests {
             encrypted_input_share.encapsulated_key().to_vec(),
             corrupted_payload,
         );
+        #[allow(clippy::unit_arg)]
+        let encoded_public_share = transcript.public_share.get_encoded();
         let report_share_1 = ReportShare::new(
             report_metadata_1,
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            encoded_public_share.clone(),
             corrupted_input_share,
         );
 
-        // report_share_2 fails decoding.
+        // report_share_2 fails decoding due to an issue with the input share.
         let report_metadata_2 = ReportMetadata::new(
             random(),
             clock
@@ -3415,14 +3427,16 @@ mod tests {
                 .unwrap(),
             Vec::new(),
         );
-        let public_share_2 = Vec::new(); // TODO(#473): fill out public_share once possible
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
+        let aad =
+            associated_data_for_report_share(task_id, &report_metadata_2, &encoded_public_share);
         let report_share_2 = generate_helper_report_share_for_plaintext(
-            &report_metadata_2,
+            report_metadata_2,
             &hpke_key.0,
+            encoded_public_share,
             &input_share_bytes,
-            &associated_data_for_report_share(task_id, &report_metadata_2, &public_share_2),
+            &aad,
         );
 
         // report_share_3 has an unknown HPKE config ID.
@@ -3445,6 +3459,7 @@ mod tests {
             task_id,
             &report_metadata_3,
             &wrong_hpke_config,
+            &transcript.public_share,
             &input_share,
         );
 
@@ -3457,19 +3472,19 @@ mod tests {
                 .unwrap(),
             Vec::new(),
         );
-        let input_share = run_vdaf(
+        let transcript = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
             &(),
             report_metadata_4.report_id(),
             &0,
-        )
-        .input_shares
-        .remove(1);
+        );
+        let input_share = transcript.input_shares[1].clone();
         let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             &report_metadata_4,
             &hpke_key.0,
+            &transcript.public_share,
             &input_share,
         );
 
@@ -3485,20 +3500,39 @@ mod tests {
                 .unwrap(),
             Vec::new(),
         );
-        let input_share = run_vdaf(
+        let transcript = run_vdaf(
             &vdaf,
             verify_key.as_bytes(),
             &(),
             report_metadata_5.report_id(),
             &0,
-        )
-        .input_shares
-        .remove(1);
+        );
+        let input_share = transcript.input_shares[1].clone();
         let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
             task_id,
             &report_metadata_5,
             &hpke_key.0,
+            &transcript.public_share,
             &input_share,
+        );
+
+        // report_share_6 fails decoding due to an issue with the public share.
+        let public_share_6 = Vec::from([0]);
+        let report_metadata_6 = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_unit_interval_start(task.min_batch_duration)
+                .unwrap(),
+            Vec::new(),
+        );
+        let aad = associated_data_for_report_share(task_id, &report_metadata_6, &public_share_6);
+        let report_share_6 = generate_helper_report_share_for_plaintext(
+            report_metadata_6,
+            &hpke_key.0,
+            public_share_6,
+            &input_share.get_encoded(),
+            &aad,
         );
 
         datastore
@@ -3541,6 +3575,7 @@ mod tests {
                 report_share_3.clone(),
                 report_share_4.clone(),
                 report_share_5.clone(),
+                report_share_6.clone(),
             ]),
         );
 
@@ -3572,7 +3607,7 @@ mod tests {
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
-        assert_eq!(aggregate_resp.prepare_steps().len(), 6);
+        assert_eq!(aggregate_resp.prepare_steps().len(), 7);
 
         let prepare_step_0 = aggregate_resp.prepare_steps().get(0).unwrap();
         assert_eq!(
@@ -3598,6 +3633,16 @@ mod tests {
         );
         assert_matches!(
             prepare_step_2.result(),
+            &PrepareStepResult::Failed(ReportShareError::VdafPrepError)
+        );
+
+        let prepare_step_6 = aggregate_resp.prepare_steps().get(6).unwrap();
+        assert_eq!(
+            prepare_step_6.report_id(),
+            report_share_6.metadata().report_id()
+        );
+        assert_matches!(
+            prepare_step_6.result(),
             &PrepareStepResult::Failed(ReportShareError::VdafPrepError)
         );
 
@@ -3656,6 +3701,7 @@ mod tests {
                 Vec::new(),
             ),
             &hpke_key.0,
+            &(),
             &(),
         );
         let request = AggregateInitializeReq::new(
@@ -3732,6 +3778,7 @@ mod tests {
             ),
             &hpke_key.0,
             &(),
+            &(),
         );
         let request = AggregateInitializeReq::new(
             task_id,
@@ -3799,7 +3846,7 @@ mod tests {
                 Time::from_seconds_since_epoch(54321),
                 Vec::new(),
             ),
-            Vec::new(), // TODO(#473): fill out public_share when possible
+            Vec::from("PUBLIC"),
             HpkeCiphertext::new(
                 // bogus, but we never get far enough to notice
                 HpkeConfigId::from(42),
@@ -3905,6 +3952,7 @@ mod tests {
             task_id,
             &report_metadata_0,
             &hpke_key.0,
+            &transcript_0.public_share,
             &transcript_0.input_shares[1],
         );
 
@@ -3929,6 +3977,7 @@ mod tests {
             task_id,
             &report_metadata_1,
             &hpke_key.0,
+            &transcript_1.public_share,
             &transcript_1.input_shares[1],
         );
 
@@ -3957,6 +4006,7 @@ mod tests {
             task_id,
             &report_metadata_2,
             &hpke_key.0,
+            &transcript_2.public_share,
             &transcript_2.input_shares[1],
         );
 
@@ -4220,6 +4270,7 @@ mod tests {
             task_id,
             &report_metadata_0,
             &hpke_key.0,
+            &transcript_0.public_share,
             &transcript_0.input_shares[1],
         );
 
@@ -4247,6 +4298,7 @@ mod tests {
             task_id,
             &report_metadata_1,
             &hpke_key.0,
+            &transcript_1.public_share,
             &transcript_1.input_shares[1],
         );
 
@@ -4273,6 +4325,7 @@ mod tests {
             task_id,
             &report_metadata_2,
             &hpke_key.0,
+            &transcript_2.public_share,
             &transcript_2.input_shares[1],
         );
 
@@ -4480,6 +4533,7 @@ mod tests {
             task_id,
             &report_metadata_3,
             &hpke_key.0,
+            &transcript_3.public_share,
             &transcript_3.input_shares[1],
         );
 
@@ -4506,6 +4560,7 @@ mod tests {
             task_id,
             &report_metadata_4,
             &hpke_key.0,
+            &transcript_4.public_share,
             &transcript_4.input_shares[1],
         );
 
@@ -4532,6 +4587,7 @@ mod tests {
             task_id,
             &report_metadata_5,
             &hpke_key.0,
+            &transcript_5.public_share,
             &transcript_5.input_shares[1],
         );
 
@@ -4749,7 +4805,7 @@ mod tests {
                         task_id,
                         &ReportShare::new(
                             report_metadata.clone(),
-                            Vec::new(), // TODO(#473): fill out public_share once possible
+                            Vec::from("Public Share"),
                             HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -4859,7 +4915,7 @@ mod tests {
                         task_id,
                         &ReportShare::new(
                             report_metadata.clone(),
-                            Vec::new(), // TODO(#473): fill out public_share once possible
+                            Vec::from("public share"),
                             HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -5015,7 +5071,7 @@ mod tests {
                         task_id,
                         &ReportShare::new(
                             report_metadata.clone(),
-                            Vec::new(), // TODO(#473): fill out public_share once possible
+                            Vec::from("PUBLIC"),
                             HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -5137,7 +5193,7 @@ mod tests {
                         task_id,
                         &ReportShare::new(
                             report_metadata_0.clone(),
-                            Vec::new(), // TODO(#473): fill out public_share once possible
+                            Vec::from("public"),
                             HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -5150,7 +5206,7 @@ mod tests {
                         task_id,
                         &ReportShare::new(
                             report_metadata_1.clone(),
-                            Vec::new(), // TODO(#473): fill out public_share once possible
+                            Vec::from("public"),
                             HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -5281,7 +5337,7 @@ mod tests {
                         task_id,
                         &ReportShare::new(
                             report_metadata.clone(),
-                            Vec::new(), // TODO(#473): fill out public_share once possible
+                            Vec::from("public share"),
                             HpkeCiphertext::new(
                                 HpkeConfigId::from(42),
                                 Vec::from("012345"),
@@ -6574,31 +6630,34 @@ mod tests {
         task_id: TaskId,
         report_metadata: &ReportMetadata,
         cfg: &HpkeConfig,
+        public_share: &V::PublicShare,
         input_share: &V::InputShare,
     ) -> ReportShare
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let public_share = Vec::new(); // TODO(#473): fill out public_share once possible
+        let encoded_public_share = public_share.get_encoded();
         let associated_data =
-            associated_data_for_report_share(task_id, report_metadata, &public_share);
+            associated_data_for_report_share(task_id, report_metadata, &encoded_public_share);
         generate_helper_report_share_for_plaintext(
-            report_metadata,
+            report_metadata.clone(),
             cfg,
+            encoded_public_share,
             &input_share.get_encoded(),
             &associated_data,
         )
     }
 
     fn generate_helper_report_share_for_plaintext(
-        metadata: &ReportMetadata,
+        metadata: ReportMetadata,
         cfg: &HpkeConfig,
+        encoded_public_share: Vec<u8>,
         plaintext: &[u8],
         associated_data: &[u8],
     ) -> ReportShare {
         ReportShare::new(
-            metadata.clone(),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            metadata,
+            encoded_public_share,
             hpke::seal(
                 cfg,
                 &HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Helper),

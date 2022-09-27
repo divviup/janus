@@ -108,6 +108,8 @@ pub enum Error {
     Hpke(#[from] janus_core::hpke::Error),
     #[error("timed out waiting for collection to finish")]
     CollectPollTimeout,
+    #[error("report count was too large")]
+    ReportCountOverflow,
 }
 
 static COLLECTOR_USER_AGENT: &str = concat!(
@@ -405,9 +407,15 @@ where
             })
             .collect::<Result<Vec<_>, Error>>()?;
 
-        let aggregate_result = self
-            .vdaf_collector
-            .unshard(&job.aggregation_parameter, aggregate_shares)?;
+        let report_count = collect_response
+            .report_count()
+            .try_into()
+            .map_err(|_| Error::ReportCountOverflow)?;
+        let aggregate_result = self.vdaf_collector.unshard(
+            &job.aggregation_parameter,
+            aggregate_shares,
+            report_count,
+        )?;
 
         Ok(PollResult::AggregateResult(aggregate_result))
     }

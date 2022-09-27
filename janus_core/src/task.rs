@@ -5,9 +5,9 @@ use ring::constant_time;
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 
 /// Identifiers for supported VDAFs, corresponding to definitions in
-/// [draft-irtf-cfrg-vdaf-00][1] and implementations in [`prio::vdaf::prio3`].
+/// [draft-irtf-cfrg-vdaf-03][1] and implementations in [`prio::vdaf::prio3`].
 ///
-/// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/00/
+/// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/03/
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VdafInstance {
     /// A `prio3` counter using the AES 128 pseudorandom generator.

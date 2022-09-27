@@ -536,7 +536,7 @@ mod tests {
                     tx.put_client_report(&Report::new(
                         task_id,
                         report_metadata.clone(),
-                        Vec::new(), // TODO(#473): fill out public_share once possible
+                        Vec::new(),
                         Vec::new(),
                     ))
                     .await?;
@@ -766,7 +766,7 @@ mod tests {
                     tx.put_client_report(&Report::new(
                         task_id,
                         report_metadata.clone(),
-                        Vec::new(), // TODO(#473): fill out public_share once possible
+                        Vec::new(),
                         Vec::new(),
                     ))
                     .await?;
@@ -922,7 +922,7 @@ mod tests {
                         tx.put_client_report(&Report::new(
                             task_id,
                             report_metadata.clone(),
-                            Vec::new(), // TODO(#473): fill out public_share once possible
+                            Vec::new(),
                             Vec::new(),
                         ))
                         .await?;

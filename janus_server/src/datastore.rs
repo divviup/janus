@@ -728,7 +728,8 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT client_reports.nonce_time, client_reports.extensions, client_reports.input_shares
+                "SELECT client_reports.nonce_time, client_reports.extensions,
+                    client_reports.public_share, client_reports.input_shares
                 FROM client_reports
                 JOIN tasks ON tasks.id = client_reports.task_id
                 WHERE tasks.task_id = $1 AND client_reports.nonce_rand = $2",
@@ -750,6 +751,8 @@ impl<C: Clock> Transaction<'_, C> {
                 let extensions: Vec<Extension> =
                     decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
 
+                let encoded_public_share: Vec<u8> = row.get("public_share");
+
                 let encoded_input_shares: Vec<u8> = row.get("input_shares");
                 let input_shares: Vec<HpkeCiphertext> =
                     decode_u16_items(&(), &mut Cursor::new(&encoded_input_shares))?;
@@ -757,7 +760,7 @@ impl<C: Clock> Transaction<'_, C> {
                 Ok(Report::new(
                     task_id,
                     ReportMetadata::new(report_id, time, extensions),
-                    Vec::new(), // TODO(#473): fill out public_share once possible
+                    encoded_public_share,
                     input_shares,
                 ))
             })
@@ -892,8 +895,9 @@ impl<C: Clock> Transaction<'_, C> {
         );
 
         let stmt = self.tx.prepare_cached(
-            "INSERT INTO client_reports (task_id, nonce_time, nonce_rand, extensions, input_shares)
-            VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5)"
+            "INSERT INTO client_reports (task_id, nonce_time, nonce_rand, extensions, public_share,
+                input_shares)
+            VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)"
         ).await?;
         self.tx
             .execute(
@@ -903,6 +907,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* nonce_time */ &time.as_naive_date_time(),
                     /* nonce_rand */ &report_id.as_ref(),
                     /* extensions */ &encoded_extensions,
+                    /* public_share */ &report.public_share(),
                     /* input_shares */ &encoded_input_shares,
                 ],
             )
@@ -3603,7 +3608,7 @@ mod tests {
                     Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
                 ],
             ),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::from("public_share"),
             Vec::from([
                 HpkeCiphertext::new(
                     HpkeConfigId::from(12),
@@ -3681,25 +3686,25 @@ mod tests {
         let first_unaggregated_report = Report::new(
             task_id,
             ReportMetadata::new(random(), when, Vec::new()),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::new(),
             Vec::new(),
         );
         let second_unaggregated_report = Report::new(
             task_id,
             ReportMetadata::new(random(), when, Vec::new()),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::new(),
             Vec::new(),
         );
         let aggregated_report = Report::new(
             task_id,
             ReportMetadata::new(random(), when, Vec::new()),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::new(),
             Vec::new(),
         );
         let unrelated_report = Report::new(
             unrelated_task_id,
             ReportMetadata::new(random(), when, Vec::new()),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::new(),
             Vec::new(),
         );
 
@@ -3806,25 +3811,25 @@ mod tests {
         let first_unaggregated_report = Report::new(
             task_id,
             ReportMetadata::new(random(), Time::from_seconds_since_epoch(12345), Vec::new()),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::new(),
             Vec::new(),
         );
         let second_unaggregated_report = Report::new(
             task_id,
             ReportMetadata::new(random(), Time::from_seconds_since_epoch(12346), Vec::new()),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::new(),
             Vec::new(),
         );
         let aggregated_report = Report::new(
             task_id,
             ReportMetadata::new(random(), Time::from_seconds_since_epoch(12347), Vec::new()),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::new(),
             Vec::new(),
         );
         let unrelated_report = Report::new(
             unrelated_task_id,
             ReportMetadata::new(random(), Time::from_seconds_since_epoch(12348), Vec::new()),
-            Vec::new(), // TODO(#473): fill out public_share once possible
+            Vec::new(),
             Vec::new(),
         );
 
@@ -6282,15 +6287,22 @@ mod tests {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let input_shares = vdaf.shard(&measurement).unwrap();
+        let (public_share, input_shares) = vdaf.shard(&measurement).unwrap();
         let verify_key: [u8; L] = random();
 
         let (mut prep_states, prep_shares): (Vec<_>, Vec<_>) = input_shares
             .iter()
             .enumerate()
             .map(|(agg_id, input_share)| {
-                vdaf.prepare_init(&verify_key, agg_id, &agg_param, b"nonce", input_share)
-                    .unwrap()
+                vdaf.prepare_init(
+                    &verify_key,
+                    agg_id,
+                    &agg_param,
+                    b"nonce",
+                    &public_share,
+                    input_share,
+                )
+                .unwrap()
             })
             .unzip();
         let prep_msg = vdaf.prepare_preprocess(prep_shares).unwrap();
