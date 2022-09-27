@@ -1180,7 +1180,7 @@ impl VdafOps {
             });
 
             let public_share = A::PublicShare::get_decoded_with_param(&vdaf, report_share.public_share()).map_err(|error|{
-                info!(?task_id, metadata = ?report_share.metadata(), %error, "Couldnt' decode public share");
+                info!(?task_id, metadata = ?report_share.metadata(), %error, "Couldn't decode public share");
                 aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "public_share_decode_failure")]);
                 ReportShareError::VdafPrepError
             });
