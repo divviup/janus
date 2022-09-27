@@ -35,7 +35,7 @@ use prio::{
         Aggregatable,
     },
 };
-use std::sync::Arc;
+use std::{borrow::Borrow, sync::Arc};
 use tracing::{debug, error, warn};
 
 /// Drives a collect job.
@@ -144,7 +144,7 @@ impl CollectJobDriver {
     {
         let task_id = lease.leased().task_id;
         let collect_job_id = lease.leased().collect_job_id;
-        let (task, collect_job, batch_unit_aggregations) = datastore
+        let (task, mut collect_job, batch_unit_aggregations) = datastore
             .run_tx(|tx| {
                 Box::pin(async move {
                     // TODO(#224): Consider fleshing out `AcquiredCollectJob` to include a `Task`,
@@ -213,22 +213,24 @@ impl CollectJobDriver {
 
         // Store the helper aggregate share in the datastore so that a later request to a collect
         // job URI can serve it up.
-        let leader_aggregate_share = Arc::new(leader_aggregate_share);
-        let aggregate_share_resp =
-            Arc::new(AggregateShareResp::get_decoded(&response.bytes().await?)?);
+        let aggregate_share_resp = AggregateShareResp::get_decoded(&response.bytes().await?)?;
+
+        collect_job.state = CollectJobState::Finished {
+            encrypted_helper_aggregate_share: aggregate_share_resp
+                .encrypted_aggregate_share()
+                .clone(),
+            leader_aggregate_share,
+        };
+
         let lease = Arc::new(lease);
+        let collect_job = Arc::new(collect_job);
         datastore
             .run_tx(|tx| {
-                let leader_aggregate_share = Arc::clone(&leader_aggregate_share);
-                let aggregate_share_resp = Arc::clone(&aggregate_share_resp);
+                // TODO(#344): Check for state == DELETED
                 let lease = Arc::clone(&lease);
+                let collect_job = Arc::clone(&collect_job);
                 Box::pin(async move {
-                    tx.update_collect_job::<L, A>(
-                        collect_job_id,
-                        &leader_aggregate_share,
-                        aggregate_share_resp.encrypted_aggregate_share(),
-                    )
-                    .await?;
+                    tx.update_collect_job::<L, A>(collect_job.borrow()).await?;
 
                     tx.release_collect_job(&lease).await
                 })
@@ -239,20 +241,90 @@ impl CollectJobDriver {
     }
 
     #[tracing::instrument(skip(self, datastore), err)]
-    pub async fn cancel_collect_job<C: Clock>(
+    pub async fn abandon_collect_job<C: Clock>(
         &self,
         datastore: Arc<Datastore<C>>,
         lease: Lease<AcquiredCollectJob>,
     ) -> Result<(), Error> {
+        match lease.leased().vdaf {
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(
+                    datastore,
+                    lease
+                )
+                .await
+            }
+
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128CountVecMultithreaded>(
+                    datastore,
+                    lease
+                )
+                .await
+            }
+
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. }) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Sum>(
+                    datastore,
+                    lease
+                )
+                .await
+            }
+
+            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Histogram>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+            #[cfg(test)]
+            VdafInstance::Fake => {
+                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+                self.abandon_collect_job_generic::<VERIFY_KEY_LENGTH, C, dummy_vdaf::Vdaf>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+            _ => panic!("VDAF {:?} is not yet supported", lease.leased().vdaf),
+        }
+    }
+
+    async fn abandon_collect_job_generic<const L: usize, C, A>(
+        &self,
+        datastore: Arc<Datastore<C>>,
+        lease: Lease<AcquiredCollectJob>,
+    ) -> Result<(), Error>
+    where
+        C: Clock,
+        A: vdaf::Aggregator<L> + 'static,
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+    {
         let collect_job_id = lease.leased().collect_job_id;
         let lease = Arc::new(lease);
         datastore
             .run_tx(|tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
-                    let cancel_future = tx.cancel_collect_job(collect_job_id);
+                    let mut collect_job = tx
+                        .get_collect_job::<L, A>(collect_job_id)
+                        .await?
+                        .ok_or_else(|| {
+                            datastore::Error::DbState(format!(
+                                "collect job {} was leased but no collect job was found",
+                                collect_job_id,
+                            ))
+                        })?;
+                    collect_job.state = CollectJobState::Abandoned;
+                    let update_future = tx.update_collect_job(&collect_job);
                     let release_future = tx.release_collect_job(&lease);
-                    try_join!(cancel_future, release_future)?;
+                    try_join!(update_future, release_future)?;
                     Ok(())
                 })
             })
@@ -301,7 +373,7 @@ impl CollectJobDriver {
                         "Canceling job due to too many failed attempts"
                     );
                     this.job_cancel_counter.add(&Context::current(), 1, &[]);
-                    return this.cancel_collect_job(datastore, collect_job_lease).await;
+                    return this.abandon_collect_job(datastore, collect_job_lease).await;
                 }
 
                 this.step_collect_job(datastore, collect_job_lease).await
@@ -510,8 +582,8 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    let collect_job_id = tx
-                        .put_collect_job(task_id, batch_interval, &aggregation_param.get_encoded())
+                    let collect_job = CollectJob::new(task_id, batch_interval, aggregation_param);
+                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
                         .await?;
 
                     let aggregation_job_id = random();
@@ -559,8 +631,8 @@ mod tests {
                         .await?
                         .remove(0);
                     assert_eq!(task_id, lease.leased().task_id);
-                    assert_eq!(collect_job_id, lease.leased().collect_job_id);
-                    Ok((collect_job_id, lease))
+                    assert_eq!(collect_job.id, lease.leased().collect_job_id);
+                    Ok((collect_job.id, lease))
                 })
             })
             .await
@@ -740,8 +812,8 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    let collect_job_id = tx
-                        .put_collect_job(task_id, batch_interval, &aggregation_param.get_encoded())
+                    let collect_job = CollectJob::new(task_id, batch_interval, aggregation_param);
+                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
                         .await?;
 
                     let aggregation_job_id = random();
@@ -814,8 +886,8 @@ mod tests {
                         .await?
                         .remove(0);
                     assert_eq!(task_id, lease.leased().task_id);
-                    assert_eq!(collect_job_id, lease.leased().collect_job_id);
-                    Ok((collect_job_id, lease))
+                    assert_eq!(collect_job.id, lease.leased().collect_job_id);
+                    Ok((collect_job.id, lease))
                 })
             })
             .await
@@ -828,7 +900,7 @@ mod tests {
 
         // Run: cancel the collect job.
         collect_job_driver
-            .cancel_collect_job(Arc::clone(&ds), lease)
+            .abandon_collect_job(Arc::clone(&ds), lease)
             .await
             .unwrap();
 
@@ -853,7 +925,7 @@ mod tests {
         assert_eq!(
             collect_job,
             CollectJob {
-                collect_job_id,
+                id: collect_job_id,
                 task_id,
                 batch_interval,
                 aggregation_param,
@@ -893,8 +965,8 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    let collect_job_id = tx
-                        .put_collect_job(task_id, batch_interval, &aggregation_param.get_encoded())
+                    let collect_job = CollectJob::new(task_id, batch_interval, aggregation_param);
+                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
                         .await?;
 
                     let aggregation_job_id = random();
@@ -953,7 +1025,7 @@ mod tests {
                     })
                     .await?;
 
-                    Ok(collect_job_id)
+                    Ok(collect_job.id)
                 })
             })
             .await
@@ -1043,7 +1115,7 @@ mod tests {
         assert_eq!(
             collect_job_after,
             CollectJob {
-                collect_job_id,
+                id: collect_job_id,
                 task_id,
                 batch_interval,
                 aggregation_param,

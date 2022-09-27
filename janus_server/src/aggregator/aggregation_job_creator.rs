@@ -452,7 +452,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 mod tests {
     use super::AggregationJobCreator;
     use crate::{
-        datastore::{test_util::ephemeral_datastore, Transaction},
+        datastore::{models::CollectJob, test_util::ephemeral_datastore, Transaction},
         messages::test_util::new_dummy_report,
         messages::TimeExt,
         task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
@@ -910,14 +910,14 @@ mod tests {
             .run_tx(|tx| {
                 Box::pin(async move {
                     // This will encompass the members of batch_2_reports.
-                    tx.put_collect_job(
+                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                         task_id,
                         Interval::new(report_time, task.min_batch_duration).unwrap(),
-                        &[7],
-                    )
+                        AggregationParam(7),
+                    ))
                     .await?;
                     // This will encompass the members of both batch_1_reports and batch_2_reports.
-                    tx.put_collect_job(
+                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                         task_id,
                         Interval::new(
                             report_time,
@@ -926,8 +926,8 @@ mod tests {
                             ),
                         )
                         .unwrap(),
-                        &[11],
-                    )
+                        AggregationParam(11),
+                    ))
                     .await?;
                     Ok(())
                 })

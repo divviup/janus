@@ -1447,13 +1447,20 @@ impl<C: Clock> Transaction<'_, C> {
     /// If a collect job corresponding to the provided values exists, its UUID is returned, which
     /// may then be used to construct a collect job URI. If that collect job does not exist, returns
     /// `Ok(None)`.
-    #[tracing::instrument(skip(self, encoded_aggregation_parameter), err)]
-    pub(crate) async fn get_collect_job_id(
+    #[tracing::instrument(skip(self, aggregation_parameter), err)]
+    pub(crate) async fn get_collect_job_id<const L: usize, A>(
         &self,
         task_id: TaskId,
         batch_interval: Interval,
-        encoded_aggregation_parameter: &[u8],
-    ) -> Result<Option<Uuid>, Error> {
+        aggregation_parameter: &A::AggregationParam,
+    ) -> Result<Option<Uuid>, Error>
+    where
+        A: vdaf::Aggregator<L>,
+        A::AggregationParam: Encode + std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let encoded_aggregation_parameter = aggregation_parameter.get_encoded();
+
         let stmt = self
             .tx
             .prepare_cached(
@@ -1614,10 +1621,12 @@ impl<C: Clock> Transaction<'_, C> {
             }
 
             CollectJobStateCode::Abandoned => CollectJobState::Abandoned,
+
+            CollectJobStateCode::Deleted => CollectJobState::Deleted,
         };
 
         Ok(CollectJob {
-            collect_job_id,
+            id: collect_job_id,
             task_id,
             batch_interval,
             aggregation_param,
@@ -1627,15 +1636,17 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Constructs and stores a new collect job for the provided values, and returns the UUID that
     /// was assigned.
-    // TODO(#242): update this function to take a CollectJob.
-    #[tracing::instrument(skip(self, encoded_aggregation_parameter), err)]
-    pub(crate) async fn put_collect_job(
+    #[tracing::instrument(skip(self), err)]
+    pub(crate) async fn put_collect_job<const L: usize, A>(
         &self,
-        task_id: TaskId,
-        batch_interval: Interval,
-        encoded_aggregation_parameter: &[u8],
-    ) -> Result<Uuid, Error> {
-        let collect_job_id = Uuid::new_v4();
+        collect_job: &CollectJob<L, A>,
+    ) -> Result<(), Error>
+    where
+        A: vdaf::Aggregator<L>,
+        A::AggregationParam: Encode + std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let encoded_aggregation_parameter = collect_job.aggregation_param.get_encoded();
 
         let stmt = self
             .tx
@@ -1651,15 +1662,15 @@ impl<C: Clock> Transaction<'_, C> {
             .execute(
                 &stmt,
                 &[
-                    /* collect_job_id */ &collect_job_id,
-                    /* task_id */ &task_id.as_ref(),
-                    /* batch_interval */ &SqlInterval::from(batch_interval),
+                    /* collect_job_id */ &collect_job.id,
+                    /* task_id */ &collect_job.task_id.as_ref(),
+                    /* batch_interval */ &SqlInterval::from(collect_job.batch_interval),
                     /* aggregation_param */ &encoded_aggregation_parameter,
                 ],
             )
             .await?;
 
-        Ok(collect_job_id)
+        Ok(())
     }
 
     /// acquire_incomplete_collect_jobs retrieves & acquires the IDs of unclaimed incomplete collect
@@ -1785,63 +1796,59 @@ ORDER BY id DESC
         )
     }
 
-    /// Updates an existing collect job with the provided aggregate shares.
-    // TODO(#242): update this function to take a CollectJob.
-    #[tracing::instrument(skip(self, leader_aggregate_share, helper_aggregate_share), err)]
-    pub(crate) async fn update_collect_job<const L: usize, A: vdaf::Aggregator<L>>(
+    /// Updates an existing collect job.
+    #[tracing::instrument(skip(self), err)]
+    pub(crate) async fn update_collect_job<const L: usize, A>(
         &self,
-        collect_job_id: Uuid,
-        leader_aggregate_share: &A::AggregateShare,
-        helper_aggregate_share: &HpkeCiphertext,
+        collect_job: &CollectJob<L, A>,
     ) -> Result<(), Error>
     where
+        A: vdaf::Aggregator<L>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let leader_aggregate_share: Option<Vec<u8>> = Some(leader_aggregate_share.into());
-        let helper_aggregate_share = Some(helper_aggregate_share.get_encoded());
+        let (leader_aggregate_share, helper_aggregate_share) = match collect_job.state {
+            CollectJobState::Start => {
+                return Err(Error::InvalidParameter(
+                    "cannot update collect job into START state",
+                ));
+            }
+            CollectJobState::Finished {
+                ref encrypted_helper_aggregate_share,
+                ref leader_aggregate_share,
+            } => {
+                let leader_aggregate_share: Option<Vec<u8>> = Some(leader_aggregate_share.into());
+                let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded());
+
+                (leader_aggregate_share, helper_aggregate_share)
+            }
+            CollectJobState::Abandoned | CollectJobState::Deleted => (None, None),
+        };
 
         let stmt = self
             .tx
             .prepare_cached(
                 "UPDATE collect_jobs SET
-                    state = 'FINISHED',
-                    leader_aggregate_share = $1,
-                    helper_aggregate_share = $2
-                WHERE collect_job_id = $3",
+                    state = $1,
+                    leader_aggregate_share = $2,
+                    helper_aggregate_share = $3
+                WHERE collect_job_id = $4",
             )
             .await?;
+
         check_single_row_mutation(
             self.tx
                 .execute(
                     &stmt,
                     &[
+                        /* state */ &collect_job.state.collect_job_state_code(),
                         &leader_aggregate_share,
                         &helper_aggregate_share,
-                        &collect_job_id,
+                        /* collect_job_id */ &collect_job.id,
                     ],
                 )
                 .await?,
-        )?;
-
-        Ok(())
-    }
-
-    /// Cancels an existing collect job.
-    // TODO(#242): remove this function in lieu of update_collect_job once that method takes a CollectJob.
-    pub(crate) async fn cancel_collect_job(&self, collect_job_id: Uuid) -> Result<(), Error> {
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "UPDATE collect_jobs SET
-                state = 'ABANDONED',
-                leader_aggregate_share = NULL,
-                helper_aggregate_share = NULL
-            WHERE collect_job_id = $1",
-            )
-            .await?;
-        check_single_row_mutation(self.tx.execute(&stmt, &[&collect_job_id]).await?)?;
-        Ok(())
+        )
     }
 
     /// Store a new `batch_unit_aggregations` row in the datastore.
@@ -2531,6 +2538,9 @@ pub enum Error {
     TryFromInt(#[from] std::num::TryFromIntError),
     #[error(transparent)]
     Message(#[from] janus_messages::Error),
+    /// An invalid parameter was provided.
+    #[error("invalid parameter: {0}")]
+    InvalidParameter(&'static str),
 }
 
 impl Error {
@@ -2961,7 +2971,7 @@ pub mod models {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         /// The unique identifier for the collect job.
-        pub(crate) collect_job_id: Uuid,
+        pub(crate) id: Uuid,
         /// The task ID for this aggregate share.
         pub(crate) task_id: TaskId,
         /// The batch interval covered by the aggregate share.
@@ -2973,6 +2983,26 @@ pub mod models {
         pub(crate) state: CollectJobState<L, A>,
     }
 
+    impl<const L: usize, A: vdaf::Aggregator<L>> CollectJob<L, A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        /// Create a new `CollectJob` in the `Start` state, with a random collect job ID.
+        pub(crate) fn new(
+            task_id: TaskId,
+            batch_interval: Interval,
+            aggregation_param: A::AggregationParam,
+        ) -> Self {
+            Self {
+                id: Uuid::new_v4(),
+                task_id,
+                batch_interval,
+                aggregation_param,
+                state: CollectJobState::Start,
+            }
+        }
+    }
+
     impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for CollectJob<L, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -2980,7 +3010,7 @@ pub mod models {
         CollectJobState<L, A>: PartialEq,
     {
         fn eq(&self, other: &Self) -> bool {
-            self.collect_job_id == other.collect_job_id
+            self.id == other.id
                 && self.task_id == other.task_id
                 && self.batch_interval == other.batch_interval
                 && self.aggregation_param == other.aggregation_param
@@ -3011,6 +3041,22 @@ pub mod models {
             leader_aggregate_share: A::AggregateShare,
         },
         Abandoned,
+        Deleted,
+    }
+
+    impl<const L: usize, A> CollectJobState<L, A>
+    where
+        A: vdaf::Aggregator<L>,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        pub(super) fn collect_job_state_code(&self) -> CollectJobStateCode {
+            match self {
+                Self::Start => CollectJobStateCode::Start,
+                Self::Finished { .. } => CollectJobStateCode::Finished,
+                Self::Abandoned => CollectJobStateCode::Abandoned,
+                Self::Deleted => CollectJobStateCode::Deleted,
+            }
+        }
     }
 
     impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for CollectJobState<L, A>
@@ -3054,6 +3100,8 @@ pub mod models {
         Finished,
         #[postgres(name = "ABANDONED")]
         Abandoned,
+        #[postgres(name = "DELETED")]
+        Deleted,
     }
 
     /// AggregateShareJob represents a row in the `aggregate_share_jobs` table, used by helpers to
@@ -3859,15 +3907,15 @@ mod tests {
 
                 // There are no client reports submitted under this task, so we shouldn't see
                 // this aggregation parameter at all.
-                tx.put_collect_job(
+                tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                     unrelated_task_id,
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(8).unwrap(),
                     )
                     .unwrap(),
-                    &[255],
-                )
+                    AggregationParam(255),
+                ))
                 .await
             })
         })
@@ -3892,37 +3940,37 @@ mod tests {
             let aggregated_report_time = *aggregated_report.metadata().time();
             let aggregated_report_id = *aggregated_report.metadata().report_id();
             Box::pin(async move {
-                tx.put_collect_job(
+                tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                     task_id,
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(8).unwrap(),
                     )
                     .unwrap(),
-                    &[0],
-                )
+                    AggregationParam(0),
+                ))
                 .await?;
-                tx.put_collect_job(
+                tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                     task_id,
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(8).unwrap(),
                     )
                     .unwrap(),
-                    &[1],
-                )
+                    AggregationParam(1),
+                ))
                 .await?;
                 // No reports fall in this interval, so we shouldn't see it's aggregation
                 // parameter at all.
-                tx.put_collect_job(
+                tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                     task_id,
                     Interval::new(
                         Time::from_seconds_since_epoch(8 * 3600),
                         Duration::from_hours(8).unwrap(),
                     )
                     .unwrap(),
-                    &[2],
-                )
+                    AggregationParam(2),
+                ))
                 .await?;
 
                 let aggregation_job_id = random();
@@ -3996,25 +4044,25 @@ mod tests {
         // repeat result tuples, which could lead to double counting in batch unit aggregations.
         ds.run_tx(|tx| {
             Box::pin(async move {
-                tx.put_collect_job(
+                tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                     task_id,
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(16).unwrap(),
                     )
                     .unwrap(),
-                    &[0],
-                )
+                    dummy_vdaf::AggregationParam(0),
+                ))
                 .await?;
-                tx.put_collect_job(
+                tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                     task_id,
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(16).unwrap(),
                     )
                     .unwrap(),
-                    &[1],
-                )
+                    dummy_vdaf::AggregationParam(1),
+                ))
                 .await?;
                 Ok(())
             })
@@ -4919,7 +4967,14 @@ mod tests {
 
         let collect_job_id = ds
             .run_tx(|tx| {
-                Box::pin(async move { tx.get_collect_job_id(task_id, batch_interval, &[]).await })
+                Box::pin(async move {
+                    tx.get_collect_job_id::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        task_id,
+                        batch_interval,
+                        &(),
+                    )
+                    .await
+                })
             })
             .await
             .unwrap();
@@ -4927,14 +4982,29 @@ mod tests {
 
         let collect_job_id = ds
             .run_tx(|tx| {
-                Box::pin(async move { tx.put_collect_job(task_id, batch_interval, &[]).await })
+                Box::pin(async move {
+                    let collect_job = CollectJob::new(task_id, batch_interval, ());
+                    tx.put_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &collect_job,
+                    )
+                    .await?;
+
+                    Ok(collect_job.id)
+                })
             })
             .await
             .unwrap();
 
         let same_collect_job_id = ds
             .run_tx(|tx| {
-                Box::pin(async move { tx.get_collect_job_id(task_id, batch_interval, &[]).await })
+                Box::pin(async move {
+                    tx.get_collect_job_id::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        task_id,
+                        batch_interval,
+                        &(),
+                    )
+                    .await
+                })
             })
             .await
             .unwrap()
@@ -4961,7 +5031,7 @@ mod tests {
             PRIO3_AES128_VERIFY_KEY_LENGTH,
             Prio3Aes128Count,
         > {
-            collect_job_id,
+            id: collect_job_id,
             task_id,
             batch_interval,
             aggregation_param: (),
@@ -4993,8 +5063,13 @@ mod tests {
         let different_collect_job_id = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.put_collect_job(task_id, different_batch_interval, &[])
-                        .await
+                    let collect_job = CollectJob::new(task_id, different_batch_interval, ());
+                    tx.put_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &collect_job,
+                    )
+                    .await?;
+
+                    Ok(collect_job.id)
                 })
             })
             .await
@@ -5031,26 +5106,26 @@ mod tests {
             })
             .await
             .unwrap();
-        collect_jobs_by_time.sort_by(|x, y| x.collect_job_id.cmp(&y.collect_job_id));
-        collect_jobs_by_interval.sort_by(|x, y| x.collect_job_id.cmp(&y.collect_job_id));
+        collect_jobs_by_time.sort_by(|x, y| x.id.cmp(&y.id));
+        collect_jobs_by_interval.sort_by(|x, y| x.id.cmp(&y.id));
 
         let mut want_collect_jobs = Vec::from([
             CollectJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
-                collect_job_id,
+                id: collect_job_id,
                 task_id,
                 batch_interval,
                 aggregation_param: (),
                 state: CollectJobState::Start,
             },
             CollectJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> {
-                collect_job_id: different_collect_job_id,
+                id: different_collect_job_id,
                 task_id,
                 batch_interval: different_batch_interval,
                 aggregation_param: (),
                 state: CollectJobState::Start,
             },
         ]);
-        want_collect_jobs.sort_by(|x, y| x.collect_job_id.cmp(&y.collect_job_id));
+        want_collect_jobs.sort_by(|x, y| x.id.cmp(&y.id));
 
         assert_eq!(collect_jobs_by_time, want_collect_jobs);
         assert_eq!(collect_jobs_by_interval, want_collect_jobs);
@@ -5088,24 +5163,29 @@ mod tests {
                 .await
                 .unwrap();
 
-                let first_collect_job_id = tx
-                    .put_collect_job(first_task_id, batch_interval, &[0, 1, 2, 3, 4])
-                    .await
-                    .unwrap();
-                let second_collect_job_id = tx
-                    .put_collect_job(second_task_id, batch_interval, &[0, 1, 2, 3, 4])
-                    .await
-                    .unwrap();
+                let first_collect_job = CollectJob::new(first_task_id, batch_interval, ());
+                tx.put_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    &first_collect_job,
+                )
+                .await
+                .unwrap();
+                let second_collect_job = CollectJob::new(second_task_id, batch_interval, ());
+
+                tx.put_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    &second_collect_job,
+                )
+                .await
+                .unwrap();
 
                 assert_eq!(
                     Some(first_task_id),
-                    tx.get_collect_job_task_id(first_collect_job_id)
+                    tx.get_collect_job_task_id(first_collect_job.id)
                         .await
                         .unwrap()
                 );
                 assert_eq!(
                     Some(second_task_id),
-                    tx.get_collect_job_task_id(second_collect_job_id)
+                    tx.get_collect_job_task_id(second_collect_job.id)
                         .await
                         .unwrap()
                 );
@@ -5148,38 +5228,36 @@ mod tests {
                 );
                 tx.put_task(&task).await.unwrap();
 
-                let first_collect_job_id = tx
-                    .put_collect_job(task_id, first_batch_interval, &().get_encoded())
-                    .await
-                    .unwrap();
-                let second_collect_job_id = tx
-                    .put_collect_job(task_id, second_batch_interval, &().get_encoded())
-                    .await
-                    .unwrap();
+                let mut first_collect_job = CollectJob::new(task_id, first_batch_interval, ());
+                tx.put_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    &first_collect_job,
+                )
+                .await
+                .unwrap();
+                let second_collect_job = CollectJob::new(task_id, second_batch_interval, ());
+                tx.put_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    &second_collect_job,
+                )
+                .await
+                .unwrap();
 
-                let first_collect_job = tx
+                let first_collect_job_again = tx
                     .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        first_collect_job_id,
+                        first_collect_job.id,
                     )
                     .await
                     .unwrap()
                     .unwrap();
-                assert_eq!(first_collect_job.collect_job_id, first_collect_job_id);
-                assert_eq!(first_collect_job.task_id, task_id);
-                assert_eq!(first_collect_job.batch_interval, first_batch_interval);
-                assert_eq!(first_collect_job.state, CollectJobState::Start);
+                assert_eq!(first_collect_job, first_collect_job_again);
 
-                let second_collect_job = tx
+                let second_collect_job_again = tx
                     .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        second_collect_job_id,
+                        second_collect_job.id,
                     )
                     .await
                     .unwrap()
                     .unwrap();
-                assert_eq!(second_collect_job.collect_job_id, second_collect_job_id);
-                assert_eq!(second_collect_job.task_id, task_id);
-                assert_eq!(second_collect_job.batch_interval, second_batch_interval);
-                assert_eq!(second_collect_job.state, CollectJobState::Start);
+                assert_eq!(second_collect_job, second_collect_job_again);
 
                 let leader_aggregate_share = AggregateShare::from(vec![Field64::from(1)]);
 
@@ -5194,31 +5272,25 @@ mod tests {
                 )
                 .unwrap();
 
+                first_collect_job.state = CollectJobState::Finished {
+                    encrypted_helper_aggregate_share,
+                    leader_aggregate_share,
+                };
+
                 tx.update_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                    first_collect_job_id,
-                    &leader_aggregate_share,
-                    &encrypted_helper_aggregate_share,
+                    &first_collect_job,
                 )
                 .await
                 .unwrap();
 
-                let first_collect_job = tx
+                let updated_first_collect_job = tx
                     .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        first_collect_job_id,
+                        first_collect_job.id,
                     )
                     .await
                     .unwrap()
                     .unwrap();
-                assert_eq!(first_collect_job.collect_job_id, first_collect_job_id);
-                assert_eq!(first_collect_job.task_id, task_id);
-                assert_eq!(first_collect_job.batch_interval, first_batch_interval);
-                assert_eq!(
-                    first_collect_job.state,
-                    CollectJobState::Finished {
-                        encrypted_helper_aggregate_share,
-                        leader_aggregate_share
-                    }
-                );
+                assert_eq!(first_collect_job, updated_first_collect_job);
 
                 Ok(())
             })
@@ -5228,84 +5300,94 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_collect_job() {
-        // Setup: write a collect job to the datastore.
+    async fn update_collect_jobs() {
+        // Setup: write collect jobs to the datastore.
         install_test_trace_subscriber();
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let task_id = random();
-        let batch_interval = Interval::new(
+        let abandoned_batch_interval = Interval::new(
             Time::from_seconds_since_epoch(100),
             Duration::from_seconds(100),
         )
         .unwrap();
+        let deleted_batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(200),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
 
-        let (collect_job_id, collect_job) = ds
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.put_task(&Task::new_dummy(
-                        task_id,
-                        janus_core::task::VdafInstance::Prio3Aes128Count.into(),
-                        Role::Leader,
-                    ))
-                    .await?;
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                tx.put_task(&Task::new_dummy(
+                    task_id,
+                    janus_core::task::VdafInstance::Prio3Aes128Count.into(),
+                    Role::Leader,
+                ))
+                .await?;
 
-                    let collect_job_id = tx.put_collect_job(task_id, batch_interval, &[]).await?;
+                let mut abandoned_collect_job =
+                    CollectJob::new(task_id, abandoned_batch_interval, ());
+                tx.put_collect_job(&abandoned_collect_job).await?;
+                let mut deleted_collect_job = CollectJob::new(task_id, deleted_batch_interval, ());
+                tx.put_collect_job(&deleted_collect_job).await?;
 
-                    let collect_job = tx
-                        .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                            collect_job_id,
-                        )
-                        .await?
-                        .unwrap();
+                let abandoned_collect_job_again = tx
+                    .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        abandoned_collect_job.id,
+                    )
+                    .await?
+                    .unwrap();
 
-                    Ok((collect_job_id, collect_job))
-                })
+                // Verify: initial state.
+                assert_eq!(abandoned_collect_job, abandoned_collect_job_again);
+
+                // Setup: update the collect jobs.
+                abandoned_collect_job.state = CollectJobState::Abandoned;
+                deleted_collect_job.state = CollectJobState::Deleted;
+
+                tx.update_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    &abandoned_collect_job,
+                )
+                .await?;
+                tx.update_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    &deleted_collect_job,
+                )
+                .await?;
+
+                let abandoned_collect_job_again = tx
+                    .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        abandoned_collect_job.id,
+                    )
+                    .await?
+                    .unwrap();
+
+                let deleted_collect_job_again = tx
+                    .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        deleted_collect_job.id,
+                    )
+                    .await?
+                    .unwrap();
+
+                // Verify: collect jobs were updated.
+                assert_eq!(abandoned_collect_job, abandoned_collect_job_again);
+                assert_eq!(deleted_collect_job, deleted_collect_job_again);
+
+                // Setup: try to update a job into state `Start`
+                abandoned_collect_job.state = CollectJobState::Start;
+
+                // Verify: Update should fail
+                tx.update_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    &abandoned_collect_job,
+                )
+                .await
+                .unwrap_err();
+                Ok(())
             })
-            .await
-            .unwrap();
-
-        // Verify: initial state.
-        assert_eq!(
-            collect_job,
-            CollectJob {
-                collect_job_id,
-                task_id,
-                batch_interval,
-                aggregation_param: (),
-                state: CollectJobState::Start,
-            }
-        );
-
-        // Setup: cancel the collect job.
-        let collect_job = ds
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.cancel_collect_job(collect_job_id).await?;
-                    let collect_job = tx
-                        .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                            collect_job_id,
-                        )
-                        .await?
-                        .unwrap();
-                    Ok(collect_job)
-                })
-            })
-            .await
-            .unwrap();
-
-        // Verify: collect job was canceled.
-        assert_eq!(
-            collect_job,
-            CollectJob {
-                collect_job_id,
-                task_id,
-                batch_interval,
-                aggregation_param: (),
-                state: CollectJobState::Abandoned,
-            }
-        );
+        })
+        .await
+        .unwrap();
     }
 
     #[derive(Clone)]
@@ -5353,24 +5435,31 @@ mod tests {
                 }
 
                 for test_case in test_case.collect_job_test_cases.iter_mut() {
-                    let collect_job_id = tx
-                        .put_collect_job(
-                            test_case.task_id,
-                            test_case.batch_interval,
-                            &test_case.agg_param.get_encoded(),
-                        )
-                        .await?;
+                    let mut collect_job = CollectJob::new(
+                        test_case.task_id,
+                        test_case.batch_interval,
+                        test_case.agg_param,
+                    );
+
+                    tx.put_collect_job(&collect_job).await?;
+
+                    assert_eq!(collect_job.state, CollectJobState::Start);
 
                     if test_case.set_aggregate_shares {
-                        tx.update_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
-                            collect_job_id,
-                            &dummy_vdaf::AggregateShare(0),
-                            &HpkeCiphertext::new(HpkeConfigId::from(0), vec![], vec![]),
-                        )
-                        .await?;
+                        collect_job.state = CollectJobState::Finished {
+                            encrypted_helper_aggregate_share: HpkeCiphertext::new(
+                                HpkeConfigId::from(0),
+                                vec![],
+                                vec![],
+                            ),
+                            leader_aggregate_share: dummy_vdaf::AggregateShare(0),
+                        };
+
+                        tx.update_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
+                            .await?;
                     }
 
-                    test_case.collect_job_id = Some(collect_job_id);
+                    test_case.collect_job_id = Some(collect_job.id);
                 }
 
                 Ok(test_case)

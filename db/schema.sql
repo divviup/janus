@@ -156,7 +156,8 @@ CREATE TABLE batch_unit_aggregations(
 CREATE TYPE COLLECT_JOB_STATE AS ENUM(
     'START',     -- the aggregator is waiting to run this collect job
     'FINISHED',  -- this collect job has run successfully and is ready for collection
-    'ABANDONED'  -- this collect job has been abandoned & will never be run again
+    'ABANDONED', -- this collect job has been abandoned & will never be run again
+    'DELETED'    -- this collect job has been deleted
 );
 
 -- The leader's view of collect requests from the Collector.
