@@ -76,6 +76,7 @@ CREATE TABLE client_reports(
     nonce_time    TIMESTAMP NOT NULL,  -- timestamp from nonce
     nonce_rand    BYTEA NOT NULL,      -- random value from nonce
     extensions    BYTEA,               -- encoded sequence of Extension messages (populated for leader only)
+    public_share  BYTEA,               -- encoded public share (opaque VDAF message, populated for leader only)
     input_shares  BYTEA,               -- encoded sequence of HpkeCiphertext messages (populated for leader only)
 
     CONSTRAINT unique_task_id_and_nonce UNIQUE(task_id, nonce_time, nonce_rand),

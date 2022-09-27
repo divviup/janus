@@ -204,7 +204,7 @@ where
     /// Shard a measurement, encrypt its shares, and construct a [`janus_core::message::Report`]
     /// to be uploaded.
     fn prepare_report(&self, measurement: &V::Measurement) -> Result<Report, Error> {
-        let input_shares = self.vdaf_client.shard(measurement)?;
+        let (public_share, input_shares) = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
         let time = self
@@ -219,7 +219,7 @@ where
             time,
             Vec::new(), // No extensions supported yet
         );
-        let public_share = Vec::new(); // TODO(#473): fill out public_share once possible
+        let public_share = public_share.get_encoded();
         let associated_data = associated_data_for_report_share(
             self.parameters.task_id,
             &report_metadata,

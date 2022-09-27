@@ -71,9 +71,12 @@ impl Default for Vdaf {
 }
 
 impl vdaf::Vdaf for Vdaf {
+    const ID: u32 = 0xFFFF0000;
+
     type Measurement = ();
     type AggregateResult = ();
     type AggregationParam = AggregationParam;
+    type PublicShare = ();
     type InputShare = ();
     type OutputShare = OutputShare;
     type AggregateShare = AggregateShare;
@@ -94,6 +97,7 @@ impl vdaf::Aggregator<0> for Vdaf {
         _: usize,
         aggregation_param: &Self::AggregationParam,
         _: &[u8],
+        _: &Self::PublicShare,
         _: &Self::InputShare,
     ) -> Result<(Self::PrepareState, Self::PrepareShare), VdafError> {
         (self.prep_init_fn)(aggregation_param)?;
@@ -129,8 +133,11 @@ impl vdaf::Aggregator<0> for Vdaf {
 }
 
 impl vdaf::Client for Vdaf {
-    fn shard(&self, _: &Self::Measurement) -> Result<Vec<Self::InputShare>, VdafError> {
-        Ok(vec![(), ()])
+    fn shard(
+        &self,
+        _: &Self::Measurement,
+    ) -> Result<(Self::PublicShare, Vec<Self::InputShare>), VdafError> {
+        Ok(((), vec![(), ()]))
     }
 }
 
