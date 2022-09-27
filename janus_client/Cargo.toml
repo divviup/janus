@@ -20,7 +20,7 @@ reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tl
 thiserror = "1.0"
 tokio = { version = "1.21", features = ["full"] }
 tracing = "0.1.36"
-url = "2.3.0"
+url = "2.3.1"
 
 [dev-dependencies]
 assert_matches = "1"
