@@ -61,4 +61,4 @@ janus_core = { path = ".", features = ["test-util"] }
 # Kubernetes clusters.
 kube = { version = "0.65", features = ["openssl-tls"] }  # ensure this remains compatible with the non-dev dependency
 mockito = "0.31.0"
-url = "2.3.0"
+url = "2.3.1"
