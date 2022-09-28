@@ -13,7 +13,7 @@ use crate::{
     datastore::{
         self,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, CollectJobState,
+            AggregateShareJob, AggregationJob, AggregationJobState, CollectJob, CollectJobState,
             ReportAggregation, ReportAggregationState,
         },
         Datastore,
@@ -1586,11 +1586,14 @@ impl VdafOps {
                 let task = task.clone();
                 let req = req.clone();
                 Box::pin(async move {
+                    let aggregation_param =
+                        A::AggregationParam::get_decoded(req.aggregation_parameter())?;
+
                     if let Some(collect_job_id) = tx
-                        .get_collect_job_id(
+                        .get_collect_job_id::<L, A>(
                             task.id,
                             *req.query().batch_interval(),
-                            req.aggregation_parameter(),
+                            &aggregation_param,
                         )
                         .await?
                     {
@@ -1605,12 +1608,13 @@ impl VdafOps {
                         *req.query().batch_interval(),
                     )
                     .await?;
-                    tx.put_collect_job(
-                        *req.task_id(),
-                        *req.query().batch_interval(),
-                        req.aggregation_parameter(),
-                    )
-                    .await
+
+                    let collect_job =
+                        CollectJob::new(task.id, *req.query().batch_interval(), aggregation_param);
+
+                    tx.put_collect_job::<L, A>(&collect_job).await?;
+
+                    Ok(collect_job.id)
                 })
             })
             .await?)
@@ -1748,6 +1752,11 @@ impl VdafOps {
                     "Attempting to collect abandoned collect job"
                 );
                 Ok(None)
+            }
+
+            CollectJobState::Deleted => {
+                // TODO(#344): return appropriate status to caller here
+                todo!()
             }
         }
     }
@@ -3165,7 +3174,12 @@ mod tests {
         .unwrap();
         datastore
             .run_tx(|tx| {
-                Box::pin(async move { tx.put_collect_job(task_id, batch_interval, &[]).await })
+                Box::pin(async move {
+                    tx.put_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &CollectJob::new(task_id, batch_interval, ()),
+                    )
+                    .await
+                })
             })
             .await
             .unwrap();
@@ -5877,10 +5891,20 @@ mod tests {
                     )
                     .unwrap();
 
+                    let mut collect_job = tx
+                        .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                            collect_job_id,
+                        )
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    collect_job.state = CollectJobState::Finished {
+                        encrypted_helper_aggregate_share,
+                        leader_aggregate_share,
+                    };
+
                     tx.update_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        collect_job_id,
-                        &leader_aggregate_share,
-                        &encrypted_helper_aggregate_share,
+                        &collect_job,
                     )
                     .await
                     .unwrap();
