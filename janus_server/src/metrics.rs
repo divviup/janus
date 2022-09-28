@@ -101,15 +101,20 @@ struct CustomAggregatorSelector;
 impl AggregatorSelector for CustomAggregatorSelector {
     fn aggregator_for(&self, descriptor: &Descriptor) -> Option<Arc<dyn Aggregator + Send + Sync>> {
         match descriptor.instrument_kind() {
-            InstrumentKind::Histogram => {
+            InstrumentKind::Histogram => match descriptor.name() {
+                "janus_job_acquire_time" => Some(Arc::new(
+                    opentelemetry::sdk::metrics::aggregators::histogram(&[
+                        0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 90.0, 300.0,
+                    ]),
+                )),
                 // The following boundaries are copied from the Ruby and Go Prometheus clients.
-                // Buckets could be specialized per-metric by matching on `descriptor.name()`.
-                Some(Arc::new(
+                // They are well-suited for HTTP request latencies.
+                _ => Some(Arc::new(
                     opentelemetry::sdk::metrics::aggregators::histogram(&[
                         0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
                     ]),
-                ))
-            }
+                )),
+            },
             InstrumentKind::GaugeObserver => Some(Arc::new(
                 opentelemetry::sdk::metrics::aggregators::last_value(),
             )),
