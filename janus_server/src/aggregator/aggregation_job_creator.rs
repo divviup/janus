@@ -159,10 +159,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 let (tx, rx) = oneshot::channel();
                 job_creation_task_shutdown_handles.insert(task_id, tx);
                 tokio::task::spawn({
-                    let (this, job_creation_time_recorder) =
+                    let (this, job_creation_time_histogram) =
                         (Arc::clone(&self), job_creation_time_histogram.clone());
                     async move {
-                        this.run_for_task(rx, job_creation_time_recorder, task)
+                        this.run_for_task(rx, job_creation_time_histogram, task)
                             .await
                     }
                 });
@@ -176,11 +176,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
-    #[tracing::instrument(skip(self, shutdown, job_creation_time_recorder))]
+    #[tracing::instrument(skip(self, shutdown, job_creation_time_histogram))]
     async fn run_for_task(
         &self,
         mut shutdown: Receiver<()>,
-        job_creation_time_recorder: Histogram<f64>,
+        job_creation_time_histogram: Histogram<f64>,
         task: Task,
     ) {
         debug!(task_id = ?task.id, "Job creation worker started");
@@ -200,7 +200,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         error!(task_id = ?task.id, %error, "Couldn't create aggregation jobs for task");
                         status = "error";
                     }
-                    job_creation_time_recorder.record(&Context::current(), start.elapsed().as_secs_f64(), &[KeyValue::new("status", status)]);
+                    job_creation_time_histogram.record(&Context::current(), start.elapsed().as_secs_f64(), &[KeyValue::new("status", status)]);
                 }
 
                 _ = &mut shutdown => {

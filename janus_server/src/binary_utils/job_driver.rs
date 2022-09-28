@@ -182,7 +182,7 @@ where
                     // Unwrap safety: we have seen that at least `leases.len()` permits are
                     // available, and this task is the only task that acquires permits.
                     let span = info_span!("Job stepper", acquired_job = ?lease.leased());
-                    let (this, permit, job_step_time_recorder) = (
+                    let (this, permit, job_step_time_histogram) = (
                         Arc::clone(&self),
                         Arc::clone(&sem).try_acquire_owned().unwrap(),
                         job_step_time_histogram.clone(),
@@ -207,7 +207,7 @@ where
                                 status = "error"
                             }
                         }
-                        job_step_time_recorder.record(
+                        job_step_time_histogram.record(
                             &Context::current(),
                             start.elapsed().as_secs_f64(),
                             &[KeyValue::new("status", status)],
