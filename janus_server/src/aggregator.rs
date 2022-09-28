@@ -32,7 +32,7 @@ use janus_core::{
         self, associated_data_for_aggregate_share, associated_data_for_report_share,
         HpkeApplicationInfo, Label,
     },
-    task::DAP_AUTH_HEADER,
+    task::{AuthenticationToken, DAP_AUTH_HEADER},
     time::Clock,
 };
 use janus_messages::{
@@ -57,6 +57,7 @@ use prio::{
         PrepareTransition,
     },
 };
+use reqwest::Client;
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
@@ -2428,6 +2429,102 @@ pub fn aggregator_server<C: Clock>(
     let wrapped_filter = filter.with(warp::filters::reply::headers(response_headers));
     let server = warp::serve(wrapped_filter);
     Ok(server.bind_with_graceful_shutdown(listen_address, shutdown_signal))
+}
+
+/// Convenience method to perform an HTTP request to the helper. This includes common
+/// metrics and error handling functionality.
+#[tracing::instrument(
+    skip(
+        http_client,
+        url,
+        request,
+        auth_token,
+        http_request_duration_histogram,
+    ),
+    fields(url = %url),
+    err,
+)]
+async fn post_to_helper<T: Encode>(
+    http_client: &Client,
+    url: Url,
+    content_type: &str,
+    request: T,
+    auth_token: &AuthenticationToken,
+    http_request_duration_histogram: &Histogram<f64>,
+) -> Result<Bytes, Error> {
+    let domain = url.domain().unwrap_or_default().to_string();
+    let endpoint = url
+        .path_segments()
+        .and_then(|mut split| split.next_back())
+        .unwrap_or_default()
+        .to_string();
+    let request_body = request.get_encoded();
+
+    let start = Instant::now();
+    let response_result = http_client
+        .post(url)
+        .header(CONTENT_TYPE, content_type)
+        .header(DAP_AUTH_HEADER, auth_token.as_bytes())
+        .body(request_body)
+        .send()
+        .await;
+    let response = match response_result {
+        Ok(response) => response,
+        Err(error) => {
+            http_request_duration_histogram.record(
+                &Context::current(),
+                start.elapsed().as_secs_f64(),
+                &[
+                    KeyValue::new("status", "error"),
+                    KeyValue::new("domain", domain),
+                    KeyValue::new("endpoint", endpoint),
+                ],
+            );
+            return Err(error.into());
+        }
+    };
+
+    let status = response.status();
+    if !status.is_success() {
+        // TODO(#381): Attempt to decode a problem details response.
+        http_request_duration_histogram.record(
+            &Context::current(),
+            start.elapsed().as_secs_f64(),
+            &[
+                KeyValue::new("status", "error"),
+                KeyValue::new("domain", domain),
+                KeyValue::new("endpoint", endpoint),
+            ],
+        );
+        return Err(Error::Http(status));
+    }
+
+    match response.bytes().await {
+        Ok(response_body) => {
+            http_request_duration_histogram.record(
+                &Context::current(),
+                start.elapsed().as_secs_f64(),
+                &[
+                    KeyValue::new("status", "success"),
+                    KeyValue::new("domain", domain),
+                    KeyValue::new("endpoint", endpoint),
+                ],
+            );
+            Ok(response_body)
+        }
+        Err(error) => {
+            http_request_duration_histogram.record(
+                &Context::current(),
+                start.elapsed().as_secs_f64(),
+                &[
+                    KeyValue::new("status", "error"),
+                    KeyValue::new("domain", domain),
+                    KeyValue::new("endpoint", endpoint),
+                ],
+            );
+            Err(error.into())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
 use crate::{
-    aggregator::Error,
+    aggregator::{post_to_helper, Error},
     datastore::{
         self,
         models::AcquiredCollectJob,
@@ -12,16 +12,15 @@ use crate::{
 };
 use derivative::Derivative;
 use futures::{future::BoxFuture, try_join};
-use http::header::CONTENT_TYPE;
 #[cfg(test)]
 use janus_core::test_util::dummy_vdaf;
-use janus_core::{report_id::ReportIdChecksumExt, task::DAP_AUTH_HEADER, time::Clock};
+use janus_core::{report_id::ReportIdChecksumExt, time::Clock};
 use janus_messages::{
     query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
     Interval, ReportIdChecksum, Role,
 };
 use opentelemetry::{
-    metrics::{Counter, Meter},
+    metrics::{Counter, Histogram, Meter, Unit},
     Context,
 };
 use prio::{
@@ -45,6 +44,8 @@ pub struct CollectJobDriver {
     http_client: reqwest::Client,
     #[derivative(Debug = "ignore")]
     job_cancel_counter: Counter<u64>,
+    #[derivative(Debug = "ignore")]
+    http_request_duration_histogram: Histogram<f64>,
 }
 
 impl CollectJobDriver {
@@ -56,9 +57,18 @@ impl CollectJobDriver {
             .init();
         job_cancel_counter.add(&Context::current(), 0, &[]);
 
+        let http_request_duration_histogram = meter
+            .f64_histogram("janus_http_request_duration_seconds")
+            .with_description(
+                "The amount of time elapsed while making an HTTP request to a helper.",
+            )
+            .with_unit(Unit::new("seconds"))
+            .init();
+
         Self {
             http_client,
             job_cancel_counter,
+            http_request_duration_histogram,
         }
     }
 
@@ -194,26 +204,19 @@ impl CollectJobDriver {
             checksum,
         );
 
-        let response = self
-            .http_client
-            .post(task.aggregator_url(Role::Helper)?.join("aggregate_share")?)
-            .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .header(
-                DAP_AUTH_HEADER,
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .body(req.get_encoded())
-            .send()
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            // TODO(#381): Attempt to decode a problem details response.
-            return Err(Error::Http(status));
-        }
+        let resp_bytes = post_to_helper(
+            &self.http_client,
+            task.aggregator_url(Role::Helper)?.join("aggregate_share")?,
+            AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            req,
+            task.primary_aggregator_auth_token(),
+            &self.http_request_duration_histogram,
+        )
+        .await?;
 
         // Store the helper aggregate share in the datastore so that a later request to a collect
         // job URI can serve it up.
-        let aggregate_share_resp = AggregateShareResp::get_decoded(&response.bytes().await?)?;
+        let aggregate_share_resp = AggregateShareResp::get_decoded(&resp_bytes)?;
 
         collect_job.state = CollectJobState::Finished {
             encrypted_helper_aggregate_share: aggregate_share_resp
@@ -535,7 +538,7 @@ mod tests {
         task::VdafInstance,
     };
     use assert_matches::assert_matches;
-    use http::StatusCode;
+    use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         test_util::{
             dummy_vdaf::{AggregateShare, AggregationParam, OutputShare},
