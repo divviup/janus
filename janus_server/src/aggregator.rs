@@ -119,6 +119,9 @@ pub enum Error {
     /// An attempt was made to act on an unknown collect job.
     #[error("unrecognized collect job: {0}")]
     UnrecognizedCollectJob(Uuid),
+    /// An attempt was made to act on a known but deleted collect job.
+    #[error("deleted collect job: {0}")]
+    DeletedCollectJob(Uuid),
     /// Corresponds to `outdatedHpkeConfig`, §3.2
     #[error("task {0}: outdated HPKE config: {1}")]
     OutdatedHpkeConfig(TaskId, HpkeConfigId),
@@ -187,6 +190,7 @@ impl Error {
             Error::UnrecognizedTask(_) => "unrecognized_task",
             Error::MissingTaskId => "missing_task_id",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",
+            Error::DeletedCollectJob(_) => "deleted_collect_job",
             Error::UnrecognizedCollectJob(_) => "unrecognized_collect_job",
             Error::OutdatedHpkeConfig(_, _) => "outdated_hpke_config",
             Error::UnauthorizedRequest(_) => "unauthorized_request",
@@ -422,11 +426,11 @@ impl<C: Clock> Aggregator<C> {
             .await
     }
 
-    /// Handle a request for a collect job. `collect_job_id` is the unique identifier for the
+    /// Handle a GET request for a collect job. `collect_job_id` is the unique identifier for the
     /// collect job parsed out of the request URI. Returns an encoded [`CollectResp`] if the collect
     /// job has been run to completion, `None` if the collect job has not yet run, or an error
     /// otherwise.
-    async fn handle_collect_job(
+    async fn handle_get_collect_job(
         &self,
         collect_job_id: Uuid,
         auth_token: Option<String>,
@@ -453,9 +457,43 @@ impl<C: Clock> Aggregator<C> {
         }
 
         Ok(task_aggregator
-            .handle_collect_job(&self.datastore, collect_job_id)
+            .handle_get_collect_job(&self.datastore, collect_job_id)
             .await?
             .map(|resp| resp.get_encoded()))
+    }
+
+    /// Handle a DELETE request for a collect job.
+    async fn handle_delete_collect_job(
+        &self,
+        collect_job_id: Uuid,
+        auth_token: Option<String>,
+    ) -> Result<Response, Error> {
+        let task_id = self
+            .datastore
+            .run_tx(|tx| Box::pin(async move { tx.get_collect_job_task_id(collect_job_id).await }))
+            .await?
+            .ok_or(Error::UnrecognizedCollectJob(collect_job_id))?;
+
+        let task_aggregator = self.task_aggregator_for(&task_id).await?;
+        if task_aggregator.task.role != Role::Leader {
+            return Err(Error::UnrecognizedTask(task_id));
+        }
+        if !auth_token
+            .map(|t| {
+                task_aggregator
+                    .task
+                    .check_collector_auth_token(&t.into_bytes().into())
+            })
+            .unwrap_or(false)
+        {
+            return Err(Error::UnauthorizedRequest(task_id));
+        }
+
+        task_aggregator
+            .handle_delete_collect_job(&self.datastore, collect_job_id)
+            .await?;
+
+        Ok(StatusCode::NO_CONTENT.into_response())
     }
 
     /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded,
@@ -668,13 +706,23 @@ impl TaskAggregator {
             .join(&collect_job_id.to_string())?)
     }
 
-    async fn handle_collect_job<C: Clock>(
+    async fn handle_get_collect_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         collect_job_id: Uuid,
     ) -> Result<Option<CollectResp<TimeInterval>>, Error> {
         self.vdaf_ops
-            .handle_collect_job(datastore, &self.task, collect_job_id)
+            .handle_get_collect_job(datastore, &self.task, collect_job_id)
+            .await
+    }
+
+    async fn handle_delete_collect_job<C: Clock>(
+        &self,
+        datastore: &Datastore<C>,
+        collect_job_id: Uuid,
+    ) -> Result<(), Error> {
+        self.vdaf_ops
+            .handle_delete_collect_job(datastore, collect_job_id)
             .await
     }
 
@@ -1621,8 +1669,9 @@ impl VdafOps {
             .await?)
     }
 
-    /// Handle requests to a collect job URI obtained from the leader's `/collect` endpoint (§4.5).
-    async fn handle_collect_job<C: Clock>(
+    /// Handle GET requests to a collect job URI obtained from the leader's `/collect` endpoint.
+    /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.1
+    async fn handle_get_collect_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         task: &Task,
@@ -1630,7 +1679,7 @@ impl VdafOps {
     ) -> Result<Option<CollectResp<TimeInterval>>, Error> {
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
-                Self::handle_collect_job_generic::<
+                Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
                     _,
@@ -1638,21 +1687,23 @@ impl VdafOps {
                 .await
             }
             VdafOps::Prio3Aes128CountVec(_, _) => {
-                Self::handle_collect_job_generic::<
+                Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128CountVecMultithreaded,
                     _,
                 >(datastore, task, collect_job_id)
                 .await
             }
-            VdafOps::Prio3Aes128Sum(_, _) => Self::handle_collect_job_generic::<
-                PRIO3_AES128_VERIFY_KEY_LENGTH,
-                Prio3Aes128Sum,
-                _,
-            >(datastore, task, collect_job_id)
-            .await,
+            VdafOps::Prio3Aes128Sum(_, _) => {
+                Self::handle_get_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128Sum,
+                    _,
+                >(datastore, task, collect_job_id)
+                .await
+            }
             VdafOps::Prio3Aes128Histogram(_, _) => {
-                Self::handle_collect_job_generic::<
+                Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Histogram,
                     _,
@@ -1663,7 +1714,7 @@ impl VdafOps {
             #[cfg(test)]
             VdafOps::Fake(_) => {
                 const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                Self::handle_collect_job_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
+                Self::handle_get_collect_job_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
                     collect_job_id,
@@ -1673,7 +1724,7 @@ impl VdafOps {
         }
     }
 
-    async fn handle_collect_job_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+    async fn handle_get_collect_job_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
         datastore: &Datastore<C>,
         task: &Task,
         collect_job_id: Uuid,
@@ -1755,11 +1806,94 @@ impl VdafOps {
                 Ok(None)
             }
 
-            CollectJobState::Deleted => {
-                // TODO(#344): return appropriate status to caller here
-                todo!()
+            CollectJobState::Deleted => Err(Error::DeletedCollectJob(collect_job_id)),
+        }
+    }
+
+    async fn handle_delete_collect_job<C: Clock>(
+        &self,
+        datastore: &Datastore<C>,
+        collect_job_id: Uuid,
+    ) -> Result<(), Error> {
+        match self {
+            VdafOps::Prio3Aes128Count(_, _) => {
+                Self::handle_delete_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128Count,
+                    _,
+                >(datastore, collect_job_id)
+                .await
+            }
+            VdafOps::Prio3Aes128CountVec(_, _) => {
+                Self::handle_delete_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(datastore, collect_job_id)
+                .await
+            }
+            VdafOps::Prio3Aes128Sum(_, _) => {
+                Self::handle_delete_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128Sum,
+                    _,
+                >(datastore, collect_job_id)
+                .await
+            }
+            VdafOps::Prio3Aes128Histogram(_, _) => {
+                Self::handle_delete_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    Prio3Aes128Histogram,
+                    _,
+                >(datastore, collect_job_id)
+                .await
+            }
+
+            #[cfg(test)]
+            VdafOps::Fake(_) => {
+                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+                Self::handle_delete_collect_job_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
+                    datastore,
+                    collect_job_id,
+                )
+                .await
             }
         }
+    }
+
+    async fn handle_delete_collect_job_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+        datastore: &Datastore<C>,
+        collect_job_id: Uuid,
+    ) -> Result<(), Error>
+    where
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+    {
+        datastore
+            .run_tx(move |tx| {
+                Box::pin(async move {
+                    let mut collect_job = tx
+                        .get_collect_job::<L, A>(collect_job_id)
+                        .await?
+                        .ok_or_else(|| {
+                            datastore::Error::User(
+                                Error::UnrecognizedCollectJob(collect_job_id).into(),
+                            )
+                        })?;
+
+                    if let CollectJobState::Deleted = collect_job.state {
+                        Ok(())
+                    } else {
+                        collect_job.state = CollectJobState::Deleted;
+                        tx.update_collect_job::<L, A>(&collect_job).await
+                    }
+                })
+            })
+            .await?;
+
+        Ok(())
     }
 
     /// Implements the `/aggregate_share` endpoint for the helper, described in §4.4.4.3
@@ -2118,6 +2252,7 @@ where
                             Some(task_id),
                         )
                     }
+                    Err(Error::DeletedCollectJob(_)) => StatusCode::NO_CONTENT.into_response(),
                     Err(Error::UnrecognizedCollectJob(_)) => StatusCode::NOT_FOUND.into_response(),
                     Err(Error::OutdatedHpkeConfig(task_id, _)) => build_problem_details_response(
                         DapProblemType::OutdatedConfig,
@@ -2346,10 +2481,9 @@ pub fn aggregator_filter<C: Clock>(
         "collect",
     );
 
-    let collect_jobs_routing = warp::path("collect_jobs");
-    let collect_jobs_responding =
-        warp::get()
-            .and(with_cloned_value(Arc::clone(&aggregator)))
+    let collect_jobs_get_routing = warp::path("collect_jobs").and(warp::get());
+    let collect_jobs_get =
+        with_cloned_value(Arc::clone(&aggregator))
             .and(warp::path::param())
             .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
             .then(
@@ -2357,7 +2491,7 @@ pub fn aggregator_filter<C: Clock>(
                  collect_job_id: Uuid,
                  auth_token: Option<String>| async move {
                     let resp_bytes = aggregator
-                        .handle_collect_job(collect_job_id, auth_token)
+                        .handle_get_collect_job(collect_job_id, auth_token)
                         .await?;
                     match resp_bytes {
                         Some(resp_bytes) => http::Response::builder()
@@ -2370,12 +2504,34 @@ pub fn aggregator_filter<C: Clock>(
                     .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
                 },
             );
-    let collect_jobs_endpoint = compose_common_wrappers(
-        collect_jobs_routing,
-        collect_jobs_responding,
+    let collect_jobs_get_endpoint = compose_common_wrappers(
+        collect_jobs_get_routing,
+        collect_jobs_get,
         warp::cors().build(),
         response_time_histogram.clone(),
-        "collect_jobs",
+        "collect_jobs_get",
+    );
+
+    let collect_jobs_delete_routing = warp::path("collect_jobs").and(warp::delete());
+    let collect_jobs_delete =
+        with_cloned_value(Arc::clone(&aggregator))
+            .and(warp::path::param())
+            .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+            .then(
+                |aggregator: Arc<Aggregator<C>>,
+                 collect_job_id: Uuid,
+                 auth_token: Option<String>| async move {
+                    aggregator
+                        .handle_delete_collect_job(collect_job_id, auth_token)
+                        .await
+                },
+            );
+    let collect_jobs_delete_endpoint = compose_common_wrappers(
+        collect_jobs_delete_routing,
+        collect_jobs_delete,
+        warp::cors().build(),
+        response_time_histogram.clone(),
+        "collect_jobs_delete",
     );
 
     let aggregate_share_routing = warp::path("aggregate_share");
@@ -2409,7 +2565,8 @@ pub fn aggregator_filter<C: Clock>(
         .or(upload_endpoint)
         .or(aggregate_endpoint)
         .or(collect_endpoint)
-        .or(collect_jobs_endpoint)
+        .or(collect_jobs_get_endpoint)
+        .or(collect_jobs_delete_endpoint)
         .or(aggregate_share_endpoint)
         .boxed())
 }
@@ -2610,7 +2767,7 @@ mod tests {
                 "title": "HPKE configuration was requested without specifying a task ID.",
                 "detail": "HPKE configuration was requested without specifying a task ID.",
                 "instance": "..",
-                // TODO()
+                // TODO(#545) problem document shouldn't include taskid key
                 "taskid": serde_json::Value::Null,
             })
         );
@@ -6183,6 +6340,108 @@ mod tests {
                 "taskid": format!("{}", task_id),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn delete_collect_job() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = random();
+        let mut task = Task::new_dummy(
+            task_id,
+            janus_core::task::VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        );
+        task.aggregator_endpoints = vec![
+            "https://leader.endpoint".parse().unwrap(),
+            "https://helper.endpoint".parse().unwrap(),
+        ];
+        task.max_batch_lifetime = 1;
+        let batch_interval =
+            Interval::new(Time::from_seconds_since_epoch(0), task.min_batch_duration).unwrap();
+
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
+
+        datastore.put_task(&task).await.unwrap();
+
+        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
+
+        // Try to delete a collect job that doesn't exist
+        let delete_job_response = warp::test::request()
+            .method("DELETE")
+            .path(&format!("/collect_jobs/{}", Uuid::new_v4()))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(delete_job_response.status(), StatusCode::NOT_FOUND);
+
+        // Create a collect job
+        let request = CollectReq::new(
+            task_id,
+            Query::new_time_interval(batch_interval),
+            Vec::new(),
+        );
+
+        let collect_response = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, CollectReq::<TimeInterval>::MEDIA_TYPE)
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        assert_eq!(collect_response.status(), StatusCode::SEE_OTHER);
+        let collect_uri = Url::parse(
+            collect_response
+                .headers()
+                .get(LOCATION)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap();
+
+        // Cancel the job
+        let delete_job_response = warp::test::request()
+            .method("DELETE")
+            .path(collect_uri.path())
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(delete_job_response.status(), StatusCode::NO_CONTENT);
+
+        // Get the job again
+        let get_response = warp::test::request()
+            .method("GET")
+            .path(collect_uri.path())
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(get_response.status(), StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]
