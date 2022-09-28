@@ -21,7 +21,7 @@ use janus_messages::{
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
-    Context,
+    Context, KeyValue, Value,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -35,27 +35,29 @@ use prio::{
     },
 };
 use std::{borrow::Borrow, sync::Arc};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
-/// Drives a collect job.
-#[derive(Derivative)]
-#[derivative(Debug)]
-pub struct CollectJobDriver {
-    http_client: reqwest::Client,
-    #[derivative(Debug = "ignore")]
-    job_cancel_counter: Counter<u64>,
-    #[derivative(Debug = "ignore")]
+#[cfg(test)]
+const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+
+/// Holds various metrics instruments for a collect job driver.
+#[derive(Clone)]
+struct CollectJobDriverMetrics {
+    jobs_finished_counter: Counter<u64>,
     http_request_duration_histogram: Histogram<f64>,
+    jobs_abandoned_counter: Counter<u64>,
+    jobs_already_finished_counter: Counter<u64>,
+    deleted_jobs_encountered_counter: Counter<u64>,
+    unexpected_job_state_counter: Counter<u64>,
 }
 
-impl CollectJobDriver {
-    /// Create a new [`CollectJobDriver`].
-    pub fn new(http_client: reqwest::Client, meter: &Meter) -> Self {
-        let job_cancel_counter = meter
-            .u64_counter("janus_job_cancellations")
-            .with_description("Count of cancelled jobs.")
+impl CollectJobDriverMetrics {
+    fn new(meter: &Meter) -> Self {
+        let jobs_finished_counter = meter
+            .u64_counter("janus_collect_jobs_finished")
+            .with_description("Count of finished collect jobs.")
             .init();
-        job_cancel_counter.add(&Context::current(), 0, &[]);
+        jobs_finished_counter.add(&Context::current(), 0, &[]);
 
         let http_request_duration_histogram = meter
             .f64_histogram("janus_http_request_duration_seconds")
@@ -65,10 +67,59 @@ impl CollectJobDriver {
             .with_unit(Unit::new("seconds"))
             .init();
 
+        let jobs_abandoned_counter = meter
+            .u64_counter("janus_collect_jobs_abandoned")
+            .with_description("Count of abandoned collect jobs.")
+            .init();
+        jobs_abandoned_counter.add(&Context::current(), 0, &[]);
+
+        let jobs_already_finished_counter = meter
+            .u64_counter("janus_collect_jobs_already_finished")
+            .with_description(
+                "Count of collect jobs for which a lease was acquired but were already finished.",
+            )
+            .init();
+        jobs_already_finished_counter.add(&Context::current(), 0, &[]);
+
+        let deleted_jobs_encountered_counter = meter
+            .u64_counter("janus_collect_deleted_jobs_encountered")
+            .with_description(
+                "Count of collect jobs that were run to completion but found to have been deleted.",
+            )
+            .init();
+        deleted_jobs_encountered_counter.add(&Context::current(), 0, &[]);
+
+        let unexpected_job_state_counter = meter
+            .u64_counter("janus_collect_unexpected_job_state")
+            .with_description("Count of collect jobs that were run to completion but found in an unexpected state.").init();
+        unexpected_job_state_counter.add(&Context::current(), 0, &[]);
+
+        Self {
+            jobs_finished_counter,
+            http_request_duration_histogram,
+            jobs_abandoned_counter,
+            jobs_already_finished_counter,
+            deleted_jobs_encountered_counter,
+            unexpected_job_state_counter,
+        }
+    }
+}
+
+/// Drives a collect job.
+#[derive(Derivative)]
+#[derivative(Debug)]
+pub struct CollectJobDriver {
+    http_client: reqwest::Client,
+    #[derivative(Debug = "ignore")]
+    metrics: CollectJobDriverMetrics,
+}
+
+impl CollectJobDriver {
+    /// Create a new [`CollectJobDriver`].
+    pub fn new(http_client: reqwest::Client, meter: &Meter) -> Self {
         Self {
             http_client,
-            job_cancel_counter,
-            http_request_duration_histogram,
+            metrics: CollectJobDriverMetrics::new(meter),
         }
     }
 
@@ -124,8 +175,7 @@ impl CollectJobDriver {
 
             #[cfg(test)]
             VdafInstance::Fake => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                self.step_collect_job_generic::<VERIFY_KEY_LENGTH, C, dummy_vdaf::Vdaf>(
+                self.step_collect_job_generic::<DUMMY_VERIFY_KEY_LENGTH, C, dummy_vdaf::Vdaf>(
                     datastore,
                     lease,
                 )
@@ -187,6 +237,9 @@ impl CollectJobDriver {
 
         if matches!(collect_job.state, CollectJobState::Finished { .. }) {
             warn!("Collect job being stepped already has a computed helper share");
+            self.metrics
+                .jobs_already_finished_counter
+                .add(&Context::current(), 1, &[]);
             return Ok(());
         }
 
@@ -210,7 +263,7 @@ impl CollectJobDriver {
             AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),
-            &self.http_request_duration_histogram,
+            &self.metrics.http_request_duration_histogram,
         )
         .await?;
 
@@ -229,13 +282,49 @@ impl CollectJobDriver {
         let collect_job = Arc::new(collect_job);
         datastore
             .run_tx(|tx| {
-                // TODO(#344): Check for state == DELETED
                 let lease = Arc::clone(&lease);
                 let collect_job = Arc::clone(&collect_job);
-                Box::pin(async move {
-                    tx.update_collect_job::<L, A>(collect_job.borrow()).await?;
+                let metrics = self.metrics.clone();
 
-                    tx.release_collect_job(&lease).await
+                Box::pin(async move {
+                    let maybe_updated_collect_job = tx
+                        .get_collect_job::<L, A>(collect_job.id)
+                        .await?
+                        .ok_or_else(|| {
+                            datastore::Error::User(
+                                Error::UnrecognizedCollectJob(collect_job_id).into(),
+                            )
+                        })?;
+
+                    match maybe_updated_collect_job.state {
+                        CollectJobState::Start => {
+                            tx.update_collect_job::<L, A>(collect_job.borrow()).await?;
+                            tx.release_collect_job(&lease).await?;
+                            metrics.jobs_finished_counter.add(&Context::current(), 1, &[]);
+                        }
+                        CollectJobState::Deleted => {
+                            // If the collect job was deleted between when we acquired it and now, discard
+                            // the aggregate shares and leave the job in the deleted state so that
+                            // appropriate status can be returned from polling the collect job URI and GC
+                            // can run (#313).
+                            info!(
+                                "collect job {} was deleted while lease was held. Discarding aggregate results.",
+                                collect_job.id,
+                            );
+                            metrics.deleted_jobs_encountered_counter.add(&Context::current(), 1, &[]);
+                        }
+                        state => {
+                            // It shouldn't be possible for a collect job to move to the abandoned
+                            // or finished state while this collect job driver held its lease.
+                            metrics.unexpected_job_state_counter.add(&Context::current(), 1, &[KeyValue::new("state", Value::from(format!("{state}")))]);
+                            panic!(
+                                "collect job {} unexpectedly in state {}",
+                                collect_job.id, state
+                            );
+                        }
+                    }
+
+                    Ok(())
                 })
             })
             .await?;
@@ -284,8 +373,7 @@ impl CollectJobDriver {
 
             #[cfg(test)]
             VdafInstance::Fake => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                self.abandon_collect_job_generic::<VERIFY_KEY_LENGTH, C, dummy_vdaf::Vdaf>(
+                self.abandon_collect_job_generic::<DUMMY_VERIFY_KEY_LENGTH, C, dummy_vdaf::Vdaf>(
                     datastore,
                     lease,
                 )
@@ -373,9 +461,11 @@ impl CollectJobDriver {
                     warn!(
                         attempts = ?collect_job_lease.lease_attempts(),
                         max_attempts = ?maximum_attempts_before_failure,
-                        "Canceling job due to too many failed attempts"
+                        "Abandoning job due to too many failed attempts"
                     );
-                    this.job_cancel_counter.add(&Context::current(), 1, &[]);
+                    this.metrics
+                        .jobs_abandoned_counter
+                        .add(&Context::current(), 1, &[]);
                     return this.abandon_collect_job(datastore, collect_job_lease).await;
                 }
 
@@ -557,14 +647,129 @@ mod tests {
     use std::str;
     use url::Url;
 
+    async fn setup_collect_job_test_case(
+        clock: MockClock,
+        datastore: Arc<Datastore<MockClock>>,
+        acquire_lease: bool,
+    ) -> (
+        Option<Lease<AcquiredCollectJob>>,
+        CollectJob<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>,
+    ) {
+        let task_id = random();
+        let mut task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Leader);
+        task.aggregator_endpoints = vec![
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ];
+        task.min_batch_duration = Duration::from_seconds(500);
+        task.min_batch_size = 10;
+        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
+        let aggregation_param = AggregationParam(0);
+
+        let collect_job = CollectJob::new(task_id, batch_interval, aggregation_param);
+
+        let lease = datastore
+            .run_tx(|tx| {
+                let clock = clock.clone();
+                let task = task.clone();
+                let collect_job = collect_job.clone();
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+
+                    tx.put_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
+                        .await?;
+
+                    let aggregation_job_id = random();
+                    tx.put_aggregation_job(&AggregationJob::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    > {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param,
+                        state: AggregationJobState::Finished,
+                    })
+                    .await?;
+
+                    let report_metadata = ReportMetadata::new(
+                        random(),
+                        clock
+                            .now()
+                            .to_batch_unit_interval_start(task.min_batch_duration)
+                            .unwrap(),
+                        Vec::new(),
+                    );
+                    tx.put_client_report(&Report::new(
+                        task_id,
+                        report_metadata.clone(),
+                        Vec::new(),
+                        Vec::new(),
+                    ))
+                    .await?;
+
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    > {
+                        aggregation_job_id,
+                        task_id,
+                        time: *report_metadata.time(),
+                        report_id: *report_metadata.report_id(),
+                        ord: 0,
+                        state: ReportAggregationState::Finished(OutputShare()),
+                    })
+                    .await?;
+
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    > {
+                        task_id,
+                        unit_interval_start: clock.now(),
+                        aggregation_param,
+                        aggregate_share: AggregateShare(0),
+                        report_count: 5,
+                        checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                    })
+                    .await?;
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    > {
+                        task_id,
+                        unit_interval_start: clock.now().add(Duration::from_seconds(1000)).unwrap(),
+                        aggregation_param,
+                        aggregate_share: AggregateShare(0),
+                        report_count: 5,
+                        checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                    })
+                    .await?;
+
+                    if acquire_lease {
+                        let lease = tx
+                            .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 1)
+                            .await?
+                            .remove(0);
+                        assert_eq!(task_id, lease.leased().task_id);
+                        assert_eq!(collect_job.id, lease.leased().collect_job_id);
+                        Ok(Some(lease))
+                    } else {
+                        Ok(None)
+                    }
+                })
+            })
+            .await
+            .unwrap();
+
+        (lease, collect_job)
+    }
+
     #[tokio::test]
     async fn drive_collect_job() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
-
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
         let task_id = random();
         let mut task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Leader);
@@ -586,18 +791,19 @@ mod tests {
                     tx.put_task(&task).await?;
 
                     let collect_job = CollectJob::new(task_id, batch_interval, aggregation_param);
-                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
+                    tx.put_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
                         .await?;
 
                     let aggregation_job_id = random();
-                    tx.put_aggregation_job(
-                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
-                            aggregation_job_id,
-                            task_id,
-                            aggregation_param,
-                            state: AggregationJobState::Finished,
-                        },
-                    )
+                    tx.put_aggregation_job(&AggregationJob::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    > {
+                        aggregation_job_id,
+                        task_id,
+                        aggregation_param,
+                        state: AggregationJobState::Finished,
+                    })
                     .await?;
 
                     let report_metadata = ReportMetadata::new(
@@ -617,7 +823,7 @@ mod tests {
                     .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<
-                        VERIFY_KEY_LENGTH,
+                        DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     > {
                         aggregation_job_id,
@@ -660,7 +866,7 @@ mod tests {
             let clock = clock.clone();
             Box::pin(async move {
                 tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                    VERIFY_KEY_LENGTH,
+                    DUMMY_VERIFY_KEY_LENGTH,
                     dummy_vdaf::Vdaf,
                 > {
                     task_id,
@@ -673,7 +879,7 @@ mod tests {
                 .await?;
 
                 tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                    VERIFY_KEY_LENGTH,
+                    DUMMY_VERIFY_KEY_LENGTH,
                     dummy_vdaf::Vdaf,
                 > {
                     task_id,
@@ -725,7 +931,7 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
+                    .get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -770,7 +976,7 @@ mod tests {
             let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
+                    .get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -793,126 +999,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_collect_job() {
+    async fn abandon_collect_job() {
         // Setup: insert a collect job into the datastore.
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        let task_id = random();
-        let mut task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Leader);
-        task.min_batch_duration = Duration::from_seconds(500);
-        task.min_batch_size = 10;
-        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
-        let aggregation_param = AggregationParam(0);
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
-        let (collect_job_id, lease) = ds
-            .run_tx(|tx| {
-                let clock = clock.clone();
-                let task = task.clone();
-                Box::pin(async move {
-                    tx.put_task(&task).await?;
-
-                    let collect_job = CollectJob::new(task_id, batch_interval, aggregation_param);
-                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
-                        .await?;
-
-                    let aggregation_job_id = random();
-                    tx.put_aggregation_job(
-                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
-                            aggregation_job_id,
-                            task_id,
-                            aggregation_param,
-                            state: AggregationJobState::Finished,
-                        },
-                    )
-                    .await?;
-
-                    let report_metadata = ReportMetadata::new(
-                        random(),
-                        clock
-                            .now()
-                            .to_batch_unit_interval_start(task.min_batch_duration)
-                            .unwrap(),
-                        Vec::new(),
-                    );
-                    tx.put_client_report(&Report::new(
-                        task_id,
-                        report_metadata.clone(),
-                        Vec::new(),
-                        Vec::new(),
-                    ))
-                    .await?;
-
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    > {
-                        aggregation_job_id,
-                        task_id,
-                        time: *report_metadata.time(),
-                        report_id: *report_metadata.report_id(),
-                        ord: 0,
-                        state: ReportAggregationState::Finished(OutputShare()),
-                    })
-                    .await?;
-
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    > {
-                        task_id,
-                        unit_interval_start: clock.now(),
-                        aggregation_param,
-                        aggregate_share: AggregateShare(0),
-                        report_count: 5,
-                        checksum: ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
-                    })
-                    .await?;
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    > {
-                        task_id,
-                        unit_interval_start: clock.now().add(Duration::from_seconds(1000)).unwrap(),
-                        aggregation_param,
-                        aggregate_share: AggregateShare(0),
-                        report_count: 5,
-                        checksum: ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
-                    })
-                    .await?;
-
-                    let lease = tx
-                        .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 1)
-                        .await?
-                        .remove(0);
-                    assert_eq!(task_id, lease.leased().task_id);
-                    assert_eq!(collect_job.id, lease.leased().collect_job_id);
-                    Ok((collect_job.id, lease))
-                })
-            })
-            .await
-            .unwrap();
+        let (lease, collect_job) = setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
 
         let collect_job_driver = CollectJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
             &meter("collect_job_driver"),
         );
 
-        // Run: cancel the collect job.
+        // Run: abandon the collect job.
         collect_job_driver
-            .abandon_collect_job(Arc::clone(&ds), lease)
+            .abandon_collect_job(Arc::clone(&ds), lease.unwrap())
             .await
             .unwrap();
 
         // Verify: check that the collect job was abandoned, and that it can no longer be acquired.
-        let (collect_job, leases) = ds
+        let (abandoned_collect_job, leases) = ds
             .run_tx(|tx| {
+                let collect_job = collect_job.clone();
                 Box::pin(async move {
-                    let collect_job = tx
-                        .get_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
+                    let abandoned_collect_job = tx
+                        .get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
+                            collect_job.id,
+                        )
                         .await?
                         .unwrap();
 
@@ -920,19 +1035,16 @@ mod tests {
                         .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 1)
                         .await?;
 
-                    Ok((collect_job, leases))
+                    Ok((abandoned_collect_job, leases))
                 })
             })
             .await
             .unwrap();
         assert_eq!(
-            collect_job,
+            abandoned_collect_job,
             CollectJob {
-                id: collect_job_id,
-                task_id,
-                batch_interval,
-                aggregation_param,
                 state: CollectJobState::Abandoned,
+                ..collect_job
             }
         );
         assert!(leases.is_empty());
@@ -946,93 +1058,8 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
-        let task_id = random();
-        let mut task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Leader);
-        task.aggregator_endpoints = vec![
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&mockito::server_url()).unwrap(),
-        ];
-        task.min_batch_duration = Duration::from_seconds(500);
-        task.min_batch_size = 10;
-        let agg_auth_token = task.primary_aggregator_auth_token();
-        let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
-        let aggregation_param = AggregationParam(0);
-
-        // Set up the database with enough test fixtures to run a collect job.
-        let collect_job_id = ds
-            .run_tx(|tx| {
-                let clock = clock.clone();
-                let task = task.clone();
-                Box::pin(async move {
-                    tx.put_task(&task).await?;
-
-                    let collect_job = CollectJob::new(task_id, batch_interval, aggregation_param);
-                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
-                        .await?;
-
-                    let aggregation_job_id = random();
-                    tx.put_aggregation_job(
-                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf> {
-                            aggregation_job_id,
-                            task_id,
-                            aggregation_param,
-                            state: AggregationJobState::Finished,
-                        },
-                    )
-                    .await?;
-
-                    // We need to have some report aggregations present, so that our collect job
-                    // can be picked up and the anti-replay check has something to check.
-                    for i in 0..10 {
-                        let report_metadata = ReportMetadata::new(
-                            random(),
-                            clock
-                                .now()
-                                .to_batch_unit_interval_start(task.min_batch_duration)
-                                .unwrap(),
-                            Vec::new(),
-                        );
-                        tx.put_client_report(&Report::new(
-                            task_id,
-                            report_metadata.clone(),
-                            Vec::new(),
-                            Vec::new(),
-                        ))
-                        .await?;
-                        tx.put_report_aggregation(&ReportAggregation::<
-                            VERIFY_KEY_LENGTH,
-                            dummy_vdaf::Vdaf,
-                        > {
-                            aggregation_job_id,
-                            task_id,
-                            time: *report_metadata.time(),
-                            report_id: *report_metadata.report_id(),
-                            ord: i,
-                            state: ReportAggregationState::Finished(OutputShare()),
-                        })
-                        .await?;
-                    }
-
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    > {
-                        task_id,
-                        unit_interval_start: clock.now(),
-                        aggregation_param,
-                        aggregate_share: AggregateShare(0),
-                        report_count: 10,
-                        checksum: ReportIdChecksum::get_decoded(&[0xff; 32]).unwrap(),
-                    })
-                    .await?;
-
-                    Ok(collect_job.id)
-                })
-            })
-            .await
-            .unwrap();
+        let (_, collect_job) =
+            setup_collect_job_test_case(clock.clone(), Arc::clone(&ds), false).await;
 
         // Set up the collect job driver
         let meter = meter("collect_job_driver");
@@ -1055,14 +1082,6 @@ mod tests {
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
         let failure_mock = mock("POST", "/aggregate_share")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            )
             .with_status(500)
             .expect(3)
             .create();
@@ -1070,14 +1089,6 @@ mod tests {
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
         let no_more_requests_mock = mock("POST", "/aggregate_share")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            )
             .with_status(500)
             .expect(1)
             .create();
@@ -1107,8 +1118,9 @@ mod tests {
         // Confirm that the collect job was abandoned.
         let collect_job_after = ds
             .run_tx(|tx| {
+                let collect_job = collect_job.clone();
                 Box::pin(async move {
-                    tx.get_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job_id)
+                    tx.get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job.id)
                         .await
                 })
             })
@@ -1118,12 +1130,86 @@ mod tests {
         assert_eq!(
             collect_job_after,
             CollectJob {
-                id: collect_job_id,
-                task_id,
-                batch_interval,
-                aggregation_param,
                 state: CollectJobState::Abandoned,
+                ..collect_job
             },
         );
+    }
+
+    #[tokio::test]
+    async fn delete_collect_job() {
+        // Setup: insert a collect job into the datastore.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
+
+        let (lease, mut collect_job) =
+            setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
+
+        // Delete the collect job
+        collect_job.state = CollectJobState::Deleted;
+
+        ds.run_tx(|tx| {
+            let collect_job = collect_job.clone();
+            Box::pin(async move {
+                tx.update_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Helper aggregate share is opaque to the leader, so no need to construct a real one
+        let helper_response = AggregateShareResp::new(HpkeCiphertext::new(
+            HpkeConfigId::from(100),
+            Vec::new(),
+            Vec::new(),
+        ));
+
+        let mocked_aggregate_share = mock("POST", "/aggregate_share")
+            .with_status(200)
+            .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
+            .with_body(helper_response.get_encoded())
+            .create();
+
+        let collect_job_driver = CollectJobDriver::new(
+            reqwest::Client::builder().build().unwrap(),
+            &meter("collect_job_driver"),
+        );
+
+        // Step the collect job. The driver should successfully run the job, but then discard the
+        // results when it notices the job has been deleted.
+        collect_job_driver
+            .step_collect_job(ds.clone(), lease.unwrap().clone())
+            .await
+            .unwrap();
+
+        mocked_aggregate_share.assert();
+
+        // Verify: check that the collect job was abandoned, and that it can no longer be acquired.
+        ds.run_tx(|tx| {
+            let collect_job = collect_job.clone();
+            Box::pin(async move {
+                let collect_job = tx
+                    .get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(collect_job.id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+
+                assert_eq!(collect_job.state, CollectJobState::Deleted);
+
+                let leases = tx
+                    .acquire_incomplete_collect_jobs(Duration::from_seconds(100), 1)
+                    .await
+                    .unwrap();
+
+                assert!(leases.is_empty());
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 }
