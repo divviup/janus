@@ -1,5 +1,5 @@
 use crate::{
-    aggregator::{self, accumulator::Accumulator, aggregate_step_failure_counter},
+    aggregator::{accumulator::Accumulator, aggregate_step_failure_counter, post_to_helper},
     datastore::{
         self,
         models::{
@@ -16,10 +16,8 @@ use futures::{
     future::{try_join_all, BoxFuture, FutureExt},
     try_join,
 };
-use http::header::CONTENT_TYPE;
 use janus_core::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    task::DAP_AUTH_HEADER,
     time::Clock,
 };
 use janus_messages::{
@@ -28,7 +26,7 @@ use janus_messages::{
     Report, ReportShare, ReportShareError, Role,
 };
 use opentelemetry::{
-    metrics::{Counter, Meter},
+    metrics::{Counter, Histogram, Meter, Unit},
     Context, KeyValue,
 };
 use prio::{
@@ -53,6 +51,8 @@ pub struct AggregationJobDriver {
     aggregate_step_failure_counter: Counter<u64>,
     #[derivative(Debug = "ignore")]
     job_cancel_counter: Counter<u64>,
+    #[derivative(Debug = "ignore")]
+    http_request_duration_histogram: Histogram<f64>,
 }
 
 impl AggregationJobDriver {
@@ -65,10 +65,19 @@ impl AggregationJobDriver {
             .init();
         job_cancel_counter.add(&Context::current(), 0, &[]);
 
+        let http_request_duration_histogram = meter
+            .f64_histogram("janus_http_request_duration_seconds")
+            .with_description(
+                "The amount of time elapsed while making an HTTP request to a helper.",
+            )
+            .with_unit(Unit::new("seconds"))
+            .init();
+
         AggregationJobDriver {
             http_client,
             aggregate_step_failure_counter,
             job_cancel_counter,
+            http_request_duration_histogram,
         }
     }
 
@@ -443,26 +452,16 @@ impl AggregationJobDriver {
             report_shares,
         );
 
-        let response = self
-            .http_client
-            .post(task.aggregator_url(Role::Helper)?.join("aggregate")?)
-            .header(
-                CONTENT_TYPE,
-                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .header(
-                DAP_AUTH_HEADER,
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .body(req.get_encoded())
-            .send()
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            // TODO(#381): Attempt to decode a problem details response.
-            return Err(aggregator::Error::Http(status).into());
-        }
-        let resp = AggregateInitializeResp::get_decoded(&response.bytes().await?)?;
+        let resp_bytes = post_to_helper(
+            &self.http_client,
+            task.aggregator_url(Role::Helper)?.join("aggregate")?,
+            AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            req,
+            task.primary_aggregator_auth_token(),
+            &self.http_request_duration_histogram,
+        )
+        .await?;
+        let resp = AggregateInitializeResp::get_decoded(&resp_bytes)?;
 
         self.process_response_from_helper(
             datastore,
@@ -549,23 +548,16 @@ impl AggregationJobDriver {
         let req =
             AggregateContinueReq::new(task.id, aggregation_job.aggregation_job_id, prepare_steps);
 
-        let response = self
-            .http_client
-            .post(task.aggregator_url(Role::Helper)?.join("aggregate")?)
-            .header(CONTENT_TYPE, AggregateContinueReq::MEDIA_TYPE)
-            .header(
-                DAP_AUTH_HEADER,
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .body(req.get_encoded())
-            .send()
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            // TODO(#381): Attempt to decode a problem details response.
-            return Err(aggregator::Error::Http(status).into());
-        }
-        let resp = AggregateContinueResp::get_decoded(&response.bytes().await?)?;
+        let resp_bytes = post_to_helper(
+            &self.http_client,
+            task.aggregator_url(Role::Helper)?.join("aggregate")?,
+            AggregateContinueReq::MEDIA_TYPE,
+            req,
+            task.primary_aggregator_auth_token(),
+            &self.http_request_duration_histogram,
+        )
+        .await?;
+        let resp = AggregateContinueResp::get_decoded(&resp_bytes)?;
 
         self.process_response_from_helper(
             datastore,
