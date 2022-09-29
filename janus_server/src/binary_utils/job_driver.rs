@@ -235,7 +235,7 @@ where
         new_delay
     }
 
-    fn effective_lease_duration(&self, lease_expiry: Time) -> time::Duration {
+    fn effective_lease_duration(&self, lease_expiry: &Time) -> time::Duration {
         // Lease expiries are expressed as Time values (i.e. an absolute timestamp). Tokio Instant
         // values, unfortunately, can't be created directly from a timestamp. All we can do is
         // create an Instant::now(), then add durations to it. This function computes how long
@@ -367,7 +367,7 @@ mod tests {
                         let leases = incomplete_jobs
                             .iter()
                             .map(|job| {
-                                Lease::new(
+                                Lease::new_dummy(
                                     (job.task_id, VdafInstance::Fake, job.job_id),
                                     job.lease_expiry,
                                 )

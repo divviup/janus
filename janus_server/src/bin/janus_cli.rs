@@ -175,7 +175,7 @@ async fn provision_tasks<C: Clock>(datastore: &Datastore<C>, tasks_file: &Path) 
                 for task in tasks.iter() {
                     // We attempt to delete the task, but ignore "task not found" errors since
                     // the task not existing is an OK outcome too.
-                    match tx.delete_task(task.id).await {
+                    match tx.delete_task(&task.id).await {
                         Ok(_) | Err(datastore::Error::MutationTargetNotFound) => (),
                         err => err?,
                     }

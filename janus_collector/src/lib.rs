@@ -385,7 +385,7 @@ where
         }
 
         let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
-            self.parameters.task_id,
+            &self.parameters.task_id,
             &job.batch_interval,
         );
         let aggregate_shares_bytes = collect_response
@@ -562,7 +562,7 @@ mod tests {
         for<'a> Vec<u8>: From<&'a V::AggregateShare>,
     {
         let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
-            parameters.task_id,
+            &parameters.task_id,
             &batch_interval,
         );
         CollectResp::new(
@@ -937,7 +937,7 @@ mod tests {
         mock_collect_job_bad_ciphertext.assert();
 
         let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
-            collector.parameters.task_id,
+            &collector.parameters.task_id,
             &batch_interval,
         );
         let collect_resp = CollectResp::new(

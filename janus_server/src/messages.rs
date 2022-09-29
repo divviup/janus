@@ -54,19 +54,19 @@ pub trait TimeExt: Sized {
     fn as_naive_date_time(&self) -> NaiveDateTime;
 
     /// Convert a [`NaiveDateTime`] representing an instant in the UTC timezone into a [`Time`].
-    fn from_naive_date_time(time: NaiveDateTime) -> Self;
+    fn from_naive_date_time(time: &NaiveDateTime) -> Self;
 
     /// Add the provided duration to this time.
-    fn add(&self, duration: Duration) -> Result<Self, Error>;
+    fn add(&self, duration: &Duration) -> Result<Self, Error>;
 
     /// Subtract the provided duration from this time.
-    fn sub(&self, duration: Duration) -> Result<Self, Error>;
+    fn sub(&self, duration: &Duration) -> Result<Self, Error>;
 
     /// Get the difference between the provided `other` and `self`. `self` must be after `other`.
-    fn difference(&self, other: Self) -> Result<Duration, Error>;
+    fn difference(&self, other: &Self) -> Result<Duration, Error>;
 
     /// Returns true if this [`Time`] occurs after `time`.
-    fn is_after(&self, time: Time) -> bool;
+    fn is_after(&self, time: &Time) -> bool;
 }
 
 impl TimeExt for Time {
@@ -75,12 +75,12 @@ impl TimeExt for Time {
     }
 
     /// Convert a [`NaiveDateTime`] representing an instant in the UTC timezone into a [`Time`].
-    fn from_naive_date_time(time: NaiveDateTime) -> Self {
+    fn from_naive_date_time(time: &NaiveDateTime) -> Self {
         Self::from_seconds_since_epoch(time.timestamp() as u64)
     }
 
     /// Add the provided duration to this time.
-    fn add(&self, duration: Duration) -> Result<Self, Error> {
+    fn add(&self, duration: &Duration) -> Result<Self, Error> {
         self.as_seconds_since_epoch()
             .checked_add(duration.as_seconds())
             .map(Self::from_seconds_since_epoch)
@@ -88,7 +88,7 @@ impl TimeExt for Time {
     }
 
     /// Subtract the provided duration from this time.
-    fn sub(&self, duration: Duration) -> Result<Self, Error> {
+    fn sub(&self, duration: &Duration) -> Result<Self, Error> {
         self.as_seconds_since_epoch()
             .checked_sub(duration.as_seconds())
             .map(Self::from_seconds_since_epoch)
@@ -96,7 +96,7 @@ impl TimeExt for Time {
     }
 
     /// Get the difference between the provided `other` and `self`. `self` must be after `other`.
-    fn difference(&self, other: Self) -> Result<Duration, Error> {
+    fn difference(&self, other: &Self) -> Result<Duration, Error> {
         self.as_seconds_since_epoch()
             .checked_sub(other.as_seconds_since_epoch())
             .map(Duration::from_seconds)
@@ -104,7 +104,7 @@ impl TimeExt for Time {
     }
 
     /// Returns true if this [`Time`] occurs after `time`.
-    fn is_after(&self, time: Time) -> bool {
+    fn is_after(&self, time: &Time) -> bool {
         self.as_seconds_since_epoch() > time.as_seconds_since_epoch()
     }
 }
@@ -119,7 +119,7 @@ impl IntervalExt for Interval {
     /// Returns a [`Time`] representing the excluded end of this interval.
     fn end(&self) -> Time {
         // [`Self::new`] verified that this addition doesn't overflow.
-        self.start().add(*self.duration()).unwrap()
+        self.start().add(self.duration()).unwrap()
     }
 }
 

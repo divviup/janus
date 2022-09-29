@@ -9,7 +9,7 @@ use anyhow::Result;
 use futures::future::try_join_all;
 use itertools::Itertools;
 use janus_core::time::{Clock, TimeExt};
-use janus_messages::{ReportId, Role, TaskId, Time};
+use janus_messages::{Role, TaskId};
 use opentelemetry::{
     metrics::{Histogram, Unit},
     Context, KeyValue,
@@ -274,15 +274,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 Box::pin(async move {
                     // Find some unaggregated client reports, and group them by their batch unit.
                     let report_ids_by_batch_unit = tx
-                        .get_unaggregated_client_report_ids_for_task(task_id)
+                        .get_unaggregated_client_report_ids_for_task(&task_id)
                         .await?
                         .into_iter()
-                        .map(|(time, report_id)| {
+                        .map(|(report_id, time)| {
                             time.to_batch_unit_interval_start(min_batch_duration)
-                                .map(|rounded_time| (rounded_time, (time, report_id)))
+                                .map(|rounded_time| (rounded_time, (report_id, time)))
                                 .map_err(datastore::Error::from)
                         })
-                        .collect::<Result<Vec<(Time, (Time, ReportId))>, _>>()?
+                        .collect::<Result<Vec<_>, _>>()?
                         .into_iter()
                         .into_group_map();
 
@@ -305,24 +305,22 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 report_count = agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
-                            agg_jobs.push(AggregationJob::<L, A> {
-                                aggregation_job_id,
+                            agg_jobs.push(AggregationJob::<L, A>::new(
                                 task_id,
-                                aggregation_param: (),
-                                state: AggregationJobState::InProgress,
-                            });
+                                aggregation_job_id,
+                                (),
+                                AggregationJobState::InProgress,
+                            ));
 
-                            for (ord, (report_time, report_id)) in
-                                agg_job_reports.iter().enumerate()
-                            {
-                                report_aggs.push(ReportAggregation::<L, A> {
-                                    aggregation_job_id,
+                            for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
+                                report_aggs.push(ReportAggregation::<L, A>::new(
                                     task_id,
-                                    time: *report_time,
-                                    report_id: *report_id,
-                                    ord: i64::try_from(ord)?,
-                                    state: ReportAggregationState::Start,
-                                });
+                                    aggregation_job_id,
+                                    *report_id,
+                                    *time,
+                                    i64::try_from(ord)?,
+                                    ReportAggregationState::Start,
+                                ));
                             }
                         }
                     }
@@ -376,27 +374,27 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Find some client reports that are covered by a collect request,
                     // but haven't been aggregated yet, and group them by their batch unit.
                     let result_vec = tx
-                        .get_unaggregated_client_report_ids_by_collect_for_task::<L, A>(task_id)
+                        .get_unaggregated_client_report_ids_by_collect_for_task::<L, A>(&task_id)
                         .await?
                         .into_iter()
-                        .map(|(report_time, report_id, aggregation_param)| {
+                        .map(|(report_id, report_time, aggregation_param)| {
                             report_time
                                 .to_batch_unit_interval_start(min_batch_duration)
                                 .map(|rounded_time| {
-                                    ((rounded_time, aggregation_param), (report_time, report_id))
+                                    ((rounded_time, aggregation_param), (report_id, report_time))
                                 })
                                 .map_err(datastore::Error::from)
                         })
-                        .collect::<Result<Vec<((Time, _), (Time, ReportId))>, _>>()?;
+                        .collect::<Result<Vec<_>, _>>()?;
                     let report_count = result_vec.len();
                     let result_map = result_vec.into_iter().into_group_map();
 
                     // Generate aggregation jobs and report aggregations.
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::with_capacity(report_count);
-                    for ((_batch_unit_start, aggregation_param), report_times_and_ids) in result_map
+                    for ((_batch_unit_start, aggregation_param), report_ids_and_times) in result_map
                     {
-                        for agg_job_reports in report_times_and_ids.chunks(max_aggregation_job_size)
+                        for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
                         {
                             let aggregation_job_id = random();
                             debug!(
@@ -405,22 +403,22 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 report_count = agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
-                            agg_jobs.push(AggregationJob::<L, A> {
-                                aggregation_job_id,
+                            agg_jobs.push(AggregationJob::<L, A>::new(
                                 task_id,
-                                aggregation_param: aggregation_param.clone(),
-                                state: AggregationJobState::InProgress,
-                            });
+                                aggregation_job_id,
+                                aggregation_param.clone(),
+                                AggregationJobState::InProgress,
+                            ));
 
-                            for (ord, (time, report_id)) in agg_job_reports.iter().enumerate() {
-                                report_aggs.push(ReportAggregation::<L, A> {
-                                    aggregation_job_id,
+                            for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
+                                report_aggs.push(ReportAggregation::<L, A>::new(
                                     task_id,
-                                    time: *time,
-                                    report_id: *report_id,
-                                    ord: i64::try_from(ord)?,
-                                    state: ReportAggregationState::Start,
-                                });
+                                    aggregation_job_id,
+                                    *report_id,
+                                    *time,
+                                    i64::try_from(ord)?,
+                                    ReportAggregationState::Start,
+                                ));
                             }
                         }
                     }
@@ -452,7 +450,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 mod tests {
     use super::AggregationJobCreator;
     use crate::{
-        datastore::{models::CollectJob, test_util::ephemeral_datastore, Transaction},
+        datastore::{
+            models::{CollectJob, CollectJobState},
+            test_util::ephemeral_datastore,
+            Transaction,
+        },
         messages::test_util::new_dummy_report,
         messages::TimeExt,
         task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
@@ -482,6 +484,7 @@ mod tests {
         time::Duration,
     };
     use tokio::{task, time};
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn aggregation_job_creator() {
@@ -619,7 +622,7 @@ mod tests {
         // In a previous "small" batch unit, create fewer than MIN_AGGREGATION_JOB_SIZE reports.
         // Since the minimum aggregation job size applies only to the current batch window, we
         // expect an aggregation job to be created for these reports.
-        let report_time = report_time.sub(task.min_batch_duration).unwrap();
+        let report_time = report_time.sub(&task.min_batch_duration).unwrap();
         let small_batch_unit_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(task_id, report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE - 1)
@@ -627,7 +630,7 @@ mod tests {
 
         // In a (separate) previous "big" batch unit, create more than MAX_AGGREGATION_JOB_SIZE
         // reports. We expect these reports will be split into more than one aggregation job.
-        let report_time = report_time.sub(task.min_batch_duration).unwrap();
+        let report_time = report_time.sub(&task.min_batch_duration).unwrap();
         let big_batch_unit_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(task_id, report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
@@ -837,7 +840,7 @@ mod tests {
         // Create MAX_AGGREGATION_JOB_SIZE reports in one batch unit. This should result in
         // one aggregation job per overlapping collect job for these reports. (and there is
         // one such collect job)
-        let report_time = clock.now().sub(task.min_batch_duration).unwrap();
+        let report_time = clock.now().sub(&task.min_batch_duration).unwrap();
         let batch_1_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(task_id, report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE)
@@ -845,7 +848,7 @@ mod tests {
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch unit. This should result
         // in two aggregation jobs per overlapping collect job. (and there are two such collect jobs)
-        let report_time = report_time.sub(task.min_batch_duration).unwrap();
+        let report_time = report_time.sub(&task.min_batch_duration).unwrap();
         let batch_2_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(task_id, report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
@@ -912,13 +915,16 @@ mod tests {
                     // This will encompass the members of batch_2_reports.
                     tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                         task_id,
+                        Uuid::new_v4(),
                         Interval::new(report_time, task.min_batch_duration).unwrap(),
                         AggregationParam(7),
+                        CollectJobState::Start,
                     ))
                     .await?;
                     // This will encompass the members of both batch_1_reports and batch_2_reports.
                     tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                         task_id,
+                        Uuid::new_v4(),
                         Interval::new(
                             report_time,
                             janus_messages::Duration::from_seconds(
@@ -927,6 +933,7 @@ mod tests {
                         )
                         .unwrap(),
                         AggregationParam(11),
+                        CollectJobState::Start,
                     ))
                     .await?;
                     Ok(())
@@ -1079,38 +1086,33 @@ mod tests {
         for<'a> <A as Vdaf>::OutputShare: TryFrom<&'a [u8]>,
     {
         try_join_all(
-            tx.get_aggregation_jobs_for_task_id::<L, A>(task_id)
+            tx.get_aggregation_jobs_for_task_id::<L, A>(&task_id)
                 .await
                 .unwrap()
                 .into_iter()
-                .map(|agg_job| {
+                .map(|agg_job| async {
+                    let agg_job_id = *agg_job.aggregation_job_id();
                     tx.get_report_aggregations_for_aggregation_job(
                         &vdaf,
-                        Role::Leader,
-                        task_id,
-                        agg_job.aggregation_job_id,
+                        &Role::Leader,
+                        &task_id,
+                        &agg_job_id,
                     )
                     .map_ok(move |report_aggs| {
                         (
-                            agg_job.aggregation_job_id,
-                            report_aggs,
-                            agg_job.aggregation_param,
+                            *agg_job.aggregation_job_id(),
+                            report_aggs
+                                .into_iter()
+                                .map(|ra| (*ra.time(), *ra.report_id()))
+                                .collect::<T>(),
+                            agg_job.aggregation_parameter().clone(),
                         )
                     })
+                    .await
                 }),
         )
         .await
         .unwrap()
         .into_iter()
-        .map(|(agg_job_id, report_aggs, aggregation_param)| {
-            (
-                agg_job_id,
-                report_aggs
-                    .into_iter()
-                    .map(|ra| (ra.time, ra.report_id))
-                    .collect::<T>(),
-                aggregation_param,
-            )
-        })
     }
 }

@@ -277,10 +277,15 @@ impl Distribution<ReportId> for Standard {
 
 /// Checksum over DAP report IDs, defined in §4.4.4.3.
 #[derive(Copy, Clone, Debug, Default, Hash, PartialEq, Eq)]
-pub struct ReportIdChecksum([u8; 32]);
+pub struct ReportIdChecksum([u8; Self::LEN]);
 
-impl From<[u8; 32]> for ReportIdChecksum {
-    fn from(checksum: [u8; 32]) -> Self {
+impl ReportIdChecksum {
+    /// LEN is the length of a report ID checksum in bytes.
+    pub const LEN: usize = 32;
+}
+
+impl From<[u8; Self::LEN]> for ReportIdChecksum {
+    fn from(checksum: [u8; Self::LEN]) -> Self {
         Self(checksum)
     }
 }
