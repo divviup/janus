@@ -134,13 +134,14 @@ pub enum Error {
     /// An error from the underlying VDAF library.
     #[error("VDAF error: {0}")]
     Vdaf(#[from] vdaf::VdafError),
-    /// A collect or aggregate share request was rejected because the interval is invalid, per
-    /// §4.5.6
+    /// A collect or aggregate share request was rejected because the interval failed boundary
+    /// checks (§4.5.6).
+    // TODO(#468): Augment this error so it can represent invalid fixed-size queries, too.
     #[error("task {0}: invalid batch interval: {1}")]
     BatchInvalid(TaskId, Interval),
-    /// There are not enough reports in the batch interval to meet the task's minimum batch size.
-    #[error("task {0}: insufficient number of reports ({1})")]
-    InsufficientBatchSize(TaskId, u64),
+    /// The number of reports in the batch is invalid for the task's parameters.
+    #[error("task {0}: invalid number of reports ({1})")]
+    InvalidBatchSize(TaskId, u64),
     #[error("URL parse error: {0}")]
     Url(#[from] url::ParseError),
     /// The checksum or report count in one aggregator's aggregate share does not match the other
@@ -156,9 +157,15 @@ pub enum Error {
         peer_checksum: ReportIdChecksum,
         peer_report_count: u64,
     },
-    /// Too many queries against a single batch.
-    #[error("task {0}: maxiumum batch lifetime exceeded")]
-    BatchLifetimeExceeded(TaskId),
+    /// A collect or aggregate share request was rejected because the queries against a single batch
+    /// exceed the task's `max_batch_query_count` (§4.5.6).
+    #[error("task {0}: batch queried too many times ({1})")]
+    BatchQueriedTooManyTimes(TaskId, u64),
+    /// A collect or aggregate share request was rejected because the batch overlaps with a
+    /// previously collected one.
+    // TODO(#468): Augment this error so it can represent invalid fixed-size queries, too.
+    #[error("task {0}: queried batch {1} overlaps with previously collected batch(es)")]
+    BatchOverlap(TaskId, Interval),
     /// HPKE failure.
     #[error("HPKE error: {0}")]
     Hpke(#[from] janus_core::hpke::Error),
@@ -197,10 +204,11 @@ impl Error {
             Error::Datastore(_) => "datastore",
             Error::Vdaf(_) => "vdaf",
             Error::BatchInvalid(_, _) => "batch_invalid",
-            Error::InsufficientBatchSize(_, _) => "insufficient_batch_size",
+            Error::InvalidBatchSize(_, _) => "invalid_batch_size",
             Error::Url(_) => "url",
             Error::BatchMismatch { .. } => "batch_mismatch",
-            Error::BatchLifetimeExceeded(_) => "batch_lifetime_exceeded",
+            Error::BatchQueriedTooManyTimes(_, _) => "batch_queried_too_many_times",
+            Error::BatchOverlap(_, _) => "batch_overlap",
             Error::Hpke(_) => "hpke",
             Error::TaskParameters(_) => "task_parameters",
             Error::HttpClient(_) => "http_client",
@@ -1618,7 +1626,8 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     {
-        // §4.5: check that the batch interval meets the requirements from §4.6
+        // Check that the batch interval is valid for the task
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
         if !task.validate_batch_interval(req.query().batch_interval()) {
             return Err(Error::BatchInvalid(task.id, *req.query().batch_interval()));
         }
@@ -2082,10 +2091,11 @@ enum DapProblemType {
     ReportTooLate,
     ReportTooEarly,
     BatchInvalid,
-    InsufficientBatchSize,
-    BatchLifetimeExceeded,
+    InvalidBatchSize,
+    BatchQueriedTooManyTimes,
     BatchMismatch,
     UnauthorizedRequest,
+    BatchOverlap,
 }
 
 impl DapProblemType {
@@ -2104,16 +2114,15 @@ impl DapProblemType {
             DapProblemType::ReportTooLate => "urn:ietf:params:ppm:dap:error:reportTooLate",
             DapProblemType::ReportTooEarly => "urn:ietf:params:ppm:dap:error:reportTooEarly",
             DapProblemType::BatchInvalid => "urn:ietf:params:ppm:dap:error:batchInvalid",
-            DapProblemType::InsufficientBatchSize => {
-                "urn:ietf:params:ppm:dap:error:insufficientBatchSize"
-            }
-            DapProblemType::BatchLifetimeExceeded => {
-                "urn:ietf:params:ppm:dap:error:batchLifetimeExceeded"
+            DapProblemType::InvalidBatchSize => "urn:ietf:params:ppm:dap:error:invalidBatchSize",
+            DapProblemType::BatchQueriedTooManyTimes => {
+                "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes"
             }
             DapProblemType::BatchMismatch => "urn:ietf:params:ppm:dap:error:batchMismatch",
             DapProblemType::UnauthorizedRequest => {
                 "urn:ietf:params:ppm:dap:error:unauthorizedRequest"
             }
+            DapProblemType::BatchOverlap => "urn:ietf:params:ppm:dap:error:batchOverlap",
         }
     }
 
@@ -2137,7 +2146,9 @@ impl DapProblemType {
             DapProblemType::UnrecognizedTask => {
                 "An endpoint received a message with an unknown task ID."
             }
-            DapProblemType::MissingTaskId => "HPKE configuration was requested without specifying a task ID.",
+            DapProblemType::MissingTaskId => {
+                "HPKE configuration was requested without specifying a task ID."
+            }
             DapProblemType::UnrecognizedAggregationJob => {
                 "An endpoint received a message with an unknown aggregation job ID."
             }
@@ -2147,16 +2158,23 @@ impl DapProblemType {
             DapProblemType::ReportTooLate => {
                 "Report could not be processed because it arrived too late."
             }
-            DapProblemType::ReportTooEarly => "Report could not be processed because it arrived too early.",
-            DapProblemType::BatchInvalid => "The batch interval in the collect or aggregate share request is not valid for the task.",
-            DapProblemType::InsufficientBatchSize => "There are not enough reports in the batch interval.",
-            DapProblemType::BatchLifetimeExceeded => {
-                "The batch lifetime has been exceeded for one or more reports included in the batch interval."
+            DapProblemType::ReportTooEarly => {
+                "Report could not be processed because it arrived too early."
+            }
+            DapProblemType::BatchInvalid => "The batch implied by the query is invalid.",
+            DapProblemType::InvalidBatchSize => {
+                "The number of reports included in the batch is invalid."
+            }
+            DapProblemType::BatchQueriedTooManyTimes => {
+                "The batch described by the query has been queried too many times."
             }
             DapProblemType::BatchMismatch => {
                 "Leader and helper disagree on reports aggregated in a batch."
             }
             DapProblemType::UnauthorizedRequest => "The request's authorization is not valid.",
+            DapProblemType::BatchOverlap => {
+                "The queried batch overlaps with a previously queried batch."
+            }
         }
     }
 }
@@ -2266,22 +2284,25 @@ where
                         DapProblemType::UnauthorizedRequest,
                         Some(task_id),
                     ),
+                    Err(Error::InvalidBatchSize(task_id, _)) => build_problem_details_response(
+                        DapProblemType::InvalidBatchSize,
+                        Some(task_id),
+                    ),
                     Err(Error::BatchInvalid(task_id, _)) => {
                         build_problem_details_response(DapProblemType::BatchInvalid, Some(task_id))
                     }
-                    Err(Error::InsufficientBatchSize(task_id, _)) => {
-                        build_problem_details_response(
-                            DapProblemType::InsufficientBatchSize,
-                            Some(task_id),
-                        )
+                    Err(Error::BatchOverlap(task_id, _)) => {
+                        build_problem_details_response(DapProblemType::BatchOverlap, Some(task_id))
                     }
                     Err(Error::BatchMismatch { task_id, .. }) => {
                         build_problem_details_response(DapProblemType::BatchMismatch, Some(task_id))
                     }
-                    Err(Error::BatchLifetimeExceeded(task_id)) => build_problem_details_response(
-                        DapProblemType::BatchLifetimeExceeded,
-                        Some(task_id),
-                    ),
+                    Err(Error::BatchQueriedTooManyTimes(task_id, ..)) => {
+                        build_problem_details_response(
+                            DapProblemType::BatchQueriedTooManyTimes,
+                            Some(task_id),
+                        )
+                    }
                     Err(Error::Hpke(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -2705,10 +2726,7 @@ mod tests {
             test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey, Label,
         },
         report_id::ReportIdChecksumExt,
-        test_util::{
-            dummy_vdaf::{self, AggregationParam},
-            install_test_trace_subscriber, run_vdaf,
-        },
+        test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
         time::{MockClock, TimeExt as CoreTimeExt},
     };
     use janus_messages::{
@@ -2726,6 +2744,8 @@ mod tests {
     use std::{collections::HashMap, io::Cursor};
     use uuid::Uuid;
     use warp::{cors::CorsForbidden, reply::Reply, Rejection};
+
+    const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
     #[tokio::test]
     async fn hpke_config() {
@@ -3977,7 +3997,7 @@ mod tests {
         let request = AggregateInitializeReq::new(
             task_id,
             random(),
-            AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone()]),
         );
@@ -4053,7 +4073,7 @@ mod tests {
         let request = AggregateInitializeReq::new(
             task_id,
             random(),
-            AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone()]),
         );
@@ -4128,7 +4148,7 @@ mod tests {
         let request = AggregateInitializeReq::new(
             task_id,
             random(),
-            AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([report_share.clone(), report_share]),
         );
@@ -5061,8 +5081,6 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         // Setup datastore.
         datastore
             .run_tx(|tx| {
@@ -5082,17 +5100,19 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_aggregation_job(
-                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                            task_id,
-                            aggregation_job_id,
-                            AggregationParam(0),
-                            AggregationJobState::InProgress,
-                        ),
-                    )
+
+                    tx.put_aggregation_job(&AggregationJob::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    >::new(
+                        task_id,
+                        aggregation_job_id,
+                        dummy_vdaf::AggregationParam(0),
+                        AggregationJobState::InProgress,
+                    ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        VERIFY_KEY_LENGTH,
+                        DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
                         task_id,
@@ -5170,8 +5190,6 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         // Setup datastore.
         datastore
             .run_tx(|tx| {
@@ -5192,17 +5210,18 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_aggregation_job(
-                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                            task_id,
-                            aggregation_job_id,
-                            AggregationParam(0),
-                            AggregationJobState::InProgress,
-                        ),
-                    )
+                    tx.put_aggregation_job(&AggregationJob::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    >::new(
+                        task_id,
+                        aggregation_job_id,
+                        dummy_vdaf::AggregationParam(0),
+                        AggregationJobState::InProgress,
+                    ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        VERIFY_KEY_LENGTH,
+                        DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
                         task_id,
@@ -5267,7 +5286,7 @@ mod tests {
                 let report_metadata = report_metadata.clone();
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
+                        .get_aggregation_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
                             &task_id,
                             &aggregation_job_id,
                         )
@@ -5292,7 +5311,7 @@ mod tests {
             Some(AggregationJob::new(
                 task_id,
                 aggregation_job_id,
-                AggregationParam(0),
+                dummy_vdaf::AggregationParam(0),
                 AggregationJobState::Finished,
             ))
         );
@@ -5326,8 +5345,6 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         // Setup datastore.
         datastore
             .run_tx(|tx| {
@@ -5348,17 +5365,18 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_aggregation_job(
-                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                            task_id,
-                            aggregation_job_id,
-                            AggregationParam(0),
-                            AggregationJobState::InProgress,
-                        ),
-                    )
+                    tx.put_aggregation_job(&AggregationJob::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    >::new(
+                        task_id,
+                        aggregation_job_id,
+                        dummy_vdaf::AggregationParam(0),
+                        AggregationJobState::InProgress,
+                    ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        VERIFY_KEY_LENGTH,
+                        DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
                         task_id,
@@ -5443,8 +5461,6 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         // Setup datastore.
         datastore
             .run_tx(|tx| {
@@ -5484,18 +5500,19 @@ mod tests {
                     )
                     .await?;
 
-                    tx.put_aggregation_job(
-                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                            task_id,
-                            aggregation_job_id,
-                            AggregationParam(0),
-                            AggregationJobState::InProgress,
-                        ),
-                    )
+                    tx.put_aggregation_job(&AggregationJob::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    >::new(
+                        task_id,
+                        aggregation_job_id,
+                        dummy_vdaf::AggregationParam(0),
+                        AggregationJobState::InProgress,
+                    ))
                     .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<
-                        VERIFY_KEY_LENGTH,
+                        DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
                         task_id,
@@ -5507,7 +5524,7 @@ mod tests {
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        VERIFY_KEY_LENGTH,
+                        DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
                         task_id,
@@ -5592,8 +5609,6 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         // Setup datastore.
         datastore
             .run_tx(|tx| {
@@ -5614,17 +5629,18 @@ mod tests {
                         ),
                     )
                     .await?;
-                    tx.put_aggregation_job(
-                        &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                            task_id,
-                            aggregation_job_id,
-                            AggregationParam(0),
-                            AggregationJobState::InProgress,
-                        ),
-                    )
+                    tx.put_aggregation_job(&AggregationJob::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    >::new(
+                        task_id,
+                        aggregation_job_id,
+                        dummy_vdaf::AggregationParam(0),
+                        AggregationJobState::InProgress,
+                    ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
-                        VERIFY_KEY_LENGTH,
+                        DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
                         task_id,
@@ -5786,8 +5802,69 @@ mod tests {
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
-                "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
-                "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "title": "The batch implied by the query is invalid.",
+                "detail": "The batch implied by the query is invalid.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
+    }
+
+    #[tokio::test]
+    // TODO(#470): re-enable this test once the report count check is moved to the /collect handler
+    #[ignore]
+    async fn collect_request_invalid_batch_size() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task_id = random();
+
+        let task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Leader);
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        datastore.put_task(&task).await.unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+
+        let request = CollectReq::new(
+            task_id,
+            Query::new_time_interval(
+                Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_seconds(task.min_batch_duration.as_seconds()),
+                )
+                .unwrap(),
+            ),
+            Vec::new(),
+        );
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, CollectReq::<TimeInterval>::MEDIA_TYPE)
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        // Collect request will be rejected because there are no reports in the batch interval
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
+                "title": "The number of reports included in the batch is invalid.",
+                "detail": "The number of reports included in the batch is invalid.",
                 "instance": "..",
                 "taskid": format!("{}", task_id),
             })
@@ -6240,7 +6317,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_request_batch_lifetime_violation() {
+    async fn collect_request_batch_queried_too_many_times() {
         install_test_trace_subscriber();
 
         let task_id = random();
@@ -6248,8 +6325,6 @@ mod tests {
         task.max_batch_lifetime = 1;
 
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
-
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
         datastore
             .run_tx(|tx| {
@@ -6259,12 +6334,12 @@ mod tests {
                     tx.put_task(&task).await?;
 
                     tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        VERIFY_KEY_LENGTH,
+                        DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
                         task.id,
                         Time::from_seconds_since_epoch(0),
-                        AggregationParam(0),
+                        dummy_vdaf::AggregationParam(0),
                         dummy_vdaf::AggregateShare(0),
                         10,
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
@@ -6283,7 +6358,7 @@ mod tests {
             Query::new_time_interval(
                 Interval::new(Time::from_seconds_since_epoch(0), task.min_batch_duration).unwrap(),
             ),
-            AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
         let response = warp::test::request()
@@ -6308,7 +6383,7 @@ mod tests {
             Query::new_time_interval(
                 Interval::new(Time::from_seconds_since_epoch(0), task.min_batch_duration).unwrap(),
             ),
-            AggregationParam(1).get_encoded(),
+            dummy_vdaf::AggregationParam(1).get_encoded(),
         );
 
         let (parts, body) = warp::test::request()
@@ -6332,9 +6407,121 @@ mod tests {
             problem_details,
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:batchLifetimeExceeded",
-                "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
-                "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
+                "title": "The batch described by the query has been queried too many times.",
+                "detail": "The batch described by the query has been queried too many times.",
+                "instance": "..",
+                "taskid": format!("{}", task_id),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_request_batch_overlap() {
+        install_test_trace_subscriber();
+
+        let task_id = random();
+        let mut task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Leader);
+        task.max_batch_lifetime = 1;
+
+        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+
+                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                        DUMMY_VERIFY_KEY_LENGTH,
+                        dummy_vdaf::Vdaf,
+                    >::new(
+                        task.id,
+                        Time::from_seconds_since_epoch(0),
+                        dummy_vdaf::AggregationParam(0),
+                        dummy_vdaf::AggregateShare(0),
+                        10,
+                        ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                    ))
+                    .await
+                })
+            })
+            .await
+            .unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+
+        // Sending this request will consume the lifetime for [0, 2 * min_batch_duration).
+        let request = CollectReq::new(
+            task_id,
+            Query::new_time_interval(
+                Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_microseconds(
+                        2 * task.min_batch_duration.as_microseconds().unwrap(),
+                    ),
+                )
+                .unwrap(),
+            ),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
+        );
+
+        let response = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, CollectReq::<TimeInterval>::MEDIA_TYPE)
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+
+        // This request will not be allowed due to overlapping with the previous request.
+        let invalid_request = CollectReq::new(
+            task_id,
+            Query::new_time_interval(
+                Interval::new(
+                    Time::from_seconds_since_epoch(0)
+                        .add(&task.min_batch_duration)
+                        .unwrap(),
+                    task.min_batch_duration,
+                )
+                .unwrap(),
+            ),
+            dummy_vdaf::AggregationParam(1).get_encoded(),
+        );
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, CollectReq::<TimeInterval>::MEDIA_TYPE)
+            .body(invalid_request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
+                "title": "The queried batch overlaps with a previously queried batch.",
+                "detail": "The queried batch overlaps with a previously queried batch.",
                 "instance": "..",
                 "taskid": format!("{}", task_id),
             })
@@ -6550,8 +6737,8 @@ mod tests {
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
-                "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
-                "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "title": "The batch implied by the query is invalid.",
+                "detail": "The batch implied by the query is invalid.",
                 "instance": "..",
                 "taskid": format!("{}", task_id),
             })
@@ -6576,8 +6763,6 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(datastore.clone(), clock).unwrap();
@@ -6588,7 +6773,7 @@ mod tests {
             BatchSelector::new_time_interval(
                 Interval::new(Time::from_seconds_since_epoch(0), task.min_batch_duration).unwrap(),
             ),
-            AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
             0,
             ReportIdChecksum::default(),
         );
@@ -6615,68 +6800,69 @@ mod tests {
             problem_details,
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:insufficientBatchSize",
-                "title": "There are not enough reports in the batch interval.",
-                "detail": "There are not enough reports in the batch interval.",
+                "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
+                "title": "The number of reports included in the batch is invalid.",
+                "detail": "The number of reports included in the batch is invalid.",
                 "instance": "..",
                 "taskid": format!("{}", task_id),
             })
         );
 
-        use dummy_vdaf::AggregateShare;
-
         // Put some batch unit aggregations in the DB.
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {
-                    for aggregation_param in [AggregationParam(0), AggregationParam(1)] {
+                    for aggregation_param in [
+                        dummy_vdaf::AggregationParam(0),
+                        dummy_vdaf::AggregationParam(1),
+                    ] {
                         tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                            VERIFY_KEY_LENGTH,
+                            DUMMY_VERIFY_KEY_LENGTH,
                             dummy_vdaf::Vdaf,
                         >::new(
                             task_id,
                             Time::from_seconds_since_epoch(500),
                             aggregation_param,
-                            AggregateShare(64),
+                            dummy_vdaf::AggregateShare(64),
                             5,
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                         ))
                         .await?;
 
                         tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                            VERIFY_KEY_LENGTH,
+                            DUMMY_VERIFY_KEY_LENGTH,
                             dummy_vdaf::Vdaf,
                         >::new(
                             task_id,
                             Time::from_seconds_since_epoch(1500),
                             aggregation_param,
-                            AggregateShare(128),
+                            dummy_vdaf::AggregateShare(128),
                             5,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ))
                         .await?;
 
                         tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                            VERIFY_KEY_LENGTH,
+                            DUMMY_VERIFY_KEY_LENGTH,
                             dummy_vdaf::Vdaf,
                         >::new(
                             task_id,
                             Time::from_seconds_since_epoch(2000),
                             aggregation_param,
-                            AggregateShare(256),
+                            dummy_vdaf::AggregateShare(256),
                             5,
                             ReportIdChecksum::get_decoded(&[4; 32]).unwrap(),
                         ))
                         .await?;
 
                         tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                            VERIFY_KEY_LENGTH,
+                            DUMMY_VERIFY_KEY_LENGTH,
                             dummy_vdaf::Vdaf,
                         >::new(
                             task_id,
                             Time::from_seconds_since_epoch(2500),
                             aggregation_param,
-                            AggregateShare(512),
+                            dummy_vdaf::AggregateShare(512),
                             5,
                             ReportIdChecksum::get_decoded(&[8; 32]).unwrap(),
                         ))
@@ -6699,7 +6885,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
             5,
             ReportIdChecksum::default(),
         );
@@ -6725,9 +6911,9 @@ mod tests {
             problem_details,
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:insufficientBatchSize",
-                "title": "There are not enough reports in the batch interval.",
-                "detail": "There are not enough reports in the batch interval.",
+                "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
+                "title": "The number of reports included in the batch is invalid.",
+                "detail": "The number of reports included in the batch is invalid.",
                 "instance": "..",
                 "taskid": format!("{}", task_id),
             })
@@ -6745,7 +6931,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                AggregationParam(0).get_encoded(),
+                dummy_vdaf::AggregationParam(0).get_encoded(),
                 10,
                 ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
             ),
@@ -6759,7 +6945,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                AggregationParam(0).get_encoded(),
+                dummy_vdaf::AggregationParam(0).get_encoded(),
                 20,
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
@@ -6809,11 +6995,11 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    AggregationParam(0).get_encoded(),
+                    dummy_vdaf::AggregationParam(0).get_encoded(),
                     10,
                     ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
                 ),
-                AggregateShare(64 + 128),
+                dummy_vdaf::AggregateShare(64 + 128),
             ),
             (
                 "third and fourth batch units",
@@ -6826,12 +7012,12 @@ mod tests {
                         )
                         .unwrap(),
                     ),
-                    AggregationParam(0).get_encoded(),
+                    dummy_vdaf::AggregationParam(0).get_encoded(),
                     10,
                     ReportIdChecksum::get_decoded(&[8 ^ 4; 32]).unwrap(),
                 ),
                 // Should get sum over the third and fourth batch units
-                AggregateShare(256 + 512),
+                dummy_vdaf::AggregateShare(256 + 512),
             ),
         ] {
             // Request the aggregate share multiple times. If the request parameters don't change,
@@ -6883,7 +7069,7 @@ mod tests {
 
                 // Should get the sum over the first and second aggregate shares
                 let decoded_aggregate_share =
-                    AggregateShare::try_from(aggregate_share.as_ref()).unwrap();
+                    dummy_vdaf::AggregateShare::try_from(aggregate_share.as_ref()).unwrap();
                 assert_eq!(
                     decoded_aggregate_share, expected_result,
                     "test case: {:?}, iteration: {}",
@@ -6903,7 +7089,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
             20,
             ReportIdChecksum::get_decoded(&[8 ^ 4 ^ 3 ^ 2; 32]).unwrap(),
         );
@@ -6927,9 +7113,9 @@ mod tests {
             problem_details,
             json!({
                 "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
-                "title": "The batch interval in the collect or aggregate share request is not valid for the task.",
-                "detail": "The batch interval in the collect or aggregate share request is not valid for the task.",
+                "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
+                "title": "The queried batch overlaps with a previously queried batch.",
+                "detail": "The queried batch overlaps with a previously queried batch.",
                 "instance": "..",
                 "taskid": format!("{}", task_id),
             }),
@@ -6948,7 +7134,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                AggregationParam(1).get_encoded(),
+                dummy_vdaf::AggregationParam(1).get_encoded(),
                 10,
                 ReportIdChecksum::get_decoded(&[3 ^ 2; 32]).unwrap(),
             ),
@@ -6961,7 +7147,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                AggregationParam(1).get_encoded(),
+                dummy_vdaf::AggregationParam(1).get_encoded(),
                 10,
                 ReportIdChecksum::get_decoded(&[4 ^ 8; 32]).unwrap(),
             ),
@@ -6986,9 +7172,9 @@ mod tests {
                 problem_details,
                 json!({
                     "status": StatusCode::BAD_REQUEST.as_u16(),
-                    "type": "urn:ietf:params:ppm:dap:error:batchLifetimeExceeded",
-                    "title": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
-                    "detail": "The batch lifetime has been exceeded for one or more reports included in the batch interval.",
+                    "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
+                    "title": "The batch described by the query has been queried too many times.",
+                    "detail": "The batch described by the query has been queried too many times.",
                     "instance": "..",
                     "taskid": format!("{}", task_id),
                 })
