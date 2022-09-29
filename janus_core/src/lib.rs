@@ -31,3 +31,11 @@ impl Runtime for TokioRuntime {
         tokio::task::spawn(future)
     }
 }
+
+pub mod message {
+    pub use janus_messages::{
+        CollectReq, CollectResp, Duration, Error, Extension, ExtensionType, HpkeAeadId,
+        HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
+        Nonce, NonceChecksum, Report, Role, RoleParseError, TaskId, Time,
+    };
+}
