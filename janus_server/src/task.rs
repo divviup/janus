@@ -623,7 +623,7 @@ pub mod test_util {
                 vdaf,
                 role,
                 Vec::from([vdaf_verify_key]),
-                0,
+                1,
                 0,
                 Duration::from_hours(8).unwrap(),
                 Duration::from_minutes(10).unwrap(),

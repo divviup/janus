@@ -2560,6 +2560,8 @@ impl From<ring::error::Unspecified> for Error {
 
 /// This module contains models used by the datastore that are not PPM messages.
 pub mod models {
+    use std::fmt::Display;
+
     use super::Error;
     use crate::{
         messages::{DurationExt, IntervalExt, TimeExt},
@@ -2581,7 +2583,7 @@ pub mod models {
         vdaf::{self, Aggregatable},
     };
     use rand::{distributions::Standard, prelude::Distribution};
-    use std::fmt::{Debug, Display, Formatter};
+    use std::fmt::{Debug, Formatter};
     use uuid::Uuid;
 
     // We have to manually implement [Partial]Eq for a number of types because the dervied
@@ -3380,6 +3382,25 @@ pub mod models {
         }
     }
 
+    impl<const L: usize, A> Display for CollectJobState<L, A>
+    where
+        A: vdaf::Aggregator<L>,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "{}",
+                match self {
+                    Self::Start => "start",
+                    Self::Finished { .. } => "finished",
+                    Self::Abandoned => "abandoned",
+                    Self::Deleted => "deleted",
+                }
+            )
+        }
+    }
+
     impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for CollectJobState<L, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -3891,6 +3912,8 @@ mod tests {
         sync::Arc,
     };
 
+    const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+
     #[tokio::test]
     async fn roundtrip_task() {
         install_test_trace_subscriber();
@@ -4223,8 +4246,6 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         let task_id = random();
         let unrelated_task_id = random();
 
@@ -4293,7 +4314,7 @@ mod tests {
                     )
                     .unwrap(),
                     AggregationParam(255),
-                    CollectJobState::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await
             })
@@ -4306,7 +4327,7 @@ mod tests {
         let got_reports = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&task_id)
+                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&task_id)
                         .await
                 })
             })
@@ -4328,7 +4349,7 @@ mod tests {
                     )
                     .unwrap(),
                     AggregationParam(0),
-                    CollectJobState::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
                 tx.put_collect_job(&CollectJob::new(
@@ -4340,7 +4361,7 @@ mod tests {
                     )
                     .unwrap(),
                     AggregationParam(1),
-                    CollectJobState::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
                 // No reports fall in this interval, so we shouldn't see it's aggregation
@@ -4354,13 +4375,13 @@ mod tests {
                     )
                     .unwrap(),
                     AggregationParam(2),
-                    CollectJobState::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
 
                 let aggregation_job_id = random();
                 tx.put_aggregation_job(
-                    &AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+                    &AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                         task_id,
                         aggregation_job_id,
                         AggregationParam(0),
@@ -4368,16 +4389,17 @@ mod tests {
                     ),
                 )
                 .await?;
-                tx.put_report_aggregation(
-                    &ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                        task_id,
-                        aggregation_job_id,
-                        aggregated_report_id,
-                        aggregated_report_time,
-                        0,
-                        ReportAggregationState::Start,
-                    ),
-                )
+                tx.put_report_aggregation(&ReportAggregation::<
+                    DUMMY_VERIFY_KEY_LENGTH,
+                    dummy_vdaf::Vdaf,
+                >::new(
+                    task_id,
+                    aggregation_job_id,
+                    aggregated_report_id,
+                    aggregated_report_time,
+                    0,
+                    ReportAggregationState::Start,
+                ))
                 .await
             })
         })
@@ -4389,7 +4411,7 @@ mod tests {
         let mut got_reports = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&task_id)
+                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&task_id)
                         .await
                 })
             })
@@ -4440,7 +4462,7 @@ mod tests {
                     )
                     .unwrap(),
                     dummy_vdaf::AggregationParam(0),
-                    CollectJobState::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
                 tx.put_collect_job(&CollectJob::new(
@@ -4452,7 +4474,7 @@ mod tests {
                     )
                     .unwrap(),
                     dummy_vdaf::AggregationParam(1),
-                    CollectJobState::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
                 Ok(())
@@ -4465,7 +4487,7 @@ mod tests {
         let mut got_reports = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&task_id)
+                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&task_id)
                         .await
                 })
             })
@@ -5146,7 +5168,6 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
         let vdaf = Arc::new(dummy_vdaf::Vdaf::default());
 
         let rslt = ds
@@ -5170,7 +5191,7 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.update_report_aggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
+                    tx.update_report_aggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
                         &ReportAggregation::new(
                             random(),
                             random(),
@@ -5818,6 +5839,14 @@ mod tests {
         .unwrap();
     }
 
+    #[derive(Copy, Clone)]
+    enum CollectJobTestCaseState {
+        Start,
+        Finished,
+        Deleted,
+        Abandoned,
+    }
+
     #[derive(Clone)]
     struct CollectJobTestCase {
         should_be_acquired: bool,
@@ -5825,7 +5854,7 @@ mod tests {
         batch_interval: Interval,
         agg_param: AggregationParam,
         collect_job_id: Option<Uuid>,
-        set_aggregate_shares: bool,
+        state: CollectJobTestCaseState,
     }
 
     #[derive(Clone)]
@@ -5841,7 +5870,6 @@ mod tests {
         ds: &Datastore<MockClock>,
         test_case: CollectJobAcquireTestCase,
     ) -> CollectJobAcquireTestCase {
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
         ds.run_tx(|tx| {
             let mut test_case = test_case.clone();
             Box::pin(async move {
@@ -5863,22 +5891,23 @@ mod tests {
                 }
 
                 for test_case in test_case.collect_job_test_cases.iter_mut() {
-                    let collect_job = CollectJob::new(
+                    let collect_job = CollectJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                         test_case.task_id,
                         Uuid::new_v4(),
                         test_case.batch_interval,
                         test_case.agg_param,
-                        if test_case.set_aggregate_shares {
-                            CollectJobState::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Finished {
+                        match test_case.state {
+                            CollectJobTestCaseState::Start => CollectJobState::Start,
+                            CollectJobTestCaseState::Finished => CollectJobState::Finished {
                                 encrypted_helper_aggregate_share: HpkeCiphertext::new(
                                     HpkeConfigId::from(0),
-                                    Vec::new(),
-                                    Vec::new(),
+                                    vec![],
+                                    vec![],
                                 ),
                                 leader_aggregate_share: dummy_vdaf::AggregateShare(0),
-                            }
-                        } else {
-                            CollectJobState::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start
+                            },
+                            CollectJobTestCaseState::Abandoned => CollectJobState::Abandoned,
+                            CollectJobTestCaseState::Deleted => CollectJobState::Deleted,
                         },
                     );
                     tx.put_collect_job(&collect_job).await?;
@@ -5945,20 +5974,20 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         let task_id = random();
         let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
         let aggregation_job_id = random();
-        let aggregation_jobs =
-            Vec::from([AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                task_id,
-                aggregation_job_id,
-                AggregationParam(0),
-                AggregationJobState::Finished,
-            )]);
+        let aggregation_jobs = Vec::from([AggregationJob::<
+            DUMMY_VERIFY_KEY_LENGTH,
+            dummy_vdaf::Vdaf,
+        >::new(
+            task_id,
+            aggregation_job_id,
+            AggregationParam(0),
+            AggregationJobState::Finished,
+        )]);
         let report_aggregations = Vec::from([ReportAggregation::<
-            VERIFY_KEY_LENGTH,
+            DUMMY_VERIFY_KEY_LENGTH,
             dummy_vdaf::Vdaf,
         >::new(
             task_id,
@@ -5969,7 +5998,7 @@ mod tests {
             ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
         )]);
 
-        let collect_job_test_cases = vec![CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: true,
             task_id,
             batch_interval: Interval::new(
@@ -5979,8 +6008,8 @@ mod tests {
             .unwrap(),
             agg_param: AggregationParam(0),
             collect_job_id: None,
-            set_aggregate_shares: false,
-        }];
+            state: CollectJobTestCaseState::Start,
+        }]);
 
         let collect_job_leases = run_collect_job_acquire_test_case(
             &ds,
@@ -6070,21 +6099,21 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         let task_id = random();
         let other_task_id = random();
 
-        let aggregation_jobs =
-            Vec::from([AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                // Aggregation job task ID does not match collect job task ID
-                other_task_id,
-                random(),
-                AggregationParam(0),
-                AggregationJobState::Finished,
-            )]);
+        let aggregation_jobs = Vec::from([AggregationJob::<
+            DUMMY_VERIFY_KEY_LENGTH,
+            dummy_vdaf::Vdaf,
+        >::new(
+            // Aggregation job task ID does not match collect job task ID
+            other_task_id,
+            random(),
+            AggregationParam(0),
+            AggregationJobState::Finished,
+        )]);
 
-        let collect_job_test_cases = vec![CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: false,
             task_id,
             batch_interval: Interval::new(
@@ -6094,8 +6123,8 @@ mod tests {
             .unwrap(),
             agg_param: AggregationParam(0),
             collect_job_id: None,
-            set_aggregate_shares: false,
-        }];
+            state: CollectJobTestCaseState::Start,
+        }]);
 
         run_collect_job_acquire_test_case(
             &ds,
@@ -6116,21 +6145,21 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         let task_id = random();
         let reports = vec![new_dummy_report(task_id, Time::from_seconds_since_epoch(0))];
 
-        let aggregation_jobs =
-            Vec::from([AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                task_id,
-                random(),
-                // Aggregation job agg param does not match collect job agg param
-                AggregationParam(1),
-                AggregationJobState::Finished,
-            )]);
+        let aggregation_jobs = Vec::from([AggregationJob::<
+            DUMMY_VERIFY_KEY_LENGTH,
+            dummy_vdaf::Vdaf,
+        >::new(
+            task_id,
+            random(),
+            // Aggregation job agg param does not match collect job agg param
+            AggregationParam(1),
+            AggregationJobState::Finished,
+        )]);
 
-        let collect_job_test_cases = vec![CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: false,
             task_id,
             batch_interval: Interval::new(
@@ -6140,8 +6169,8 @@ mod tests {
             .unwrap(),
             agg_param: AggregationParam(0),
             collect_job_id: None,
-            set_aggregate_shares: false,
-        }];
+            state: CollectJobTestCaseState::Start,
+        }]);
 
         run_collect_job_acquire_test_case(
             &ds,
@@ -6162,8 +6191,6 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         let task_id = random();
         let reports = vec![new_dummy_report(
             task_id,
@@ -6172,15 +6199,17 @@ mod tests {
             Time::from_seconds_since_epoch(200),
         )];
         let aggregation_job_id = random();
-        let aggregation_jobs =
-            Vec::from([AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                task_id,
-                aggregation_job_id,
-                AggregationParam(0),
-                AggregationJobState::Finished,
-            )]);
+        let aggregation_jobs = Vec::from([AggregationJob::<
+            DUMMY_VERIFY_KEY_LENGTH,
+            dummy_vdaf::Vdaf,
+        >::new(
+            task_id,
+            aggregation_job_id,
+            AggregationParam(0),
+            AggregationJobState::Finished,
+        )]);
         let report_aggregations = Vec::from([ReportAggregation::<
-            VERIFY_KEY_LENGTH,
+            DUMMY_VERIFY_KEY_LENGTH,
             dummy_vdaf::Vdaf,
         >::new(
             task_id,
@@ -6191,7 +6220,7 @@ mod tests {
             ReportAggregationState::Start, // Shouldn't matter what state the report aggregation is in
         )]);
 
-        let collect_job_test_cases = vec![CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: false,
             task_id,
             batch_interval: Interval::new(
@@ -6201,8 +6230,8 @@ mod tests {
             .unwrap(),
             agg_param: AggregationParam(0),
             collect_job_id: None,
-            set_aggregate_shares: false,
-        }];
+            state: CollectJobTestCaseState::Start,
+        }]);
 
         run_collect_job_acquire_test_case(
             &ds,
@@ -6223,21 +6252,21 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         let task_id = random();
         let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
         let aggregation_job_id = random();
-        let aggregation_jobs =
-            Vec::from([AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                task_id,
-                aggregation_job_id,
-                AggregationParam(0),
-                AggregationJobState::Finished,
-            )]);
+        let aggregation_jobs = Vec::from([AggregationJob::<
+            DUMMY_VERIFY_KEY_LENGTH,
+            dummy_vdaf::Vdaf,
+        >::new(
+            task_id,
+            aggregation_job_id,
+            AggregationParam(0),
+            AggregationJobState::Finished,
+        )]);
 
         let report_aggregations = Vec::from([ReportAggregation::<
-            VERIFY_KEY_LENGTH,
+            DUMMY_VERIFY_KEY_LENGTH,
             dummy_vdaf::Vdaf,
         >::new(
             task_id,
@@ -6259,7 +6288,7 @@ mod tests {
             agg_param: AggregationParam(0),
             collect_job_id: None,
             // Collect job has already run to completion
-            set_aggregate_shares: true,
+            state: CollectJobTestCaseState::Finished,
         }]);
 
         run_collect_job_acquire_test_case(
@@ -6281,8 +6310,6 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         let task_id = random();
         let reports = Vec::from([
             new_dummy_report(task_id, Time::from_seconds_since_epoch(0)),
@@ -6291,13 +6318,13 @@ mod tests {
 
         let aggregation_job_ids: [_; 2] = random();
         let aggregation_jobs = Vec::from([
-            AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 AggregationParam(0),
                 AggregationJobState::Finished,
             ),
-            AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 AggregationParam(0),
@@ -6307,7 +6334,7 @@ mod tests {
         ]);
 
         let report_aggregations = Vec::from([
-            ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 *reports[0].metadata().report_id(),
@@ -6315,7 +6342,7 @@ mod tests {
                 0,
                 ReportAggregationState::Start,
             ),
-            ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 *reports[1].metadata().report_id(),
@@ -6335,7 +6362,7 @@ mod tests {
             .unwrap(),
             agg_param: AggregationParam(0),
             collect_job_id: None,
-            set_aggregate_shares: false,
+            state: CollectJobTestCaseState::Start,
         }]);
 
         run_collect_job_acquire_test_case(
@@ -6357,19 +6384,17 @@ mod tests {
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-
         let task_id = random();
         let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
         let aggregation_job_ids: [_; 2] = random();
         let aggregation_jobs = Vec::from([
-            AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 AggregationParam(0),
                 AggregationJobState::Finished,
             ),
-            AggregationJob::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 AggregationParam(1),
@@ -6377,7 +6402,7 @@ mod tests {
             ),
         ]);
         let report_aggregations = Vec::from([
-            ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 *reports[0].metadata().report_id(),
@@ -6385,7 +6410,7 @@ mod tests {
                 0,
                 ReportAggregationState::Start,
             ),
-            ReportAggregation::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 *reports[0].metadata().report_id(),
@@ -6395,7 +6420,7 @@ mod tests {
             ),
         ]);
 
-        let collect_job_test_cases = vec![
+        let collect_job_test_cases = Vec::from([
             CollectJobTestCase {
                 should_be_acquired: true,
                 task_id,
@@ -6406,7 +6431,7 @@ mod tests {
                 .unwrap(),
                 agg_param: AggregationParam(0),
                 collect_job_id: None,
-                set_aggregate_shares: false,
+                state: CollectJobTestCaseState::Start,
             },
             CollectJobTestCase {
                 should_be_acquired: true,
@@ -6418,9 +6443,9 @@ mod tests {
                 .unwrap(),
                 agg_param: AggregationParam(1),
                 collect_job_id: None,
-                set_aggregate_shares: false,
+                state: CollectJobTestCaseState::Start,
             },
-        ];
+        ]);
 
         let test_case = setup_collect_job_acquire_test_case(
             &ds,
@@ -6476,6 +6501,128 @@ mod tests {
                 expected_collect_jobs.sort();
 
                 assert_eq!(acquired_collect_jobs, expected_collect_jobs);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn collect_job_acquire_state_filtering() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let task_id = random();
+        let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
+        let aggregation_job_ids: [_; 3] = random();
+        let aggregation_jobs = Vec::from([
+            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+                task_id,
+                aggregation_job_ids[0],
+                AggregationParam(0),
+                AggregationJobState::Finished,
+            ),
+            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+                task_id,
+                aggregation_job_ids[1],
+                AggregationParam(1),
+                AggregationJobState::Finished,
+            ),
+            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+                task_id,
+                aggregation_job_ids[2],
+                AggregationParam(2),
+                AggregationJobState::Finished,
+            ),
+        ]);
+        let report_aggregations = Vec::from([
+            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+                task_id,
+                aggregation_job_ids[0],
+                *reports[0].metadata().report_id(),
+                *reports[0].metadata().time(),
+                0,
+                ReportAggregationState::Start,
+            ),
+            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+                task_id,
+                aggregation_job_ids[1],
+                *reports[0].metadata().report_id(),
+                *reports[0].metadata().time(),
+                0,
+                ReportAggregationState::Start,
+            ),
+            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+                task_id,
+                aggregation_job_ids[2],
+                *reports[0].metadata().report_id(),
+                *reports[0].metadata().time(),
+                0,
+                ReportAggregationState::Start,
+            ),
+        ]);
+
+        let collect_job_test_cases = vec![
+            CollectJobTestCase {
+                should_be_acquired: true,
+                task_id,
+                batch_interval: Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_seconds(100),
+                )
+                .unwrap(),
+                agg_param: AggregationParam(0),
+                collect_job_id: None,
+                state: CollectJobTestCaseState::Finished,
+            },
+            CollectJobTestCase {
+                should_be_acquired: true,
+                task_id,
+                batch_interval: Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_seconds(100),
+                )
+                .unwrap(),
+                agg_param: AggregationParam(1),
+                collect_job_id: None,
+                state: CollectJobTestCaseState::Abandoned,
+            },
+            CollectJobTestCase {
+                should_be_acquired: true,
+                task_id,
+                batch_interval: Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_seconds(100),
+                )
+                .unwrap(),
+                agg_param: AggregationParam(2),
+                collect_job_id: None,
+                state: CollectJobTestCaseState::Deleted,
+            },
+        ];
+
+        setup_collect_job_acquire_test_case(
+            &ds,
+            CollectJobAcquireTestCase {
+                task_ids: vec![task_id],
+                reports,
+                aggregation_jobs,
+                report_aggregations,
+                collect_job_test_cases,
+            },
+        )
+        .await;
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                // No collect jobs should be acquired because none of them are in the START state
+                let acquired_collect_jobs = tx
+                    .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 10)
+                    .await?;
+                assert!(acquired_collect_jobs.is_empty());
 
                 Ok(())
             })

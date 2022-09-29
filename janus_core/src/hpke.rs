@@ -71,8 +71,8 @@ impl Label {
     /// Get the message-specific portion of the application info string for this label.
     pub fn as_bytes(&self) -> &'static [u8] {
         match self {
-            Self::InputShare => b"dap-01 input share",
-            Self::AggregateShare => b"dap-01 aggregate share",
+            Self::InputShare => b"dap-02 input share",
+            Self::AggregateShare => b"dap-02 aggregate share",
         }
     }
 }
