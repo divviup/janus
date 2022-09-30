@@ -8,7 +8,10 @@ use anyhow::anyhow;
 use base64::{display::Base64Display, URL_SAFE_NO_PAD};
 use derivative::Derivative;
 use num_enum::TryFromPrimitive;
-use prio::codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode};
+use prio::codec::{
+    decode_u16_items, decode_u32_items, encode_u16_items, encode_u32_items, CodecError, Decode,
+    Encode,
+};
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -670,7 +673,7 @@ impl Encode for HpkeCiphertext {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.config_id.encode(bytes);
         encode_u16_items(bytes, &(), &self.encapsulated_key);
-        encode_u16_items(bytes, &(), &self.payload); // TODO(#471): should be encode_u32_items
+        encode_u32_items(bytes, &(), &self.payload);
     }
 }
 
@@ -678,7 +681,7 @@ impl Decode for HpkeCiphertext {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let config_id = HpkeConfigId::decode(bytes)?;
         let encapsulated_key = decode_u16_items(&(), bytes)?;
-        let payload = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+        let payload = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             config_id,
@@ -917,8 +920,8 @@ impl Encode for Report {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.metadata.encode(bytes);
-        encode_u16_items(bytes, &(), &self.public_share); // TODO(#471): should be encode_u32_items
-        encode_u16_items(bytes, &(), &self.encrypted_input_shares); // TODO(#471): should be encode_u32_items
+        encode_u32_items(bytes, &(), &self.public_share);
+        encode_u32_items(bytes, &(), &self.encrypted_input_shares);
     }
 }
 
@@ -926,8 +929,8 @@ impl Decode for Report {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let metadata = ReportMetadata::decode(bytes)?;
-        let public_share = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
-        let encrypted_input_shares = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+        let public_share = decode_u32_items(&(), bytes)?;
+        let encrypted_input_shares = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             task_id,
@@ -1174,7 +1177,7 @@ impl<Q: QueryType> Encode for CollectResp<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.partial_batch_selector.encode(bytes);
         self.report_count.encode(bytes);
-        encode_u16_items(bytes, &(), &self.encrypted_aggregate_shares); // TODO(#471): should be encode_u32_items
+        encode_u32_items(bytes, &(), &self.encrypted_aggregate_shares);
     }
 }
 
@@ -1182,7 +1185,7 @@ impl<Q: QueryType> Decode for CollectResp<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let report_count = u64::decode(bytes)?;
-        let encrypted_aggregate_shares = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+        let encrypted_aggregate_shares = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             partial_batch_selector,
@@ -1333,7 +1336,7 @@ impl ReportShare {
 impl Encode for ReportShare {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.metadata.encode(bytes);
-        encode_u16_items(bytes, &(), &self.public_share); // TODO(#471): should be encode_u32_items
+        encode_u32_items(bytes, &(), &self.public_share);
         self.encrypted_input_share.encode(bytes);
     }
 }
@@ -1341,7 +1344,7 @@ impl Encode for ReportShare {
 impl Decode for ReportShare {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let metadata = ReportMetadata::decode(bytes)?;
-        let public_share = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+        let public_share = decode_u32_items(&(), bytes)?;
         let encrypted_input_share = HpkeCiphertext::decode(bytes)?;
 
         Ok(Self {
@@ -1409,7 +1412,7 @@ impl Encode for PrepareStepResult {
         match self {
             Self::Continued(vdaf_msg) => {
                 0u8.encode(bytes);
-                encode_u16_items(bytes, &(), vdaf_msg); // TODO(#471): should be encode_u32_items
+                encode_u32_items(bytes, &(), vdaf_msg);
             }
             Self::Finished => 1u8.encode(bytes),
             Self::Failed(error) => {
@@ -1424,7 +1427,7 @@ impl Decode for PrepareStepResult {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Ok(match val {
-            0 => Self::Continued(decode_u16_items(&(), bytes)?), // TODO(#471): should be decode_u32_items
+            0 => Self::Continued(decode_u32_items(&(), bytes)?),
             1 => Self::Finished,
             2 => Self::Failed(ReportShareError::decode(bytes)?),
             _ => return Err(CodecError::UnexpectedValue),
@@ -1581,7 +1584,7 @@ impl<Q: QueryType> Encode for AggregateInitializeReq<Q> {
         self.job_id.encode(bytes);
         encode_u16_items(bytes, &(), &self.aggregation_parameter);
         self.partial_batch_selector.encode(bytes);
-        encode_u16_items(bytes, &(), &self.report_shares); // TODO(#471): should be encode_u32_items
+        encode_u32_items(bytes, &(), &self.report_shares);
     }
 }
 
@@ -1591,7 +1594,7 @@ impl<Q: QueryType> Decode for AggregateInitializeReq<Q> {
         let job_id = AggregationJobId::decode(bytes)?;
         let aggregation_parameter = decode_u16_items(&(), bytes)?;
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
-        let report_shares = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+        let report_shares = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             task_id,
@@ -1626,13 +1629,13 @@ impl AggregateInitializeResp {
 
 impl Encode for AggregateInitializeResp {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u16_items(bytes, &(), &self.prepare_steps); // TODO(#471): should be encode_u32_items
+        encode_u32_items(bytes, &(), &self.prepare_steps);
     }
 }
 
 impl Decode for AggregateInitializeResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let prepare_steps = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+        let prepare_steps = decode_u32_items(&(), bytes)?;
         Ok(Self { prepare_steps })
     }
 }
@@ -1678,7 +1681,7 @@ impl Encode for AggregateContinueReq {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.job_id.encode(bytes);
-        encode_u16_items(bytes, &(), &self.prepare_steps); // TODO(#471): should be encode_u32_items
+        encode_u32_items(bytes, &(), &self.prepare_steps);
     }
 }
 
@@ -1686,7 +1689,7 @@ impl Decode for AggregateContinueReq {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let job_id = AggregationJobId::decode(bytes)?;
-        let prepare_steps = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+        let prepare_steps = decode_u32_items(&(), bytes)?;
         Ok(Self {
             task_id,
             job_id,
@@ -1718,13 +1721,13 @@ impl AggregateContinueResp {
 
 impl Encode for AggregateContinueResp {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u16_items(bytes, &(), &self.prepare_steps); // TODO(#471): should be encode_u32_items
+        encode_u32_items(bytes, &(), &self.prepare_steps);
     }
 }
 
 impl Decode for AggregateContinueResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let prepare_steps = decode_u16_items(&(), bytes)?; // TODO(#471): should be decode_u32_items
+        let prepare_steps = decode_u32_items(&(), bytes)?;
         Ok(Self { prepare_steps })
     }
 }
@@ -2174,7 +2177,7 @@ mod tests {
                     ),
                     concat!(
                         // payload
-                        "0004",     // length
+                        "00000004", // length
                         "34353637", // opaque data
                     ),
                 ),
@@ -2190,8 +2193,8 @@ mod tests {
                     ),
                     concat!(
                         // payload
-                        "0003",   // length
-                        "353637", // opaque data
+                        "00000003", // length
+                        "353637",   // opaque data
                     ),
                 ),
             ),
@@ -2335,11 +2338,11 @@ mod tests {
                     ),
                     concat!(
                         // public_share
-                        "0000", // length
+                        "00000000", // length
                     ),
                     concat!(
                         // encrypted_input_shares
-                        "0000", // length
+                        "00000000", // length
                     )
                 ),
             ),
@@ -2386,12 +2389,12 @@ mod tests {
                     ),
                     concat!(
                         // public_share
-                        "0004",     // length
+                        "00000004", // length
                         "33323130", // opaque data
                     ),
                     concat!(
                         // encrypted_input_shares
-                        "001E", // length
+                        "00000022", // length
                         concat!(
                             "2A", // config_id
                             concat!(
@@ -2401,7 +2404,7 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0006",         // length
+                                "00000006",     // length
                                 "353433323130", // opaque data
                             ),
                         ),
@@ -2414,7 +2417,7 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0004",     // length
+                                "00000004", // length
                                 "61626664", // opaque data
                             ),
                         ),
@@ -2649,7 +2652,7 @@ mod tests {
                     "0000000000000000", // report_count
                     concat!(
                         // encrypted_aggregate_shares
-                        "0000", // length
+                        "00000000", // length
                     )
                 ),
             ),
@@ -2678,7 +2681,7 @@ mod tests {
                     "0000000000000017", // report_count
                     concat!(
                         // encrypted_aggregate_shares
-                        "001A", // length
+                        "0000001E", // length
                         concat!(
                             "0A", // config_id
                             concat!(
@@ -2688,7 +2691,7 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0004",     // length
+                                "00000004", // length
                                 "34353637", // opaque data
                             ),
                         ),
@@ -2701,8 +2704,8 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0003",   // length
-                                "353637", // opaque data
+                                "00000003", // length
+                                "353637",   // opaque data
                             ),
                         )
                     )
@@ -2729,7 +2732,7 @@ mod tests {
                     "0000000000000000", // report_count
                     concat!(
                         // encrypted_aggregate_shares
-                        "0000", // length
+                        "00000000", // length
                     )
                 ),
             ),
@@ -2761,7 +2764,7 @@ mod tests {
                     "0000000000000017", // report_count
                     concat!(
                         // encrypted_aggregate_shares
-                        "001A", // length
+                        "0000001E", // length
                         concat!(
                             "0A", // config_id
                             concat!(
@@ -2771,7 +2774,7 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0004",     // length
+                                "00000004", // length
                                 "34353637", // opaque data
                             ),
                         ),
@@ -2784,8 +2787,8 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0003",   // length
-                                "353637", // opaque data
+                                "00000003", // length
+                                "353637",   // opaque data
                             ),
                         )
                     )
@@ -2818,7 +2821,7 @@ mod tests {
                     "00",                               // prepare_step_result
                     concat!(
                         // vdaf_msg
-                        "0006",         // length
+                        "00000006",     // length
                         "303132333435", // opaque data
                     ),
                 ),
@@ -2934,7 +2937,7 @@ mod tests {
                 ),
                 concat!(
                     // report_shares
-                    "006A", // length
+                    "00000072", // length
                     concat!(
                         concat!(
                             // metadata
@@ -2955,8 +2958,8 @@ mod tests {
                         ),
                         concat!(
                             // public_share
-                            "0000", // length
-                            "",     // opaque data
+                            "00000000", // length
+                            "",         // opaque data
                         ),
                         concat!(
                             // encrypted_input_share
@@ -2968,7 +2971,7 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0006",         // length
+                                "00000006",     // length
                                 "353433323130", // opaque data
                             ),
                         ),
@@ -2992,7 +2995,7 @@ mod tests {
                             ),
                         ),
                         concat!(
-                            "0004",     // payload
+                            "00000004", // payload
                             "30313233", // opaque data
                         ),
                         concat!(
@@ -3005,7 +3008,7 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0004",     // length
+                                "00000004", // length
                                 "61626664", // opaque data
                             ),
                         ),
@@ -3067,7 +3070,7 @@ mod tests {
                 ),
                 concat!(
                     // report_shares
-                    "006A", // length
+                    "00000072", // length
                     concat!(
                         concat!(
                             // metadata
@@ -3088,8 +3091,8 @@ mod tests {
                         ),
                         concat!(
                             // public_share
-                            "0000", // length
-                            "",     // opaque data
+                            "00000000", // length
+                            "",         // opaque data
                         ),
                         concat!(
                             // encrypted_input_share
@@ -3101,7 +3104,7 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0006",         // length
+                                "00000006",     // length
                                 "353433323130", // opaque data
                             ),
                         ),
@@ -3125,7 +3128,8 @@ mod tests {
                             ),
                         ),
                         concat!(
-                            "0004",     // payload
+                            // public_share
+                            "00000004", // length
                             "30313233", // opaque data
                         ),
                         concat!(
@@ -3138,7 +3142,7 @@ mod tests {
                             ),
                             concat!(
                                 // payload
-                                "0004",     // length
+                                "00000004", // length
                                 "61626664", // opaque data
                             ),
                         ),
@@ -3157,7 +3161,7 @@ mod tests {
                 },
                 concat!(concat!(
                     // prepare_steps
-                    "0000", // length
+                    "00000000", // length
                 ),),
             ),
             (
@@ -3179,13 +3183,13 @@ mod tests {
                 },
                 concat!(concat!(
                     // prepare_steps
-                    "002A", // length
+                    "0000002C", // length
                     concat!(
                         "0102030405060708090A0B0C0D0E0F10", // report_id
                         "00",                               // prepare_step_result
                         concat!(
                             // payload
-                            "0006",         // length
+                            "00000006",     // length
                             "303132333435", // opaque data
                         ),
                     ),
@@ -3224,13 +3228,13 @@ mod tests {
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
                 concat!(
                     // prepare_steps
-                    "002A", // length
+                    "0000002C", // length
                     concat!(
                         "0102030405060708090A0B0C0D0E0F10", // report_id
                         "00",                               // prepare_step_result
                         concat!(
                             // payload
-                            "0006",         // length
+                            "00000006",     // length
                             "303132333435", // opaque data
                         ),
                     ),
@@ -3252,7 +3256,7 @@ mod tests {
                 },
                 concat!(concat!(
                     // prepare_steps
-                    "0000", // length
+                    "00000000", // length
                 ),),
             ),
             (
@@ -3274,13 +3278,13 @@ mod tests {
                 },
                 concat!(concat!(
                     // prepare_steps
-                    "002A", // length
+                    "0000002C", // length
                     concat!(
                         "0102030405060708090A0B0C0D0E0F10", // report_id
                         "00",                               // prepare_step_result
                         concat!(
                             // payload
-                            "0006",         // length
+                            "00000006",     // length
                             "303132333435", // opaque data
                         ),
                     ),
@@ -3509,7 +3513,7 @@ mod tests {
                     ),
                     concat!(
                         // payload
-                        "0004",     // length
+                        "00000004", // length
                         "34353637", // opaque data
                     ),
                 )),
@@ -3531,8 +3535,8 @@ mod tests {
                         "3031323334", // opaque data
                     ),
                     concat!(
-                        "0003",   // length
-                        "353637", // opaque data
+                        "00000003", // length
+                        "353637",   // opaque data
                     ),
                 )),
             ),
