@@ -508,7 +508,7 @@ where
     // more discussion).
     //
     // On the leader side, we know/assume that we would not be stepping a collect job unless we had
-    // verified that the constituent aggregation jobs were finished
+    // verified that the constituent aggregation jobs were finished.
     //
     // In either case, we go ahead and service the aggregate share request with whatever batch unit
     // aggregations are available now.
@@ -517,10 +517,12 @@ where
     let mut total_aggregate_share: Option<A::AggregateShare> = None;
 
     for batch_unit_aggregation in batch_unit_aggregations {
-        // §4.4.4.3: XOR this batch interval's checksum into the overall checksum
+        // XOR this batch interval's checksum into the overall checksum
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
         total_checksum = total_checksum.combined_with(batch_unit_aggregation.checksum());
 
-        // §4.4.4.3: Sum all the report counts
+        // Sum all the report counts
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
         total_report_count += batch_unit_aggregation.report_count();
 
         match &mut total_aggregate_share {
@@ -529,16 +531,19 @@ where
         }
     }
 
-    let total_aggregate_share = match total_aggregate_share {
-        Some(share) => share,
-        None => return Err(Error::InsufficientBatchSize(task.id, 0)),
-    };
+    // Only happens if there were no batch unit aggregations, which would get caught by the
+    // min_batch_size check below, but we have to unwrap the option.
+    let total_aggregate_share =
+        total_aggregate_share.ok_or(Error::InvalidBatchSize(task.id, total_report_count))?;
 
-    // §4.6: refuse to service aggregate share requests if there are too few reports
+    // Refuse to service time-interval aggregate share requests if there are too few reports
     // included.
+    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
     if total_report_count < task.min_batch_size {
-        return Err(Error::InsufficientBatchSize(task.id, total_report_count));
+        return Err(Error::InvalidBatchSize(task.id, total_report_count));
     }
+
+    // TODO(#468): This should check against the task's max batch size for fixed size queries
 
     Ok((total_aggregate_share, total_report_count, total_checksum))
 }
@@ -547,6 +552,7 @@ where
 /// [`Role::Leader`]) or aggregate share jobs (for `task.role` == [`Role::Helper`]) to violate the
 /// task's maximum batch lifetime, and that this collect interval does not partially overlap with
 /// an already-observed collect interval.
+// TODO(#468): This only handles time-interval queries
 pub(crate) async fn validate_batch_lifetime_for_collect<
     const L: usize,
     C: Clock,
@@ -581,16 +587,18 @@ where
     };
 
     // Check that all intersecting collect intervals are equal to this collect interval.
+    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6-5
     if intersecting_intervals
         .iter()
         .any(|interval| interval != &collect_interval)
     {
         return Err(datastore::Error::User(
-            Error::BatchInvalid(task.id, collect_interval).into(),
+            Error::BatchOverlap(task.id, collect_interval).into(),
         ));
     }
 
-    // Check that the batch lifetime is being consumed appropriately.
+    // Check that the batch query count is being consumed appropriately.
+    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
     let max_batch_lifetime: usize = task.max_batch_lifetime.try_into()?;
     if intersecting_intervals.len() == max_batch_lifetime {
         debug!(
@@ -598,7 +606,7 @@ where
             "Refusing aggregate share request because batch lifetime has been consumed"
         );
         return Err(datastore::Error::User(
-            Error::BatchLifetimeExceeded(task.id).into(),
+            Error::BatchQueriedTooManyTimes(task.id, intersecting_intervals.len() as u64).into(),
         ));
     }
     if intersecting_intervals.len() > max_batch_lifetime {
@@ -878,7 +886,7 @@ mod tests {
             .step_collect_job(ds.clone(), Arc::clone(&lease))
             .await
             .unwrap_err();
-        assert_matches!(error, Error::InsufficientBatchSize(error_task_id, 0) => {
+        assert_matches!(error, Error::InvalidBatchSize(error_task_id, 0) => {
             assert_eq!(task_id, error_task_id)
         });
 
