@@ -15,7 +15,7 @@ use prio::{
     codec::{Decode, Encode},
     vdaf::{self, prio3::Prio3},
 };
-use rand::random;
+use rand::{distributions::Standard, prelude::Distribution, random};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -68,6 +68,12 @@ struct CollectPollRequest {
     handle: String,
 }
 
+#[derive(Debug, Clone)]
+struct CollectResult {
+    report_count: u64,
+    aggregation_result: AggregationResult,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 enum AggregationResult {
@@ -80,6 +86,8 @@ struct CollectPollResponse {
     status: &'static str,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    report_count: Option<u64>,
     #[serde(default)]
     result: Option<AggregationResult>,
 }
@@ -96,16 +104,18 @@ struct TaskState {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Handle(String);
 
-impl Handle {
-    fn generate() -> Handle {
-        let randomness: [u8; 32] = random();
-        Handle(base64::encode_config(randomness, URL_SAFE_NO_PAD))
+impl Distribution<Handle> for Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Handle {
+        Handle(base64::encode_config(
+            rng.gen::<[u8; 32]>(),
+            URL_SAFE_NO_PAD,
+        ))
     }
 }
 
 enum CollectJobState {
-    InProgress(Option<JoinHandle<anyhow::Result<AggregationResult>>>),
-    Completed(AggregationResult),
+    InProgress(Option<JoinHandle<anyhow::Result<CollectResult>>>),
+    Completed(CollectResult),
     Error,
 }
 
@@ -143,8 +153,8 @@ async fn handle_collect_generic<V>(
     batch_interval: Interval,
     vdaf: V,
     agg_param_encoded: &[u8],
-    convert_fn: impl Fn(V::AggregateResult) -> AggregationResult + Send + 'static,
-) -> anyhow::Result<JoinHandle<anyhow::Result<AggregationResult>>>
+    convert_fn: impl Fn(&V::AggregateResult) -> AggregationResult + Send + 'static,
+) -> anyhow::Result<JoinHandle<anyhow::Result<CollectResult>>>
 where
     V: vdaf::Collector + Send + Sync + 'static,
     V::AggregationParam: Send + Sync + 'static,
@@ -153,9 +163,11 @@ where
     let collector = Collector::new(collector_params, vdaf, http_client.clone());
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let handle = spawn(async move {
-        let vdaf_result = collector.collect(batch_interval, &agg_param).await?;
-        let enum_result = convert_fn(vdaf_result);
-        Ok(enum_result)
+        let collect_result = collector.collect(batch_interval, &agg_param).await?;
+        Ok(CollectResult {
+            report_count: collect_result.report_count(),
+            aggregation_result: convert_fn(collect_result.aggregate_result()),
+        })
     });
     Ok(handle)
 }
@@ -216,7 +228,7 @@ async fn handle_collect_start(
                 batch_interval,
                 vdaf,
                 &agg_param,
-                |result| AggregationResult::Number(NumberAsString(result.into())),
+                |result| AggregationResult::Number(NumberAsString((*result).into())),
             )
             .await?
         }
@@ -230,7 +242,7 @@ async fn handle_collect_start(
                 vdaf,
                 &agg_param,
                 |result| {
-                    let converted = result.into_iter().map(NumberAsString).collect();
+                    let converted = result.iter().cloned().map(NumberAsString).collect();
                     AggregationResult::NumberVec(converted)
                 },
             )
@@ -245,7 +257,7 @@ async fn handle_collect_start(
                 batch_interval,
                 vdaf,
                 &agg_param,
-                |result| AggregationResult::Number(NumberAsString(result)),
+                |result| AggregationResult::Number(NumberAsString(*result)),
             )
             .await?
         }
@@ -261,7 +273,7 @@ async fn handle_collect_start(
                 vdaf,
                 &agg_param,
                 |result| {
-                    let converted = result.into_iter().map(NumberAsString).collect();
+                    let converted = result.iter().cloned().map(NumberAsString).collect();
                     AggregationResult::NumberVec(converted)
                 },
             )
@@ -271,24 +283,22 @@ async fn handle_collect_start(
     };
 
     let mut collect_jobs_guard = collect_jobs.lock().await;
-    let handle = loop {
-        let handle = Handle::generate();
-        match collect_jobs_guard.entry(handle.clone()) {
+    Ok(loop {
+        match collect_jobs_guard.entry(random()) {
             Entry::Occupied(_) => continue,
             entry @ Entry::Vacant(_) => {
+                let key = entry.key().clone();
                 entry.or_insert(CollectJobState::InProgress(Some(task_handle)));
-                break handle;
+                break key;
             }
         }
-    };
-
-    Ok(handle)
+    })
 }
 
 async fn handle_collect_poll(
     collect_jobs: &Mutex<HashMap<Handle, CollectJobState>>,
     request: CollectPollRequest,
-) -> anyhow::Result<Option<AggregationResult>> {
+) -> anyhow::Result<Option<CollectResult>> {
     let mut collect_jobs_guard = collect_jobs.lock().await;
     let collect_job_state_entry = collect_jobs_guard.entry(Handle(request.handle.clone()));
     match collect_job_state_entry {
@@ -308,9 +318,10 @@ async fn handle_collect_poll(
                         }
                     };
                     match collect_result {
-                        Ok(agg_result) => {
-                            occupied_entry.insert(CollectJobState::Completed(agg_result.clone()));
-                            Ok(Some(agg_result))
+                        Ok(collect_result) => {
+                            occupied_entry
+                                .insert(CollectJobState::Completed(collect_result.clone()));
+                            Ok(Some(collect_result))
                         }
                         Err(e) => {
                             occupied_entry.insert(CollectJobState::Error);
@@ -321,7 +332,7 @@ async fn handle_collect_poll(
                     Ok(None)
                 }
             }
-            CollectJobState::Completed(ref agg_result) => Ok(Some(agg_result.clone())),
+            CollectJobState::Completed(collect_result) => Ok(Some(collect_result.clone())),
             CollectJobState::Error => Err(anyhow::anyhow!(
                 "collection previously resulted in an error"
             )),
@@ -406,19 +417,22 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
             let collect_jobs = Arc::clone(&collect_jobs);
             async move {
                 let response = match handle_collect_poll(&collect_jobs, request).await {
-                    Ok(Some(result)) => CollectPollResponse {
+                    Ok(Some(collect_result)) => CollectPollResponse {
                         status: COMPLETE,
                         error: None,
-                        result: Some(result),
+                        report_count: Some(collect_result.report_count),
+                        result: Some(collect_result.aggregation_result),
                     },
                     Ok(None) => CollectPollResponse {
                         status: IN_PROGRESS,
                         error: None,
+                        report_count: None,
                         result: None,
                     },
                     Err(e) => CollectPollResponse {
                         status: ERROR,
                         error: Some(format!("{:?}", e)),
+                        report_count: None,
                         result: None,
                     },
                 };

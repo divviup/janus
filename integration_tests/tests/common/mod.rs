@@ -1,7 +1,9 @@
 use backoff::ExponentialBackoffBuilder;
 use itertools::Itertools;
 use janus_client::{Client, ClientParameters};
-use janus_collector::{test_util::collect_with_rewritten_url, Collector, CollectorParameters};
+use janus_collector::{
+    test_util::collect_with_rewritten_url, CollectionResult, Collector, CollectorParameters,
+};
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
     retries::test_http_request_exponential_backoff,
@@ -177,14 +179,14 @@ pub async fn submit_measurements_and_verify_aggregate(
         vdaf,
         janus_collector::default_http_client().unwrap(),
     );
-    let aggregate_result =
+    let collect_result =
         collect_with_rewritten_url(&collector, batch_interval, &(), "127.0.0.1", leader_port)
             .await
             .unwrap();
 
-    // Verify that the aggregate in the collect response is the correct value.
-    assert!(
-        aggregate_result == num_nonzero_measurements as u64,
-        "Unexpected aggregate result (want {num_nonzero_measurements}, got {aggregate_result})"
+    // Verify that we got the correct result.
+    assert_eq!(
+        collect_result,
+        CollectionResult::new(total_measurements as u64, num_nonzero_measurements as u64)
     );
 }

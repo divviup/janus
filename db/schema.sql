@@ -168,6 +168,7 @@ CREATE TABLE collect_jobs(
     batch_interval          TSRANGE NOT NULL,            -- the batch interval, as a range of timestamps
     aggregation_param       BYTEA NOT NULL,              -- the aggregation parameter (opaque VDAF message)
     state                   COLLECT_JOB_STATE NOT NULL,  -- the current state of this collect job
+    report_count            BIGINT,                      -- the number of reports included in this collect job (only if in state FINISHED)
     helper_aggregate_share  BYTEA,                       -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
     leader_aggregate_share  BYTEA,                       -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
 
