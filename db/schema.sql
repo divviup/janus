@@ -1,7 +1,6 @@
 -- Load pgcrypto for gen_random_bytes.
 CREATE EXTENSION pgcrypto;
--- Load an extension to allow indexing over both BIGINT and TSRANGE in a
--- multicolumn GiST index.
+-- Load an extension to allow indexing over both BIGINT and TSRANGE in a multicolumn GiST index.
 CREATE EXTENSION btree_gist;
 
 -- Identifies which aggregator role is being played for this task.
@@ -10,10 +9,10 @@ CREATE TYPE AGGREGATOR_ROLE AS ENUM(
     'HELPER'
 );
 
--- Corresponds to a PPM task, containing static data associated with the task.
+-- Corresponds to a DAP task, containing static data associated with the task.
 CREATE TABLE tasks(
     id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    task_id                BYTEA UNIQUE NOT NULL,     -- 32-byte TaskID as defined by the PPM specification
+    task_id                BYTEA UNIQUE NOT NULL,     -- 32-byte TaskID as defined by the DAP specification
     aggregator_role        AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator for this task
     aggregator_endpoints   TEXT[] NOT NULL,           -- aggregator HTTPS endpoints, leader first
     vdaf                   JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
@@ -71,18 +70,18 @@ CREATE TABLE task_vdaf_verify_keys(
 
 -- Individual reports received from clients.
 CREATE TABLE client_reports(
-    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id       BIGINT NOT NULL,     -- task ID the report is associated with
-    nonce_time    TIMESTAMP NOT NULL,  -- timestamp from nonce
-    nonce_rand    BYTEA NOT NULL,      -- random value from nonce
-    extensions    BYTEA,               -- encoded sequence of Extension messages (populated for leader only)
-    public_share  BYTEA,               -- encoded public share (opaque VDAF message, populated for leader only)
-    input_shares  BYTEA,               -- encoded sequence of HpkeCiphertext messages (populated for leader only)
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
+    task_id           BIGINT NOT NULL,     -- task ID the report is associated with
+    report_id         BYTEA NOT NULL,      -- 16-byte ReportID as defined by the DAP specification
+    client_timestamp  TIMESTAMP NOT NULL,  -- report timestamp, from client
+    extensions        BYTEA,               -- encoded sequence of Extension messages (populated for leader only)
+    public_share      BYTEA,               -- encoded public share (opaque VDAF message, populated for leader only)
+    input_shares      BYTEA,               -- encoded sequence of HpkeCiphertext messages (populated for leader only)
 
-    CONSTRAINT unique_task_id_and_nonce UNIQUE(task_id, nonce_time, nonce_rand),
+    CONSTRAINT unique_task_id_and_report_id UNIQUE(task_id, report_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
-CREATE INDEX client_reports_task_and_time_index ON client_reports(task_id, nonce_time);
+CREATE INDEX client_reports_task_and_timestamp_index ON client_reports(task_id, client_timestamp);
 
 -- Specifies the possible state of an aggregation job.
 CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
@@ -95,7 +94,7 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 CREATE TABLE aggregation_jobs(
     id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id            BIGINT NOT NULL,                 -- ID of related task
-    aggregation_job_id BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the PPM specification
+    aggregation_job_id BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
     aggregation_param  BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     state              AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
 
@@ -129,7 +128,7 @@ CREATE TABLE report_aggregations(
     prep_state          BYTEA,                              -- the current preparation state (opaque VDAF message, only if in state WAITING)
     prep_msg            BYTEA,                              -- the next preparation message to be sent to the helper (opaque VDAF message, only if in state WAITING if this aggregator is the leader)
     out_share           BYTEA,                              -- the output share (opaque VDAF message, only if in state FINISHED)
-    error_code          BIGINT,                             -- error code corresponding to a PPM ReportShareError value; null if in a state other than FAILED
+    error_code          BIGINT,                             -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
 
     CONSTRAINT unique_ord UNIQUE(aggregation_job_id, ord),
     CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id),

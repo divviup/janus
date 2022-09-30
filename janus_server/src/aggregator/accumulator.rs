@@ -31,7 +31,7 @@ where
     fn update(&mut self, output_share: &A::OutputShare, report_id: &ReportId) -> Result<(), Error> {
         self.aggregate_share.accumulate(output_share)?;
         self.report_count += 1;
-        self.checksum.update(report_id);
+        self.checksum = self.checksum.updated_with(report_id);
 
         Ok(())
     }
@@ -112,10 +112,10 @@ where
         for (unit_interval_start, accumulation) in &self.accumulations {
             let unit_interval = Interval::new(*unit_interval_start, self.min_batch_duration)?;
 
-            let mut batch_unit_aggregations = tx
+            let batch_unit_aggregations = tx
                 .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
-                    self.task_id,
-                    unit_interval,
+                    &self.task_id,
+                    &unit_interval,
                     &self.aggregation_param,
                 )
                 .await?;
@@ -128,35 +128,30 @@ where
                 )));
             }
 
-            if let Some(batch_unit_aggregation) = batch_unit_aggregations.first_mut() {
+            if let Some(batch_unit_aggregation) = batch_unit_aggregations.into_iter().next() {
                 debug!(
                     unit_interval_start = ?unit_interval.start(),
                     "accumulating into existing batch_unit_aggregation_row",
                 );
-                batch_unit_aggregation
-                    .aggregate_share
-                    .merge(&accumulation.aggregate_share)
-                    .map_err(|e| datastore::Error::User(e.into()))?;
-                batch_unit_aggregation.report_count += accumulation.report_count;
-                batch_unit_aggregation
-                    .checksum
-                    .combine(&accumulation.checksum);
-
-                tx.update_batch_unit_aggregation(&batch_unit_aggregations[0])
-                    .await?;
+                tx.update_batch_unit_aggregation(&batch_unit_aggregation.merged_with(
+                    &accumulation.aggregate_share,
+                    accumulation.report_count,
+                    &accumulation.checksum,
+                )?)
+                .await?;
             } else {
                 debug!(
                     unit_interval_start = ?unit_interval.start(),
                     "inserting new batch_unit_aggregation row",
                 );
-                tx.put_batch_unit_aggregation::<L, A>(&BatchUnitAggregation {
-                    task_id: self.task_id,
-                    unit_interval_start: *unit_interval.start(),
-                    aggregation_param: self.aggregation_param.clone(),
-                    aggregate_share: accumulation.aggregate_share.clone(),
-                    report_count: accumulation.report_count,
-                    checksum: accumulation.checksum,
-                })
+                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<L, A>::new(
+                    self.task_id,
+                    *unit_interval.start(),
+                    self.aggregation_param.clone(),
+                    accumulation.aggregate_share.clone(),
+                    accumulation.report_count,
+                    accumulation.checksum,
+                ))
                 .await?;
             }
         }

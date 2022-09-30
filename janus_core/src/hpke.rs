@@ -50,7 +50,7 @@ pub fn associated_data_for_report_share(
 
 /// Construct the HPKE associated data for sealing or opening an aggregate share.
 pub fn associated_data_for_aggregate_share<Q: QueryType>(
-    task_id: TaskId,
+    task_id: &TaskId,
     batch_identifier: &Q::BatchIdentifier,
 ) -> Vec<u8> {
     let mut associated_data = Vec::new();
