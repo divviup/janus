@@ -186,7 +186,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* task_id */ &task.id.as_ref(),
                     /* aggregator_role */ &AggregatorRole::from_role(task.role)?,
                     /* aggregator_endpoints */ &endpoints,
-                    /* vdaf */ &Json(&task.vdaf), // vdaf
+                    /* vdaf */ &Json(&task.vdaf),
                     /* max_batch_lifetime */ &i64::try_from(task.max_batch_lifetime)?,
                     /* min_batch_size */ &i64::try_from(task.min_batch_size)?,
                     /* min_batch_duration */
@@ -455,7 +455,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_row
             .map(|task_row| {
                 self.task_from_rows(
-                    *task_id,
+                    task_id,
                     &task_row,
                     &aggregator_auth_token_rows,
                     &collector_auth_token_rows,
@@ -573,7 +573,7 @@ impl<C: Clock> Transaction<'_, C> {
             .into_iter()
             .map(|(task_id, row)| {
                 self.task_from_rows(
-                    task_id,
+                    &task_id,
                     &row,
                     &aggregator_auth_token_rows_by_task_id
                         .remove(&task_id)
@@ -598,7 +598,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// agg_auth_token_rows must be sorted in ascending order by `ord`.
     fn task_from_rows(
         &self,
-        task_id: TaskId,
+        task_id: &TaskId,
         row: &Row,
         aggregator_auth_token_rows: &[Row],
         collector_auth_token_rows: &[Row],
@@ -691,7 +691,7 @@ impl<C: Clock> Transaction<'_, C> {
         }
 
         Ok(Task::new(
-            task_id,
+            *task_id,
             endpoints,
             vdaf,
             aggregator_role.as_role(),
@@ -998,7 +998,7 @@ impl<C: Clock> Transaction<'_, C> {
                 ],
             )
             .await?
-            .map(|row| Self::aggregation_job_from_row(*task_id, *aggregation_job_id, &row))
+            .map(|row| Self::aggregation_job_from_row(task_id, aggregation_job_id, &row))
             .transpose()
     }
 
@@ -1026,8 +1026,8 @@ impl<C: Clock> Transaction<'_, C> {
             .into_iter()
             .map(|row| {
                 Self::aggregation_job_from_row(
-                    *task_id,
-                    AggregationJobId::get_decoded(row.get("aggregation_job_id"))?,
+                    task_id,
+                    &AggregationJobId::get_decoded(row.get("aggregation_job_id"))?,
                     &row,
                 )
             })
@@ -1035,16 +1035,16 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     fn aggregation_job_from_row<const L: usize, A: vdaf::Aggregator<L>>(
-        task_id: TaskId,
-        aggregation_job_id: AggregationJobId,
+        task_id: &TaskId,
+        aggregation_job_id: &AggregationJobId,
         row: &Row,
     ) -> Result<AggregationJob<L, A>, Error>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         Ok(AggregationJob::new(
-            task_id,
-            aggregation_job_id,
+            *task_id,
+            *aggregation_job_id,
             A::AggregationParam::get_decoded(row.get("aggregation_param"))?,
             row.get("state"),
         ))
