@@ -1530,6 +1530,7 @@ impl<C: Clock> Transaction<'_, C> {
                     collect_jobs.batch_interval,
                     collect_jobs.aggregation_param,
                     collect_jobs.state,
+                    collect_jobs.report_count,
                     collect_jobs.helper_aggregate_share,
                     collect_jobs.leader_aggregate_share
                 FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
@@ -1602,6 +1603,7 @@ impl<C: Clock> Transaction<'_, C> {
                     collect_jobs.batch_interval,
                     collect_jobs.aggregation_param,
                     collect_jobs.state,
+                    collect_jobs.report_count,
                     collect_jobs.helper_aggregate_share,
                     collect_jobs.leader_aggregate_share
                 FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
@@ -1648,6 +1650,7 @@ impl<C: Clock> Transaction<'_, C> {
                     collect_jobs.batch_interval,
                     collect_jobs.aggregation_param,
                     collect_jobs.state,
+                    collect_jobs.report_count,
                     collect_jobs.helper_aggregate_share,
                     collect_jobs.leader_aggregate_share
                 FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
@@ -1685,6 +1688,7 @@ impl<C: Clock> Transaction<'_, C> {
         let batch_interval = sql_interval.as_interval();
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
         let state: CollectJobStateCode = row.get("state");
+        let report_count: Option<i64> = row.get("report_count");
         let helper_aggregate_share_bytes: Option<Vec<u8>> = row.get("helper_aggregate_share");
         let leader_aggregate_share_bytes: Option<Vec<u8>> = row.get("leader_aggregate_share");
 
@@ -1692,6 +1696,11 @@ impl<C: Clock> Transaction<'_, C> {
             CollectJobStateCode::Start => CollectJobState::Start,
 
             CollectJobStateCode::Finished => {
+                let report_count = u64::try_from(report_count.ok_or_else(|| {
+                    Error::DbState(
+                        "collect job in state FINISHED but report_count is NULL".to_string(),
+                    )
+                })?)?;
                 let encrypted_helper_aggregate_share = HpkeCiphertext::get_decoded(
                     &helper_aggregate_share_bytes.ok_or_else(|| {
                         Error::DbState(
@@ -1715,6 +1724,7 @@ impl<C: Clock> Transaction<'_, C> {
                     ))
                 })?;
                 CollectJobState::Finished {
+                    report_count,
                     encrypted_helper_aggregate_share,
                     leader_aggregate_share,
                 }
@@ -1734,8 +1744,7 @@ impl<C: Clock> Transaction<'_, C> {
         ))
     }
 
-    /// Constructs and stores a new collect job for the provided values, and returns the UUID that
-    /// was assigned.
+    /// Stores a new collect job.
     #[tracing::instrument(skip(self), err)]
     pub(crate) async fn put_collect_job<const L: usize, A>(
         &self,
@@ -1901,22 +1910,26 @@ ORDER BY id DESC
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let (leader_aggregate_share, helper_aggregate_share) = match collect_job.state() {
+        let (report_count, leader_aggregate_share, helper_aggregate_share) = match collect_job
+            .state()
+        {
             CollectJobState::Start => {
                 return Err(Error::InvalidParameter(
                     "cannot update collect job into START state",
                 ));
             }
             CollectJobState::Finished {
-                ref encrypted_helper_aggregate_share,
-                ref leader_aggregate_share,
+                report_count,
+                encrypted_helper_aggregate_share,
+                leader_aggregate_share,
             } => {
+                let report_count: Option<i64> = Some(i64::try_from(*report_count)?);
                 let leader_aggregate_share: Option<Vec<u8>> = Some(leader_aggregate_share.into());
                 let helper_aggregate_share = Some(encrypted_helper_aggregate_share.get_encoded());
 
-                (leader_aggregate_share, helper_aggregate_share)
+                (report_count, leader_aggregate_share, helper_aggregate_share)
             }
-            CollectJobState::Abandoned | CollectJobState::Deleted => (None, None),
+            CollectJobState::Abandoned | CollectJobState::Deleted => (None, None, None),
         };
 
         let stmt = self
@@ -1924,9 +1937,10 @@ ORDER BY id DESC
             .prepare_cached(
                 "UPDATE collect_jobs SET
                     state = $1,
-                    leader_aggregate_share = $2,
-                    helper_aggregate_share = $3
-                WHERE collect_job_id = $4",
+                    report_count = $2,
+                    leader_aggregate_share = $3,
+                    helper_aggregate_share = $4
+                WHERE collect_job_id = $5",
             )
             .await?;
 
@@ -1936,8 +1950,9 @@ ORDER BY id DESC
                     &stmt,
                     &[
                         /* state */ &collect_job.state().collect_job_state_code(),
-                        &leader_aggregate_share,
-                        &helper_aggregate_share,
+                        /* report_count */ &report_count,
+                        /* leader_aggregate_share */ &leader_aggregate_share,
+                        /* helper_aggregate_share */ &helper_aggregate_share,
                         /* collect_job_id */ &collect_job.collect_job_id(),
                     ],
                 )
@@ -3357,6 +3372,8 @@ pub mod models {
     {
         Start,
         Finished {
+            /// The number of reports included in this collect job.
+            report_count: u64,
             /// The helper's encrypted aggregate share over the input shares in the interval.
             encrypted_helper_aggregate_share: HpkeCiphertext,
             /// The leader's aggregate share over the input shares in the interval.
@@ -3410,15 +3427,18 @@ pub mod models {
             match (self, other) {
                 (
                     Self::Finished {
+                        report_count: self_report_count,
                         encrypted_helper_aggregate_share: self_helper_agg_share,
                         leader_aggregate_share: self_leader_agg_share,
                     },
                     Self::Finished {
+                        report_count: other_report_count,
                         encrypted_helper_aggregate_share: other_helper_agg_share,
                         leader_aggregate_share: other_leader_agg_share,
                     },
                 ) => {
-                    self_helper_agg_share == other_helper_agg_share
+                    self_report_count == other_report_count
+                        && self_helper_agg_share == other_helper_agg_share
                         && self_leader_agg_share == other_leader_agg_share
                 }
                 _ => core::mem::discriminant(self) == core::mem::discriminant(other),
@@ -5708,6 +5728,7 @@ mod tests {
                 .unwrap();
 
                 let first_collect_job = first_collect_job.with_state(CollectJobState::Finished {
+                    report_count: 12,
                     encrypted_helper_aggregate_share,
                     leader_aggregate_share,
                 });
@@ -5899,6 +5920,7 @@ mod tests {
                         match test_case.state {
                             CollectJobTestCaseState::Start => CollectJobState::Start,
                             CollectJobTestCaseState::Finished => CollectJobState::Finished {
+                                report_count: 1,
                                 encrypted_helper_aggregate_share: HpkeCiphertext::new(
                                     HpkeConfigId::from(0),
                                     vec![],

@@ -236,15 +236,53 @@ impl<P> CollectJob<P> {
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-/// The result of a collect request poll operation. This will either provide the aggregate result
+/// The result of a collect request poll operation. This will either provide the collection result
 /// or indicate that the collection is still being processed.
 enum PollResult<T> {
-    /// The aggregate result from a completed collect request.
-    AggregateResult(#[derivative(Debug = "ignore")] T),
+    /// The collection result from a completed collect request.
+    CollectionResult(#[derivative(Debug = "ignore")] Collection<T>),
     /// The collect request is not yet ready. If present, the [`RetryAfter`] object is the time at
     /// which the leader recommends retrying the request.
     NextAttempt(Option<RetryAfter>),
 }
+
+/// The result of a collection operation.
+#[derive(Debug)]
+pub struct Collection<T> {
+    report_count: u64,
+    aggregate_result: T,
+}
+
+impl<T> Collection<T> {
+    /// Retrieves the number of client reports included in this collection.
+    pub fn report_count(&self) -> u64 {
+        self.report_count
+    }
+
+    /// Retrieves the aggregated result of the client reports included in this collection.
+    pub fn aggregate_result(&self) -> &T {
+        &self.aggregate_result
+    }
+}
+
+#[cfg(feature = "test-util")]
+impl<T> Collection<T> {
+    /// Creates a new [`Collection`].
+    pub fn new(report_count: u64, aggregate_result: T) -> Self {
+        Self {
+            report_count,
+            aggregate_result,
+        }
+    }
+}
+
+impl<T: PartialEq> PartialEq for Collection<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.report_count == other.report_count && self.aggregate_result == other.aggregate_result
+    }
+}
+
+impl<T: Eq> Eq for Collection<T> {}
 
 /// A DAP collector.
 #[derive(Debug)]
@@ -417,7 +455,10 @@ where
             report_count,
         )?;
 
-        Ok(PollResult::AggregateResult(aggregate_result))
+        Ok(PollResult::CollectionResult(Collection {
+            report_count: collect_response.report_count(),
+            aggregate_result,
+        }))
     }
 
     /// A convenience method to repeatedly request the result of an in-progress collection until it
@@ -425,7 +466,7 @@ where
     async fn poll_until_complete(
         &self,
         job: &CollectJob<V::AggregationParam>,
-    ) -> Result<V::AggregateResult, Error> {
+    ) -> Result<Collection<V::AggregateResult>, Error> {
         let mut backoff = self.parameters.collect_poll_wait_parameters.clone();
         backoff.reset();
         let deadline = backoff
@@ -435,7 +476,7 @@ where
             // poll_once() already retries upon server and connection errors, so propagate any error
             // received from it and return immediately.
             let retry_after = match self.poll_once(job).await? {
-                PollResult::AggregateResult(aggregate_result) => return Ok(aggregate_result),
+                PollResult::CollectionResult(aggregate_result) => return Ok(aggregate_result),
                 PollResult::NextAttempt(retry_after) => retry_after,
             };
 
@@ -480,7 +521,7 @@ where
         &self,
         batch_interval: Interval,
         aggregation_parameter: &V::AggregationParam,
-    ) -> Result<V::AggregateResult, Error> {
+    ) -> Result<Collection<V::AggregateResult>, Error> {
         let job = self
             .start_collection(batch_interval, aggregation_parameter)
             .await?;
@@ -490,7 +531,7 @@ where
 
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use crate::{Collector, Error};
+    use crate::{Collection, Collector, Error};
     use janus_messages::Interval;
     use prio::vdaf;
 
@@ -500,7 +541,7 @@ pub mod test_util {
         aggregation_parameter: &V::AggregationParam,
         host: &str,
         port: u16,
-    ) -> Result<V::AggregateResult, Error>
+    ) -> Result<Collection<V::AggregateResult>, Error>
     where
         for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
     {
@@ -679,8 +720,8 @@ mod tests {
         let poll_result = collector.poll_once(&job).await.unwrap();
         assert_matches!(poll_result, PollResult::NextAttempt(None));
 
-        let agg_result = collector.poll_until_complete(&job).await.unwrap();
-        assert_eq!(agg_result, 1);
+        let collection = collector.poll_until_complete(&job).await.unwrap();
+        assert_eq!(collection, Collection::new(1, 1));
 
         mocked_collect_start_error.assert();
         mocked_collect_start_success.assert();
@@ -732,8 +773,8 @@ mod tests {
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
         assert_eq!(job.batch_interval, batch_interval);
 
-        let agg_result = collector.poll_until_complete(&job).await.unwrap();
-        assert_eq!(agg_result, 144);
+        let collection = collector.poll_until_complete(&job).await.unwrap();
+        assert_eq!(collection, Collection::new(1, 144));
 
         mocked_collect_start_success.assert();
         mocked_collect_complete.assert();
@@ -782,8 +823,8 @@ mod tests {
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
         assert_eq!(job.batch_interval, batch_interval);
 
-        let agg_result = collector.poll_until_complete(&job).await.unwrap();
-        assert_eq!(agg_result, vec![0, 0, 0, 1, 0]);
+        let collection = collector.poll_until_complete(&job).await.unwrap();
+        assert_eq!(collection, Collection::new(1, Vec::from([0, 0, 0, 1, 0])));
 
         mocked_collect_start_success.assert();
         mocked_collect_complete.assert();

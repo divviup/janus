@@ -1763,6 +1763,7 @@ impl VdafOps {
             }
 
             CollectJobState::Finished {
+                report_count,
                 encrypted_helper_aggregate_share,
                 leader_aggregate_share,
             } => {
@@ -1794,7 +1795,7 @@ impl VdafOps {
 
                 Ok(Some(CollectResp::new(
                     PartialBatchSelector::new_time_interval(),
-                    0, // TODO(#469): fill out report_count once possible
+                    *report_count,
                     vec![
                         encrypted_leader_aggregate_share,
                         encrypted_helper_aggregate_share.clone(),
@@ -6230,6 +6231,7 @@ mod tests {
                         .unwrap()
                         .unwrap()
                         .with_state(CollectJobState::Finished {
+                            report_count: 12,
                             encrypted_helper_aggregate_share,
                             leader_aggregate_share,
                         });

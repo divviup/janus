@@ -31,6 +31,7 @@ assert_matches = "1"
 base64 = "0.13.0"
 chrono = "0.4"
 clap = { version = "3.2.22", features = ["derive", "env"] }
+janus_collector = { path = ".", features = ["test-util"] }
 janus_core = { path = "../janus_core", features = ["test-util"] }
 mockito = "0.31.0"
 rand = "0.8"

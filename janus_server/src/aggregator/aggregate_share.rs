@@ -34,7 +34,7 @@ use prio::{
         Aggregatable,
     },
 };
-use std::{borrow::Borrow, sync::Arc};
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 #[cfg(test)]
@@ -276,6 +276,7 @@ impl CollectJobDriver {
         // job URI can serve it up.
         let collect_job = Arc::new(
             collect_job.with_state(CollectJobState::Finished {
+                report_count,
                 encrypted_helper_aggregate_share: AggregateShareResp::get_decoded(&resp_bytes)?
                     .encrypted_aggregate_share()
                     .clone(),
@@ -299,7 +300,7 @@ impl CollectJobDriver {
 
                     match maybe_updated_collect_job.state() {
                         CollectJobState::Start => {
-                            tx.update_collect_job::<L, A>(collect_job.borrow()).await?;
+                            tx.update_collect_job::<L, A>(&collect_job).await?;
                             tx.release_collect_job(&lease).await?;
                             metrics.jobs_finished_counter.add(&Context::current(), 1, &[]);
                         }

@@ -1714,6 +1714,7 @@ dependencies = [
  "chrono",
  "clap 3.2.22",
  "derivative",
+ "janus_collector",
  "janus_core",
  "janus_messages",
  "mockito",
