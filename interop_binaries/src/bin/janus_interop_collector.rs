@@ -82,6 +82,7 @@ enum AggregationResult {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct CollectPollResponse {
     status: &'static str,
     #[serde(default)]
