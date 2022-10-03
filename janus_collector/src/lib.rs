@@ -238,12 +238,9 @@ impl<P> CollectJob<P> {
 #[derivative(Debug)]
 /// The result of a collect request poll operation. This will either provide the collection result
 /// or indicate that the collection is still being processed.
-enum PollResult<V: vdaf::Collector>
-where
-    for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-{
+enum PollResult<T> {
     /// The collection result from a completed collect request.
-    CollectionResult(#[derivative(Debug = "ignore")] CollectionResult<V>),
+    CollectionResult(#[derivative(Debug = "ignore")] CollectionResult<T>),
     /// The collect request is not yet ready. If present, the [`RetryAfter`] object is the time at
     /// which the leader recommends retrying the request.
     NextAttempt(Option<RetryAfter>),
@@ -251,36 +248,27 @@ where
 
 /// The result of a collection operation.
 #[derive(Debug)]
-pub struct CollectionResult<V: vdaf::Collector>
-where
-    for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-{
+pub struct CollectionResult<T> {
     report_count: u64,
-    aggregate_result: V::AggregateResult,
+    aggregate_result: T,
 }
 
-impl<V: vdaf::Collector> CollectionResult<V>
-where
-    for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-{
+impl<T> CollectionResult<T> {
     /// Retrieves the number of client reports included in this collection.
     pub fn report_count(&self) -> u64 {
         self.report_count
     }
 
     /// Retrieves the aggregated result of the client reports included in this collection.
-    pub fn aggregate_result(&self) -> &V::AggregateResult {
+    pub fn aggregate_result(&self) -> &T {
         &self.aggregate_result
     }
 }
 
 #[cfg(feature = "test-util")]
-impl<V: vdaf::Collector> CollectionResult<V>
-where
-    for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-{
+impl<T> CollectionResult<T> {
     /// Creates a new [`CollectionResult`].
-    pub fn new(report_count: u64, aggregate_result: V::AggregateResult) -> Self {
+    pub fn new(report_count: u64, aggregate_result: T) -> Self {
         Self {
             report_count,
             aggregate_result,
@@ -288,22 +276,13 @@ where
     }
 }
 
-impl<V: vdaf::Collector> PartialEq for CollectionResult<V>
-where
-    V::AggregateResult: PartialEq,
-    for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-{
+impl<T: PartialEq> PartialEq for CollectionResult<T> {
     fn eq(&self, other: &Self) -> bool {
         self.report_count == other.report_count && self.aggregate_result == other.aggregate_result
     }
 }
 
-impl<V: vdaf::Collector> Eq for CollectionResult<V>
-where
-    V::AggregateResult: Eq,
-    for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
-{
-}
+impl<T: Eq> Eq for CollectionResult<T> {}
 
 /// A DAP collector.
 #[derive(Debug)]
@@ -395,7 +374,7 @@ where
     async fn poll_once(
         &self,
         job: &CollectJob<V::AggregationParam>,
-    ) -> Result<PollResult<V>, Error> {
+    ) -> Result<PollResult<V::AggregateResult>, Error> {
         let response = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
             || async {
@@ -487,7 +466,7 @@ where
     async fn poll_until_complete(
         &self,
         job: &CollectJob<V::AggregationParam>,
-    ) -> Result<CollectionResult<V>, Error> {
+    ) -> Result<CollectionResult<V::AggregateResult>, Error> {
         let mut backoff = self.parameters.collect_poll_wait_parameters.clone();
         backoff.reset();
         let deadline = backoff
@@ -542,7 +521,7 @@ where
         &self,
         batch_interval: Interval,
         aggregation_parameter: &V::AggregationParam,
-    ) -> Result<CollectionResult<V>, Error> {
+    ) -> Result<CollectionResult<V::AggregateResult>, Error> {
         let job = self
             .start_collection(batch_interval, aggregation_parameter)
             .await?;
@@ -562,7 +541,7 @@ pub mod test_util {
         aggregation_parameter: &V::AggregationParam,
         host: &str,
         port: u16,
-    ) -> Result<CollectionResult<V>, Error>
+    ) -> Result<CollectionResult<V::AggregateResult>, Error>
     where
         for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
     {
