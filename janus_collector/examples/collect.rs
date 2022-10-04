@@ -1,7 +1,8 @@
 use base64::URL_SAFE_NO_PAD;
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
-    ArgAction, CommandFactory, ErrorKind, FromArgMatches, Parser, ValueEnum,
+    error::ErrorKind,
+    ArgAction, CommandFactory, FromArgMatches, Parser, ValueEnum,
 };
 use derivative::Derivative;
 use janus_collector::{default_http_client, Collector, CollectorParameters};
@@ -250,8 +251,7 @@ struct Options {
     #[clap(
         long,
         required = false,
-        takes_value = true,
-        multiple_occurrences = false,
+        num_args = 1,
         action = ArgAction::Set,
         value_parser = BucketsValueParser::new(),
         help_heading = "VDAF ALGORITHM AND PARAMETERS"
@@ -348,7 +348,7 @@ async fn run(options: Options) -> Result<(), Error> {
                     .to_possible_value()
                     .unwrap()
                     .get_help()
-                    .unwrap_or("the selected algorithm"),
+                    .unwrap(),
             ),
         )
         .into()),
