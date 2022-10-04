@@ -1,6 +1,6 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use base64::URL_SAFE_NO_PAD;
-use clap::{Arg, Command};
+use clap::{value_parser, Arg, Command};
 use interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
@@ -30,6 +30,7 @@ use std::{
     time::Duration as StdDuration,
 };
 use tokio::sync::Mutex;
+use url::Url;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
 #[derive(Debug, Serialize)]
@@ -170,19 +171,21 @@ fn make_filter(
         .unify())
 }
 
-fn app() -> clap::Command<'static> {
+fn app() -> clap::Command {
     Command::new("Janus interoperation test aggregator")
         .arg(
             Arg::new("port")
                 .long("port")
                 .short('p')
                 .default_value("8080")
+                .value_parser(value_parser!(u16))
                 .help("Port number to listen on."),
         )
         .arg(
             Arg::new("postgres-url")
                 .long("postgres-url")
                 .default_value("postgres://postgres@127.0.0.1:5432/postgres")
+                .value_parser(value_parser!(Url))
                 .help("PostgreSQL database connection URL."),
         )
         .arg(
@@ -197,8 +200,12 @@ fn app() -> clap::Command<'static> {
 async fn main() -> anyhow::Result<()> {
     install_tracing_subscriber()?;
     let matches = app().get_matches();
-    let http_port = matches.value_of_t("port")?;
-    let postgres_url = matches.value_of_t("postgres-url")?;
+    let http_port = matches
+        .try_get_one::<u16>("port")?
+        .ok_or_else(|| anyhow!("port argument missing"))?;
+    let postgres_url = matches
+        .try_get_one::<Url>("postgres-url")?
+        .ok_or_else(|| anyhow!("postgres-url argument missing"))?;
     let dap_serving_prefix = matches
         .get_one("dap-serving-prefix")
         .map(Clone::clone)
@@ -212,7 +219,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Connect to database, apply schema, and set up datastore.
     let db_config = DbConfig {
-        url: postgres_url,
+        url: postgres_url.clone(),
         connection_pool_timeouts_secs: 30,
     };
     let pool = database_pool(&db_config, None).await?;
@@ -230,7 +237,7 @@ async fn main() -> anyhow::Result<()> {
     // endpoints.
     let filter = make_filter(Arc::clone(&datastore), dap_serving_prefix)?;
     let server = warp::serve(filter);
-    let aggregator_future = server.bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, http_port)));
+    let aggregator_future = server.bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, *http_port)));
 
     // Run the aggregation job creator.
     let pool = database_pool(&db_config, None).await?;
