@@ -292,8 +292,9 @@ where
     V::AggregateResult: Debug,
 {
     let collector = Collector::new(parameters, vdaf, http_client);
-    let agg_result = collector.collect(interval, agg_param).await?;
-    println!("Aggregation result: {:?}", agg_result);
+    let collection = collector.collect(interval, agg_param).await?;
+    println!("Aggregation result: {:?}", collection.aggregate_result());
+    println!("Number of reports: {}", collection.report_count());
     Ok(())
 }
 
