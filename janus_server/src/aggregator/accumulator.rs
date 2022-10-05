@@ -63,12 +63,12 @@ where
     pub(super) fn new(
         task_id: TaskId,
         min_batch_duration: Duration,
-        aggregation_param: &A::AggregationParam,
+        aggregation_param: A::AggregationParam,
     ) -> Self {
         Self {
             task_id,
             min_batch_duration,
-            aggregation_param: aggregation_param.clone(),
+            aggregation_param,
             accumulations: HashMap::new(),
         }
     }
@@ -81,7 +81,7 @@ where
         report_id: &ReportId,
     ) -> Result<(), datastore::Error> {
         let key = report_time
-            .to_batch_unit_interval_start(self.min_batch_duration)
+            .to_batch_unit_interval_start(&self.min_batch_duration)
             .map_err(|e| datastore::Error::User(e.into()))?;
         if let Some(accumulation) = self.accumulations.get_mut(&key) {
             accumulation

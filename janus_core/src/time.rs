@@ -82,7 +82,7 @@ pub trait TimeExt: Sized {
     /// Compute the start of the batch interval containing this Time, given the batch unit duration.
     fn to_batch_unit_interval_start(
         &self,
-        min_batch_duration: Duration,
+        min_batch_duration: &Duration,
     ) -> Result<Self, janus_messages::Error>;
 }
 
@@ -90,7 +90,7 @@ impl TimeExt for Time {
     /// Compute the start of the batch interval containing this Time, given the batch unit duration.
     fn to_batch_unit_interval_start(
         &self,
-        min_batch_duration: Duration,
+        min_batch_duration: &Duration,
     ) -> Result<Self, janus_messages::Error> {
         let rem = self
             .as_seconds_since_epoch()

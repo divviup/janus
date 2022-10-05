@@ -86,22 +86,22 @@ where
     let min_batch_duration = Duration::from_seconds(request.min_batch_duration);
     let client_parameters = ClientParameters::new(
         task_id,
-        vec![request.leader, request.helper],
+        Vec::<Url>::from([request.leader, request.helper]),
         min_batch_duration,
     );
 
     let leader_hpke_config = janus_client::aggregator_hpke_config(
         &client_parameters,
-        Role::Leader,
-        task_id,
+        &Role::Leader,
+        &task_id,
         http_client,
     )
     .await
     .context("failed to fetch leader's HPKE configuration")?;
     let helper_hpke_config = janus_client::aggregator_hpke_config(
         &client_parameters,
-        Role::Helper,
-        task_id,
+        &Role::Helper,
+        &task_id,
         http_client,
     )
     .await

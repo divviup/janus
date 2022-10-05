@@ -429,12 +429,12 @@ where
         let aggregate_shares_bytes = collect_response
             .encrypted_aggregate_shares()
             .iter()
-            .zip([Role::Leader, Role::Helper])
+            .zip(&[Role::Leader, Role::Helper])
             .map(|(encrypted_aggregate_share, role)| {
                 hpke::open(
                     &self.parameters.hpke_config,
                     &self.parameters.hpke_private_key,
-                    &HpkeApplicationInfo::new(hpke::Label::AggregateShare, role, Role::Collector),
+                    &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, role, &Role::Collector),
                     encrypted_aggregate_share,
                     &associated_data,
                 )
@@ -556,21 +556,37 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        default_http_client, CollectJob, Collection, Collector, CollectorParameters, Error,
+        PollResult,
+    };
     use assert_matches::assert_matches;
     use chrono::{TimeZone, Utc};
     use janus_core::{
-        hpke::{test_util::generate_test_hpke_config_and_private_key, Label},
+        hpke::{
+            self, associated_data_for_aggregate_share,
+            test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+        },
         retries::test_http_request_exponential_backoff,
+        task::AuthenticationToken,
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
-    use janus_messages::{Duration, HpkeCiphertext, PartialBatchSelector, Time};
+    use janus_messages::{
+        query_type::TimeInterval, CollectReq, CollectResp, Duration, HpkeCiphertext, Interval,
+        PartialBatchSelector, Role, Time,
+    };
     use mockito::mock;
     use prio::{
+        codec::Encode,
         field::Field64,
-        vdaf::{prio3::Prio3, AggregateShare},
+        vdaf::{self, prio3::Prio3, AggregateShare},
     };
     use rand::random;
+    use reqwest::{
+        header::{CONTENT_TYPE, LOCATION},
+        StatusCode, Url,
+    };
+    use retry_after::RetryAfter;
 
     fn setup_collector<V: vdaf::Collector>(vdaf_collector: V) -> Collector<V>
     where
@@ -609,22 +625,30 @@ mod tests {
         CollectResp::new(
             PartialBatchSelector::new_time_interval(),
             1,
-            vec![
+            Vec::<HpkeCiphertext>::from([
                 hpke::seal(
                     &parameters.hpke_config,
-                    &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
+                    &HpkeApplicationInfo::new(
+                        &Label::AggregateShare,
+                        &Role::Leader,
+                        &Role::Collector,
+                    ),
                     &<Vec<u8>>::from(&transcript.aggregate_shares[0]),
                     &associated_data,
                 )
                 .unwrap(),
                 hpke::seal(
                     &parameters.hpke_config,
-                    &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
+                    &HpkeApplicationInfo::new(
+                        &Label::AggregateShare,
+                        &Role::Helper,
+                        &Role::Collector,
+                    ),
                     &<Vec<u8>>::from(&transcript.aggregate_shares[1]),
                     &associated_data,
                 )
                 .unwrap(),
-            ],
+            ]),
         )
     }
 
@@ -963,8 +987,16 @@ mod tests {
                     PartialBatchSelector::new_time_interval(),
                     1,
                     Vec::from([
-                        HpkeCiphertext::new(*collector.parameters.hpke_config.id(), vec![], vec![]),
-                        HpkeCiphertext::new(*collector.parameters.hpke_config.id(), vec![], vec![]),
+                        HpkeCiphertext::new(
+                            *collector.parameters.hpke_config.id(),
+                            Vec::new(),
+                            Vec::new(),
+                        ),
+                        HpkeCiphertext::new(
+                            *collector.parameters.hpke_config.id(),
+                            Vec::new(),
+                            Vec::new(),
+                        ),
                     ]),
                 )
                 .get_encoded(),
@@ -987,14 +1019,22 @@ mod tests {
             Vec::from([
                 hpke::seal(
                     &collector.parameters.hpke_config,
-                    &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
+                    &HpkeApplicationInfo::new(
+                        &Label::AggregateShare,
+                        &Role::Leader,
+                        &Role::Collector,
+                    ),
                     b"bad",
                     &associated_data,
                 )
                 .unwrap(),
                 hpke::seal(
                     &collector.parameters.hpke_config,
-                    &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
+                    &HpkeApplicationInfo::new(
+                        &Label::AggregateShare,
+                        &Role::Helper,
+                        &Role::Collector,
+                    ),
                     b"bad",
                     &associated_data,
                 )
@@ -1022,18 +1062,26 @@ mod tests {
             Vec::from([
                 hpke::seal(
                     &collector.parameters.hpke_config,
-                    &HpkeApplicationInfo::new(Label::AggregateShare, Role::Leader, Role::Collector),
-                    &<Vec<u8>>::from(&AggregateShare::from(vec![Field64::from(0)])),
+                    &HpkeApplicationInfo::new(
+                        &Label::AggregateShare,
+                        &Role::Leader,
+                        &Role::Collector,
+                    ),
+                    &<Vec<u8>>::from(&AggregateShare::from(Vec::from([Field64::from(0)]))),
                     &associated_data,
                 )
                 .unwrap(),
                 hpke::seal(
                     &collector.parameters.hpke_config,
-                    &HpkeApplicationInfo::new(Label::AggregateShare, Role::Helper, Role::Collector),
-                    &<Vec<u8>>::from(&AggregateShare::from(vec![
+                    &HpkeApplicationInfo::new(
+                        &Label::AggregateShare,
+                        &Role::Helper,
+                        &Role::Collector,
+                    ),
+                    &<Vec<u8>>::from(&AggregateShare::from(Vec::from([
                         Field64::from(0),
                         Field64::from(0),
-                    ])),
+                    ]))),
                     &associated_data,
                 )
                 .unwrap(),
@@ -1108,7 +1156,7 @@ mod tests {
             .create();
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
-            PollResult::NextAttempt(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, StdDuration::from_secs(60))
+            PollResult::NextAttempt(Some(RetryAfter::Delay(duration))) => assert_eq!(duration, std::time::Duration::from_secs(60))
         );
         mock_collect_poll_retry_after_60s.assert();
 
@@ -1137,7 +1185,7 @@ mod tests {
         collector
             .parameters
             .collect_poll_wait_parameters
-            .max_elapsed_time = Some(StdDuration::from_secs(3));
+            .max_elapsed_time = Some(std::time::Duration::from_secs(3));
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
         let batch_interval = Interval::new(
@@ -1165,7 +1213,7 @@ mod tests {
         mock_collect_poll_retry_after_10s.assert();
 
         let near_future =
-            Utc::now() + chrono::Duration::from_std(StdDuration::from_secs(1)).unwrap();
+            Utc::now() + chrono::Duration::from_std(std::time::Duration::from_secs(1)).unwrap();
         let near_future_formatted = near_future.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
         let mock_collect_poll_retry_after_near_future = mock("GET", "/collect_job/1")
             .with_status(202)
@@ -1194,11 +1242,11 @@ mod tests {
         collector
             .parameters
             .collect_poll_wait_parameters
-            .max_elapsed_time = Some(StdDuration::from_millis(15));
+            .max_elapsed_time = Some(std::time::Duration::from_millis(15));
         collector
             .parameters
             .collect_poll_wait_parameters
-            .initial_interval = StdDuration::from_millis(10);
+            .initial_interval = std::time::Duration::from_millis(10);
         let mock_collect_poll_no_retry_after = mock("GET", "/collect_job/1")
             .with_status(202)
             .expect_at_least(1)

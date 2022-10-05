@@ -159,12 +159,12 @@ pub struct AddTaskResponse {
 impl From<Task> for AggregatorAddTaskRequest {
     fn from(task: Task) -> Self {
         Self {
-            task_id: base64::encode_config(task.id.as_ref(), URL_SAFE_NO_PAD),
-            leader: task.aggregator_url(Role::Leader).unwrap().clone(),
-            helper: task.aggregator_url(Role::Helper).unwrap().clone(),
-            vdaf: task.vdaf.clone().into(),
+            task_id: base64::encode_config(task.task_id().as_ref(), URL_SAFE_NO_PAD),
+            leader: task.aggregator_url(&Role::Leader).unwrap().clone(),
+            helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
+            vdaf: task.vdaf().clone().into(),
             leader_authentication_token: String::from_utf8(
-                task.aggregator_auth_tokens
+                task.aggregator_auth_tokens()
                     .first()
                     .unwrap()
                     .as_bytes()
@@ -172,19 +172,19 @@ impl From<Task> for AggregatorAddTaskRequest {
             )
             .unwrap(),
             collector_authentication_token: task
-                .collector_auth_tokens
+                .collector_auth_tokens()
                 .first()
                 .map(|t| String::from_utf8(t.as_bytes().to_vec()).unwrap()),
-            aggregator_id: task.role.index().unwrap().try_into().unwrap(),
+            aggregator_id: task.role().index().unwrap().try_into().unwrap(),
             verify_key: base64::encode_config(
-                task.vdaf_verify_keys().first().unwrap().as_bytes(),
+                task.vdaf_verify_keys().first().unwrap().as_ref(),
                 URL_SAFE_NO_PAD,
             ),
-            max_batch_lifetime: task.max_batch_lifetime,
-            min_batch_size: task.min_batch_size,
-            min_batch_duration: task.min_batch_duration.as_seconds(),
+            max_batch_lifetime: task.max_batch_lifetime(),
+            min_batch_size: task.min_batch_size(),
+            min_batch_duration: task.min_batch_duration().as_seconds(),
             collector_hpke_config: base64::encode_config(
-                &task.collector_hpke_config.get_encoded(),
+                &task.collector_hpke_config().get_encoded(),
                 URL_SAFE_NO_PAD,
             ),
         }

@@ -229,7 +229,7 @@ impl CollectJobDriver {
 
                     let batch_unit_aggregations = tx
                         .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
-                            &task.id,
+                            task.task_id(),
                             collect_job.batch_interval(),
                             collect_job.aggregation_parameter(),
                         )
@@ -255,7 +255,7 @@ impl CollectJobDriver {
 
         // Send an aggregate share request to the helper.
         let req = AggregateShareReq::new(
-            task.id,
+            *task.task_id(),
             BatchSelector::new_time_interval(*collect_job.batch_interval()),
             collect_job.aggregation_parameter().get_encoded(),
             report_count,
@@ -264,7 +264,8 @@ impl CollectJobDriver {
 
         let resp_bytes = post_to_helper(
             &self.http_client,
-            task.aggregator_url(Role::Helper)?.join("aggregate_share")?,
+            task.aggregator_url(&Role::Helper)?
+                .join("aggregate_share")?,
             AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),
@@ -534,14 +535,14 @@ where
 
     // Only happens if there were no batch unit aggregations, which would get caught by the
     // min_batch_size check below, but we have to unwrap the option.
-    let total_aggregate_share =
-        total_aggregate_share.ok_or(Error::InvalidBatchSize(task.id, total_report_count))?;
+    let total_aggregate_share = total_aggregate_share
+        .ok_or_else(|| Error::InvalidBatchSize(*task.task_id(), total_report_count))?;
 
     // Refuse to service time-interval aggregate share requests if there are too few reports
     // included.
     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-    if total_report_count < task.min_batch_size {
-        return Err(Error::InvalidBatchSize(task.id, total_report_count));
+    if total_report_count < task.min_batch_size() {
+        return Err(Error::InvalidBatchSize(*task.task_id(), total_report_count));
     }
 
     // TODO(#468): This should check against the task's max batch size for fixed size queries
@@ -569,22 +570,25 @@ where
 {
     // Check how many rows in the relevant table have an intersecting batch interval.
     // Each such row consumes one unit of batch lifetime (§4.6).
-    let intersecting_intervals: Vec<_> = match task.role {
+    let intersecting_intervals: Vec<_> = match task.role() {
         Role::Leader => tx
-            .get_collect_jobs_jobs_intersecting_interval::<L, A>(&task.id, &collect_interval)
+            .get_collect_jobs_jobs_intersecting_interval::<L, A>(task.task_id(), &collect_interval)
             .await?
             .into_iter()
             .map(|job| *job.batch_interval())
             .collect(),
 
         Role::Helper => tx
-            .get_aggregate_share_jobs_intersecting_interval::<L, A>(&task.id, &collect_interval)
+            .get_aggregate_share_jobs_intersecting_interval::<L, A>(
+                task.task_id(),
+                &collect_interval,
+            )
             .await?
             .into_iter()
             .map(|job| *job.batch_interval())
             .collect(),
 
-        _ => panic!("Unexpected task role {:?}", task.role),
+        _ => panic!("Unexpected task role {:?}", task.role()),
     };
 
     // Check that all intersecting collect intervals are equal to this collect interval.
@@ -594,25 +598,26 @@ where
         .any(|interval| interval != &collect_interval)
     {
         return Err(datastore::Error::User(
-            Error::BatchOverlap(task.id, collect_interval).into(),
+            Error::BatchOverlap(*task.task_id(), collect_interval).into(),
         ));
     }
 
     // Check that the batch query count is being consumed appropriately.
     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
-    let max_batch_lifetime: usize = task.max_batch_lifetime.try_into()?;
+    let max_batch_lifetime: usize = task.max_batch_lifetime().try_into()?;
     if intersecting_intervals.len() == max_batch_lifetime {
         debug!(
-            task_id = ?task.id, ?collect_interval,
+            task_id = %task.task_id(), ?collect_interval,
             "Refusing aggregate share request because batch lifetime has been consumed"
         );
         return Err(datastore::Error::User(
-            Error::BatchQueriedTooManyTimes(task.id, intersecting_intervals.len() as u64).into(),
+            Error::BatchQueriedTooManyTimes(*task.task_id(), intersecting_intervals.len() as u64)
+                .into(),
         ));
     }
     if intersecting_intervals.len() > max_batch_lifetime {
         error!(
-            task_id = ?task.id, ?collect_interval,
+            task_id = %task.task_id(), ?collect_interval,
             "Batch lifetime has been consumed more times than task allows"
         );
 
@@ -626,39 +631,44 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
+        aggregator::{aggregate_share::CollectJobDriver, Error},
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, CollectJob, CollectJobState,
-                ReportAggregation, ReportAggregationState,
+                AcquiredCollectJob, AggregationJob, AggregationJobState, BatchUnitAggregation,
+                CollectJob, CollectJobState, Lease, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
+            Datastore,
         },
         messages::TimeExt,
-        task::VdafInstance,
+        task::{test_util::TaskBuilder, VdafInstance},
     };
     use assert_matches::assert_matches;
     use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         test_util::{
-            dummy_vdaf::{AggregateShare, AggregationParam, OutputShare},
+            dummy_vdaf::{self, AggregateShare, AggregationParam, OutputShare},
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
         },
-        time::{MockClock, TimeExt as CoreTimeExt},
+        time::{Clock, MockClock, TimeExt as CoreTimeExt},
         Runtime,
     };
     use janus_messages::{
-        Duration, HpkeCiphertext, HpkeConfigId, Interval, Report, ReportMetadata, Role,
+        query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
+        HpkeCiphertext, HpkeConfigId, Interval, Report, ReportIdChecksum, ReportMetadata, Role,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
+    use prio::codec::{Decode, Encode};
     use rand::random;
-    use std::str;
+    use std::{str, sync::Arc};
     use url::Url;
     use uuid::Uuid;
+
+    use super::DUMMY_VERIFY_KEY_LENGTH;
 
     async fn setup_collect_job_test_case(
         clock: MockClock,
@@ -668,19 +678,19 @@ mod tests {
         Option<Lease<AcquiredCollectJob>>,
         CollectJob<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>,
     ) {
-        let task_id = random();
-        let mut task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Leader);
-        task.aggregator_endpoints = vec![
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&mockito::server_url()).unwrap(),
-        ];
-        task.min_batch_duration = Duration::from_seconds(500);
-        task.min_batch_size = 10;
+        let task = TaskBuilder::new(VdafInstance::Fake, Role::Leader)
+            .with_aggregator_endpoints(Vec::from([
+                Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+                Url::parse(&mockito::server_url()).unwrap(),
+            ]))
+            .with_min_batch_duration(Duration::from_seconds(500))
+            .with_min_batch_size(10)
+            .build();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = AggregationParam(0);
 
         let collect_job = CollectJob::new(
-            task_id,
+            *task.task_id(),
             Uuid::new_v4(),
             batch_interval,
             aggregation_param,
@@ -689,9 +699,7 @@ mod tests {
 
         let lease = datastore
             .run_tx(|tx| {
-                let clock = clock.clone();
-                let task = task.clone();
-                let collect_job = collect_job.clone();
+                let (clock, task, collect_job) = (clock.clone(), task.clone(), collect_job.clone());
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
@@ -703,7 +711,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        task_id,
+                        *task.task_id(),
                         aggregation_job_id,
                         aggregation_param,
                         AggregationJobState::Finished,
@@ -714,12 +722,12 @@ mod tests {
                         random(),
                         clock
                             .now()
-                            .to_batch_unit_interval_start(task.min_batch_duration)
+                            .to_batch_unit_interval_start(task.min_batch_duration())
                             .unwrap(),
                         Vec::new(),
                     );
                     tx.put_client_report(&Report::new(
-                        task_id,
+                        *task.task_id(),
                         report_metadata.clone(),
                         Vec::new(),
                         Vec::new(),
@@ -730,7 +738,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        task_id,
+                        *task.task_id(),
                         aggregation_job_id,
                         *report_metadata.report_id(),
                         *report_metadata.time(),
@@ -743,7 +751,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        task_id,
+                        *task.task_id(),
                         clock.now(),
                         aggregation_param,
                         AggregateShare(0),
@@ -755,7 +763,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        task_id,
+                        *task.task_id(),
                         clock.now().add(&Duration::from_seconds(1000)).unwrap(),
                         aggregation_param,
                         AggregateShare(0),
@@ -769,7 +777,7 @@ mod tests {
                             .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 1)
                             .await?
                             .remove(0);
-                        assert_eq!(&task_id, lease.leased().task_id());
+                        assert_eq!(task.task_id(), lease.leased().task_id());
                         assert_eq!(
                             collect_job.collect_job_id(),
                             lease.leased().collect_job_id()
@@ -793,28 +801,27 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        let task_id = random();
-        let mut task = Task::new_dummy(task_id, VdafInstance::Fake, Role::Leader);
-        task.aggregator_endpoints = vec![
-            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-            Url::parse(&mockito::server_url()).unwrap(),
-        ];
-        task.min_batch_duration = Duration::from_seconds(500);
-        task.min_batch_size = 10;
+        let task = TaskBuilder::new(VdafInstance::Fake, Role::Leader)
+            .with_aggregator_endpoints(Vec::from([
+                Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+                Url::parse(&mockito::server_url()).unwrap(),
+            ]))
+            .with_min_batch_duration(Duration::from_seconds(500))
+            .with_min_batch_size(10)
+            .build();
         let agg_auth_token = task.primary_aggregator_auth_token();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = AggregationParam(0);
 
         let (collect_job_id, lease) = ds
             .run_tx(|tx| {
-                let clock = clock.clone();
-                let task = task.clone();
+                let (clock, task) = (clock.clone(), task.clone());
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
                     let collect_job_id = Uuid::new_v4();
                     tx.put_collect_job(&CollectJob::new(
-                        task_id,
+                        *task.task_id(),
                         collect_job_id,
                         batch_interval,
                         aggregation_param,
@@ -827,7 +834,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        task_id,
+                        *task.task_id(),
                         aggregation_job_id,
                         aggregation_param,
                         AggregationJobState::Finished,
@@ -838,12 +845,12 @@ mod tests {
                         random(),
                         clock
                             .now()
-                            .to_batch_unit_interval_start(task.min_batch_duration)
+                            .to_batch_unit_interval_start(task.min_batch_duration())
                             .unwrap(),
                         Vec::new(),
                     );
                     tx.put_client_report(&Report::new(
-                        task_id,
+                        *task.task_id(),
                         report_metadata.clone(),
                         Vec::new(),
                         Vec::new(),
@@ -854,7 +861,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        task_id,
+                        *task.task_id(),
                         aggregation_job_id,
                         *report_metadata.report_id(),
                         *report_metadata.time(),
@@ -869,7 +876,7 @@ mod tests {
                             .remove(0),
                     );
 
-                    assert_eq!(&task_id, lease.leased().task_id());
+                    assert_eq!(task.task_id(), lease.leased().task_id());
                     assert_eq!(&collect_job_id, lease.leased().collect_job_id());
                     Ok((collect_job_id, lease))
                 })
@@ -888,18 +895,18 @@ mod tests {
             .await
             .unwrap_err();
         assert_matches!(error, Error::InvalidBatchSize(error_task_id, 0) => {
-            assert_eq!(task_id, error_task_id)
+            assert_eq!(task.task_id(), &error_task_id)
         });
 
         // Put some batch unit aggregations in the DB
         ds.run_tx(|tx| {
-            let clock = clock.clone();
+            let (clock, task) = (clock.clone(), task.clone());
             Box::pin(async move {
                 tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
                     DUMMY_VERIFY_KEY_LENGTH,
                     dummy_vdaf::Vdaf,
                 >::new(
-                    task_id,
+                    *task.task_id(),
                     clock.now(),
                     aggregation_param,
                     AggregateShare(0),
@@ -912,7 +919,7 @@ mod tests {
                     DUMMY_VERIFY_KEY_LENGTH,
                     dummy_vdaf::Vdaf,
                 >::new(
-                    task_id,
+                    *task.task_id(),
                     clock.now().add(&Duration::from_seconds(1000)).unwrap(),
                     aggregation_param,
                     AggregateShare(0),
@@ -928,7 +935,7 @@ mod tests {
         .unwrap();
 
         let leader_request = AggregateShareReq::new(
-            task_id,
+            *task.task_id(),
             BatchSelector::new_time_interval(batch_interval),
             aggregation_param.get_encoded(),
             10,

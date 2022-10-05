@@ -1,4 +1,4 @@
-//! Shared parameters for a PPM task.
+//! Shared parameters for a DAP task.
 
 use crate::SecretBytes;
 use base64::URL_SAFE_NO_PAD;
@@ -170,43 +170,43 @@ impl<const L: usize> TryFrom<&SecretBytes> for VerifyKey<L> {
     }
 }
 
-/// The parameters for a PPM task, corresponding to draft-gpew-priv-ppm §4.2.
+/// The parameters for a DAP task, corresponding to draft-gpew-priv-ppm §4.2.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct Task {
     /// Unique identifier for the task.
-    pub id: TaskId,
+    task_id: TaskId,
     /// URLs relative to which aggregator API endpoints are found. The first
     /// entry is the leader's.
     #[derivative(Debug(format_with = "fmt_vector_of_urls"))]
-    pub aggregator_endpoints: Vec<Url>,
+    aggregator_endpoints: Vec<Url>,
     /// The VDAF this task executes.
-    pub vdaf: VdafInstance,
+    vdaf: VdafInstance,
     /// The role performed by the aggregator.
-    pub role: Role,
+    role: Role,
     /// Secret verification keys shared by the aggregators.
     #[derivative(Debug = "ignore")]
     vdaf_verify_keys: Vec<SecretBytes>,
     /// The maximum number of times a given batch may be collected.
-    pub max_batch_lifetime: u64,
+    max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
-    pub min_batch_size: u64,
+    min_batch_size: u64,
     /// The minimum batch interval for a collect request. Batch intervals must
     /// be multiples of this duration.
-    pub min_batch_duration: Duration,
+    min_batch_duration: Duration,
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
-    pub tolerable_clock_skew: Duration,
+    tolerable_clock_skew: Duration,
     /// HPKE configuration for the collector.
-    pub collector_hpke_config: HpkeConfig,
+    collector_hpke_config: HpkeConfig,
     /// Tokens used to authenticate messages sent to or received from the other aggregator.
     #[derivative(Debug = "ignore")]
-    pub aggregator_auth_tokens: Vec<AuthenticationToken>,
+    aggregator_auth_tokens: Vec<AuthenticationToken>,
     /// Tokens used to authenticate messages sent to or received from the collector.
     #[derivative(Debug = "ignore")]
-    pub collector_auth_tokens: Vec<AuthenticationToken>,
+    collector_auth_tokens: Vec<AuthenticationToken>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
-    pub hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
+    hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
 }
 
 impl Task {
@@ -226,7 +226,7 @@ impl Task {
         collector_auth_tokens: Vec<AuthenticationToken>,
         hpke_keys: I,
     ) -> Result<Self, Error> {
-        // PPM currently only supports configurations of exactly two aggregators.
+        // DAP currently only supports configurations of exactly two aggregators.
         if aggregator_endpoints.len() != 2 {
             return Err(Error::InvalidParameter("aggregator_endpoints"));
         }
@@ -253,16 +253,16 @@ impl Task {
         }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
-        let hpke_configs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_keys
+        let hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_keys
             .into_iter()
             .map(|(cfg, key)| (*cfg.id(), (cfg, key)))
             .collect();
-        if hpke_configs.is_empty() {
+        if hpke_keys.is_empty() {
             return Err(Error::InvalidParameter("hpke_configs"));
         }
 
         Ok(Self {
-            id: task_id,
+            task_id,
             aggregator_endpoints,
             vdaf,
             role,
@@ -274,8 +274,73 @@ impl Task {
             collector_hpke_config,
             aggregator_auth_tokens,
             collector_auth_tokens,
-            hpke_keys: hpke_configs,
+            hpke_keys,
         })
+    }
+
+    /// Retrieves the task ID associated with this task.
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+
+    /// Retrieves the aggregator endpoints associated with this task in natural order.
+    pub fn aggregator_endpoints(&self) -> &[Url] {
+        &self.aggregator_endpoints
+    }
+
+    /// Retrieves the VDAF associated with this task.
+    pub fn vdaf(&self) -> &VdafInstance {
+        &self.vdaf
+    }
+
+    /// Retrieves the role associated with this task.
+    pub fn role(&self) -> &Role {
+        &self.role
+    }
+
+    /// Retrieves the VDAF verification keys associated with this task.
+    pub fn vdaf_verify_keys(&self) -> &[SecretBytes] {
+        &self.vdaf_verify_keys
+    }
+
+    /// Retrieves the max batch lifetime parameter associated with this task.
+    pub fn max_batch_lifetime(&self) -> u64 {
+        self.max_batch_lifetime
+    }
+
+    /// Retrieves the min batch size parameter associated with this task.
+    pub fn min_batch_size(&self) -> u64 {
+        self.min_batch_size
+    }
+
+    /// Retrieves the min batch duration parameter associated with this task.
+    pub fn min_batch_duration(&self) -> &Duration {
+        &self.min_batch_duration
+    }
+
+    /// Retrieves the tolerable clock skew parameter associated with this task.
+    pub fn tolerable_clock_skew(&self) -> &Duration {
+        &self.tolerable_clock_skew
+    }
+
+    /// Retrieves the collector HPKE config associated with this task.
+    pub fn collector_hpke_config(&self) -> &HpkeConfig {
+        &self.collector_hpke_config
+    }
+
+    /// Retrieves the aggregator authentication tokens associated with this task.
+    pub fn aggregator_auth_tokens(&self) -> &[AuthenticationToken] {
+        &self.aggregator_auth_tokens
+    }
+
+    /// Retrieves the collector authentication tokens associated with this task.
+    pub fn collector_auth_tokens(&self) -> &[AuthenticationToken] {
+        &self.collector_auth_tokens
+    }
+
+    /// Retrieves the HPKE keys in use associated with this task.
+    pub fn hpke_keys(&self) -> &HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> {
+        &self.hpke_keys
     }
 
     /// Returns true if `batch_interval` is valid, per §4.6 of draft-gpew-priv-ppm.
@@ -289,7 +354,7 @@ impl Task {
     }
 
     /// Returns the [`Url`] relative to which the server performing `role` serves its API.
-    pub fn aggregator_url(&self, role: Role) -> Result<&Url, Error> {
+    pub fn aggregator_url(&self, role: &Role) -> Result<&Url, Error> {
         let index = role.index().ok_or(Error::InvalidParameter(role.as_str()))?;
         Ok(&self.aggregator_endpoints[index])
     }
@@ -337,11 +402,6 @@ impl Task {
         let secret_bytes = self.vdaf_verify_keys.first().unwrap();
         VerifyKey::try_from(secret_bytes).map_err(|_| Error::AggregatorVerifyKeySize)
     }
-
-    /// Returns the secret VDAF verification keys for this task.
-    pub fn vdaf_verify_keys(&self) -> &[SecretBytes] {
-        &self.vdaf_verify_keys
-    }
 }
 
 fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
@@ -356,7 +416,7 @@ fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
 /// Deserialize traits.
 #[derive(Serialize, Deserialize)]
 struct SerializedTask {
-    id: String, // in unpadded base64url
+    task_id: String, // in unpadded base64url
     aggregator_endpoints: Vec<Url>,
     vdaf: VdafInstance,
     role: Role,
@@ -373,11 +433,11 @@ struct SerializedTask {
 
 impl Serialize for Task {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let id = base64::encode_config(self.id.as_ref(), URL_SAFE_NO_PAD);
+        let task_id = base64::encode_config(self.task_id.as_ref(), URL_SAFE_NO_PAD);
         let vdaf_verify_keys: Vec<_> = self
             .vdaf_verify_keys
             .iter()
-            .map(|key| base64::encode_config(key.as_bytes(), URL_SAFE_NO_PAD))
+            .map(|key| base64::encode_config(key.as_ref(), URL_SAFE_NO_PAD))
             .collect();
         let aggregator_auth_tokens = self
             .aggregator_auth_tokens
@@ -396,7 +456,7 @@ impl Serialize for Task {
             .collect();
 
         SerializedTask {
-            id,
+            task_id,
             aggregator_endpoints: self.aggregator_endpoints.clone(),
             vdaf: self.vdaf.clone(),
             role: self.role,
@@ -421,7 +481,7 @@ impl<'de> Deserialize<'de> for Task {
 
         // task_id
         let task_id_bytes: [u8; TaskId::LEN] =
-            base64::decode_config(serialized_task.id, URL_SAFE_NO_PAD)
+            base64::decode_config(serialized_task.task_id, URL_SAFE_NO_PAD)
                 .map_err(D::Error::custom)?
                 .try_into()
                 .map_err(|_| D::Error::custom("task_id length incorrect"))?;
@@ -567,6 +627,7 @@ pub mod test_util {
     use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
     use rand::{distributions::Standard, random, thread_rng, Rng};
+    use url::Url;
 
     impl VdafInstance {
         /// Returns the expected length of a VDAF verification key for a VDAF of this type.
@@ -584,11 +645,14 @@ pub mod test_util {
         }
     }
 
-    impl Task {
-        /// Create a dummy [`Task`] from the provided [`TaskId`], with
-        /// dummy values for the other fields. This is pub because it is needed for
-        /// integration tests.
-        pub fn new_dummy(task_id: TaskId, vdaf: VdafInstance, role: Role) -> Task {
+    /// TaskBuilder is a testing utility allowing tasks to be built based on a template.
+    pub struct TaskBuilder(Task);
+
+    impl TaskBuilder {
+        /// Create a [`TaskBuilder`] from the provided values, with arbitrary values for the other
+        /// task parameters.
+        pub fn new(vdaf: VdafInstance, role: Role) -> Self {
+            let task_id = random();
             let (aggregator_config_0, aggregator_private_key_0) =
                 generate_test_hpke_config_and_private_key();
             let (mut aggregator_config_1, aggregator_private_key_1) =
@@ -614,28 +678,91 @@ pub mod test_util {
                 Vec::new()
             };
 
-            Task::new(
-                task_id,
-                Vec::from([
-                    "http://leader_endpoint".parse().unwrap(),
-                    "http://helper_endpoint".parse().unwrap(),
-                ]),
-                vdaf,
-                role,
-                Vec::from([vdaf_verify_key]),
-                1,
-                0,
-                Duration::from_hours(8).unwrap(),
-                Duration::from_minutes(10).unwrap(),
-                generate_test_hpke_config_and_private_key().0,
-                Vec::from([generate_auth_token(), generate_auth_token()]),
-                collector_auth_tokens,
-                Vec::from([
-                    (aggregator_config_0, aggregator_private_key_0),
-                    (aggregator_config_1, aggregator_private_key_1),
-                ]),
+            Self(
+                Task::new(
+                    task_id,
+                    Vec::from([
+                        "https://leader.endpoint".parse().unwrap(),
+                        "https://helper.endpoint".parse().unwrap(),
+                    ]),
+                    vdaf,
+                    role,
+                    Vec::from([vdaf_verify_key]),
+                    1,
+                    0,
+                    Duration::from_hours(8).unwrap(),
+                    Duration::from_minutes(10).unwrap(),
+                    generate_test_hpke_config_and_private_key().0,
+                    Vec::from([generate_auth_token(), generate_auth_token()]),
+                    collector_auth_tokens,
+                    Vec::from([
+                        (aggregator_config_0, aggregator_private_key_0),
+                        (aggregator_config_1, aggregator_private_key_1),
+                    ]),
+                )
+                .unwrap(),
             )
-            .unwrap()
+        }
+
+        /// Associates the eventual task with the given task ID.
+        pub fn with_task_id(self, task_id: TaskId) -> Self {
+            Self(Task { task_id, ..self.0 })
+        }
+
+        /// Associates the eventual task with the given aggregator endpoints.
+        pub fn with_aggregator_endpoints(self, aggregator_endpoints: Vec<Url>) -> Self {
+            Self(Task {
+                aggregator_endpoints,
+                ..self.0
+            })
+        }
+
+        /// Associates the eventual task with the given max batch lifetime parameter.
+        pub fn with_max_batch_lifetime(self, max_batch_lifetime: u64) -> Self {
+            Self(Task {
+                max_batch_lifetime,
+                ..self.0
+            })
+        }
+
+        /// Associates the eventual task with the given min batch size parameter.
+        pub fn with_min_batch_size(self, min_batch_size: u64) -> Self {
+            Self(Task {
+                min_batch_size,
+                ..self.0
+            })
+        }
+
+        /// Associates the eventual task with the given min batch duration parameter.
+        pub fn with_min_batch_duration(self, min_batch_duration: Duration) -> Self {
+            Self(Task {
+                min_batch_duration,
+                ..self.0
+            })
+        }
+
+        /// Associates the eventual task with the given collector HPKE config.
+        pub fn with_collector_hpke_config(self, collector_hpke_config: HpkeConfig) -> Self {
+            Self(Task {
+                collector_hpke_config,
+                ..self.0
+            })
+        }
+
+        /// Associates the eventual task with the given aggregator authentication tokens.
+        pub fn with_aggregator_auth_tokens(
+            self,
+            aggregator_auth_tokens: Vec<AuthenticationToken>,
+        ) -> Self {
+            Self(Task {
+                aggregator_auth_tokens,
+                ..self.0
+            })
+        }
+
+        /// Consumes this task builder & produces a [`Task`] with the given specifications.
+        pub fn build(self) -> Task {
+            self.0
         }
     }
 
@@ -652,7 +779,11 @@ mod tests {
     use super::{
         test_util::generate_auth_token, SecretBytes, Task, PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
-    use crate::{config::test_util::roundtrip_encoding, messages::DurationExt, task::VdafInstance};
+    use crate::{
+        config::test_util::roundtrip_encoding,
+        messages::DurationExt,
+        task::{test_util::TaskBuilder, VdafInstance},
+    };
     use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
     use janus_messages::{Duration, Interval, Role, Time};
     use rand::random;
@@ -660,9 +791,10 @@ mod tests {
 
     #[test]
     fn validate_batch_interval() {
-        let mut task = Task::new_dummy(random(), VdafInstance::Fake, Role::Leader);
         let min_batch_duration_secs = 3600;
-        task.min_batch_duration = Duration::from_seconds(min_batch_duration_secs);
+        let task = TaskBuilder::new(VdafInstance::Fake, Role::Leader)
+            .with_min_batch_duration(Duration::from_seconds(min_batch_duration_secs))
+            .build();
 
         struct TestCase {
             name: &'static str,
@@ -670,7 +802,7 @@ mod tests {
             expected: bool,
         }
 
-        let test_cases = vec![
+        for test_case in Vec::from([
             TestCase {
                 name: "same duration as minimum",
                 input: Interval::new(
@@ -716,9 +848,7 @@ mod tests {
                 .unwrap(),
                 expected: false,
             },
-        ];
-
-        for test_case in test_cases {
+        ]) {
             assert_eq!(
                 test_case.expected,
                 task.validate_batch_interval(&test_case.input),
@@ -767,7 +897,7 @@ mod tests {
         );
         assert_tokens(
             &VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
-                buckets: vec![0, 100, 200, 400],
+                buckets: Vec::from([0, 100, 200, 400]),
             }),
             &[
                 Token::StructVariant {
@@ -823,11 +953,13 @@ mod tests {
 
     #[test]
     fn task_serialization() {
-        roundtrip_encoding(Task::new_dummy(
-            random(),
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
-            Role::Leader,
-        ));
+        roundtrip_encoding(
+            TaskBuilder::new(
+                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
+                Role::Leader,
+            )
+            .build(),
+        );
     }
 
     #[test]

@@ -315,7 +315,7 @@ async fn run(
     // determine what batch time to start the aggregation at.
     let start_timestamp = RealClock::default().now();
     let batch_interval_start = start_timestamp
-        .to_batch_unit_interval_start(Duration::from_seconds(MIN_BATCH_DURATION))
+        .to_batch_unit_interval_start(&Duration::from_seconds(MIN_BATCH_DURATION))
         .unwrap()
         .as_seconds_since_epoch();
     // Span the aggregation over two minimum batch durations, just in case our

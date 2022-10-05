@@ -1,11 +1,17 @@
-use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
+use common::submit_measurements_and_verify_aggregate;
 use integration_tests::janus::Janus;
 use interop_binaries::test_util::generate_network_name;
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
+    task::VdafInstance,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
-use janus_server::task::Task;
+use janus_messages::Role;
+use janus_server::task::{
+    test_util::{generate_auth_token, TaskBuilder},
+    Task,
+};
+use rand::random;
 use std::env::{self, VarError};
 use testcontainers::clients::Cli;
 use url::Url;
@@ -48,12 +54,28 @@ impl<'a> JanusPair<'a> {
     ///  - `JANUS_E2E_LEADER_NAMESPACE`: The Kubernetes namespace where the DAP leader is deployed.
     ///  - `JANUS_E2E_HELPER_NAMESPACE`: The Kubernetes namespace where the DAP helper is deployed.
     pub async fn new(container_client: &'a Cli) -> JanusPair<'a> {
+        let task_id = random();
+        let endpoint_random_value = hex::encode(random::<[u8; 4]>());
+        let endpoints = Vec::from([
+            Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
+            Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
+        ]);
         let (collector_hpke_config, collector_private_key) =
             generate_test_hpke_config_and_private_key();
-        let (mut leader_task, mut helper_task) = create_test_tasks(&collector_hpke_config);
+        let aggregator_auth_tokens = Vec::from([generate_auth_token()]);
+        let leader_task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
+            .with_task_id(task_id)
+            .with_min_batch_size(46)
+            .with_collector_hpke_config(collector_hpke_config.clone())
+            .with_aggregator_auth_tokens(aggregator_auth_tokens.clone());
+        let helper_task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Helper)
+            .with_task_id(task_id)
+            .with_min_batch_size(46)
+            .with_collector_hpke_config(collector_hpke_config)
+            .with_aggregator_auth_tokens(aggregator_auth_tokens);
 
         // The environment variables should either all be present, or all be absent
-        let (leader, helper) = match (
+        let (leader_task, leader, helper) = match (
             env::var("JANUS_E2E_KUBE_CONFIG_PATH"),
             env::var("JANUS_E2E_KUBECTL_CONTEXT_NAME"),
             env::var("JANUS_E2E_LEADER_NAMESPACE"),
@@ -71,8 +93,13 @@ impl<'a> JanusPair<'a> {
                 // and so they need the in-cluster DNS name of the other aggregator. However, since
                 // aggregators use the endpoint URLs in the task to construct collect job URIs, we
                 // must only fix the _peer_ aggregator's endpoint.
-                leader_task.aggregator_endpoints[1] =
-                    Self::in_cluster_aggregator_url(&helper_namespace);
+                let leader_task = leader_task
+                    .with_aggregator_endpoints({
+                        let mut endpoints = endpoints.clone();
+                        endpoints[1] = Self::in_cluster_aggregator_url(&helper_namespace);
+                        endpoints
+                    })
+                    .build();
                 let leader = Janus::new_with_kubernetes_cluster(
                     &kubeconfig_path,
                     &kubectl_context_name,
@@ -81,8 +108,13 @@ impl<'a> JanusPair<'a> {
                 )
                 .await;
 
-                helper_task.aggregator_endpoints[0] =
-                    Self::in_cluster_aggregator_url(&leader_namespace);
+                let helper_task = helper_task
+                    .with_aggregator_endpoints({
+                        let mut endpoints = endpoints;
+                        endpoints[0] = Self::in_cluster_aggregator_url(&leader_namespace);
+                        endpoints
+                    })
+                    .build();
                 let helper = Janus::new_with_kubernetes_cluster(
                     &kubeconfig_path,
                     &kubectl_context_name,
@@ -91,7 +123,7 @@ impl<'a> JanusPair<'a> {
                 )
                 .await;
 
-                (leader, helper)
+                (leader_task, leader, helper)
             }
             (
                 Err(VarError::NotPresent),
@@ -99,12 +131,16 @@ impl<'a> JanusPair<'a> {
                 Err(VarError::NotPresent),
                 Err(VarError::NotPresent),
             ) => {
+                let leader_task = leader_task
+                    .with_aggregator_endpoints(endpoints.clone())
+                    .build();
+                let helper_task = helper_task.with_aggregator_endpoints(endpoints).build();
                 let network = generate_network_name();
                 let leader =
                     Janus::new_in_container(container_client, &network, &leader_task).await;
                 let helper =
                     Janus::new_in_container(container_client, &network, &helper_task).await;
-                (leader, helper)
+                (leader_task, leader, helper)
             }
             _ => panic!("unexpected environment variables"),
         };
