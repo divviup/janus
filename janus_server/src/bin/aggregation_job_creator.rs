@@ -103,7 +103,7 @@ impl BinaryConfig for Config {
 #[cfg(test)]
 mod tests {
     use super::{Config, Options};
-    use clap::IntoApp;
+    use clap::CommandFactory;
     use janus_server::config::{
         test_util::{
             generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn verify_app() {
-        Options::into_app().debug_assert()
+        Options::command().debug_assert()
     }
 
     #[test]
