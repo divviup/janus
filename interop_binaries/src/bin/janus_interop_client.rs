@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context};
 use base64::URL_SAFE_NO_PAD;
-use clap::{Arg, Command};
+use clap::{value_parser, Arg, Command};
 use interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
@@ -210,12 +210,13 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
         .and(ready_filter.or(upload_filter).unify()))
 }
 
-fn app() -> clap::Command<'static> {
+fn app() -> clap::Command {
     Command::new("Janus interoperation test client").arg(
         Arg::new("port")
             .long("port")
             .short('p')
             .default_value("8080")
+            .value_parser(value_parser!(u16))
             .help("Port number to listen on."),
     )
 }
@@ -224,11 +225,13 @@ fn app() -> clap::Command<'static> {
 async fn main() -> anyhow::Result<()> {
     install_tracing_subscriber()?;
     let matches = app().get_matches();
-    let port = matches.value_of_t::<u16>("port")?;
+    let port = matches
+        .try_get_one::<u16>("port")?
+        .ok_or_else(|| anyhow!("port argument missing"))?;
     let filter = make_filter()?;
     let server = warp::serve(filter);
     server
-        .bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)))
+        .bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, *port)))
         .await;
     Ok(())
 }
