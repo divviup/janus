@@ -628,6 +628,7 @@ where
 mod tests {
     use super::*;
     use crate::{
+        aggregator::DapProblemType,
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
@@ -947,13 +948,20 @@ mod tests {
             )
             .match_body(leader_request.get_encoded())
             .with_status(500)
+            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes\"}")
             .create();
 
         let error = collect_job_driver
             .step_collect_job(ds.clone(), Arc::clone(&lease))
             .await
             .unwrap_err();
-        assert_matches!(error, Error::Http(StatusCode::INTERNAL_SERVER_ERROR));
+        assert_matches!(
+            error,
+            Error::Http(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Some(DapProblemType::BatchQueriedTooManyTimes),
+            )
+        );
 
         mocked_failed_aggregate_share.assert();
 
