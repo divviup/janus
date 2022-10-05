@@ -164,17 +164,17 @@ impl From<Task> for AggregatorAddTaskRequest {
             helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
             vdaf: task.vdaf().clone().into(),
             leader_authentication_token: String::from_utf8(
-                task.aggregator_auth_tokens()
-                    .first()
-                    .unwrap()
-                    .as_bytes()
-                    .to_vec(),
+                task.primary_aggregator_auth_token().as_bytes().to_vec(),
             )
             .unwrap(),
-            collector_authentication_token: task
-                .collector_auth_tokens()
-                .first()
-                .map(|t| String::from_utf8(t.as_bytes().to_vec()).unwrap()),
+            collector_authentication_token: if task.role() == &Role::Leader {
+                Some(
+                    String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec())
+                        .unwrap(),
+                )
+            } else {
+                None
+            },
             aggregator_id: task.role().index().unwrap().try_into().unwrap(),
             verify_key: base64::encode_config(
                 task.vdaf_verify_keys().first().unwrap().as_ref(),
