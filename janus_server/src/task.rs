@@ -646,6 +646,7 @@ pub mod test_util {
     }
 
     /// TaskBuilder is a testing utility allowing tasks to be built based on a template.
+    #[derive(Clone)]
     pub struct TaskBuilder(Task);
 
     impl TaskBuilder {
@@ -713,6 +714,19 @@ pub mod test_util {
         pub fn with_aggregator_endpoints(self, aggregator_endpoints: Vec<Url>) -> Self {
             Self(Task {
                 aggregator_endpoints,
+                ..self.0
+            })
+        }
+
+        /// Associates the eventual task with the given aggregator role.
+        pub fn with_role(self, role: Role) -> Self {
+            Self(Task { role, ..self.0 })
+        }
+
+        /// Associates the eventual task with the given VDAF verification keys.
+        pub fn with_vdaf_verify_keys(self, vdaf_verify_keys: Vec<SecretBytes>) -> Self {
+            Self(Task {
+                vdaf_verify_keys,
                 ..self.0
             })
         }

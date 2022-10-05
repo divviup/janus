@@ -7,10 +7,7 @@ use janus_core::{
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
 use janus_messages::Role;
-use janus_server::task::{
-    test_util::{generate_auth_token, TaskBuilder},
-    Task,
-};
+use janus_server::task::{test_util::TaskBuilder, Task};
 use rand::random;
 use std::env::{self, VarError};
 use testcontainers::clients::Cli;
@@ -54,25 +51,13 @@ impl<'a> JanusPair<'a> {
     ///  - `JANUS_E2E_LEADER_NAMESPACE`: The Kubernetes namespace where the DAP leader is deployed.
     ///  - `JANUS_E2E_HELPER_NAMESPACE`: The Kubernetes namespace where the DAP helper is deployed.
     pub async fn new(container_client: &'a Cli) -> JanusPair<'a> {
-        let task_id = random();
         let endpoint_random_value = hex::encode(random::<[u8; 4]>());
-        let endpoints = Vec::from([
-            Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
-            Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
-        ]);
         let (collector_hpke_config, collector_private_key) =
             generate_test_hpke_config_and_private_key();
-        let aggregator_auth_tokens = Vec::from([generate_auth_token()]);
         let leader_task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_task_id(task_id)
             .with_min_batch_size(46)
-            .with_collector_hpke_config(collector_hpke_config.clone())
-            .with_aggregator_auth_tokens(aggregator_auth_tokens.clone());
-        let helper_task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Helper)
-            .with_task_id(task_id)
-            .with_min_batch_size(46)
-            .with_collector_hpke_config(collector_hpke_config)
-            .with_aggregator_auth_tokens(aggregator_auth_tokens);
+            .with_collector_hpke_config(collector_hpke_config);
+        let helper_task = leader_task.clone().with_role(Role::Helper);
 
         // The environment variables should either all be present, or all be absent
         let (leader_task, leader, helper) = match (
@@ -94,11 +79,11 @@ impl<'a> JanusPair<'a> {
                 // aggregators use the endpoint URLs in the task to construct collect job URIs, we
                 // must only fix the _peer_ aggregator's endpoint.
                 let leader_task = leader_task
-                    .with_aggregator_endpoints({
-                        let mut endpoints = endpoints.clone();
-                        endpoints[1] = Self::in_cluster_aggregator_url(&helper_namespace);
-                        endpoints
-                    })
+                    .with_aggregator_endpoints(Vec::from([
+                        Url::parse(&format!("http://leader-{endpoint_random_value}:8080/"))
+                            .unwrap(),
+                        Self::in_cluster_aggregator_url(&helper_namespace),
+                    ]))
                     .build();
                 let leader = Janus::new_with_kubernetes_cluster(
                     &kubeconfig_path,
@@ -109,11 +94,11 @@ impl<'a> JanusPair<'a> {
                 .await;
 
                 let helper_task = helper_task
-                    .with_aggregator_endpoints({
-                        let mut endpoints = endpoints;
-                        endpoints[0] = Self::in_cluster_aggregator_url(&leader_namespace);
-                        endpoints
-                    })
+                    .with_aggregator_endpoints(Vec::from([
+                        Self::in_cluster_aggregator_url(&leader_namespace),
+                        Url::parse(&format!("http://helper-{endpoint_random_value}:8080/"))
+                            .unwrap(),
+                    ]))
                     .build();
                 let helper = Janus::new_with_kubernetes_cluster(
                     &kubeconfig_path,
@@ -131,6 +116,10 @@ impl<'a> JanusPair<'a> {
                 Err(VarError::NotPresent),
                 Err(VarError::NotPresent),
             ) => {
+                let endpoints = Vec::from([
+                    Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
+                    Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
+                ]);
                 let leader_task = leader_task
                     .with_aggregator_endpoints(endpoints.clone())
                     .build();
