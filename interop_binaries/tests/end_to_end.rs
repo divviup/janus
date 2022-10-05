@@ -481,7 +481,7 @@ async fn e2e_prio3_count() {
 #[tokio::test]
 async fn e2e_prio3_sum() {
     let result = run(
-        json!({"type": "Prio3Aes128Sum", "bits": 64}),
+        json!({"type": "Prio3Aes128Sum", "bits": "64"}),
         &[
             json!("0"),
             json!("10"),
@@ -525,7 +525,7 @@ async fn e2e_prio3_histogram() {
 #[tokio::test]
 async fn e2e_prio3_count_vec() {
     let result = run(
-        json!({"type": "Prio3Aes128CountVec", "length": 4}),
+        json!({"type": "Prio3Aes128CountVec", "length": "4"}),
         &[
             json!(["0", "0", "0", "1"]),
             json!(["0", "0", "1", "0"]),

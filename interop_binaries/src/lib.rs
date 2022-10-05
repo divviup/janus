@@ -83,8 +83,8 @@ where
 #[serde(tag = "type")]
 pub enum VdafObject {
     Prio3Aes128Count,
-    Prio3Aes128CountVec { length: usize },
-    Prio3Aes128Sum { bits: u32 },
+    Prio3Aes128CountVec { length: NumberAsString<usize> },
+    Prio3Aes128Sum { bits: NumberAsString<u32> },
     Prio3Aes128Histogram { buckets: Vec<NumberAsString<u64>> },
 }
 
@@ -95,10 +95,14 @@ impl From<VdafInstance> for VdafObject {
                 VdafObject::Prio3Aes128Count
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
-                VdafObject::Prio3Aes128CountVec { length }
+                VdafObject::Prio3Aes128CountVec {
+                    length: NumberAsString(length),
+                }
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
-                VdafObject::Prio3Aes128Sum { bits }
+                VdafObject::Prio3Aes128Sum {
+                    bits: NumberAsString(bits),
+                }
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
                 buckets,
@@ -117,10 +121,12 @@ impl From<VdafObject> for VdafInstance {
                 VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count)
             }
             VdafObject::Prio3Aes128CountVec { length } => {
-                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length })
+                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec {
+                    length: length.0,
+                })
             }
             VdafObject::Prio3Aes128Sum { bits } => {
-                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits })
+                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits: bits.0 })
             }
             VdafObject::Prio3Aes128Histogram { buckets } => {
                 VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
