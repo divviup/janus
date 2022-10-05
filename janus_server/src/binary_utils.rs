@@ -163,8 +163,7 @@ pub struct CommonBinaryOptions {
     #[clap(
         long,
         env = "CONFIG_FILE",
-        parse(from_os_str),
-        takes_value = true,
+        num_args = 1,
         required(true),
         help = "path to configuration file"
     )]
@@ -185,8 +184,8 @@ pub struct CommonBinaryOptions {
         long,
         env = "DATASTORE_KEYS",
         hide_env_values = true,
-        takes_value = true,
-        use_delimiter = true,
+        num_args = 1,
+        use_value_delimiter = true,
         help = "datastore encryption keys, encoded in base64 then comma-separated"
     )]
     pub datastore_keys: Vec<String>,
@@ -196,10 +195,10 @@ pub struct CommonBinaryOptions {
     #[clap(
         long,
         env = "OTLP_TRACING_METADATA",
-        parse(try_from_str = parse_metadata_entry),
+        value_parser(parse_metadata_entry),
         help = "additional OTLP/gRPC metadata key/value pairs for the tracing exporter",
         value_name = "KEY=value",
-        use_delimiter = true,
+        use_value_delimiter = true
     )]
     otlp_tracing_metadata: Vec<(String, String)>,
 
@@ -208,10 +207,10 @@ pub struct CommonBinaryOptions {
     #[clap(
         long,
         env = "OTLP_METRICS_METADATA",
-        parse(try_from_str = parse_metadata_entry),
+        value_parser(parse_metadata_entry),
         help = "additional OTLP/gRPC metadata key/value pairs for the metrics exporter",
         value_name = "KEY=value",
-        use_delimiter = true,
+        use_value_delimiter = true
     )]
     otlp_metrics_metadata: Vec<(String, String)>,
 }
@@ -253,7 +252,7 @@ where
     Fut: Future<Output = anyhow::Result<()>>,
 {
     // Parse arguments, then read & parse config.
-    let options = Options::from_args();
+    let options = Options::parse();
     let config: Config = read_config(options.common_options())?;
 
     // Install tracing/metrics handlers.
@@ -344,10 +343,10 @@ pub fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::IntoApp;
+    use clap::CommandFactory;
 
     #[test]
     fn verify_app() {
-        CommonBinaryOptions::into_app().debug_assert()
+        CommonBinaryOptions::command().debug_assert()
     }
 }

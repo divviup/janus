@@ -29,7 +29,7 @@ static SCHEMA: &str = include_str!("../../../db/schema.sql");
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse options, then read & parse config.
-    let options = Options::from_args();
+    let options = Options::parse();
 
     debug!(?options, "Starting up");
 
@@ -261,7 +261,7 @@ struct KubernetesSecretOptions {
     #[clap(
         long,
         env = "SECRETS_K8S_NAMESPACE",
-        takes_value = true,
+        num_args = 1,
         long_help = "Kubernetes namespace where the datastore key is stored. Required if \
         --datastore-keys is not set or if command is create-datastore-key."
     )]
@@ -271,7 +271,7 @@ struct KubernetesSecretOptions {
     #[clap(
         long,
         env = "DATASTORE_KEYS_SECRET_NAME",
-        takes_value = true,
+        num_args = 1,
         default_value = "datastore-key"
     )]
     datastore_keys_secret_name: String,
@@ -280,7 +280,7 @@ struct KubernetesSecretOptions {
     #[clap(
         long,
         env = "DATASTORE_KEYS_SECRET_KEY",
-        takes_value = true,
+        num_args = 1,
         help = "Key into data of datastore key Kubernetes secret",
         default_value = "datastore_key"
     )]
@@ -347,7 +347,7 @@ impl BinaryConfig for Config {
 mod tests {
     use super::{fetch_datastore_keys, Config, KubernetesSecretOptions, Options};
     use base64::STANDARD_NO_PAD;
-    use clap::IntoApp;
+    use clap::CommandFactory;
     use janus_core::{task::VdafInstance, test_util::kubernetes, time::RealClock};
     use janus_messages::Role;
     use janus_server::{
@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn verify_app() {
-        Options::into_app().debug_assert()
+        Options::command().debug_assert()
     }
 
     #[tokio::test]

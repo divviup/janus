@@ -197,7 +197,7 @@ struct Options {
     #[clap(
         long,
         value_parser = TaskIdValueParser::new(),
-        help_heading = "DAP TASK PARAMETERS",
+        help_heading = "DAP Task Parameters",
         display_order = 0
     )]
     task_id: TaskId,
@@ -209,7 +209,7 @@ struct Options {
         long,
         value_parser = StringValueParser::new().map(parse_authentication_token),
         env,
-        help_heading = "DAP TASK PARAMETERS",
+        help_heading = "DAP Task Parameters",
         display_order = 2
     )]
     #[derivative(Debug = "ignore")]
@@ -218,7 +218,7 @@ struct Options {
     #[clap(
         long,
         value_parser = HpkeConfigValueParser::new(),
-        help_heading = "DAP TASK PARAMETERS",
+        help_heading = "DAP Task Parameters",
         display_order = 3
     )]
     hpke_config: HpkeConfig,
@@ -227,7 +227,7 @@ struct Options {
         long,
         value_parser = PrivateKeyValueParser::new(),
         env,
-        help_heading = "DAP TASK PARAMETERS",
+        help_heading = "DAP Task Parameters",
         display_order = 4
     )]
     #[derivative(Debug = "ignore")]
@@ -237,15 +237,15 @@ struct Options {
     #[clap(
         long,
         value_enum,
-        help_heading = "VDAF ALGORITHM AND PARAMETERS",
+        help_heading = "VDAF Algorithm and Parameters",
         display_order = 0
     )]
     vdaf: VdafType,
     /// Number of vector elements, for use with --vdaf=countvec
-    #[clap(long, help_heading = "VDAF ALGORITHM AND PARAMETERS")]
+    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     length: Option<usize>,
     /// Bit length of measurements, for use with --vdaf=sum
-    #[clap(long, help_heading = "VDAF ALGORITHM AND PARAMETERS")]
+    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     bits: Option<u32>,
     /// Comma-separated list of bucket boundaries, for use with --vdaf=histogram
     #[clap(
@@ -254,15 +254,15 @@ struct Options {
         num_args = 1,
         action = ArgAction::Set,
         value_parser = BucketsValueParser::new(),
-        help_heading = "VDAF ALGORITHM AND PARAMETERS"
+        help_heading = "VDAF Algorithm and Parameters"
     )]
     buckets: Option<Buckets>,
 
     /// Start of the collection batch interval, as the number of seconds since the Unix epoch
-    #[clap(long, help_heading = "COLLECT REQUEST PARAMETERS")]
+    #[clap(long, help_heading = "Collect Request Parameters")]
     batch_interval_start: u64,
     /// Duration of the collection batch interval, in seconds
-    #[clap(long, help_heading = "COLLECT REQUEST PARAMETERS")]
+    #[clap(long, help_heading = "Collect Request Parameters")]
     batch_interval_duration: u64,
 }
 
