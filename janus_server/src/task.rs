@@ -759,6 +759,11 @@ pub mod test_util {
             })
         }
 
+        /// Retrieves the aggregator endpoints associated with this task builder.
+        pub fn aggregator_endpoints(&self) -> &[Url] {
+            self.0.aggregator_endpoints()
+        }
+
         /// Associates the eventual task with the given aggregator role.
         pub fn with_role(self, role: Role) -> Self {
             Self(Task { role, ..self.0 })

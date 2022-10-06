@@ -5,16 +5,39 @@ use janus_collector::{
     test_util::collect_with_rewritten_url, Collection, Collector, CollectorParameters,
 };
 use janus_core::{
-    hpke::HpkePrivateKey,
+    hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
     retries::test_http_request_exponential_backoff,
+    task::VdafInstance,
     time::{Clock, RealClock, TimeExt},
 };
 use janus_messages::{Duration, Interval, Role};
-use janus_server::task::Task;
+use janus_server::task::{test_util::TaskBuilder, QueryType, Task};
 use prio::vdaf::prio3::Prio3;
+use rand::random;
 use reqwest::Url;
 use std::iter;
 use tokio::time;
+
+// Returns (collector_private_key, leader_task, helper_task).
+pub fn test_task_builders() -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
+    let endpoint_random_value = hex::encode(random::<[u8; 4]>());
+    let (collector_hpke_config, collector_private_key) =
+        generate_test_hpke_config_and_private_key();
+    let leader_task = TaskBuilder::new(
+        QueryType::TimeInterval,
+        VdafInstance::Prio3Aes128Count.into(),
+        Role::Leader,
+    )
+    .with_aggregator_endpoints(Vec::from([
+        Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
+        Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
+    ]))
+    .with_min_batch_size(46)
+    .with_collector_hpke_config(collector_hpke_config);
+    let helper_task = leader_task.clone().with_role(Role::Helper);
+
+    (collector_private_key, leader_task, helper_task)
+}
 
 pub fn translate_url_for_external_access(url: &Url, external_port: u16) -> Url {
     let mut translated = url.clone();

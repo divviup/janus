@@ -87,7 +87,7 @@ impl<'a> Daphne<'a> {
                 helper_url: task.aggregator_url(&Role::Helper).unwrap().clone(),
                 min_batch_duration: task.time_precision().as_seconds(), // TODO(#493): this field will likely need to be renamed
                 min_batch_size: task.min_batch_size(),
-                vdaf: daphne_vdaf_config_from_janus_vdaf(&task.vdaf()),
+                vdaf: daphne_vdaf_config_from_janus_vdaf(task.vdaf()),
                 vdaf_verify_key: hex::encode(task.vdaf_verify_keys().first().unwrap().as_ref()),
                 collector_hpke_config: DaphneHpkeConfig::from(task.collector_hpke_config().clone()),
             },
