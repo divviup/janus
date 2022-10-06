@@ -383,6 +383,7 @@ mod tests {
     use assert_matches::assert_matches;
     use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
     use prio::codec::Encode;
+    use rand::random;
 
     #[test]
     fn verify_app() {
@@ -395,7 +396,7 @@ mod tests {
         let encoded_hpke_config = base64::encode_config(hpke_config.get_encoded(), URL_SAFE_NO_PAD);
         let encoded_private_key = base64::encode_config(hpke_private_key.as_ref(), URL_SAFE_NO_PAD);
 
-        let task_id = TaskId::random();
+        let task_id: TaskId = random();
         let task_id_encoded = base64::encode_config(task_id.get_encoded(), URL_SAFE_NO_PAD);
 
         let leader = Url::parse("https://example.com/dap/").unwrap();
@@ -501,7 +502,7 @@ mod tests {
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind, ErrorKind::ArgumentConflict)
+            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
         );
 
         let mut bad_arguments = base_arguments.clone();
@@ -509,7 +510,7 @@ mod tests {
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind, ErrorKind::ArgumentConflict)
+            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
         );
 
         let mut bad_arguments = base_arguments.clone();
@@ -517,7 +518,7 @@ mod tests {
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind, ErrorKind::ArgumentConflict)
+            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
         );
 
         let mut bad_arguments = base_arguments.clone();
@@ -525,7 +526,7 @@ mod tests {
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind, ErrorKind::ArgumentConflict)
+            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
         );
 
         let mut bad_arguments = base_arguments.clone();
@@ -540,7 +541,7 @@ mod tests {
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind, ErrorKind::ArgumentConflict)
+            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
         );
 
         let mut bad_arguments = base_arguments.clone();
@@ -548,7 +549,7 @@ mod tests {
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind, ErrorKind::ArgumentConflict)
+            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
         );
 
         let mut good_arguments = base_arguments.clone();
