@@ -903,6 +903,7 @@ where
 mod tests {
     use super::AggregationJobDriver;
     use crate::{
+        aggregator::{DapProblemType, Error},
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
@@ -914,7 +915,7 @@ mod tests {
         task::{Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
-    use http::header::CONTENT_TYPE;
+    use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         hpke::{
             self, associated_data_for_report_share,
@@ -1275,7 +1276,10 @@ mod tests {
             *report.metadata().report_id(),
             PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
         )]));
-        let mocked_aggregate_failure = mock("POST", "/aggregate").with_status(500).create();
+        let mocked_aggregate_failure = mock("POST", "/aggregate")
+            .with_status(500)
+            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
+            .create();
         let mocked_aggregate_success = mock("POST", "/aggregate")
             .match_header(
                 "DAP-Auth-Token",
@@ -1299,7 +1303,13 @@ mod tests {
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("500 Internal Server Error"));
+        assert_matches!(
+            error.downcast().unwrap(),
+            Error::Http { problem_details, dap_problem_type } => {
+                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(dap_problem_type, Some(DapProblemType::UnauthorizedRequest));
+            }
+        );
         aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease))
             .await
@@ -1481,7 +1491,10 @@ mod tests {
             *report.metadata().report_id(),
             PrepareStepResult::Finished,
         )]));
-        let mocked_aggregate_failure = mock("POST", "/aggregate").with_status(500).create();
+        let mocked_aggregate_failure = mock("POST", "/aggregate")
+            .with_status(500)
+            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
+            .create();
         let mocked_aggregate_success = mock("POST", "/aggregate")
             .match_header(
                 "DAP-Auth-Token",
@@ -1502,7 +1515,13 @@ mod tests {
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("500 Internal Server Error"));
+        assert_matches!(
+            error.downcast().unwrap(),
+            Error::Http { problem_details, dap_problem_type } => {
+                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(dap_problem_type, Some(DapProblemType::UnrecognizedTask));
+            }
+        );
         aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease))
             .await

@@ -40,6 +40,7 @@ deadpool-postgres = "0.10.1"
 derivative = "2.2.0"
 futures = "0.3.24"
 http = "0.2.8"
+http-api-problem = "0.55.0"
 hyper = "0.14.20"
 itertools = "0.10.5"
 janus_core = { path = "../janus_core" }
