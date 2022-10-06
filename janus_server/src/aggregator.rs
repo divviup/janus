@@ -27,6 +27,7 @@ use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
     HeaderMap, StatusCode,
 };
+use http_api_problem::HttpApiProblem;
 use janus_core::{
     hpke::{
         self, associated_data_for_aggregate_share, associated_data_for_report_share,
@@ -66,6 +67,7 @@ use std::{
     future::Future,
     io::Cursor,
     net::SocketAddr,
+    str::FromStr,
     sync::Arc,
     time::Instant,
 };
@@ -176,8 +178,11 @@ pub enum Error {
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
     /// HTTP server returned an error status code.
-    #[error("HTTP response status {0}")]
-    Http(StatusCode),
+    #[error("HTTP response status {problem_details}")]
+    Http {
+        problem_details: HttpApiProblem,
+        dap_problem_type: Option<DapProblemType>,
+    },
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
@@ -212,7 +217,7 @@ impl Error {
             Error::Hpke(_) => "hpke",
             Error::TaskParameters(_) => "task_parameters",
             Error::HttpClient(_) => "http_client",
-            Error::Http(_) => "http",
+            Error::Http { .. } => "http",
             Error::Internal(_) => "internal",
         }
     }
@@ -2093,7 +2098,8 @@ where
 }
 
 /// Representation of the different problem types defined in Table 1 in §3.2.
-enum DapProblemType {
+#[derive(Debug, PartialEq, Eq)]
+pub enum DapProblemType {
     UnrecognizedMessage,
     UnrecognizedTask,
     MissingTaskId,
@@ -2186,6 +2192,45 @@ impl DapProblemType {
             DapProblemType::BatchOverlap => {
                 "The queried batch overlaps with a previously queried batch."
             }
+        }
+    }
+}
+
+/// An error indicating a problem type URI was not recognized as a DAP problem type.
+#[derive(Debug)]
+pub struct DapProblemTypeParseError;
+
+impl FromStr for DapProblemType {
+    type Err = DapProblemTypeParseError;
+
+    fn from_str(value: &str) -> Result<DapProblemType, DapProblemTypeParseError> {
+        match value {
+            "urn:ietf:params:ppm:dap:error:unrecognizedMessage" => {
+                Ok(DapProblemType::UnrecognizedMessage)
+            }
+            "urn:ietf:params:ppm:dap:error:unrecognizedTask" => {
+                Ok(DapProblemType::UnrecognizedTask)
+            }
+            "urn:ietf:params:ppm:dap:error:missingTaskID" => Ok(DapProblemType::MissingTaskId),
+            "urn:ietf:params:ppm:dap:error:unrecognizedAggregationJob" => {
+                Ok(DapProblemType::UnrecognizedAggregationJob)
+            }
+            "urn:ietf:params:ppm:dap:error:outdatedConfig" => Ok(DapProblemType::OutdatedConfig),
+            "urn:ietf:params:ppm:dap:error:reportTooLate" => Ok(DapProblemType::ReportTooLate),
+            "urn:ietf:params:ppm:dap:error:reportTooEarly" => Ok(DapProblemType::ReportTooEarly),
+            "urn:ietf:params:ppm:dap:error:batchInvalid" => Ok(DapProblemType::BatchInvalid),
+            "urn:ietf:params:ppm:dap:error:invalidBatchSize" => {
+                Ok(DapProblemType::InvalidBatchSize)
+            }
+            "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes" => {
+                Ok(DapProblemType::BatchQueriedTooManyTimes)
+            }
+            "urn:ietf:params:ppm:dap:error:batchMismatch" => Ok(DapProblemType::BatchMismatch),
+            "urn:ietf:params:ppm:dap:error:unauthorizedRequest" => {
+                Ok(DapProblemType::UnauthorizedRequest)
+            }
+            "urn:ietf:params:ppm:dap:error:batchOverlap" => Ok(DapProblemType::BatchOverlap),
+            _ => Err(DapProblemTypeParseError),
         }
     }
 }
@@ -2321,7 +2366,7 @@ where
                     Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::HttpClient(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::Http(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::Http { .. }) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::TaskParameters(_)) => {
                         StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
@@ -2675,7 +2720,6 @@ async fn post_to_helper<T: Encode>(
 
     let status = response.status();
     if !status.is_success() {
-        // TODO(#381): Attempt to decode a problem details response.
         http_request_duration_histogram.record(
             &Context::current(),
             start.elapsed().as_secs_f64(),
@@ -2685,7 +2729,21 @@ async fn post_to_helper<T: Encode>(
                 KeyValue::new("endpoint", endpoint),
             ],
         );
-        return Err(Error::Http(status));
+        if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
+            problem_details.status = Some(status);
+            let type_opt = problem_details
+                .type_url
+                .as_ref()
+                .and_then(|str| str.parse::<DapProblemType>().ok());
+            return Err(Error::Http {
+                problem_details,
+                dap_problem_type: type_opt,
+            });
+        }
+        return Err(Error::Http {
+            problem_details: HttpApiProblem::new(status),
+            dap_problem_type: None,
+        });
     }
 
     match response.bytes().await {
@@ -2719,7 +2777,10 @@ async fn post_to_helper<T: Encode>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        aggregator::{aggregator_filter, Aggregator, Error},
+        aggregator::{
+            aggregator_filter, error_handler, post_to_helper, Aggregator, DapProblemType,
+            DapProblemTypeParseError, Error,
+        },
         datastore::{
             models::{
                 AggregateShareJob, AggregationJob, AggregationJobState, BatchUnitAggregation,
@@ -2748,9 +2809,9 @@ mod tests {
             HpkePrivateKey, Label,
         },
         report_id::ReportIdChecksumExt,
-        task::VdafInstance,
+        task::{AuthenticationToken, VdafInstance},
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
-        time::{Clock, MockClock, TimeExt as CoreTimeExt},
+        time::{Clock, MockClock, RealClock, TimeExt as _},
     };
     use janus_messages::{
         query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp,
@@ -2759,6 +2820,7 @@ mod tests {
         Interval, PartialBatchSelector, PrepareStep, PrepareStepResult, Query, Report, ReportId,
         ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
+    use mockito::mock;
     use opentelemetry::global::meter;
     use prio::{
         codec::{Decode, Encode},
@@ -2770,6 +2832,7 @@ mod tests {
         },
     };
     use rand::random;
+    use reqwest::Client;
     use serde_json::json;
     use std::{collections::HashMap, io::Cursor, sync::Arc};
     use url::Url;
@@ -2778,7 +2841,7 @@ mod tests {
         cors::CorsForbidden,
         filters::BoxedFilter,
         reply::{Reply, Response},
-        Rejection,
+        Filter, Rejection,
     };
 
     const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
@@ -7319,5 +7382,177 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    #[test]
+    fn dap_problem_type_round_trip() {
+        for problem_type in [
+            DapProblemType::UnrecognizedMessage,
+            DapProblemType::UnrecognizedTask,
+            DapProblemType::MissingTaskId,
+            DapProblemType::UnrecognizedAggregationJob,
+            DapProblemType::OutdatedConfig,
+            DapProblemType::ReportTooLate,
+            DapProblemType::ReportTooEarly,
+            DapProblemType::BatchInvalid,
+            DapProblemType::InvalidBatchSize,
+            DapProblemType::BatchQueriedTooManyTimes,
+            DapProblemType::BatchMismatch,
+            DapProblemType::UnauthorizedRequest,
+            DapProblemType::BatchOverlap,
+        ] {
+            let uri = problem_type.type_uri();
+            assert_eq!(uri.parse::<DapProblemType>().unwrap(), problem_type);
+        }
+        assert_matches!("".parse::<DapProblemType>(), Err(DapProblemTypeParseError));
+    }
+
+    #[tokio::test]
+    async fn problem_details_round_trip() {
+        let meter = opentelemetry::global::meter("");
+        let response_histogram = meter.f64_histogram("janus_aggregator_response_time").init();
+        let request_histogram = meter
+            .f64_histogram("janus_http_request_duration_seconds")
+            .init();
+        let server_url: Url = mockito::server_url().parse().unwrap();
+        let auth_token = AuthenticationToken::from("auth".as_bytes().to_vec());
+        let http_client = Client::new();
+
+        struct TestCase {
+            error_factory: Box<dyn Fn() -> Error + Send + Sync>,
+            expected_problem_type: Option<DapProblemType>,
+        }
+
+        impl TestCase {
+            fn new(
+                error_factory: Box<dyn Fn() -> Error + Send + Sync>,
+                expected_problem_type: Option<DapProblemType>,
+            ) -> TestCase {
+                TestCase {
+                    error_factory,
+                    expected_problem_type,
+                }
+            }
+        }
+
+        let test_cases = [
+            TestCase::new(Box::new(|| Error::InvalidConfiguration("test")), None),
+            TestCase::new(
+                Box::new(|| Error::ReportTooLate(random(), random(), RealClock::default().now())),
+                Some(DapProblemType::ReportTooLate),
+            ),
+            TestCase::new(
+                Box::new(|| Error::UnrecognizedMessage(Some(random()), "test")),
+                Some(DapProblemType::UnrecognizedMessage),
+            ),
+            TestCase::new(
+                Box::new(|| Error::UnrecognizedTask(random())),
+                Some(DapProblemType::UnrecognizedTask),
+            ),
+            TestCase::new(
+                Box::new(|| Error::MissingTaskId),
+                Some(DapProblemType::MissingTaskId),
+            ),
+            TestCase::new(
+                Box::new(|| Error::UnrecognizedAggregationJob(random(), random())),
+                Some(DapProblemType::UnrecognizedAggregationJob),
+            ),
+            TestCase::new(
+                Box::new(|| Error::OutdatedHpkeConfig(random(), HpkeConfigId::from(0))),
+                Some(DapProblemType::OutdatedConfig),
+            ),
+            TestCase::new(
+                Box::new(|| Error::ReportTooEarly(random(), random(), RealClock::default().now())),
+                Some(DapProblemType::ReportTooEarly),
+            ),
+            TestCase::new(
+                Box::new(|| Error::UnauthorizedRequest(random())),
+                Some(DapProblemType::UnauthorizedRequest),
+            ),
+            TestCase::new(
+                Box::new(|| Error::InvalidBatchSize(random(), 8)),
+                Some(DapProblemType::InvalidBatchSize),
+            ),
+            TestCase::new(
+                Box::new(|| {
+                    Error::BatchInvalid(
+                        random(),
+                        Interval::new(RealClock::default().now(), Duration::from_seconds(3600))
+                            .unwrap(),
+                    )
+                }),
+                Some(DapProblemType::BatchInvalid),
+            ),
+            TestCase::new(
+                Box::new(|| {
+                    Error::BatchOverlap(
+                        random(),
+                        Interval::new(RealClock::default().now(), Duration::from_seconds(3600))
+                            .unwrap(),
+                    )
+                }),
+                Some(DapProblemType::BatchOverlap),
+            ),
+            TestCase::new(
+                Box::new(|| Error::BatchMismatch {
+                    task_id: random(),
+                    own_checksum: ReportIdChecksum::from([0; 32]),
+                    own_report_count: 100,
+                    peer_checksum: ReportIdChecksum::from([1; 32]),
+                    peer_report_count: 99,
+                }),
+                Some(DapProblemType::BatchMismatch),
+            ),
+            TestCase::new(
+                Box::new(|| Error::BatchQueriedTooManyTimes(random(), 99)),
+                Some(DapProblemType::BatchQueriedTooManyTimes),
+            ),
+        ];
+
+        for TestCase {
+            error_factory,
+            expected_problem_type,
+        } in test_cases
+        {
+            // Run error_handler() on the given error, and capture its response.
+            let error_factory = Arc::new(error_factory);
+            let base_filter = warp::post().map({
+                let error_factory = Arc::clone(&error_factory);
+                move || -> Result<Response, Error> { Err(error_factory()) }
+            });
+            let wrapped_filter = base_filter.with(warp::wrap_fn(error_handler(
+                response_histogram.clone(),
+                "test",
+            )));
+            let response = warp::test::request()
+                .method("POST")
+                .reply(&wrapped_filter)
+                .await;
+
+            // Serve the response via mockito, and run it through post_to_helper's error handling.
+            let error_mock = mock("POST", "/")
+                .with_status(response.status().as_u16().into())
+                .with_body(response.body())
+                .create();
+            let actual_error = post_to_helper(
+                &http_client,
+                server_url.clone(),
+                "text/plain",
+                (),
+                &auth_token,
+                &request_histogram,
+            )
+            .await
+            .unwrap_err();
+            error_mock.assert();
+
+            // Confirm that post_to_helper() correctly parsed the error type from error_handler().
+            assert_matches!(
+                actual_error,
+                Error::Http { dap_problem_type: problem_type, .. } => {
+                    assert_eq!(problem_type, expected_problem_type);
+                }
+            );
+        }
     }
 }

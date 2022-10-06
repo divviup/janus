@@ -632,7 +632,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        aggregator::{aggregate_share::CollectJobDriver, Error},
+        aggregator::{aggregate_share::CollectJobDriver, DapProblemType, Error},
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
@@ -954,13 +954,22 @@ mod tests {
             )
             .match_body(leader_request.get_encoded())
             .with_status(500)
+            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes\"}")
             .create();
 
         let error = collect_job_driver
             .step_collect_job(ds.clone(), Arc::clone(&lease))
             .await
             .unwrap_err();
-        assert_matches!(error, Error::Http(StatusCode::INTERNAL_SERVER_ERROR));
+        assert_matches!(
+            error,
+            Error::Http {
+                problem_details,
+                dap_problem_type: Some(DapProblemType::BatchQueriedTooManyTimes),
+            } => {
+                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        );
 
         mocked_failed_aggregate_share.assert();
 

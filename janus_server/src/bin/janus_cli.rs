@@ -29,7 +29,7 @@ static SCHEMA: &str = include_str!("../../../db/schema.sql");
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse options, then read & parse config.
-    let options = Options::from_args();
+    let options = Options::parse();
 
     debug!(?options, "Starting up");
 
@@ -128,6 +128,7 @@ impl Command {
                     kube_client,
                     k8s_namespace,
                     &kubernetes_secret_options.datastore_keys_secret_name,
+                    &kubernetes_secret_options.datastore_keys_secret_data_key,
                 )
                 .await
             }
@@ -221,6 +222,7 @@ async fn create_datastore_key(
     kube_client: kube::Client,
     k8s_namespace: &str,
     k8s_secret_name: &str,
+    k8s_secret_data_key: &str,
 ) -> Result<()> {
     info!("Creating datastore key");
     let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client.clone(), k8s_namespace);
@@ -244,7 +246,7 @@ async fn create_datastore_key(
                     ..ObjectMeta::default()
                 },
                 string_data: Some(BTreeMap::from([(
-                    "datastore_key".to_string(),
+                    k8s_secret_data_key.to_string(),
                     secret_content,
                 )])),
                 ..Secret::default()
@@ -261,7 +263,7 @@ struct KubernetesSecretOptions {
     #[clap(
         long,
         env = "SECRETS_K8S_NAMESPACE",
-        takes_value = true,
+        num_args = 1,
         long_help = "Kubernetes namespace where the datastore key is stored. Required if \
         --datastore-keys is not set or if command is create-datastore-key."
     )]
@@ -271,7 +273,7 @@ struct KubernetesSecretOptions {
     #[clap(
         long,
         env = "DATASTORE_KEYS_SECRET_NAME",
-        takes_value = true,
+        num_args = 1,
         default_value = "datastore-key"
     )]
     datastore_keys_secret_name: String,
@@ -280,7 +282,7 @@ struct KubernetesSecretOptions {
     #[clap(
         long,
         env = "DATASTORE_KEYS_SECRET_KEY",
-        takes_value = true,
+        num_args = 1,
         help = "Key into data of datastore key Kubernetes secret",
         default_value = "datastore_key"
     )]
@@ -347,7 +349,7 @@ impl BinaryConfig for Config {
 mod tests {
     use super::{fetch_datastore_keys, Config, KubernetesSecretOptions, Options};
     use base64::STANDARD_NO_PAD;
-    use clap::IntoApp;
+    use clap::CommandFactory;
     use janus_core::{task::VdafInstance, test_util::kubernetes, time::RealClock};
     use janus_messages::Role;
     use janus_server::{
@@ -369,7 +371,7 @@ mod tests {
 
     #[test]
     fn verify_app() {
-        Options::into_app().debug_assert()
+        Options::command().debug_assert()
     }
 
     #[tokio::test]
@@ -377,9 +379,14 @@ mod tests {
         // Prep: create a Kubernetes cluster and put a secret in it
         let k8s_cluster = kubernetes::EphemeralCluster::create();
         let kube_client = k8s_cluster.cluster().client().await;
-        super::create_datastore_key(kube_client.clone(), "default", "secret-name")
-            .await
-            .unwrap();
+        super::create_datastore_key(
+            kube_client.clone(),
+            "default",
+            "secret-name",
+            "secret-data-key",
+        )
+        .await
+        .unwrap();
 
         let expected_datastore_keys =
             Vec::from(["datastore-key-1".to_string(), "datastore-key-2".to_string()]);
@@ -405,7 +412,7 @@ mod tests {
         // Keys not provided at command line, present in k8s
         let k8s_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),
-            datastore_keys_secret_data_key: "datastore_key".to_string(),
+            datastore_keys_secret_data_key: "secret-data-key".to_string(),
             secrets_k8s_namespace: Some("default".to_string()),
         };
 
@@ -421,7 +428,7 @@ mod tests {
         // Neither flag provided
         let k8s_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),
-            datastore_keys_secret_data_key: "datastore_key".to_string(),
+            datastore_keys_secret_data_key: "secret-data-key".to_string(),
             secrets_k8s_namespace: None,
         };
 
@@ -502,13 +509,14 @@ mod tests {
         // Create a datastore key.
         const NAMESPACE: &str = "default";
         const SECRET_NAME: &str = "secret-name";
-        super::create_datastore_key(kube_client.clone(), NAMESPACE, SECRET_NAME)
+        const SECRET_DATA_KEY: &str = "secret-data-key";
+        super::create_datastore_key(kube_client.clone(), NAMESPACE, SECRET_NAME, SECRET_DATA_KEY)
             .await
             .unwrap();
 
         // Verify that the secret was created.
         let secret_data =
-            fetch_datastore_keys(&kube_client, NAMESPACE, SECRET_NAME, "datastore_key")
+            fetch_datastore_keys(&kube_client, NAMESPACE, SECRET_NAME, SECRET_DATA_KEY)
                 .await
                 .unwrap();
 

@@ -1,33 +1,23 @@
 ```
 $ aggregation_job_driver --help
-janus-aggregation-job-driver [..]
 Janus aggregation job driver
 
-USAGE:
-    aggregation_job_driver [OPTIONS] --config-file <CONFIG_FILE>
+Usage: aggregation_job_driver [OPTIONS] --config-file <CONFIG_FILE>
 
-OPTIONS:
-        --config-file <CONFIG_FILE>
-            path to configuration file [env: CONFIG_FILE=]
-
-        --database-password <DATABASE_PASSWORD>
-            PostgreSQL password [env: PGPASSWORD]
-
-        --datastore-keys <DATASTORE_KEYS>
-            datastore encryption keys, encoded in base64 then comma-separated [env: DATASTORE_KEYS]
-
-    -h, --help
-            Print help information
-
-        --otlp-metrics-metadata <KEY=value>
-            additional OTLP/gRPC metadata key/value pairs for the metrics exporter [env:
-            OTLP_METRICS_METADATA=]
-
-        --otlp-tracing-metadata <KEY=value>
-            additional OTLP/gRPC metadata key/value pairs for the tracing exporter [env:
-            OTLP_TRACING_METADATA=]
-
-    -V, --version
-            Print version information
+Options:
+      --config-file <CONFIG_FILE>
+          path to configuration file [env: CONFIG_FILE=]
+      --database-password <DATABASE_PASSWORD>
+          PostgreSQL password [env: PGPASSWORD]
+      --datastore-keys <DATASTORE_KEYS>
+          datastore encryption keys, encoded in base64 then comma-separated [env: DATASTORE_KEYS]
+      --otlp-tracing-metadata <KEY=value>
+          additional OTLP/gRPC metadata key/value pairs for the tracing exporter [env: OTLP_TRACING_METADATA=]
+      --otlp-metrics-metadata <KEY=value>
+          additional OTLP/gRPC metadata key/value pairs for the metrics exporter [env: OTLP_METRICS_METADATA=]
+  -h, --help
+          Print help information
+  -V, --version
+          Print version information
 
 ```

@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
 #[derive(Debug, Parser)]
 #[clap(
     name = "janus-aggregator",
-    about = "PPM aggregator server",
+    about = "DAP aggregator server",
     rename_all = "kebab-case",
     version = env!("CARGO_PKG_VERSION"),
 )]
@@ -121,7 +121,7 @@ impl BinaryConfig for Config {
 #[cfg(test)]
 mod tests {
     use super::{Config, HeaderEntry, Options};
-    use clap::IntoApp;
+    use clap::CommandFactory;
     use janus_server::{
         config::{
             test_util::{
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn verify_app() {
-        Options::into_app().debug_assert()
+        Options::command().debug_assert()
     }
 
     #[test]

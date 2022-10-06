@@ -1,7 +1,8 @@
 use base64::URL_SAFE_NO_PAD;
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
-    ArgAction, CommandFactory, ErrorKind, FromArgMatches, Parser, ValueEnum,
+    error::ErrorKind,
+    ArgAction, CommandFactory, FromArgMatches, Parser, ValueEnum,
 };
 use derivative::Derivative;
 use janus_collector::{default_http_client, Collector, CollectorParameters};
@@ -196,7 +197,7 @@ struct Options {
     #[clap(
         long,
         value_parser = TaskIdValueParser::new(),
-        help_heading = "DAP TASK PARAMETERS",
+        help_heading = "DAP Task Parameters",
         display_order = 0
     )]
     task_id: TaskId,
@@ -208,7 +209,7 @@ struct Options {
         long,
         value_parser = StringValueParser::new().map(parse_authentication_token),
         env,
-        help_heading = "DAP TASK PARAMETERS",
+        help_heading = "DAP Task Parameters",
         display_order = 2
     )]
     #[derivative(Debug = "ignore")]
@@ -217,7 +218,7 @@ struct Options {
     #[clap(
         long,
         value_parser = HpkeConfigValueParser::new(),
-        help_heading = "DAP TASK PARAMETERS",
+        help_heading = "DAP Task Parameters",
         display_order = 3
     )]
     hpke_config: HpkeConfig,
@@ -226,7 +227,7 @@ struct Options {
         long,
         value_parser = PrivateKeyValueParser::new(),
         env,
-        help_heading = "DAP TASK PARAMETERS",
+        help_heading = "DAP Task Parameters",
         display_order = 4
     )]
     #[derivative(Debug = "ignore")]
@@ -236,33 +237,32 @@ struct Options {
     #[clap(
         long,
         value_enum,
-        help_heading = "VDAF ALGORITHM AND PARAMETERS",
+        help_heading = "VDAF Algorithm and Parameters",
         display_order = 0
     )]
     vdaf: VdafType,
     /// Number of vector elements, for use with --vdaf=countvec
-    #[clap(long, help_heading = "VDAF ALGORITHM AND PARAMETERS")]
+    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     length: Option<usize>,
     /// Bit length of measurements, for use with --vdaf=sum
-    #[clap(long, help_heading = "VDAF ALGORITHM AND PARAMETERS")]
+    #[clap(long, help_heading = "VDAF Algorithm and Parameters")]
     bits: Option<u32>,
     /// Comma-separated list of bucket boundaries, for use with --vdaf=histogram
     #[clap(
         long,
         required = false,
-        takes_value = true,
-        multiple_occurrences = false,
+        num_args = 1,
         action = ArgAction::Set,
         value_parser = BucketsValueParser::new(),
-        help_heading = "VDAF ALGORITHM AND PARAMETERS"
+        help_heading = "VDAF Algorithm and Parameters"
     )]
     buckets: Option<Buckets>,
 
     /// Start of the collection batch interval, as the number of seconds since the Unix epoch
-    #[clap(long, help_heading = "COLLECT REQUEST PARAMETERS")]
+    #[clap(long, help_heading = "Collect Request Parameters")]
     batch_interval_start: u64,
     /// Duration of the collection batch interval, in seconds
-    #[clap(long, help_heading = "COLLECT REQUEST PARAMETERS")]
+    #[clap(long, help_heading = "Collect Request Parameters")]
     batch_interval_duration: u64,
 }
 
@@ -292,8 +292,9 @@ where
     V::AggregateResult: Debug,
 {
     let collector = Collector::new(parameters, vdaf, http_client);
-    let agg_result = collector.collect(interval, agg_param).await?;
-    println!("Aggregation result: {:?}", agg_result);
+    let collection = collector.collect(interval, agg_param).await?;
+    println!("Aggregation result: {:?}", collection.aggregate_result());
+    println!("Number of reports: {}", collection.report_count());
     Ok(())
 }
 
@@ -348,7 +349,7 @@ async fn run(options: Options) -> Result<(), Error> {
                     .to_possible_value()
                     .unwrap()
                     .get_help()
-                    .unwrap_or("the selected algorithm"),
+                    .unwrap(),
             ),
         )
         .into()),
