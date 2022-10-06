@@ -9,7 +9,7 @@ use self::models::{
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
 use crate::{
     messages::{IntervalExt, TimeExt},
-    task::{self, Task, VdafInstance, QueryType},
+    task::{self, QueryType, Task, VdafInstance},
     SecretBytes,
 };
 use anyhow::anyhow;
@@ -615,7 +615,8 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Task, Error> {
         // Scalar task parameters.
         let aggregator_role: AggregatorRole = row.get("aggregator_role");
-        let endpoints = row.get::<_, Vec<String>>("aggregator_endpoints")
+        let endpoints = row
+            .get::<_, Vec<String>>("aggregator_endpoints")
             .into_iter()
             .map(|endpoint| Ok(Url::parse(&endpoint)?))
             .collect::<Result<_, Error>>()?;
@@ -3913,7 +3914,7 @@ mod tests {
             Crypter, Error,
         },
         messages::{test_util::new_dummy_report, DurationExt, TimeExt},
-        task::{test_util::TaskBuilder, Task, PRIO3_AES128_VERIFY_KEY_LENGTH, QueryType},
+        task::{test_util::TaskBuilder, QueryType, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
     use chrono::NaiveDate;
@@ -4076,7 +4077,12 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let report = Report::new(
             *task.task_id(),
             ReportMetadata::new(
@@ -4157,9 +4163,18 @@ mod tests {
             .to_batch_unit_interval_start(&Duration::from_seconds(1000))
             .unwrap();
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
-        let unrelated_task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
+        let unrelated_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
 
         let first_unaggregated_report = Report::new(
             *task.task_id(),
@@ -4277,9 +4292,18 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, crate::task::VdafInstance::Fake, Role::Leader).build();
-        let unrelated_task =
-            TaskBuilder::new(QueryType::TimeInterval, crate::task::VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
+        let unrelated_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
 
         let first_unaggregated_report = Report::new(
             *task.task_id(),
@@ -4539,7 +4563,12 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let report_share = ReportShare::new(
             ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -4620,8 +4649,12 @@ mod tests {
         // better exercising the serialization/deserialization roundtrip of the aggregation_param.
         const PRG_SEED_SIZE: usize = 16;
         type ToyPoplar1 = Poplar1<ToyIdpf<Field128>, PrgAes128, PRG_SEED_SIZE>;
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 64 }.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Poplar1 { bits: 64 }.into(),
+            Role::Leader,
+        )
+        .build();
         let aggregation_job = AggregationJob::<PRG_SEED_SIZE, ToyPoplar1>::new(
             *task.task_id(),
             random(),
@@ -4691,7 +4724,12 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         const AGGREGATION_JOB_COUNT: usize = 10;
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let mut aggregation_job_ids: Vec<_> = thread_rng()
             .sample_iter(Standard)
             .take(AGGREGATION_JOB_COUNT)
@@ -4731,8 +4769,12 @@ mod tests {
 
                 // Write an aggregation job for a task that we are taking on the helper role for.
                 // We don't want to retrieve this one, either.
-                let helper_task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Helper).build();
+                let helper_task = TaskBuilder::new(
+                    QueryType::TimeInterval,
+                    VdafInstance::Prio3Aes128Count.into(),
+                    Role::Helper,
+                )
+                .build();
                 tx.put_task(&helper_task).await?;
                 tx.put_aggregation_job(&AggregationJob::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -4989,8 +5031,12 @@ mod tests {
         // better exercising the serialization/deserialization roundtrip of the aggregation_param.
         const PRG_SEED_SIZE: usize = 16;
         type ToyPoplar1 = Poplar1<ToyIdpf<Field128>, PrgAes128, PRG_SEED_SIZE>;
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 64 }.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Poplar1 { bits: 64 }.into(),
+            Role::Leader,
+        )
+        .build();
         let first_aggregation_job = AggregationJob::<PRG_SEED_SIZE, ToyPoplar1>::new(
             *task.task_id(),
             random(),
@@ -5023,9 +5069,12 @@ mod tests {
 
                 // Also write an unrelated aggregation job with a different task ID to check that it
                 // is not returned.
-                let unrelated_task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Poplar1 { bits: 64 }.into(), Role::Leader)
-                        .build();
+                let unrelated_task = TaskBuilder::new(
+                    QueryType::TimeInterval,
+                    VdafInstance::Poplar1 { bits: 64 }.into(),
+                    Role::Leader,
+                )
+                .build();
                 tx.put_task(&unrelated_task).await?;
                 tx.put_aggregation_job(&AggregationJob::<PRG_SEED_SIZE, ToyPoplar1>::new(
                     *unrelated_task.task_id(),
@@ -5077,8 +5126,12 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            let task =
-                TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+            let task = TaskBuilder::new(
+                QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128Count.into(),
+                Role::Leader,
+            )
+            .build();
             let aggregation_job_id = random();
             let time = Time::from_seconds_since_epoch(12345);
             let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
@@ -5233,7 +5286,12 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let (prep_state, prep_msg, output_share) = generate_vdaf_values(vdaf.as_ref(), (), 0);
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let aggregation_job_id = random();
 
         let report_aggregations = ds
@@ -5368,7 +5426,12 @@ mod tests {
     async fn lookup_collect_job() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(100),
             Duration::from_seconds(100),
@@ -5571,10 +5634,18 @@ mod tests {
     async fn get_collect_job_task_id() {
         install_test_trace_subscriber();
 
-        let first_task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
-        let second_task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let first_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
+        let second_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(100),
             Duration::from_seconds(100),
@@ -5641,7 +5712,12 @@ mod tests {
     async fn get_collect_job() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let first_batch_interval = Interval::new(
             Time::from_seconds_since_epoch(100),
             Duration::from_seconds(100),
@@ -5748,7 +5824,12 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let abandoned_batch_interval = Interval::new(
             Time::from_seconds_since_epoch(100),
             Duration::from_seconds(100),
@@ -5878,9 +5959,13 @@ mod tests {
             Box::pin(async move {
                 for task_id in &test_case.task_ids {
                     tx.put_task(
-                        &TaskBuilder::new(QueryType::TimeInterval, crate::task::VdafInstance::Fake, Role::Leader)
-                            .with_task_id(*task_id)
-                            .build(),
+                        &TaskBuilder::new(
+                            QueryType::TimeInterval,
+                            crate::task::VdafInstance::Fake,
+                            Role::Leader,
+                        )
+                        .with_task_id(*task_id)
+                        .build(),
                     )
                     .await?;
                 }
@@ -6646,11 +6731,19 @@ mod tests {
         const PRG_SEED_SIZE: usize = 16;
         type ToyPoplar1 = Poplar1<ToyIdpf<Field64>, PrgAes128, PRG_SEED_SIZE>;
 
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_time_precision(Duration::from_seconds(100))
-            .build();
-        let other_task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .with_time_precision(Duration::from_seconds(100))
+        .build();
+        let other_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let aggregate_share = AggregateShare::from(Vec::from([Field64::from(17)]));
         let aggregation_param = BTreeSet::from([
             IdpfInput::new("abc".as_bytes(), 0).unwrap(),
@@ -6865,7 +6958,8 @@ mod tests {
 
         ds.run_tx(|tx| {
             Box::pin(async move {
-                let task = TaskBuilder::new(QueryType::TimeInterval, 
+                let task = TaskBuilder::new(
+                    QueryType::TimeInterval,
                     VdafInstance::Prio3Aes128Count.into(),
                     Role::Helper,
                 ).build();
