@@ -2,7 +2,8 @@
 
 use backoff::ExponentialBackoff;
 use derivative::Derivative;
-use http::{header::CONTENT_TYPE, StatusCode};
+use http::header::CONTENT_TYPE;
+use http_api_problem::HttpApiProblem;
 use janus_core::{
     hpke::associated_data_for_report_share,
     hpke::{self, HpkeApplicationInfo, Label},
@@ -31,7 +32,7 @@ pub enum Error {
     #[error("codec error: {0}")]
     Codec(#[from] prio::codec::CodecError),
     #[error("HTTP response status {0}")]
-    Http(StatusCode),
+    Http(HttpApiProblem),
     #[error("URL parse: {0}")]
     Url(#[from] url::ParseError),
     #[error("VDAF error: {0}")]
@@ -150,7 +151,11 @@ pub async fn aggregator_hpke_config(
     .or_else(|e| e)?;
     let status = hpke_config_response.status();
     if !status.is_success() {
-        return Err(Error::Http(status));
+        if let Ok(mut problem_details) = hpke_config_response.json::<HttpApiProblem>().await {
+            problem_details.status = Some(status);
+            return Err(Error::Http(problem_details));
+        }
+        return Err(Error::Http(HttpApiProblem::new(status)));
     }
 
     Ok(HpkeConfig::decode(&mut Cursor::new(
@@ -272,8 +277,11 @@ where
         .or_else(|e| e)?;
         let status = upload_response.status();
         if !status.is_success() {
-            // TODO(#233): decode an RFC 7807 problem document
-            return Err(Error::Http(status));
+            if let Ok(mut problem_details) = upload_response.json::<HttpApiProblem>().await {
+                problem_details.status = Some(status);
+                return Err(Error::Http(problem_details));
+            }
+            return Err(Error::Http(HttpApiProblem::new(status)));
         }
 
         Ok(())
@@ -284,6 +292,7 @@ where
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
+    use http::StatusCode;
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
         retries::test_http_request_exponential_backoff, test_util::install_test_trace_subscriber,
@@ -374,7 +383,44 @@ mod tests {
         let client = setup_client(Prio3::new_aes128_count(2).unwrap());
         assert_matches!(
             client.upload(&1).await,
-            Err(Error::Http(StatusCode::NOT_IMPLEMENTED))
+            Err(Error::Http(problem)) => {
+                assert_eq!(problem.status.unwrap(), StatusCode::NOT_IMPLEMENTED);
+            }
+        );
+
+        mocked_upload.assert();
+    }
+
+    #[tokio::test]
+    async fn upload_problem_details() {
+        install_test_trace_subscriber();
+
+        let mocked_upload = mock("POST", "/upload")
+            .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+            .with_status(400)
+            .with_body(
+                concat!(
+                    "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
+                    "\"detail\": \"The message type for a response was incorrect or the payload was malformed.\"}",
+                )
+            )
+            .expect(1)
+            .create();
+
+        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
+        assert_matches!(
+            client.upload(&1).await,
+            Err(Error::Http(problem)) => {
+                assert_eq!(problem.status.unwrap(), StatusCode::BAD_REQUEST);
+                assert_eq!(
+                    problem.type_url.unwrap(),
+                    "urn:ietf:params:ppm:dap:error:unrecognizedMessage"
+                );
+                assert_eq!(
+                    problem.detail.unwrap(),
+                    "The message type for a response was incorrect or the payload was malformed."
+                );
+            }
         );
 
         mocked_upload.assert();

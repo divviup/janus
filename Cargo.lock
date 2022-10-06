@@ -1737,6 +1737,7 @@ dependencies = [
  "backoff",
  "derivative",
  "http",
+ "http-api-problem",
  "janus_core",
  "janus_messages",
  "mockito",
