@@ -178,7 +178,7 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, vdaf,
-                max_batch_lifetime, min_batch_size, min_batch_duration, tolerable_clock_skew,
+                max_batch_lifetime, min_batch_size, time_precision, tolerable_clock_skew,
                 collector_hpke_config)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
@@ -193,8 +193,8 @@ impl<C: Clock> Transaction<'_, C> {
                     /* vdaf */ &Json(&task.vdaf()),
                     /* max_batch_lifetime */ &i64::try_from(task.max_batch_lifetime())?,
                     /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
-                    /* min_batch_duration */
-                    &i64::try_from(task.min_batch_duration().as_seconds())?,
+                    /* time_precision */
+                    &i64::try_from(task.time_precision().as_seconds())?,
                     /* tolerable_clock_skew */
                     &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
                     /* collector_hpke_config */ &task.collector_hpke_config().get_encoded(),
@@ -401,7 +401,7 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT aggregator_role, aggregator_endpoints, vdaf, max_batch_lifetime,
-                min_batch_size, min_batch_duration, tolerable_clock_skew, collector_hpke_config
+                min_batch_size, time_precision, tolerable_clock_skew, collector_hpke_config
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -476,9 +476,8 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf,
-                max_batch_lifetime, min_batch_size, min_batch_duration,
-                tolerable_clock_skew, collector_hpke_config 
+                "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf, max_batch_lifetime,
+                    min_batch_size, time_precision, tolerable_clock_skew, collector_hpke_config 
                 FROM tasks",
             )
             .await?;
@@ -619,8 +618,7 @@ impl<C: Clock> Transaction<'_, C> {
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
         let max_batch_lifetime = row.get_bigint_and_convert("max_batch_lifetime")?;
         let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
-        let min_batch_duration =
-            Duration::from_seconds(row.get_bigint_and_convert("min_batch_duration")?);
+        let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let tolerable_clock_skew =
             Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
@@ -702,7 +700,7 @@ impl<C: Clock> Transaction<'_, C> {
             vdaf_verify_keys,
             max_batch_lifetime,
             min_batch_size,
-            min_batch_duration,
+            time_precision,
             tolerable_clock_skew,
             collector_hpke_config,
             aggregator_auth_tokens,
@@ -2073,13 +2071,13 @@ ORDER BY id DESC
         let stmt = self
             .tx
             .prepare_cached(
-                "WITH tasks AS (SELECT id, min_batch_duration FROM tasks WHERE task_id = $1)
+                "WITH tasks AS (SELECT id, time_precision FROM tasks WHERE task_id = $1)
                 SELECT unit_interval_start, aggregate_share, report_count, checksum
                 FROM batch_unit_aggregations
                 WHERE
                     task_id = (SELECT id FROM tasks)
                     AND unit_interval_start >= $2
-                    AND (unit_interval_start + (SELECT min_batch_duration FROM tasks) * interval '1 second') <= $3
+                    AND (unit_interval_start + (SELECT time_precision FROM tasks) * interval '1 second') <= $3
                     AND aggregation_param = $4",
             )
             .await?;
@@ -3142,7 +3140,7 @@ pub mod models {
 
     /// BatchUnitAggregation corresponds to a row in the `batch_unit_aggregations` table and
     /// represents the possibly-ongoing aggregation of the set of input shares that fall within the
-    /// interval defined by `unit_interval_start` and the relevant task's `min_batch_duration`.
+    /// interval defined by `unit_interval_start` and the relevant task's `time_precision`.
     /// This is the finest-grained possible aggregate share we can emit for this task, hence "batch
     /// unit". The aggregate share constructed to service a collect or aggregate share request
     /// consists of one or more `BatchUnitAggregation`s merged together.
@@ -3156,7 +3154,7 @@ pub mod models {
         task_id: TaskId,
         /// This is an aggregation over report shares whose timestamp falls within the interval
         /// starting at this time and of duration equal to the corresponding task's
-        /// `min_batch_duration`. `unit_interval_start` is aligned to `min_batch_duration`.
+        /// `time_precision`. `unit_interval_start` is a multiple of `time_precision`.
         unit_interval_start: Time,
         /// The VDAF aggregation parameter used to prepare and accumulate input shares.
         #[derivative(Debug = "ignore")]
@@ -6641,7 +6639,7 @@ mod tests {
         type ToyPoplar1 = Poplar1<ToyIdpf<Field64>, PrgAes128, PRG_SEED_SIZE>;
 
         let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_min_batch_duration(Duration::from_seconds(100))
+            .with_time_precision(Duration::from_seconds(100))
             .build();
         let other_task =
             TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();

@@ -60,7 +60,7 @@ impl<'a> Daphne<'a> {
         // Aes128Gcm); this is checked in `DaphneHpkeConfig::from`.
         let dap_hpke_receiver_config_list = serde_json::to_string(
             &task
-                .hpke_keys
+                .hpke_keys()
                 .values()
                 .map(|(hpke_config, private_key)| DaphneHpkeReceiverConfig {
                     config: DaphneHpkeConfig::from(hpke_config.clone()),
@@ -80,16 +80,16 @@ impl<'a> Daphne<'a> {
         let dap_collect_id_key: [u8; 16] = random();
 
         let dap_task_list = serde_json::to_string(&HashMap::from([(
-            hex::encode(task.id.as_ref()),
+            hex::encode(task.task_id().as_ref()),
             DaphneDapTaskConfig {
                 version: "v01".to_string(),
-                leader_url: task.aggregator_url(Role::Leader).unwrap().clone(),
-                helper_url: task.aggregator_url(Role::Helper).unwrap().clone(),
-                min_batch_duration: task.min_batch_duration.as_seconds(),
-                min_batch_size: task.min_batch_size,
-                vdaf: daphne_vdaf_config_from_janus_vdaf(&task.vdaf),
-                vdaf_verify_key: hex::encode(task.vdaf_verify_keys().first().unwrap().as_bytes()),
-                collector_hpke_config: DaphneHpkeConfig::from(task.collector_hpke_config.clone()),
+                leader_url: task.aggregator_url(&Role::Leader).unwrap().clone(),
+                helper_url: task.aggregator_url(&Role::Helper).unwrap().clone(),
+                min_batch_duration: task.time_precision().as_seconds(), // TODO(#493): this field will likely need to be renamed
+                min_batch_size: task.min_batch_size(),
+                vdaf: daphne_vdaf_config_from_janus_vdaf(&task.vdaf()),
+                vdaf_verify_key: hex::encode(task.vdaf_verify_keys().first().unwrap().as_ref()),
+                collector_hpke_config: DaphneHpkeConfig::from(task.collector_hpke_config().clone()),
             },
         )]))
         .unwrap();
@@ -97,11 +97,11 @@ impl<'a> Daphne<'a> {
         // Daphne currently only supports one auth token per task. Janus supports multiple tokens
         // per task to allow rotation; we supply Daphne with the "primary" token.
         let aggregator_bearer_token_list = json!({
-            hex::encode(task.id.as_ref()): String::from_utf8(task.primary_aggregator_auth_token().as_bytes().to_vec()).unwrap()
+            hex::encode(task.task_id().as_ref()): String::from_utf8(task.primary_aggregator_auth_token().as_bytes().to_vec()).unwrap()
         }).to_string();
-        let collector_bearer_token_list = if task.role == Role::Leader {
+        let collector_bearer_token_list = if task.role() == &Role::Leader {
             json!({
-                hex::encode(task.id.as_ref()): String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec()).unwrap()
+                hex::encode(task.task_id().as_ref()): String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec()).unwrap()
             }).to_string()
         } else {
             String::new()
@@ -160,7 +160,7 @@ impl<'a> Daphne<'a> {
 
         // Start the Daphne test container running.
         let port = pick_unused_port().expect("Couldn't pick unused port");
-        let endpoint = task.aggregator_url(task.role).unwrap();
+        let endpoint = task.aggregator_url(task.role()).unwrap();
 
         let args = [
             (
@@ -179,7 +179,7 @@ impl<'a> Daphne<'a> {
             ),
             (
                 "DAP_AGGREGATOR_ROLE".to_string(),
-                task.role.as_str().to_string(),
+                task.role().as_str().to_string(),
             ),
             (
                 "DAP_GLOBAL_CONFIG".to_string(),
@@ -233,7 +233,7 @@ impl<'a> Daphne<'a> {
         task::spawn({
             let http_client = reqwest::Client::default();
             let mut request_url = task
-                .aggregator_url(task.role)
+                .aggregator_url(task.role())
                 .unwrap()
                 .join("/internal/process")
                 .unwrap();
@@ -266,7 +266,7 @@ impl<'a> Daphne<'a> {
 
         Self {
             daphne_container,
-            role: task.role,
+            role: *task.role(),
             start_shutdown_sender: Some(start_shutdown_sender),
             shutdown_complete_receiver: Some(shutdown_complete_receiver),
         }

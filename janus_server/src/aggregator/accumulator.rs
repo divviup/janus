@@ -1,15 +1,18 @@
 //! In-memory accumulation of output shares.
 
 use super::Error;
-use crate::datastore::{self, models::BatchUnitAggregation, Transaction};
+use crate::{
+    datastore::{self, models::BatchUnitAggregation, Transaction},
+    task::Task,
+};
 use derivative::Derivative;
 use janus_core::{
     report_id::ReportIdChecksumExt,
     time::{Clock, TimeExt},
 };
-use janus_messages::{Duration, Interval, ReportId, ReportIdChecksum, TaskId, Time};
+use janus_messages::{Interval, ReportId, ReportIdChecksum, Time};
 use prio::vdaf::{self, Aggregatable};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
 
 #[derive(Derivative)]
@@ -47,27 +50,21 @@ pub(super) struct Accumulator<const L: usize, A: vdaf::Aggregator<L>>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
-    task_id: TaskId,
-    min_batch_duration: Duration,
+    task: Arc<Task>,
     #[derivative(Debug = "ignore")]
     aggregation_param: A::AggregationParam,
     accumulations: HashMap<Time, Accumulation<L, A>>,
 }
 
-impl<const L: usize, A: vdaf::Aggregator<L>> Accumulator<L, A>
+impl<'t, const L: usize, A: vdaf::Aggregator<L>> Accumulator<L, A>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
 {
     /// Create a new accumulator
-    pub(super) fn new(
-        task_id: TaskId,
-        min_batch_duration: Duration,
-        aggregation_param: A::AggregationParam,
-    ) -> Self {
+    pub(super) fn new(task: Arc<Task>, aggregation_param: A::AggregationParam) -> Self {
         Self {
-            task_id,
-            min_batch_duration,
+            task,
             aggregation_param,
             accumulations: HashMap::new(),
         }
@@ -81,7 +78,7 @@ where
         report_id: &ReportId,
     ) -> Result<(), datastore::Error> {
         let key = report_time
-            .to_batch_unit_interval_start(&self.min_batch_duration)
+            .to_batch_unit_interval_start(self.task.time_precision())
             .map_err(|e| datastore::Error::User(e.into()))?;
         if let Some(accumulation) = self.accumulations.get_mut(&key) {
             accumulation
@@ -110,11 +107,11 @@ where
         tx: &Transaction<'_, C>,
     ) -> Result<(), datastore::Error> {
         for (unit_interval_start, accumulation) in &self.accumulations {
-            let unit_interval = Interval::new(*unit_interval_start, self.min_batch_duration)?;
+            let unit_interval = Interval::new(*unit_interval_start, *self.task.time_precision())?;
 
             let batch_unit_aggregations = tx
                 .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
-                    &self.task_id,
+                    self.task.task_id(),
                     &unit_interval,
                     &self.aggregation_param,
                 )
@@ -124,7 +121,7 @@ where
                 return Err(datastore::Error::DbState(format!(
                     "found {} batch unit aggregation rows for task {}, interval {unit_interval}",
                     batch_unit_aggregations.len(),
-                    self.task_id,
+                    self.task.task_id(),
                 )));
             }
 
@@ -145,7 +142,7 @@ where
                     "inserting new batch_unit_aggregation row",
                 );
                 tx.put_batch_unit_aggregation(&BatchUnitAggregation::<L, A>::new(
-                    self.task_id,
+                    *self.task.task_id(),
                     *unit_interval.start(),
                     self.aggregation_param.clone(),
                     accumulation.aggregate_share.clone(),

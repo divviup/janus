@@ -18,7 +18,7 @@ CREATE TABLE tasks(
     vdaf                   JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
     max_batch_lifetime     BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
-    min_batch_duration     BIGINT NOT NULL,           -- the minimum duration in seconds of a single batch interval
+    time_precision         BIGINT NOT NULL,           -- the duration to which clients are expected to round their report timestamps, in seconds
     tolerable_clock_skew   BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
     collector_hpke_config  BYTEA NOT NULL             -- the HPKE config of the collector (encoded HpkeConfig message)
 );

@@ -683,7 +683,7 @@ mod tests {
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
                 Url::parse(&mockito::server_url()).unwrap(),
             ]))
-            .with_min_batch_duration(Duration::from_seconds(500))
+            .with_time_precision(Duration::from_seconds(500))
             .with_min_batch_size(10)
             .build();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
@@ -722,7 +722,7 @@ mod tests {
                         random(),
                         clock
                             .now()
-                            .to_batch_unit_interval_start(task.min_batch_duration())
+                            .to_batch_unit_interval_start(task.time_precision())
                             .unwrap(),
                         Vec::new(),
                     );
@@ -806,7 +806,7 @@ mod tests {
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
                 Url::parse(&mockito::server_url()).unwrap(),
             ]))
-            .with_min_batch_duration(Duration::from_seconds(500))
+            .with_time_precision(Duration::from_seconds(500))
             .with_min_batch_size(10)
             .build();
         let agg_auth_token = task.primary_aggregator_auth_token();
@@ -845,7 +845,7 @@ mod tests {
                         random(),
                         clock
                             .now()
-                            .to_batch_unit_interval_start(task.min_batch_duration())
+                            .to_batch_unit_interval_start(task.time_precision())
                             .unwrap(),
                         Vec::new(),
                     );

@@ -145,7 +145,7 @@ pub struct AggregatorAddTaskRequest {
     pub verify_key: String, // in unpadded base64url
     pub max_batch_lifetime: u64,
     pub min_batch_size: u64,
-    pub min_batch_duration: u64,       // in seconds
+    pub time_precision: u64,           // in seconds
     pub collector_hpke_config: String, // in unpadded base64url
 }
 
@@ -182,7 +182,7 @@ impl From<Task> for AggregatorAddTaskRequest {
             ),
             max_batch_lifetime: task.max_batch_lifetime(),
             min_batch_size: task.min_batch_size(),
-            min_batch_duration: task.min_batch_duration().as_seconds(),
+            time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: base64::encode_config(
                 &task.collector_hpke_config().get_encoded(),
                 URL_SAFE_NO_PAD,

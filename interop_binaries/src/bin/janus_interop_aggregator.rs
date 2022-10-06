@@ -53,7 +53,7 @@ async fn handle_add_task(
         base64::decode_config(request.verify_key, URL_SAFE_NO_PAD)
             .context("invalid base64url content in \"verifyKey\"")?,
     );
-    let min_batch_duration = Duration::from_seconds(request.min_batch_duration);
+    let time_precision = Duration::from_seconds(request.time_precision);
     let collector_hpke_config_bytes =
         base64::decode_config(request.collector_hpke_config, URL_SAFE_NO_PAD)
             .context("invalid base64url content in \"collectorHpkeConfig\"")?;
@@ -69,9 +69,9 @@ async fn handle_add_task(
         }
         (0, Some(collector_authentication_token)) => (
             Role::Leader,
-            vec![AuthenticationToken::from(
+            Vec::from([AuthenticationToken::from(
                 collector_authentication_token.into_bytes(),
-            )],
+            )]),
         ),
         (1, _) => (Role::Helper, Vec::new()),
         _ => return Err(anyhow::anyhow!("invalid \"aggregator_id\" value")),
@@ -81,18 +81,18 @@ async fn handle_add_task(
 
     let task = Task::new(
         task_id,
-        vec![request.leader, request.helper],
+        Vec::from([request.leader, request.helper]),
         vdaf,
         role,
-        vec![verify_key],
+        Vec::from([verify_key]),
         request.max_batch_lifetime,
         request.min_batch_size,
-        min_batch_duration,
+        time_precision,
         // We can be strict about clock skew since this executable is only intended for use with
         // other aggregators running on the same host.
         Duration::from_seconds(1),
         collector_hpke_config,
-        vec![leader_authentication_token],
+        Vec::from([leader_authentication_token]),
         collector_authentication_tokens,
         [(hpke_config, private_key)],
     )
@@ -234,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
     // Run the aggregation job creator.
     let pool = database_pool(&db_config, None).await?;
     let datastore_key = LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &key_bytes).unwrap());
-    let crypter = Crypter::new(vec![datastore_key]);
+    let crypter = Crypter::new(Vec::from([datastore_key]));
     let aggregation_job_creator = Arc::new(AggregationJobCreator::new(
         Datastore::new(pool, crypter, clock),
         clock,

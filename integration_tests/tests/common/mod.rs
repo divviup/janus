@@ -41,7 +41,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     let client_parameters = ClientParameters::new(
         *leader_task.task_id(),
         aggregator_endpoints.clone(),
-        *leader_task.min_batch_duration(),
+        *leader_task.time_precision(),
     );
     let http_client = janus_client::default_http_client().unwrap();
     let leader_report_config = janus_client::aggregator_hpke_config(
@@ -90,11 +90,11 @@ pub async fn submit_measurements_and_verify_aggregate(
     // Send a collect request.
     let batch_interval = Interval::new(
         before_timestamp
-            .to_batch_unit_interval_start(leader_task.min_batch_duration())
+            .to_batch_unit_interval_start(leader_task.time_precision())
             .unwrap(),
         // Use two minimum batch durations as the interval duration in order to avoid a race
         // condition if this test happens to run very close to the end of a batch window.
-        Duration::from_seconds(2 * leader_task.min_batch_duration().as_seconds()),
+        Duration::from_seconds(2 * leader_task.time_precision().as_seconds()),
     )
     .unwrap();
     let collector_params = CollectorParameters::new(

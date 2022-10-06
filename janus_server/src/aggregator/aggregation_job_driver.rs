@@ -214,7 +214,7 @@ impl AggregationJobDriver {
                         .map_err(|err| datastore::Error::User(err.into()))?;
 
                     Ok((
-                        task,
+                        Arc::new(task),
                         aggregation_job,
                         report_aggregations,
                         client_reports,
@@ -253,7 +253,7 @@ impl AggregationJobDriver {
         datastore: &Datastore<C>,
         vdaf: &A,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Task,
+        task: Arc<Task>,
         aggregation_job: AggregationJob<L, A>,
         report_aggregations: Vec<ReportAggregation<L, A>>,
         client_reports: Vec<Report>,
@@ -498,7 +498,7 @@ impl AggregationJobDriver {
         datastore: &Datastore<C>,
         vdaf: &A,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Task,
+        task: Arc<Task>,
         aggregation_job: AggregationJob<L, A>,
         report_aggregations: Vec<ReportAggregation<L, A>>,
     ) -> Result<()>
@@ -595,7 +595,7 @@ impl AggregationJobDriver {
         datastore: &Datastore<C>,
         vdaf: &A,
         lease: Arc<Lease<AcquiredAggregationJob>>,
-        task: Task,
+        task: Arc<Task>,
         aggregation_job: AggregationJob<L, A>,
         stepped_aggregations: &[SteppedAggregation<L, A>],
         mut report_aggregations_to_write: Vec<ReportAggregation<L, A>>,
@@ -619,8 +619,7 @@ impl AggregationJobDriver {
             ));
         }
         let mut accumulator = Accumulator::<L, A>::new(
-            *task.task_id(),
-            *task.min_batch_duration(),
+            Arc::clone(&task),
             aggregation_job.aggregation_parameter().clone(),
         );
         for (stepped_aggregation, helper_prep_step) in stepped_aggregations.iter().zip(prep_steps) {
@@ -974,7 +973,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -1184,7 +1183,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -1388,7 +1387,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -1539,7 +1538,7 @@ mod tests {
         let batch_interval_start = report
             .metadata()
             .time()
-            .to_batch_unit_interval_start(task.min_batch_duration())
+            .to_batch_unit_interval_start(task.time_precision())
             .unwrap();
         let want_batch_unit_aggregations = Vec::from([BatchUnitAggregation::<
             PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1578,8 +1577,8 @@ mod tests {
                         .get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                             task.task_id(),
                             &Interval::new(
-                                report_metadata.time().to_batch_unit_interval_start(task.min_batch_duration()).unwrap(),
-                                *task.min_batch_duration()).unwrap(),
+                                report_metadata.time().to_batch_unit_interval_start(task.time_precision()).unwrap(),
+                                *task.time_precision()).unwrap(),
                             &())
                         .await
                         .unwrap();
@@ -1613,7 +1612,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -1799,7 +1798,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );

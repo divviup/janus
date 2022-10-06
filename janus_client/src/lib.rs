@@ -58,24 +58,20 @@ pub struct ClientParameters {
     /// entry is the leader's.
     #[derivative(Debug(format_with = "fmt_vector_of_urls"))]
     aggregator_endpoints: Vec<Url>,
-    /// The minimum batch duration of the task. This value is shared by all
-    /// parties in the protocol, and is used to compute report timestamps.
-    min_batch_duration: Duration,
+    /// The time precision of the task. This value is shared by all parties in the protocol, and is
+    /// used to compute report timestamps.
+    time_precision: Duration,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,
 }
 
 impl ClientParameters {
     /// Creates a new set of client task parameters.
-    pub fn new(
-        task_id: TaskId,
-        aggregator_endpoints: Vec<Url>,
-        min_batch_duration: Duration,
-    ) -> Self {
+    pub fn new(task_id: TaskId, aggregator_endpoints: Vec<Url>, time_precision: Duration) -> Self {
         Self::new_with_backoff(
             task_id,
             aggregator_endpoints,
-            min_batch_duration,
+            time_precision,
             http_request_exponential_backoff(),
         )
     }
@@ -84,7 +80,7 @@ impl ClientParameters {
     pub fn new_with_backoff(
         task_id: TaskId,
         mut aggregator_endpoints: Vec<Url>,
-        min_batch_duration: Duration,
+        time_precision: Duration,
         http_request_retry_parameters: ExponentialBackoff,
     ) -> Self {
         // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
@@ -97,7 +93,7 @@ impl ClientParameters {
         Self {
             task_id,
             aggregator_endpoints,
-            min_batch_duration,
+            time_precision,
             http_request_retry_parameters,
         }
     }
@@ -210,10 +206,8 @@ where
         let time = self
             .clock
             .now()
-            .to_batch_unit_interval_start(&self.parameters.min_batch_duration)
-            .map_err(|_| {
-                Error::InvalidParameter("couldn't round time down to min_batch_duration")
-            })?;
+            .to_batch_unit_interval_start(&self.parameters.time_precision)
+            .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
         let report_metadata = ReportMetadata::new(
             random(),
             time,
@@ -383,7 +377,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_bad_min_batch_duration() {
+    async fn upload_bad_time_precision() {
         install_test_trace_subscriber();
 
         let client_parameters =
@@ -406,7 +400,7 @@ mod tests {
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let mut client = setup_client(vdaf);
 
-        client.parameters.min_batch_duration = Duration::from_seconds(100);
+        client.parameters.time_precision = Duration::from_seconds(100);
         client.clock = MockClock::new(Time::from_seconds_since_epoch(101));
         assert_eq!(
             client.prepare_report(&1).unwrap().metadata().time(),

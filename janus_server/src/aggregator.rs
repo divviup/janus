@@ -1316,8 +1316,7 @@ impl VdafOps {
                     tx.put_aggregation_job(&aggregation_job).await?;
 
                     let mut accumulator = Accumulator::<L, A>::new(
-                        *task.task_id(),
-                        *task.min_batch_duration(),
+                        Arc::clone(&task),
                         aggregation_job.aggregation_parameter().clone(),
                     );
 
@@ -1432,7 +1431,7 @@ impl VdafOps {
                     let mut report_aggregations = report_aggregations.into_iter();
                     let (mut saw_continue, mut saw_finish) = (false, false);
                     let mut response_prep_steps = Vec::new();
-                    let mut accumulator = Accumulator::<L, A>::new(*task.task_id(), *task.min_batch_duration(), aggregation_job.aggregation_parameter().clone());
+                    let mut accumulator = Accumulator::<L, A>::new(Arc::clone(&task), aggregation_job.aggregation_parameter().clone());
 
                     for prep_step in req.prepare_steps().iter() {
                         // Match preparation step received from leader to stored report aggregation,
@@ -3173,7 +3172,7 @@ mod tests {
                         random(),
                         clock
                             .now()
-                            .to_batch_unit_interval_start(task.min_batch_duration())
+                            .to_batch_unit_interval_start(task.time_precision())
                             .unwrap(),
                         Vec::new(),
                     ),
@@ -3453,9 +3452,9 @@ mod tests {
             report
                 .metadata()
                 .time()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
-            *task.min_batch_duration(),
+            *task.time_precision(),
         )
         .unwrap();
         datastore
@@ -3663,7 +3662,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3688,7 +3687,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3713,7 +3712,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3737,7 +3736,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3761,7 +3760,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3783,13 +3782,13 @@ mod tests {
 
         // report_share_5 falls into a batch unit that has already been collected.
         let past_clock = MockClock::new(Time::from_seconds_since_epoch(
-            task.min_batch_duration().as_seconds() / 2,
+            task.time_precision().as_seconds() / 2,
         ));
         let report_metadata_5 = ReportMetadata::new(
             random(),
             past_clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3815,7 +3814,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3840,7 +3839,7 @@ mod tests {
                             *task.task_id(),
                             Interval::new(
                                 Time::from_seconds_since_epoch(0),
-                                *task.min_batch_duration(),
+                                *task.time_precision(),
                             )
                             .unwrap(),
                             (),
@@ -3988,7 +3987,7 @@ mod tests {
                 random(),
                 clock
                     .now()
-                    .to_batch_unit_interval_start(task.min_batch_duration())
+                    .to_batch_unit_interval_start(task.time_precision())
                     .unwrap(),
                 Vec::new(),
             ),
@@ -4064,7 +4063,7 @@ mod tests {
                 random(),
                 clock
                     .now()
-                    .to_batch_unit_interval_start(task.min_batch_duration())
+                    .to_batch_unit_interval_start(task.time_precision())
                     .unwrap(),
                 Vec::new(),
             ),
@@ -4213,7 +4212,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4248,7 +4247,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4270,13 +4269,13 @@ mod tests {
 
         // report_share_2 falls into a batch unit that has already been collected.
         let past_clock = MockClock::new(Time::from_seconds_since_epoch(
-            task.min_batch_duration().as_seconds() / 2,
+            task.time_precision().as_seconds() / 2,
         ));
         let report_metadata_2 = ReportMetadata::new(
             random(),
             past_clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4373,7 +4372,7 @@ mod tests {
                             *task.task_id(),
                             Interval::new(
                                 Time::from_seconds_since_epoch(0),
-                                *task.min_batch_duration(),
+                                *task.time_precision(),
                             )
                             .unwrap(),
                             (),
@@ -4517,7 +4516,7 @@ mod tests {
         let second_batch_unit_interval_clock = MockClock::new(
             first_batch_unit_interval_clock
                 .now()
-                .add(task.min_batch_duration())
+                .add(task.time_precision())
                 .unwrap(),
         );
 
@@ -4531,7 +4530,7 @@ mod tests {
             random(),
             first_batch_unit_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4559,7 +4558,7 @@ mod tests {
             random(),
             first_batch_unit_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4586,7 +4585,7 @@ mod tests {
             random(),
             second_batch_unit_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4739,10 +4738,10 @@ mod tests {
                         &Interval::new(
                             report_metadata_0
                                 .time()
-                                .to_batch_unit_interval_start(task.min_batch_duration())
+                                .to_batch_unit_interval_start(task.time_precision())
                                 .unwrap(),
                             // Make interval big enough to capture both batch unit aggregations
-                            Duration::from_seconds(task.min_batch_duration().as_seconds() * 2),
+                            Duration::from_seconds(task.time_precision().as_seconds() * 2),
                         )
                         .unwrap(),
                         &(),
@@ -4766,7 +4765,7 @@ mod tests {
                     *task.task_id(),
                     report_metadata_0
                         .time()
-                        .to_batch_unit_interval_start(task.min_batch_duration())
+                        .to_batch_unit_interval_start(task.time_precision())
                         .unwrap(),
                     (),
                     aggregate_share,
@@ -4777,7 +4776,7 @@ mod tests {
                     *task.task_id(),
                     report_metadata_2
                         .time()
-                        .to_batch_unit_interval_start(task.min_batch_duration())
+                        .to_batch_unit_interval_start(task.time_precision())
                         .unwrap(),
                     (),
                     AggregateShare::from(out_share_2.clone()),
@@ -4794,7 +4793,7 @@ mod tests {
             random(),
             first_batch_unit_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4821,7 +4820,7 @@ mod tests {
             random(),
             second_batch_unit_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4848,7 +4847,7 @@ mod tests {
             random(),
             second_batch_unit_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.min_batch_duration())
+                .to_batch_unit_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4998,10 +4997,10 @@ mod tests {
                         &Interval::new(
                             report_metadata_0
                                 .time()
-                                .to_batch_unit_interval_start(task.min_batch_duration())
+                                .to_batch_unit_interval_start(task.time_precision())
                                 .unwrap(),
                             // Make interval big enough to capture both batch unit aggregations
-                            Duration::from_seconds(task.min_batch_duration().as_seconds() * 2),
+                            Duration::from_seconds(task.time_precision().as_seconds() * 2),
                         )
                         .unwrap(),
                         &(),
@@ -5033,7 +5032,7 @@ mod tests {
                     *task.task_id(),
                     report_metadata_0
                         .time()
-                        .to_batch_unit_interval_start(task.min_batch_duration())
+                        .to_batch_unit_interval_start(task.time_precision())
                         .unwrap(),
                     (),
                     first_aggregate_share,
@@ -5044,7 +5043,7 @@ mod tests {
                     *task.task_id(),
                     report_metadata_2
                         .time()
-                        .to_batch_unit_interval_start(task.min_batch_duration())
+                        .to_batch_unit_interval_start(task.time_precision())
                         .unwrap(),
                     (),
                     second_aggregate_share,
@@ -5703,11 +5702,7 @@ mod tests {
         let request = CollectReq::new(
             *task.task_id(),
             Query::new_time_interval(
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    *task.min_batch_duration(),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
             ),
             Vec::new(),
         );
@@ -5759,7 +5754,7 @@ mod tests {
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
                     // Collect request will be rejected because batch interval is too small
-                    Duration::from_seconds(task.min_batch_duration().as_seconds() - 1),
+                    Duration::from_seconds(task.time_precision().as_seconds() - 1),
                 )
                 .unwrap(),
             ),
@@ -5817,7 +5812,7 @@ mod tests {
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
-                    Duration::from_seconds(task.min_batch_duration().as_seconds()),
+                    Duration::from_seconds(task.time_precision().as_seconds()),
                 )
                 .unwrap(),
             ),
@@ -5862,11 +5857,8 @@ mod tests {
 
         // Prepare parameters.
         let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(0),
-            *task.min_batch_duration(),
-        )
-        .unwrap();
+        let batch_interval =
+            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -5975,11 +5967,8 @@ mod tests {
 
         // Prepare parameters.
         let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(0),
-            *task.min_batch_duration(),
-        )
-        .unwrap();
+        let batch_interval =
+            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -6110,11 +6099,8 @@ mod tests {
         let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
             .with_collector_hpke_config(collector_hpke_config)
             .build();
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(0),
-            *task.min_batch_duration(),
-        )
-        .unwrap();
+        let batch_interval =
+            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
         let leader_aggregate_share = AggregateShare::from(Vec::from([Field64::from(64)]));
         let helper_aggregate_share = AggregateShare::from(Vec::from([Field64::from(32)]));
@@ -6320,15 +6306,11 @@ mod tests {
 
         let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
 
-        // Sending this request will consume the lifetime for [0, min_batch_duration).
+        // Sending this request will consume the lifetime for [0, time_precision).
         let request = CollectReq::new(
             *task.task_id(),
             Query::new_time_interval(
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    *task.min_batch_duration(),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
             ),
             dummy_vdaf::AggregationParam(0).get_encoded(),
         );
@@ -6353,11 +6335,7 @@ mod tests {
         let invalid_request = CollectReq::new(
             *task.task_id(),
             Query::new_time_interval(
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    *task.min_batch_duration(),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
             ),
             dummy_vdaf::AggregationParam(1).get_encoded(),
         );
@@ -6425,14 +6403,14 @@ mod tests {
 
         let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
 
-        // Sending this request will consume the lifetime for [0, 2 * min_batch_duration).
+        // Sending this request will consume the lifetime for [0, 2 * time_precision).
         let request = CollectReq::new(
             *task.task_id(),
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
                     Duration::from_microseconds(
-                        2 * task.min_batch_duration().as_microseconds().unwrap(),
+                        2 * task.time_precision().as_microseconds().unwrap(),
                     ),
                 )
                 .unwrap(),
@@ -6462,9 +6440,9 @@ mod tests {
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0)
-                        .add(task.min_batch_duration())
+                        .add(task.time_precision())
                         .unwrap(),
-                    *task.min_batch_duration(),
+                    *task.time_precision(),
                 )
                 .unwrap(),
             ),
@@ -6507,11 +6485,8 @@ mod tests {
 
         // Prepare parameters.
         let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(0),
-            *task.min_batch_duration(),
-        )
-        .unwrap();
+        let batch_interval =
+            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -6612,11 +6587,7 @@ mod tests {
         let request = AggregateShareReq::new(
             *task.task_id(),
             BatchSelector::new_time_interval(
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    *task.min_batch_duration(),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
             ),
             Vec::new(),
             0,
@@ -6673,7 +6644,7 @@ mod tests {
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
                     // Collect request will be rejected because batch interval is too small
-                    Duration::from_seconds(task.min_batch_duration().as_seconds() - 1),
+                    Duration::from_seconds(task.time_precision().as_seconds() - 1),
                 )
                 .unwrap(),
             ),
@@ -6721,7 +6692,7 @@ mod tests {
             generate_test_hpke_config_and_private_key();
         let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Helper)
             .with_max_batch_lifetime(1)
-            .with_min_batch_duration(Duration::from_seconds(500))
+            .with_time_precision(Duration::from_seconds(500))
             .with_min_batch_size(10)
             .with_collector_hpke_config(collector_hpke_config.clone())
             .build();
@@ -6738,11 +6709,7 @@ mod tests {
         let request = AggregateShareReq::new(
             *task.task_id(),
             BatchSelector::new_time_interval(
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    *task.min_batch_duration(),
-                )
-                .unwrap(),
+                Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
             ),
             dummy_vdaf::AggregationParam(0).get_encoded(),
             0,

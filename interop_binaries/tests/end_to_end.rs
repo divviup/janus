@@ -19,7 +19,7 @@ use std::time::Duration as StdDuration;
 use testcontainers::RunnableImage;
 
 const JSON_MEDIA_TYPE: &str = "application/json";
-const MIN_BATCH_DURATION: u64 = 3600;
+const TIME_PRECISION: u64 = 3600;
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
@@ -240,7 +240,7 @@ async fn run(
             "verifyKey": verify_key_encoded,
             "maxBatchLifetime": 1,
             "minBatchSize": 1,
-            "minBatchDuration": MIN_BATCH_DURATION,
+            "timePrecision": TIME_PRECISION,
             "collectorHpkeConfig": collector_hpke_config_encoded,
         }))
         .send()
@@ -284,7 +284,7 @@ async fn run(
             "verifyKey": verify_key_encoded,
             "maxBatchLifetime": 1,
             "minBatchSize": 1,
-            "minBatchDuration": MIN_BATCH_DURATION,
+            "timePrecision": TIME_PRECISION,
             "collectorHpkeConfig": collector_hpke_config_encoded,
         }))
         .send()
@@ -315,12 +315,12 @@ async fn run(
     // determine what batch time to start the aggregation at.
     let start_timestamp = RealClock::default().now();
     let batch_interval_start = start_timestamp
-        .to_batch_unit_interval_start(&Duration::from_seconds(MIN_BATCH_DURATION))
+        .to_batch_unit_interval_start(&Duration::from_seconds(TIME_PRECISION))
         .unwrap()
         .as_seconds_since_epoch();
     // Span the aggregation over two minimum batch durations, just in case our
     // measurements spilled over a batch boundary.
-    let batch_interval_duration = MIN_BATCH_DURATION * 2;
+    let batch_interval_duration = TIME_PRECISION * 2;
 
     // Send one or more /internal/test/upload requests to the client.
     for measurement in measurements {
@@ -332,7 +332,7 @@ async fn run(
                 "helper": internal_helper_endpoint,
                 "vdaf": vdaf_object,
                 "measurement": measurement,
-                "minBatchDuration": MIN_BATCH_DURATION,
+                "timePrecision": TIME_PRECISION,
             }))
             .send()
             .await

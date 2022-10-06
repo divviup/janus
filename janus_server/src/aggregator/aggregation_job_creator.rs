@@ -261,7 +261,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         let current_batch_unit_start = self
             .clock
             .now()
-            .to_batch_unit_interval_start(task.min_batch_duration())?;
+            .to_batch_unit_interval_start(task.time_precision())?;
 
         let min_aggregation_job_size = self.min_aggregation_job_size;
         let max_aggregation_job_size = self.max_aggregation_job_size;
@@ -277,7 +277,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         .await?
                         .into_iter()
                         .map(|(report_id, time)| {
-                            time.to_batch_unit_interval_start(task.min_batch_duration())
+                            time.to_batch_unit_interval_start(task.time_precision())
                                 .map(|rounded_time| (rounded_time, (report_id, time)))
                                 .map_err(datastore::Error::from)
                         })
@@ -379,7 +379,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         .into_iter()
                         .map(|(report_id, report_time, aggregation_param)| {
                             report_time
-                                .to_batch_unit_interval_start(task.min_batch_duration())
+                                .to_batch_unit_interval_start(task.time_precision())
                                 .map(|rounded_time| {
                                     ((rounded_time, aggregation_param), (report_id, report_time))
                                 })
@@ -599,7 +599,7 @@ mod tests {
             Arc::new(TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build());
         let current_batch_unit = clock
             .now()
-            .to_batch_unit_interval_start(task.min_batch_duration())
+            .to_batch_unit_interval_start(task.time_precision())
             .unwrap();
 
         // In the current batch unit, create MIN_AGGREGATION_JOB_SIZE reports. We expect an
@@ -613,7 +613,7 @@ mod tests {
         // In a previous "small" batch unit, create fewer than MIN_AGGREGATION_JOB_SIZE reports.
         // Since the minimum aggregation job size applies only to the current batch window, we
         // expect an aggregation job to be created for these reports.
-        let report_time = report_time.sub(task.min_batch_duration()).unwrap();
+        let report_time = report_time.sub(task.time_precision()).unwrap();
         let small_batch_unit_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(*task.task_id(), report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE - 1)
@@ -621,7 +621,7 @@ mod tests {
 
         // In a (separate) previous "big" batch unit, create more than MAX_AGGREGATION_JOB_SIZE
         // reports. We expect these reports will be split into more than one aggregation job.
-        let report_time = report_time.sub(task.min_batch_duration()).unwrap();
+        let report_time = report_time.sub(task.time_precision()).unwrap();
         let big_batch_unit_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(*task.task_id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
@@ -690,7 +690,7 @@ mod tests {
             let batch_units: HashSet<Time> = times_and_ids
                 .iter()
                 .map(|(time, _)| {
-                    time.to_batch_unit_interval_start(task.min_batch_duration())
+                    time.to_batch_unit_interval_start(task.time_precision())
                         .unwrap()
                 })
                 .collect();
@@ -837,7 +837,7 @@ mod tests {
         // Create MAX_AGGREGATION_JOB_SIZE reports in one batch unit. This should result in
         // one aggregation job per overlapping collect job for these reports. (and there is
         // one such collect job)
-        let report_time = clock.now().sub(task.min_batch_duration()).unwrap();
+        let report_time = clock.now().sub(task.time_precision()).unwrap();
         let batch_1_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(*task.task_id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE)
@@ -845,7 +845,7 @@ mod tests {
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch unit. This should result
         // in two aggregation jobs per overlapping collect job. (and there are two such collect jobs)
-        let report_time = report_time.sub(task.min_batch_duration()).unwrap();
+        let report_time = report_time.sub(task.time_precision()).unwrap();
         let batch_2_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(*task.task_id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
@@ -915,7 +915,7 @@ mod tests {
                     tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
                         *task.task_id(),
                         Uuid::new_v4(),
-                        Interval::new(report_time, *task.min_batch_duration()).unwrap(),
+                        Interval::new(report_time, *task.time_precision()).unwrap(),
                         AggregationParam(7),
                         CollectJobState::Start,
                     ))
@@ -927,7 +927,7 @@ mod tests {
                         Interval::new(
                             report_time,
                             janus_messages::Duration::from_seconds(
-                                task.min_batch_duration().as_seconds() * 2,
+                                task.time_precision().as_seconds() * 2,
                             ),
                         )
                         .unwrap(),
@@ -979,7 +979,7 @@ mod tests {
             let batch_units: HashSet<Time> = times_and_ids
                 .iter()
                 .map(|(time, _)| {
-                    time.to_batch_unit_interval_start(task.min_batch_duration())
+                    time.to_batch_unit_interval_start(task.time_precision())
                         .unwrap()
                 })
                 .collect();

@@ -191,9 +191,9 @@ pub struct Task {
     max_batch_lifetime: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
     min_batch_size: u64,
-    /// The minimum batch interval for a collect request. Batch intervals must
-    /// be multiples of this duration.
-    min_batch_duration: Duration,
+    /// The duration to which clients should round their reported timestamps to. For time-interval
+    /// tasks, batch intervals must be multiples of this duration.
+    time_precision: Duration,
     /// How much clock skew to allow between client and aggregator. Reports from
     /// farther than this duration into the future will be rejected.
     tolerable_clock_skew: Duration,
@@ -219,7 +219,7 @@ impl Task {
         vdaf_verify_keys: Vec<SecretBytes>,
         max_batch_lifetime: u64,
         min_batch_size: u64,
-        min_batch_duration: Duration,
+        time_precision: Duration,
         tolerable_clock_skew: Duration,
         collector_hpke_config: HpkeConfig,
         aggregator_auth_tokens: Vec<AuthenticationToken>,
@@ -269,7 +269,7 @@ impl Task {
             vdaf_verify_keys,
             max_batch_lifetime,
             min_batch_size,
-            min_batch_duration,
+            time_precision,
             tolerable_clock_skew,
             collector_hpke_config,
             aggregator_auth_tokens,
@@ -313,9 +313,9 @@ impl Task {
         self.min_batch_size
     }
 
-    /// Retrieves the min batch duration parameter associated with this task.
-    pub fn min_batch_duration(&self) -> &Duration {
-        &self.min_batch_duration
+    /// Retrieves the time precision parameter associated with this task.
+    pub fn time_precision(&self) -> &Duration {
+        &self.time_precision
     }
 
     /// Retrieves the tolerable clock skew parameter associated with this task.
@@ -346,11 +346,11 @@ impl Task {
     /// Returns true if `batch_interval` is valid, per §4.6 of draft-gpew-priv-ppm.
     pub(crate) fn validate_batch_interval(&self, batch_interval: &Interval) -> bool {
         // Batch interval should be greater than task's minimum batch duration
-        batch_interval.duration().as_seconds() >= self.min_batch_duration.as_seconds()
+        batch_interval.duration().as_seconds() >= self.time_precision.as_seconds()
             // Batch interval start must be a multiple of minimum batch duration
-            && batch_interval.start().as_seconds_since_epoch() % self.min_batch_duration.as_seconds() == 0
+            && batch_interval.start().as_seconds_since_epoch() % self.time_precision.as_seconds() == 0
             // Batch interval duration must be a multiple of minimum batch duration
-            && batch_interval.duration().as_seconds() % self.min_batch_duration.as_seconds() == 0
+            && batch_interval.duration().as_seconds() % self.time_precision.as_seconds() == 0
     }
 
     /// Returns the [`Url`] relative to which the server performing `role` serves its API.
@@ -423,7 +423,7 @@ struct SerializedTask {
     vdaf_verify_keys: Vec<String>, // in unpadded base64url
     max_batch_lifetime: u64,
     min_batch_size: u64,
-    min_batch_duration: Duration,
+    time_precision: Duration,
     tolerable_clock_skew: Duration,
     collector_hpke_config: SerializedHpkeConfig,
     aggregator_auth_tokens: Vec<String>, // in unpadded base64url
@@ -463,7 +463,7 @@ impl Serialize for Task {
             vdaf_verify_keys,
             max_batch_lifetime: self.max_batch_lifetime,
             min_batch_size: self.min_batch_size,
-            min_batch_duration: self.min_batch_duration,
+            time_precision: self.time_precision,
             tolerable_clock_skew: self.tolerable_clock_skew,
             collector_hpke_config: self.collector_hpke_config.clone().into(),
             aggregator_auth_tokens,
@@ -541,7 +541,7 @@ impl<'de> Deserialize<'de> for Task {
             vdaf_verify_keys,
             serialized_task.max_batch_lifetime,
             serialized_task.min_batch_size,
-            serialized_task.min_batch_duration,
+            serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
             collector_hpke_config,
             aggregator_auth_tokens,
@@ -748,9 +748,9 @@ pub mod test_util {
         }
 
         /// Associates the eventual task with the given min batch duration parameter.
-        pub fn with_min_batch_duration(self, min_batch_duration: Duration) -> Self {
+        pub fn with_time_precision(self, time_precision: Duration) -> Self {
             Self(Task {
-                min_batch_duration,
+                time_precision,
                 ..self.0
             })
         }
@@ -805,9 +805,9 @@ mod tests {
 
     #[test]
     fn validate_batch_interval() {
-        let min_batch_duration_secs = 3600;
+        let time_precision_secs = 3600;
         let task = TaskBuilder::new(VdafInstance::Fake, Role::Leader)
-            .with_min_batch_duration(Duration::from_seconds(min_batch_duration_secs))
+            .with_time_precision(Duration::from_seconds(time_precision_secs))
             .build();
 
         struct TestCase {
@@ -820,8 +820,8 @@ mod tests {
             TestCase {
                 name: "same duration as minimum",
                 input: Interval::new(
-                    Time::from_seconds_since_epoch(min_batch_duration_secs),
-                    Duration::from_seconds(min_batch_duration_secs),
+                    Time::from_seconds_since_epoch(time_precision_secs),
+                    Duration::from_seconds(time_precision_secs),
                 )
                 .unwrap(),
                 expected: true,
@@ -829,8 +829,8 @@ mod tests {
             TestCase {
                 name: "interval too short",
                 input: Interval::new(
-                    Time::from_seconds_since_epoch(min_batch_duration_secs),
-                    Duration::from_seconds(min_batch_duration_secs - 1),
+                    Time::from_seconds_since_epoch(time_precision_secs),
+                    Duration::from_seconds(time_precision_secs - 1),
                 )
                 .unwrap(),
                 expected: false,
@@ -838,8 +838,8 @@ mod tests {
             TestCase {
                 name: "interval larger than minimum",
                 input: Interval::new(
-                    Time::from_seconds_since_epoch(min_batch_duration_secs),
-                    Duration::from_seconds(min_batch_duration_secs * 2),
+                    Time::from_seconds_since_epoch(time_precision_secs),
+                    Duration::from_seconds(time_precision_secs * 2),
                 )
                 .unwrap(),
                 expected: true,
@@ -847,8 +847,8 @@ mod tests {
             TestCase {
                 name: "interval duration not aligned with minimum",
                 input: Interval::new(
-                    Time::from_seconds_since_epoch(min_batch_duration_secs),
-                    Duration::from_seconds(min_batch_duration_secs + 1800),
+                    Time::from_seconds_since_epoch(time_precision_secs),
+                    Duration::from_seconds(time_precision_secs + 1800),
                 )
                 .unwrap(),
                 expected: false,
@@ -857,7 +857,7 @@ mod tests {
                 name: "interval start not aligned with minimum",
                 input: Interval::new(
                     Time::from_seconds_since_epoch(1800),
-                    Duration::from_seconds(min_batch_duration_secs),
+                    Duration::from_seconds(time_precision_secs),
                 )
                 .unwrap(),
                 expected: false,
