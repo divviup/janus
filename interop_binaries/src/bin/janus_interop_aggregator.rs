@@ -7,7 +7,7 @@ use interop_binaries::{
     AddTaskResponse, AggregatorAddTaskRequest, HpkeConfigRegistry,
 };
 use janus_core::{task::AuthenticationToken, time::RealClock, TokioRuntime};
-use janus_messages::{Duration, HpkeConfig, Role, TaskId};
+use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
 use janus_server::{
     aggregator::{
         aggregate_share::CollectJobDriver, aggregation_job_creator::AggregationJobCreator,
@@ -86,6 +86,7 @@ async fn handle_add_task(
         role,
         Vec::from([verify_key]),
         request.max_batch_query_count,
+        Time::from_seconds_since_epoch(request.task_expiration),
         request.min_batch_size,
         time_precision,
         // We can be strict about clock skew since this executable is only intended for use with

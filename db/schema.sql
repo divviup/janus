@@ -17,6 +17,7 @@ CREATE TABLE tasks(
     aggregator_endpoints   TEXT[] NOT NULL,           -- aggregator HTTPS endpoints, leader first
     vdaf                   JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
     max_batch_query_count  BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
+    task_expiration        TIMESTAMP NOT NULL,        -- the time after which client reports are no longer accepted
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     time_precision         BIGINT NOT NULL,           -- the duration to which clients are expected to round their report timestamps, in seconds
     tolerable_clock_skew   BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds

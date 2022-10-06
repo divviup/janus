@@ -9,7 +9,7 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
-    Role, TaskId,
+    Role, TaskId, Time,
 };
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -189,6 +189,8 @@ pub struct Task {
     vdaf_verify_keys: Vec<SecretBytes>,
     /// The maximum number of times a given batch may be collected.
     max_batch_query_count: u64,
+    /// The time after which the task is considered invalid.
+    task_expiration: Time,
     /// The minimum number of reports in a batch to allow it to be collected.
     min_batch_size: u64,
     /// The duration to which clients should round their reported timestamps to. For time-interval
@@ -218,6 +220,7 @@ impl Task {
         role: Role,
         vdaf_verify_keys: Vec<SecretBytes>,
         max_batch_query_count: u64,
+        task_expiration: Time,
         min_batch_size: u64,
         time_precision: Duration,
         tolerable_clock_skew: Duration,
@@ -268,6 +271,7 @@ impl Task {
             role,
             vdaf_verify_keys,
             max_batch_query_count,
+            task_expiration,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
@@ -306,6 +310,11 @@ impl Task {
     /// Retrieves the max batch query count parameter associated with this task.
     pub fn max_batch_query_count(&self) -> u64 {
         self.max_batch_query_count
+    }
+
+    /// Retrieves the task expiration associated with this task.
+    pub fn task_expiration(&self) -> &Time {
+        &self.task_expiration
     }
 
     /// Retrieves the min batch size parameter associated with this task.
@@ -422,6 +431,7 @@ struct SerializedTask {
     role: Role,
     vdaf_verify_keys: Vec<String>, // in unpadded base64url
     max_batch_query_count: u64,
+    task_expiration: Time,
     min_batch_size: u64,
     time_precision: Duration,
     tolerable_clock_skew: Duration,
@@ -462,6 +472,7 @@ impl Serialize for Task {
             role: self.role,
             vdaf_verify_keys,
             max_batch_query_count: self.max_batch_query_count,
+            task_expiration: self.task_expiration,
             min_batch_size: self.min_batch_size,
             time_precision: self.time_precision,
             tolerable_clock_skew: self.tolerable_clock_skew,
@@ -540,6 +551,7 @@ impl<'de> Deserialize<'de> for Task {
             serialized_task.role,
             vdaf_verify_keys,
             serialized_task.max_batch_query_count,
+            serialized_task.task_expiration,
             serialized_task.min_batch_size,
             serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
@@ -625,7 +637,7 @@ pub mod test_util {
     };
     use crate::messages::DurationExt;
     use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
-    use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId};
+    use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use url::Url;
 
@@ -690,6 +702,7 @@ pub mod test_util {
                     role,
                     Vec::from([vdaf_verify_key]),
                     1,
+                    Time::from_seconds_since_epoch(u64::MAX),
                     0,
                     Duration::from_hours(8).unwrap(),
                     Duration::from_minutes(10).unwrap(),
@@ -989,6 +1002,7 @@ mod tests {
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
+            Time::from_seconds_since_epoch(u64::MAX),
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
@@ -1010,6 +1024,7 @@ mod tests {
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
+            Time::from_seconds_since_epoch(u64::MAX),
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
@@ -1031,6 +1046,7 @@ mod tests {
             Role::Helper,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
+            Time::from_seconds_since_epoch(u64::MAX),
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
@@ -1052,6 +1068,7 @@ mod tests {
             Role::Helper,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
+            Time::from_seconds_since_epoch(u64::MAX),
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
@@ -1075,6 +1092,7 @@ mod tests {
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
+            Time::from_seconds_since_epoch(u64::MAX),
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),

@@ -178,9 +178,9 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, vdaf,
-                max_batch_query_count, min_batch_size, time_precision, tolerable_clock_skew,
-                collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                max_batch_query_count, task_expiration, min_batch_size, time_precision,
+                tolerable_clock_skew, collector_hpke_config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             )
             .await?;
         self.tx
@@ -193,6 +193,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* vdaf */ &Json(&task.vdaf()),
                     /* max_batch_query_count */
                     &i64::try_from(task.max_batch_query_count())?,
+                    /* task_expiration */ &task.task_expiration().as_naive_date_time(),
                     /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
                     /* time_precision */
                     &i64::try_from(task.time_precision().as_seconds())?,
@@ -402,7 +403,8 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT aggregator_role, aggregator_endpoints, vdaf, max_batch_query_count,
-                min_batch_size, time_precision, tolerable_clock_skew, collector_hpke_config
+                    task_expiration, min_batch_size, time_precision, tolerable_clock_skew,
+                    collector_hpke_config
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -478,7 +480,8 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf, max_batch_query_count,
-                    min_batch_size, time_precision, tolerable_clock_skew, collector_hpke_config 
+                    task_expiration, min_batch_size, time_precision, tolerable_clock_skew,
+                    collector_hpke_config 
                 FROM tasks",
             )
             .await?;
@@ -618,6 +621,7 @@ impl<C: Clock> Transaction<'_, C> {
             .collect::<Result<_, Error>>()?;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
         let max_batch_query_count = row.get_bigint_and_convert("max_batch_query_count")?;
+        let task_expiration = Time::from_naive_date_time(&row.get("task_expiration"));
         let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
         let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let tolerable_clock_skew =
@@ -700,6 +704,7 @@ impl<C: Clock> Transaction<'_, C> {
             aggregator_role.as_role(),
             vdaf_verify_keys,
             max_batch_query_count,
+            task_expiration,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
