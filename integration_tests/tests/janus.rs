@@ -7,7 +7,7 @@ use janus_core::{
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
 use janus_messages::Role;
-use janus_server::task::{test_util::TaskBuilder, Task};
+use janus_server::task::{test_util::TaskBuilder, QueryType, Task};
 use rand::random;
 use std::env::{self, VarError};
 use testcontainers::clients::Cli;
@@ -54,9 +54,13 @@ impl<'a> JanusPair<'a> {
         let endpoint_random_value = hex::encode(random::<[u8; 4]>());
         let (collector_hpke_config, collector_private_key) =
             generate_test_hpke_config_and_private_key();
-        let leader_task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_min_batch_size(46)
-            .with_collector_hpke_config(collector_hpke_config);
+        let leader_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .with_min_batch_size(46)
+        .with_collector_hpke_config(collector_hpke_config);
         let helper_task = leader_task.clone().with_role(Role::Helper);
 
         // The environment variables should either all be present, or all be absent

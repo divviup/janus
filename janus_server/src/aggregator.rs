@@ -2731,7 +2731,7 @@ mod tests {
         messages::{DurationExt, TimeExt},
         task::{
             test_util::{generate_auth_token, TaskBuilder},
-            Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH,
+            QueryType, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH,
         },
     };
     use assert_matches::assert_matches;
@@ -2787,7 +2787,12 @@ mod tests {
     async fn hpke_config() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let unknown_task_id: TaskId = random();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -2893,7 +2898,12 @@ mod tests {
     async fn hpke_config_cors_headers() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -3001,7 +3011,12 @@ mod tests {
     async fn upload_filter() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -3201,7 +3216,12 @@ mod tests {
     async fn upload_filter_helper() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -3253,7 +3273,12 @@ mod tests {
         Arc<Datastore<MockClock>>,
         DbHandle,
     ) {
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
@@ -3487,7 +3512,12 @@ mod tests {
     async fn aggregate_leader() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -3566,7 +3596,12 @@ mod tests {
     async fn aggregate_wrong_agg_auth_token() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -3649,7 +3684,12 @@ mod tests {
         // Prepare datastore & request.
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -3974,8 +4014,12 @@ mod tests {
         // Prepare datastore & request.
         install_test_trace_subscriber();
 
-        let task =
-            TaskBuilder::new(crate::task::VdafInstance::FakeFailsPrepInit, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::FakeFailsPrepInit,
+            Role::Helper,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let hpke_key = current_hpke_key(task.hpke_keys());
@@ -4050,8 +4094,12 @@ mod tests {
         // Prepare datastore & request.
         install_test_trace_subscriber();
 
-        let task =
-            TaskBuilder::new(crate::task::VdafInstance::FakeFailsPrepInit, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::FakeFailsPrepInit,
+            Role::Helper,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let hpke_key = current_hpke_key(task.hpke_keys());
@@ -4125,8 +4173,12 @@ mod tests {
     async fn aggregate_init_duplicated_report_id() {
         install_test_trace_subscriber();
 
-        let task =
-            TaskBuilder::new(crate::task::VdafInstance::FakeFailsPrepInit, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::FakeFailsPrepInit,
+            Role::Helper,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -4198,7 +4250,12 @@ mod tests {
         install_test_trace_subscriber();
 
         let aggregation_job_id = random();
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
@@ -4508,7 +4565,12 @@ mod tests {
     async fn aggregate_continue_accumulate_batch_unit_aggregation() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        )
+        .build();
         let aggregation_job_id_0 = random();
         let aggregation_job_id_1 = random();
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
@@ -5061,7 +5123,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Helper,
+        )
+        .build();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -5169,8 +5236,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task =
-            TaskBuilder::new(crate::task::VdafInstance::FakeFailsPrepStep, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::FakeFailsPrepStep,
+            Role::Helper,
+        )
+        .build();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -5325,7 +5396,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Helper,
+        )
+        .build();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -5434,7 +5510,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Helper,
+        )
+        .build();
         let aggregation_job_id = random();
         let report_metadata_0 = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -5586,7 +5667,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Helper,
+        )
+        .build();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -5692,7 +5778,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Helper,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -5741,7 +5832,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -5800,7 +5896,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -5857,7 +5958,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let batch_interval =
             Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
@@ -5967,7 +6073,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let batch_interval =
             Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
@@ -6097,9 +6208,13 @@ mod tests {
         // Prepare parameters.
         let (collector_hpke_config, collector_hpke_recipient) =
             generate_test_hpke_config_and_private_key();
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_collector_hpke_config(collector_hpke_config)
-            .build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .with_collector_hpke_config(collector_hpke_config)
+        .build();
         let batch_interval =
             Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
@@ -6278,7 +6393,12 @@ mod tests {
     async fn collect_request_batch_queried_too_many_times() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
 
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
@@ -6375,7 +6495,12 @@ mod tests {
     async fn collect_request_batch_overlap() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
 
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
@@ -6485,7 +6610,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let batch_interval =
             Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
@@ -6577,7 +6707,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -6631,7 +6766,12 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Helper).build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Helper,
+        )
+        .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -6691,12 +6831,16 @@ mod tests {
 
         let (collector_hpke_config, collector_hpke_recipient) =
             generate_test_hpke_config_and_private_key();
-        let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Helper)
-            .with_max_batch_query_count(1)
-            .with_time_precision(Duration::from_seconds(500))
-            .with_min_batch_size(10)
-            .with_collector_hpke_config(collector_hpke_config.clone())
-            .build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            crate::task::VdafInstance::Fake,
+            Role::Helper,
+        )
+        .with_max_batch_query_count(1)
+        .with_time_precision(Duration::from_seconds(500))
+        .with_min_batch_size(10)
+        .with_collector_hpke_config(collector_hpke_config.clone())
+        .build();
 
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;

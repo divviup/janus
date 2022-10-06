@@ -30,6 +30,20 @@ pub enum Error {
     AggregatorVerifyKeySize,
 }
 
+/// Identifiers for query types used by a task, along with query-type specific configuration.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QueryType {
+    /// Time-interval: used to support a collection style based on fixed time intervals.
+    TimeInterval,
+
+    /// Fixed-size: used to support collection of batches as quickly as possible, without aligning
+    /// to a fixed batch window.
+    FixedSize {
+        /// The maximum number of reports in a batch to allow it to be collected.
+        max_batch_size: u64,
+    },
+}
+
 /// Identifiers for VDAFs supported by this aggregator, corresponding to
 /// definitions in [draft-irtf-cfrg-vdaf-03][1] and implementations in
 /// [`prio::vdaf::prio3`].
@@ -180,6 +194,8 @@ pub struct Task {
     /// entry is the leader's.
     #[derivative(Debug(format_with = "fmt_vector_of_urls"))]
     aggregator_endpoints: Vec<Url>,
+    /// The query type this task uses to generate batches.
+    query_type: QueryType,
     /// The VDAF this task executes.
     vdaf: VdafInstance,
     /// The role performed by the aggregator.
@@ -216,6 +232,7 @@ impl Task {
     pub fn new<I: IntoIterator<Item = (HpkeConfig, HpkePrivateKey)>>(
         task_id: TaskId,
         mut aggregator_endpoints: Vec<Url>,
+        query_type: QueryType,
         vdaf: VdafInstance,
         role: Role,
         vdaf_verify_keys: Vec<SecretBytes>,
@@ -267,6 +284,7 @@ impl Task {
         Ok(Self {
             task_id,
             aggregator_endpoints,
+            query_type,
             vdaf,
             role,
             vdaf_verify_keys,
@@ -290,6 +308,11 @@ impl Task {
     /// Retrieves the aggregator endpoints associated with this task in natural order.
     pub fn aggregator_endpoints(&self) -> &[Url] {
         &self.aggregator_endpoints
+    }
+
+    /// Retrieves the query type associated with this task.
+    pub fn query_type(&self) -> &QueryType {
+        &self.query_type
     }
 
     /// Retrieves the VDAF associated with this task.
@@ -427,6 +450,7 @@ fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
 struct SerializedTask {
     task_id: String, // in unpadded base64url
     aggregator_endpoints: Vec<Url>,
+    query_type: QueryType,
     vdaf: VdafInstance,
     role: Role,
     vdaf_verify_keys: Vec<String>, // in unpadded base64url
@@ -468,6 +492,7 @@ impl Serialize for Task {
         SerializedTask {
             task_id,
             aggregator_endpoints: self.aggregator_endpoints.clone(),
+            query_type: self.query_type,
             vdaf: self.vdaf.clone(),
             role: self.role,
             vdaf_verify_keys,
@@ -547,6 +572,7 @@ impl<'de> Deserialize<'de> for Task {
         Task::new(
             task_id,
             serialized_task.aggregator_endpoints,
+            serialized_task.query_type,
             serialized_task.vdaf,
             serialized_task.role,
             vdaf_verify_keys,
@@ -633,7 +659,8 @@ impl TryFrom<SerializedHpkeKeypair> for (HpkeConfig, HpkePrivateKey) {
 #[cfg(feature = "test-util")]
 pub mod test_util {
     use super::{
-        AuthenticationToken, SecretBytes, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH,
+        AuthenticationToken, QueryType, SecretBytes, Task, VdafInstance,
+        PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
     use crate::messages::DurationExt;
     use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
@@ -664,7 +691,7 @@ pub mod test_util {
     impl TaskBuilder {
         /// Create a [`TaskBuilder`] from the provided values, with arbitrary values for the other
         /// task parameters.
-        pub fn new(vdaf: VdafInstance, role: Role) -> Self {
+        pub fn new(query_type: QueryType, vdaf: VdafInstance, role: Role) -> Self {
             let task_id = random();
             let (aggregator_config_0, aggregator_private_key_0) =
                 generate_test_hpke_config_and_private_key();
@@ -698,6 +725,7 @@ pub mod test_util {
                         "https://leader.endpoint".parse().unwrap(),
                         "https://helper.endpoint".parse().unwrap(),
                     ]),
+                    query_type,
                     vdaf,
                     role,
                     Vec::from([vdaf_verify_key]),
@@ -809,7 +837,7 @@ mod tests {
     use crate::{
         config::test_util::roundtrip_encoding,
         messages::DurationExt,
-        task::{test_util::TaskBuilder, VdafInstance},
+        task::{test_util::TaskBuilder, QueryType, VdafInstance},
     };
     use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
     use janus_messages::{Duration, Interval, Role, Time};
@@ -819,7 +847,7 @@ mod tests {
     #[test]
     fn validate_batch_interval() {
         let time_precision_secs = 3600;
-        let task = TaskBuilder::new(VdafInstance::Fake, Role::Leader)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_time_precision(Duration::from_seconds(time_precision_secs))
             .build();
 
@@ -982,6 +1010,7 @@ mod tests {
     fn task_serialization() {
         roundtrip_encoding(
             TaskBuilder::new(
+                QueryType::TimeInterval,
                 VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
                 Role::Leader,
             )
@@ -998,6 +1027,7 @@ mod tests {
                 "http://leader_endpoint".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
             ]),
+            QueryType::TimeInterval,
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
@@ -1020,6 +1050,7 @@ mod tests {
                 "http://leader_endpoint".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
             ]),
+            QueryType::TimeInterval,
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
@@ -1042,6 +1073,7 @@ mod tests {
                 "http://leader_endpoint".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
             ]),
+            QueryType::TimeInterval,
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Helper,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
@@ -1064,6 +1096,7 @@ mod tests {
                 "http://leader_endpoint".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
             ]),
+            QueryType::TimeInterval,
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Helper,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
@@ -1088,6 +1121,7 @@ mod tests {
                 "http://leader_endpoint/foo/bar".parse().unwrap(),
                 "http://helper_endpoint".parse().unwrap(),
             ]),
+            QueryType::TimeInterval,
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count),
             Role::Leader,
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),

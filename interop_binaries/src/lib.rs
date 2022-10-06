@@ -1,7 +1,7 @@
 use base64::URL_SAFE_NO_PAD;
 use janus_core::hpke::{generate_hpke_config_and_private_key, HpkePrivateKey};
 use janus_messages::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role};
-use janus_server::task::{Task, VdafInstance};
+use janus_server::task::{QueryType, Task, VdafInstance};
 use prio::codec::Encode;
 use rand::random;
 use serde::{de::Visitor, Deserialize, Serialize};
@@ -137,6 +137,7 @@ pub struct AggregatorAddTaskRequest {
     pub task_id: String, // in unpadded base64url
     pub leader: Url,
     pub helper: Url,
+    pub query_type: QueryType,
     pub vdaf: VdafObject,
     pub leader_authentication_token: String,
     #[serde(default)]
@@ -163,6 +164,7 @@ impl From<Task> for AggregatorAddTaskRequest {
             task_id: base64::encode_config(task.task_id().as_ref(), URL_SAFE_NO_PAD),
             leader: task.aggregator_url(&Role::Leader).unwrap().clone(),
             helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
+            query_type: *task.query_type(),
             vdaf: task.vdaf().clone().into(),
             leader_authentication_token: String::from_utf8(
                 task.primary_aggregator_auth_token().as_bytes().to_vec(),

@@ -913,7 +913,7 @@ mod tests {
             },
             test_util::ephemeral_datastore,
         },
-        task::{test_util::TaskBuilder, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{test_util::TaskBuilder, QueryType, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
     use http::header::CONTENT_TYPE;
@@ -962,12 +962,16 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_aggregator_endpoints(Vec::from([
-                Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&mockito::server_url()).unwrap(),
-            ]))
-            .build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .with_aggregator_endpoints(Vec::from([
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ]))
+        .build();
 
         let report_metadata = ReportMetadata::new(
             random(),
@@ -1172,12 +1176,16 @@ mod tests {
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_aggregator_endpoints(Vec::from([
-                Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&mockito::server_url()).unwrap(),
-            ]))
-            .build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .with_aggregator_endpoints(Vec::from([
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ]))
+        .build();
 
         let report_metadata = ReportMetadata::new(
             random(),
@@ -1377,12 +1385,16 @@ mod tests {
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_aggregator_endpoints(Vec::from([
-                Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&mockito::server_url()).unwrap(),
-            ]))
-            .build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .with_aggregator_endpoints(Vec::from([
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ]))
+        .build();
         let report_metadata = ReportMetadata::new(
             random(),
             clock
@@ -1602,12 +1614,16 @@ mod tests {
         let ds = Arc::new(ds);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_aggregator_endpoints(Vec::from([
-                Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&mockito::server_url()).unwrap(),
-            ]))
-            .build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .with_aggregator_endpoints(Vec::from([
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ]))
+        .build();
         let report_metadata = ReportMetadata::new(
             random(),
             clock
@@ -1779,12 +1795,16 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        let task = TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader)
-            .with_aggregator_endpoints(Vec::from([
-                Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&mockito::server_url()).unwrap(),
-            ]))
-            .build();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .with_aggregator_endpoints(Vec::from([
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ]))
+        .build();
         let agg_auth_token = task.primary_aggregator_auth_token();
         let aggregation_job_id = random();
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =

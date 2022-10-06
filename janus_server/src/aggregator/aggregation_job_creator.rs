@@ -457,7 +457,7 @@ mod tests {
         },
         messages::test_util::new_dummy_report,
         messages::TimeExt,
-        task::{test_util::TaskBuilder, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{test_util::TaskBuilder, QueryType, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use futures::{future::try_join_all, TryFutureExt};
     use janus_core::{
@@ -503,12 +503,20 @@ mod tests {
         // even if the main test loops on calling yield_now().
 
         let report_time = Time::from_seconds_since_epoch(0);
-        let leader_task =
-            TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build();
+        let leader_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
         let leader_report = new_dummy_report(*leader_task.task_id(), report_time);
 
-        let helper_task =
-            TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Helper).build();
+        let helper_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        )
+        .build();
         let helper_report = new_dummy_report(*helper_task.task_id(), report_time);
 
         ds.run_tx(|tx| {
@@ -595,8 +603,14 @@ mod tests {
             assert!(MAX_AGGREGATION_JOB_SIZE < usize::MAX); // we can add 1 safely
         }
 
-        let task =
-            Arc::new(TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build());
+        let task = Arc::new(
+            TaskBuilder::new(
+                QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128Count.into(),
+                Role::Leader,
+            )
+            .build(),
+        );
         let current_batch_unit = clock
             .now()
             .to_batch_unit_interval_start(task.time_precision())
@@ -722,8 +736,14 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let task =
-            Arc::new(TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build());
+        let task = Arc::new(
+            TaskBuilder::new(
+                QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128Count.into(),
+                Role::Leader,
+            )
+            .build(),
+        );
         let first_report = new_dummy_report(*task.task_id(), clock.now());
         let second_report = new_dummy_report(*task.task_id(), clock.now());
 
@@ -831,8 +851,14 @@ mod tests {
 
         const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
         let vdaf = dummy_vdaf::Vdaf::new();
-        let task =
-            Arc::new(TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Leader).build());
+        let task = Arc::new(
+            TaskBuilder::new(
+                QueryType::TimeInterval,
+                crate::task::VdafInstance::Fake,
+                Role::Leader,
+            )
+            .build(),
+        );
 
         // Create MAX_AGGREGATION_JOB_SIZE reports in one batch unit. This should result in
         // one aggregation job per overlapping collect job for these reports. (and there is

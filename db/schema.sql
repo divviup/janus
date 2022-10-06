@@ -15,6 +15,7 @@ CREATE TABLE tasks(
     task_id                BYTEA UNIQUE NOT NULL,     -- 32-byte TaskID as defined by the DAP specification
     aggregator_role        AGGREGATOR_ROLE NOT NULL,  -- the role of this aggregator for this task
     aggregator_endpoints   TEXT[] NOT NULL,           -- aggregator HTTPS endpoints, leader first
+    query_type             JSON NOT NULL,             -- the query type in use for this task, along with its parameters
     vdaf                   JSON NOT NULL,             -- the VDAF instance in use for this task, along with its parameters
     max_batch_query_count  BIGINT NOT NULL,           -- the maximum number of times a given batch may be collected
     task_expiration        TIMESTAMP NOT NULL,        -- the time after which client reports are no longer accepted

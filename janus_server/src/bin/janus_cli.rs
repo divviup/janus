@@ -357,7 +357,7 @@ mod tests {
         },
         config::CommonConfig,
         datastore::test_util::{ephemeral_datastore, ephemeral_db_handle},
-        task::test_util::TaskBuilder,
+        task::{test_util::TaskBuilder, QueryType},
     };
     use ring::aead::{UnboundKey, AES_128_GCM};
     use std::{
@@ -453,8 +453,14 @@ mod tests {
     #[tokio::test]
     async fn provision_tasks() {
         let tasks = Vec::from([
-            TaskBuilder::new(VdafInstance::Prio3Aes128Count.into(), Role::Leader).build(),
             TaskBuilder::new(
+                QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128Count.into(),
+                Role::Leader,
+            )
+            .build(),
+            TaskBuilder::new(
+                QueryType::TimeInterval,
                 VdafInstance::Prio3Aes128Sum { bits: 64 }.into(),
                 Role::Helper,
             )

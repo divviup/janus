@@ -643,7 +643,7 @@ mod tests {
             Datastore,
         },
         messages::TimeExt,
-        task::{test_util::TaskBuilder, VdafInstance},
+        task::{test_util::TaskBuilder, QueryType, VdafInstance},
     };
     use assert_matches::assert_matches;
     use http::{header::CONTENT_TYPE, StatusCode};
@@ -678,7 +678,7 @@ mod tests {
         Option<Lease<AcquiredCollectJob>>,
         CollectJob<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>,
     ) {
-        let task = TaskBuilder::new(VdafInstance::Fake, Role::Leader)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_aggregator_endpoints(Vec::from([
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
                 Url::parse(&mockito::server_url()).unwrap(),
@@ -801,7 +801,7 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        let task = TaskBuilder::new(VdafInstance::Fake, Role::Leader)
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_aggregator_endpoints(Vec::from([
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
                 Url::parse(&mockito::server_url()).unwrap(),

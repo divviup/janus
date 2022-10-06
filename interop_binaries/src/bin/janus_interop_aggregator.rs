@@ -82,6 +82,7 @@ async fn handle_add_task(
     let task = Task::new(
         task_id,
         Vec::from([request.leader, request.helper]),
+        request.query_type,
         vdaf,
         role,
         Vec::from([verify_key]),

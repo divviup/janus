@@ -25,6 +25,7 @@ const TIME_PRECISION: u64 = 3600;
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
 /// the "Test Runner Operation" section in draft-dcook-ppm-dap-interop-test-design-01.
 async fn run(
+    query_type: serde_json::Value,
     vdaf_object: serde_json::Value,
     measurements: &[serde_json::Value],
     aggregation_parameter: &[u8],
@@ -233,6 +234,7 @@ async fn run(
             "taskId": task_id_encoded,
             "leader": internal_leader_endpoint,
             "helper": internal_helper_endpoint,
+            "queryType": query_type,
             "vdaf": vdaf_object,
             "leaderAuthenticationToken": aggregator_auth_token,
             "collectorAuthenticationToken": collector_auth_token,
@@ -279,6 +281,7 @@ async fn run(
             "taskId": task_id_encoded,
             "leader": internal_leader_endpoint,
             "helper": internal_helper_endpoint,
+            "queryType": query_type,
             "vdaf": vdaf_object,
             "leaderAuthenticationToken": aggregator_auth_token,
             "aggregatorId": 1,
@@ -454,6 +457,7 @@ async fn run(
 #[tokio::test]
 async fn e2e_prio3_count() {
     let result = run(
+        json!("TimeInterval"),
         json!({"type": "Prio3Aes128Count"}),
         &[
             json!("0"),
@@ -484,6 +488,7 @@ async fn e2e_prio3_count() {
 #[tokio::test]
 async fn e2e_prio3_sum() {
     let result = run(
+        json!("TimeInterval"),
         json!({"type": "Prio3Aes128Sum", "bits": 64}),
         &[
             json!("0"),
@@ -503,6 +508,7 @@ async fn e2e_prio3_sum() {
 #[tokio::test]
 async fn e2e_prio3_histogram() {
     let result = run(
+        json!("TimeInterval"),
         json!({
             "type": "Prio3Aes128Histogram",
             "buckets": ["0", "1", "10", "100", "1000", "10000", "100000"],
@@ -528,6 +534,7 @@ async fn e2e_prio3_histogram() {
 #[tokio::test]
 async fn e2e_prio3_count_vec() {
     let result = run(
+        json!("TimeInterval"),
         json!({"type": "Prio3Aes128CountVec", "length": 4}),
         &[
             json!(["0", "0", "0", "1"]),
