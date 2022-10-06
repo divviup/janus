@@ -1762,6 +1762,7 @@ dependencies = [
  "chrono",
  "clap 4.0.8",
  "derivative",
+ "http-api-problem",
  "janus_collector",
  "janus_core",
  "janus_messages",

@@ -15,10 +15,11 @@ test-util = []
 [dependencies]
 backoff = { version = "0.4.0", features = ["tokio"] }
 derivative = "2.2.0"
+http-api-problem = "0.55.0"
 janus_core = { version = "0.1", path = "../janus_core" }
 janus_messages = { version = "0.1", path = "../janus_messages" }
 prio = "0.10.0"
-reqwest = { version = "0.11.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.11.12", default-features = false, features = ["rustls-tls", "json"] }
 retry-after = "0.3.1"
 thiserror = "1.0"
 tokio = { version = "1.21", features = ["full"] }

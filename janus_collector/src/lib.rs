@@ -54,6 +54,7 @@
 
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use derivative::Derivative;
+use http_api_problem::HttpApiProblem;
 use janus_core::{
     hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey},
     retries::{http_request_exponential_backoff, retry_http_request},
@@ -85,7 +86,7 @@ pub enum Error {
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
     #[error("HTTP response status {0}")]
-    Http(StatusCode),
+    Http(HttpApiProblem),
     #[error("URL parse: {0}")]
     Url(#[from] url::ParseError),
     #[error("missing Location header in See Other response")]
@@ -328,7 +329,7 @@ where
         );
         let url = self.parameters.collect_endpoint()?;
 
-        let response = retry_http_request(
+        let response_res = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
             || async {
                 let mut request = self
@@ -344,16 +345,39 @@ where
                 request.send().await
             },
         )
-        .await
-        .map_err(|res| match res {
-            Ok(response) => Error::Http(response.status()),
-            Err(error) => Error::HttpClient(error),
-        })?;
+        .await;
 
-        let status = response.status();
-        if status != StatusCode::SEE_OTHER {
-            return Err(Error::Http(status));
-        }
+        let response = match response_res {
+            // Successful response or unretryable error status code:
+            Ok(response) => {
+                let status = response.status();
+                if status == StatusCode::SEE_OTHER {
+                    response
+                } else if status.is_client_error() || status.is_server_error() {
+                    if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
+                        problem_details.status = Some(status);
+                        return Err(Error::Http(problem_details));
+                    } else {
+                        return Err(Error::Http(HttpApiProblem::new(status)));
+                    }
+                } else {
+                    return Err(Error::Http(HttpApiProblem::new(status)));
+                }
+            }
+            // Retryable error status code, but ran out of retries:
+            Err(Ok(response)) => {
+                let status = response.status();
+                if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
+                    problem_details.status = Some(status);
+                    return Err(Error::Http(problem_details));
+                } else {
+                    return Err(Error::Http(HttpApiProblem::new(status)));
+                }
+            }
+            // Lower level errors, either unretryable or ran out of retries:
+            Err(Err(error)) => return Err(Error::HttpClient(error)),
+        };
+
         let location_header_value = response
             .headers()
             .get(LOCATION)
@@ -375,7 +399,7 @@ where
         &self,
         job: &CollectJob<V::AggregationParam>,
     ) -> Result<PollResult<V::AggregateResult>, Error> {
-        let response = retry_http_request(
+        let response_res = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
             || async {
                 let mut request = self.http_client.get(job.collect_job_url.clone());
@@ -387,25 +411,46 @@ where
                 request.send().await
             },
         )
-        .await
-        .map_err(|res| match res {
-            Ok(response) => Error::Http(response.status()),
-            Err(error) => Error::HttpClient(error),
-        })?;
+        .await;
 
-        let status = response.status();
-        match status {
-            StatusCode::ACCEPTED => {
-                let retry_after_opt = response
-                    .headers()
-                    .get(RETRY_AFTER)
-                    .map(RetryAfter::try_from)
-                    .transpose()?;
-                return Ok(PollResult::NextAttempt(retry_after_opt));
+        let response = match response_res {
+            // Successful response or unretryable error status code:
+            Ok(response) => {
+                let status = response.status();
+                match status {
+                    StatusCode::OK => response,
+                    StatusCode::ACCEPTED => {
+                        let retry_after_opt = response
+                            .headers()
+                            .get(RETRY_AFTER)
+                            .map(RetryAfter::try_from)
+                            .transpose()?;
+                        return Ok(PollResult::NextAttempt(retry_after_opt));
+                    }
+                    _ if status.is_client_error() || status.is_server_error() => {
+                        if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
+                            problem_details.status = Some(status);
+                            return Err(Error::Http(problem_details));
+                        } else {
+                            return Err(Error::Http(HttpApiProblem::new(status)));
+                        }
+                    }
+                    _ => return Err(Error::Http(HttpApiProblem::new(status))),
+                }
             }
-            StatusCode::OK => {}
-            _ => return Err(Error::Http(status)),
-        }
+            // Retryable error status code, but ran out of retries:
+            Err(Ok(response)) => {
+                let status = response.status();
+                if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
+                    problem_details.status = Some(status);
+                    return Err(Error::Http(problem_details));
+                } else {
+                    return Err(Error::Http(HttpApiProblem::new(status)));
+                }
+            }
+            // Lower level errors, either unretryable or ran out of retries:
+            Err(Err(error)) => return Err(Error::HttpClient(error)),
+        };
 
         let content_type = response
             .headers()
@@ -855,9 +900,32 @@ mod tests {
             .start_collection(batch_interval, &())
             .await
             .unwrap_err();
-        assert_matches!(error, Error::Http(StatusCode::INTERNAL_SERVER_ERROR));
+        assert_matches!(error, Error::Http(problem) => {
+            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+        });
 
         mock_server_error.assert();
+
+        let mock_server_error_details = mock("POST", "/collect")
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_status(500)
+            .with_body("{\"type\": \"http://example.com/test_server_error\"}")
+            .expect_at_least(1)
+            .create();
+
+        let error = collector
+            .start_collection(batch_interval, &())
+            .await
+            .unwrap_err();
+        assert_matches!(error, Error::Http(problem) => {
+            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(problem.type_url.unwrap(), "http://example.com/test_server_error");
+        });
+
+        mock_server_error_details.assert();
 
         let mock_server_no_location = mock("POST", "/collect")
             .match_header(
@@ -868,11 +936,6 @@ mod tests {
             .expect_at_least(1)
             .create();
 
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(1_000_000),
-            Duration::from_seconds(3600),
-        )
-        .unwrap();
         let error = collector
             .start_collection(batch_interval, &())
             .await
@@ -880,6 +943,33 @@ mod tests {
         assert_matches!(error, Error::MissingLocationHeader);
 
         mock_server_no_location.assert();
+
+        let mock_bad_request = mock("POST", "/collect")
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                CollectReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .with_status(400)
+            .with_body(
+                concat!(
+                    "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
+                    "\"detail\": \"The message type for a response was incorrect or the payload was malformed.\"}"
+                )
+            )
+            .expect_at_least(1)
+            .create();
+
+        let error = collector
+            .start_collection(batch_interval, &())
+            .await
+            .unwrap_err();
+        assert_matches!(error, Error::Http(problem) => {
+            assert_eq!(problem.status.unwrap(), StatusCode::BAD_REQUEST);
+            assert_eq!(problem.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:unrecognizedMessage");
+            assert_eq!(problem.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
+        });
+
+        mock_bad_request.assert();
     }
 
     #[tokio::test]
@@ -914,10 +1004,44 @@ mod tests {
             .await
             .unwrap();
         let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http(StatusCode::INTERNAL_SERVER_ERROR));
+        assert_matches!(error, Error::Http(problem) => {
+            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+        });
 
         mock_collect_start.assert();
         mock_collect_job_server_error.assert();
+
+        let mock_collect_job_server_error_details = mock("GET", "/collect_job/1")
+            .with_status(500)
+            .with_body("{\"type\": \"http://example.com/test_server_error\"}")
+            .expect_at_least(1)
+            .create();
+
+        let error = collector.poll_once(&job).await.unwrap_err();
+        assert_matches!(error, Error::Http(problem) => {
+            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(problem.type_url.unwrap(), "http://example.com/test_server_error");
+        });
+
+        mock_collect_job_server_error_details.assert();
+
+        let mock_collect_job_bad_request = mock("GET", "/collect_job/1")
+            .with_status(400)
+            .with_body(concat!(
+                "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
+                "\"detail\": \"The message type for a response was incorrect or the payload was malformed.\"}"
+            ))
+            .expect_at_least(1)
+            .create();
+
+        let error = collector.poll_once(&job).await.unwrap_err();
+        assert_matches!(error, Error::Http(problem) => {
+            assert_eq!(problem.status.unwrap(), StatusCode::BAD_REQUEST);
+            assert_eq!(problem.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:unrecognizedMessage");
+            assert_eq!(problem.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
+        });
+
+        mock_collect_job_bad_request.assert();
 
         let mock_collect_job_bad_message_bytes = mock("GET", "/collect_job/1")
             .with_status(200)
@@ -1059,7 +1183,9 @@ mod tests {
             .expect_at_least(3)
             .create();
         let error = collector.poll_until_complete(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http(StatusCode::INTERNAL_SERVER_ERROR));
+        assert_matches!(error, Error::Http(problem) => {
+            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+        });
         mock_collect_job_always_fail.assert();
     }
 
