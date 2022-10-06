@@ -957,10 +957,12 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             error,
-            Error::Http(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Some(DapProblemType::BatchQueriedTooManyTimes),
-            )
+            Error::Http {
+                problem_details,
+                dap_problem_type: Some(DapProblemType::BatchQueriedTooManyTimes),
+            } => {
+                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            }
         );
 
         mocked_failed_aggregate_share.assert();

@@ -1305,9 +1305,9 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             error.downcast().unwrap(),
-            Error::Http(status_code, problem_type) => {
-                assert_eq!(status_code, StatusCode::INTERNAL_SERVER_ERROR);
-                assert_eq!(problem_type, Some(DapProblemType::UnauthorizedRequest));
+            Error::Http { problem_details, dap_problem_type } => {
+                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(dap_problem_type, Some(DapProblemType::UnauthorizedRequest));
             }
         );
         aggregation_job_driver
@@ -1517,9 +1517,9 @@ mod tests {
             .unwrap_err();
         assert_matches!(
             error.downcast().unwrap(),
-            Error::Http(status_code, problem_type) => {
-                assert_eq!(status_code, StatusCode::INTERNAL_SERVER_ERROR);
-                assert_eq!(problem_type, Some(DapProblemType::UnrecognizedTask));
+            Error::Http { problem_details, dap_problem_type } => {
+                assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(dap_problem_type, Some(DapProblemType::UnrecognizedTask));
             }
         );
         aggregation_job_driver

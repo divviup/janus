@@ -27,6 +27,7 @@ use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
     HeaderMap, StatusCode,
 };
+use http_api_problem::HttpApiProblem;
 use janus_core::{
     hpke::{
         self, associated_data_for_aggregate_share, associated_data_for_report_share,
@@ -177,8 +178,11 @@ pub enum Error {
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
     /// HTTP server returned an error status code.
-    #[error("HTTP response status {0} (problem type {1:?})")]
-    Http(StatusCode, Option<DapProblemType>),
+    #[error("HTTP response status {problem_details}")]
+    Http {
+        problem_details: HttpApiProblem,
+        dap_problem_type: Option<DapProblemType>,
+    },
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
@@ -213,7 +217,7 @@ impl Error {
             Error::Hpke(_) => "hpke",
             Error::TaskParameters(_) => "task_parameters",
             Error::HttpClient(_) => "http_client",
-            Error::Http(_, _) => "http",
+            Error::Http { .. } => "http",
             Error::Internal(_) => "internal",
         }
     }
@@ -2352,7 +2356,7 @@ where
                     Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::HttpClient(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::Http(_, _)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::Http { .. }) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::TaskParameters(_)) => {
                         StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
@@ -2715,15 +2719,21 @@ async fn post_to_helper<T: Encode>(
                 KeyValue::new("endpoint", endpoint),
             ],
         );
-        if let Ok(json_body) = response.json::<serde_json::Value>().await {
-            let type_opt = json_body
-                .as_object()
-                .and_then(|object| object.get("type"))
-                .and_then(|value| value.as_str())
+        if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
+            problem_details.status = Some(status);
+            let type_opt = problem_details
+                .type_url
+                .as_ref()
                 .and_then(|str| str.parse::<DapProblemType>().ok());
-            return Err(Error::Http(status, type_opt));
+            return Err(Error::Http {
+                problem_details,
+                dap_problem_type: type_opt,
+            });
         }
-        return Err(Error::Http(status, None));
+        return Err(Error::Http {
+            problem_details: HttpApiProblem::new(status),
+            dap_problem_type: None,
+        });
     }
 
     match response.bytes().await {
@@ -7449,7 +7459,7 @@ mod tests {
             // Confirm that post_to_helper() correctly parsed the error type from error_handler().
             assert_matches!(
                 actual_error,
-                Error::Http(_, problem_type) => {
+                Error::Http { dap_problem_type: problem_type, .. } => {
                     assert_eq!(problem_type, expected_problem_type);
                 }
             );
