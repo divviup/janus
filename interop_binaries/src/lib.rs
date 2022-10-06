@@ -143,7 +143,7 @@ pub struct AggregatorAddTaskRequest {
     pub collector_authentication_token: Option<String>,
     pub aggregator_id: u8,
     pub verify_key: String, // in unpadded base64url
-    pub max_batch_lifetime: u64,
+    pub max_batch_query_count: u64,
     pub min_batch_size: u64,
     pub time_precision: u64,           // in seconds
     pub collector_hpke_config: String, // in unpadded base64url
@@ -180,7 +180,7 @@ impl From<Task> for AggregatorAddTaskRequest {
                 task.vdaf_verify_keys().first().unwrap().as_ref(),
                 URL_SAFE_NO_PAD,
             ),
-            max_batch_lifetime: task.max_batch_lifetime(),
+            max_batch_query_count: task.max_batch_query_count(),
             min_batch_size: task.min_batch_size(),
             time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: base64::encode_config(

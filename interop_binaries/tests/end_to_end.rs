@@ -238,7 +238,7 @@ async fn run(
             "collectorAuthenticationToken": collector_auth_token,
             "aggregatorId": 0,
             "verifyKey": verify_key_encoded,
-            "maxBatchLifetime": 1,
+            "maxBatchQueryCount": 1,
             "minBatchSize": 1,
             "timePrecision": TIME_PRECISION,
             "collectorHpkeConfig": collector_hpke_config_encoded,
@@ -282,7 +282,7 @@ async fn run(
             "leaderAuthenticationToken": aggregator_auth_token,
             "aggregatorId": 1,
             "verifyKey": verify_key_encoded,
-            "maxBatchLifetime": 1,
+            "maxBatchQueryCount": 1,
             "minBatchSize": 1,
             "timePrecision": TIME_PRECISION,
             "collectorHpkeConfig": collector_hpke_config_encoded,
@@ -318,8 +318,8 @@ async fn run(
         .to_batch_unit_interval_start(&Duration::from_seconds(TIME_PRECISION))
         .unwrap()
         .as_seconds_since_epoch();
-    // Span the aggregation over two minimum batch durations, just in case our
-    // measurements spilled over a batch boundary.
+    // Span the aggregation over two time precisions, just in case our measurements spilled over a
+    // batch boundary.
     let batch_interval_duration = TIME_PRECISION * 2;
 
     // Send one or more /internal/test/upload requests to the client.

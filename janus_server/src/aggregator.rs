@@ -8,7 +8,7 @@ pub mod aggregation_job_driver;
 use crate::{
     aggregator::{
         accumulator::Accumulator,
-        aggregate_share::{compute_aggregate_share, validate_batch_lifetime_for_collect},
+        aggregate_share::{compute_aggregate_share, validate_batch_query_count_for_collect},
     },
     datastore::{
         self,
@@ -1659,7 +1659,7 @@ impl VdafOps {
                     }
 
                     debug!(collect_request = ?req, "Cache miss, creating new collect job UUID");
-                    validate_batch_lifetime_for_collect::<L, _, A>(
+                    validate_batch_query_count_for_collect::<L, _, A>(
                         tx,
                         &task,
                         *req.query().batch_interval(),
@@ -2015,7 +2015,7 @@ impl VdafOps {
                                     aggregate_share_req.batch_selector().batch_interval(),
                                     &aggregation_param,
                                 ),
-                                validate_batch_lifetime_for_collect::<L, _, A>(
+                                validate_batch_query_count_for_collect::<L, _, A>(
                                     tx,
                                     &task,
                                     *aggregate_share_req.batch_selector().batch_interval(),
@@ -2027,8 +2027,9 @@ impl VdafOps {
                                     .await
                                     .map_err(|e| datastore::Error::User(e.into()))?;
 
-                            // Now that we are satisfied that the request is serviceable, we consume batch lifetime by
-                            // recording the aggregate share request parameters and the result.
+                            // Now that we are satisfied that the request is serviceable, we consume
+                            // a query by recording the aggregate share request parameters and the
+                            // result.
                             let aggregate_share_job = AggregateShareJob::<L, A>::new(
                                 *task.task_id(),
                                 *aggregate_share_req.batch_selector().batch_interval(),
@@ -6306,7 +6307,7 @@ mod tests {
 
         let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
 
-        // Sending this request will consume the lifetime for [0, time_precision).
+        // Sending this request will consume a query for [0, time_precision).
         let request = CollectReq::new(
             *task.task_id(),
             Query::new_time_interval(
@@ -6331,7 +6332,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-        // This request will not be allowed due to the batch lifetime already being consumed.
+        // This request will not be allowed due to the query count already being consumed.
         let invalid_request = CollectReq::new(
             *task.task_id(),
             Query::new_time_interval(
@@ -6403,7 +6404,7 @@ mod tests {
 
         let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
 
-        // Sending this request will consume the lifetime for [0, 2 * time_precision).
+        // Sending this request will consume a query for [0, 2 * time_precision).
         let request = CollectReq::new(
             *task.task_id(),
             Query::new_time_interval(
@@ -6691,7 +6692,7 @@ mod tests {
         let (collector_hpke_config, collector_hpke_recipient) =
             generate_test_hpke_config_and_private_key();
         let task = TaskBuilder::new(crate::task::VdafInstance::Fake, Role::Helper)
-            .with_max_batch_lifetime(1)
+            .with_max_batch_query_count(1)
             .with_time_precision(Duration::from_seconds(500))
             .with_min_batch_size(10)
             .with_collector_hpke_config(collector_hpke_config.clone())
@@ -6960,7 +6961,7 @@ mod tests {
             ),
         ] {
             // Request the aggregate share multiple times. If the request parameters don't change,
-            // then there is no batch lifetime violation and all requests should succeed.
+            // then there is no query count violation and all requests should succeed.
             for iteration in 0..3 {
                 let (parts, body) = warp::test::request()
                     .method("POST")
@@ -7064,10 +7065,10 @@ mod tests {
             }),
         );
 
-        // Previous sequence of aggregate share requests should have consumed the batch lifetime for
-        // all the batch units. Further requests for any batch units will cause batch lifetime
+        // Previous sequence of aggregate share requests should have consumed the available queries
+        // for all the batch units. Further requests for any batch units will cause query count
         // violations.
-        for batch_lifetime_violation_request in [
+        for query_count_violation_request in [
             AggregateShareReq::new(
                 *task.task_id(),
                 BatchSelector::new_time_interval(
@@ -7103,7 +7104,7 @@ mod tests {
                     task.primary_aggregator_auth_token().as_bytes(),
                 )
                 .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-                .body(batch_lifetime_violation_request.get_encoded())
+                .body(query_count_violation_request.get_encoded())
                 .filter(&filter)
                 .await
                 .unwrap()

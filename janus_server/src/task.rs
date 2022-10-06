@@ -188,7 +188,7 @@ pub struct Task {
     #[derivative(Debug = "ignore")]
     vdaf_verify_keys: Vec<SecretBytes>,
     /// The maximum number of times a given batch may be collected.
-    max_batch_lifetime: u64,
+    max_batch_query_count: u64,
     /// The minimum number of reports in a batch to allow it to be collected.
     min_batch_size: u64,
     /// The duration to which clients should round their reported timestamps to. For time-interval
@@ -217,7 +217,7 @@ impl Task {
         vdaf: VdafInstance,
         role: Role,
         vdaf_verify_keys: Vec<SecretBytes>,
-        max_batch_lifetime: u64,
+        max_batch_query_count: u64,
         min_batch_size: u64,
         time_precision: Duration,
         tolerable_clock_skew: Duration,
@@ -267,7 +267,7 @@ impl Task {
             vdaf,
             role,
             vdaf_verify_keys,
-            max_batch_lifetime,
+            max_batch_query_count,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
@@ -303,9 +303,9 @@ impl Task {
         &self.vdaf_verify_keys
     }
 
-    /// Retrieves the max batch lifetime parameter associated with this task.
-    pub fn max_batch_lifetime(&self) -> u64 {
-        self.max_batch_lifetime
+    /// Retrieves the max batch query count parameter associated with this task.
+    pub fn max_batch_query_count(&self) -> u64 {
+        self.max_batch_query_count
     }
 
     /// Retrieves the min batch size parameter associated with this task.
@@ -345,11 +345,11 @@ impl Task {
 
     /// Returns true if `batch_interval` is valid, per §4.6 of draft-gpew-priv-ppm.
     pub(crate) fn validate_batch_interval(&self, batch_interval: &Interval) -> bool {
-        // Batch interval should be greater than task's minimum batch duration
+        // Batch interval should be greater than task's time precision
         batch_interval.duration().as_seconds() >= self.time_precision.as_seconds()
-            // Batch interval start must be a multiple of minimum batch duration
+            // Batch interval start must be a multiple of time precision
             && batch_interval.start().as_seconds_since_epoch() % self.time_precision.as_seconds() == 0
-            // Batch interval duration must be a multiple of minimum batch duration
+            // Batch interval duration must be a multiple of time precision
             && batch_interval.duration().as_seconds() % self.time_precision.as_seconds() == 0
     }
 
@@ -421,7 +421,7 @@ struct SerializedTask {
     vdaf: VdafInstance,
     role: Role,
     vdaf_verify_keys: Vec<String>, // in unpadded base64url
-    max_batch_lifetime: u64,
+    max_batch_query_count: u64,
     min_batch_size: u64,
     time_precision: Duration,
     tolerable_clock_skew: Duration,
@@ -461,7 +461,7 @@ impl Serialize for Task {
             vdaf: self.vdaf.clone(),
             role: self.role,
             vdaf_verify_keys,
-            max_batch_lifetime: self.max_batch_lifetime,
+            max_batch_query_count: self.max_batch_query_count,
             min_batch_size: self.min_batch_size,
             time_precision: self.time_precision,
             tolerable_clock_skew: self.tolerable_clock_skew,
@@ -539,7 +539,7 @@ impl<'de> Deserialize<'de> for Task {
             serialized_task.vdaf,
             serialized_task.role,
             vdaf_verify_keys,
-            serialized_task.max_batch_lifetime,
+            serialized_task.max_batch_query_count,
             serialized_task.min_batch_size,
             serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
@@ -731,10 +731,10 @@ pub mod test_util {
             })
         }
 
-        /// Associates the eventual task with the given max batch lifetime parameter.
-        pub fn with_max_batch_lifetime(self, max_batch_lifetime: u64) -> Self {
+        /// Associates the eventual task with the given max batch query count parameter.
+        pub fn with_max_batch_query_count(self, max_batch_query_count: u64) -> Self {
             Self(Task {
-                max_batch_lifetime,
+                max_batch_query_count,
                 ..self.0
             })
         }
@@ -747,7 +747,7 @@ pub mod test_util {
             })
         }
 
-        /// Associates the eventual task with the given min batch duration parameter.
+        /// Associates the eventual task with the given time precision parameter.
         pub fn with_time_precision(self, time_precision: Duration) -> Self {
             Self(Task {
                 time_precision,

@@ -482,7 +482,7 @@ impl CollectJobDriver {
 
 /// Computes the aggregate share over the provided batch unit aggregations.
 /// The assumption is that all aggregation jobs contributing to those batch unit aggregations have
-/// been driven to completion, and that the batch lifetime requirements have been validated for the
+/// been driven to completion, and that the query count requirements have been validated for the
 /// included batch units.
 #[tracing::instrument(err)]
 pub(crate) async fn compute_aggregate_share<const L: usize, A: vdaf::Aggregator<L>>(
@@ -552,10 +552,10 @@ where
 
 /// Check whether this collect interval has been included in enough collect jobs (for `task.role` ==
 /// [`Role::Leader`]) or aggregate share jobs (for `task.role` == [`Role::Helper`]) to violate the
-/// task's maximum batch lifetime, and that this collect interval does not partially overlap with
+/// task's maximum batch query count, and that this collect interval does not partially overlap with
 /// an already-observed collect interval.
 // TODO(#468): This only handles time-interval queries
-pub(crate) async fn validate_batch_lifetime_for_collect<
+pub(crate) async fn validate_batch_query_count_for_collect<
     const L: usize,
     C: Clock,
     A: vdaf::Aggregator<L>,
@@ -569,7 +569,7 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     // Check how many rows in the relevant table have an intersecting batch interval.
-    // Each such row consumes one unit of batch lifetime (§4.6).
+    // Each such row consumes one unit of query count (§4.6).
     let intersecting_intervals: Vec<_> = match task.role() {
         Role::Leader => tx
             .get_collect_jobs_jobs_intersecting_interval::<L, A>(task.task_id(), &collect_interval)
@@ -604,26 +604,26 @@ where
 
     // Check that the batch query count is being consumed appropriately.
     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
-    let max_batch_lifetime: usize = task.max_batch_lifetime().try_into()?;
-    if intersecting_intervals.len() == max_batch_lifetime {
+    let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
+    if intersecting_intervals.len() == max_batch_query_count {
         debug!(
             task_id = %task.task_id(), ?collect_interval,
-            "Refusing aggregate share request because batch lifetime has been consumed"
+            "Refusing aggregate share request because query count has been consumed"
         );
         return Err(datastore::Error::User(
             Error::BatchQueriedTooManyTimes(*task.task_id(), intersecting_intervals.len() as u64)
                 .into(),
         ));
     }
-    if intersecting_intervals.len() > max_batch_lifetime {
+    if intersecting_intervals.len() > max_batch_query_count {
         error!(
             task_id = %task.task_id(), ?collect_interval,
-            "Batch lifetime has been consumed more times than task allows"
+            "query count has been consumed more times than task allows"
         );
 
         // We return an internal error since this should be impossible.
         return Err(datastore::Error::User(
-            Error::Internal("batch lifetime overconsumed".to_string()).into(),
+            Error::Internal("query count overconsumed".to_string()).into(),
         ));
     }
     Ok(())

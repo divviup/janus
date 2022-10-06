@@ -85,7 +85,7 @@ async fn handle_add_task(
         vdaf,
         role,
         Vec::from([verify_key]),
-        request.max_batch_lifetime,
+        request.max_batch_query_count,
         request.min_batch_size,
         time_precision,
         // We can be strict about clock skew since this executable is only intended for use with

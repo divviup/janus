@@ -178,7 +178,7 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, vdaf,
-                max_batch_lifetime, min_batch_size, time_precision, tolerable_clock_skew,
+                max_batch_query_count, min_batch_size, time_precision, tolerable_clock_skew,
                 collector_hpke_config)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
@@ -191,7 +191,8 @@ impl<C: Clock> Transaction<'_, C> {
                     /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
                     /* aggregator_endpoints */ &endpoints,
                     /* vdaf */ &Json(&task.vdaf()),
-                    /* max_batch_lifetime */ &i64::try_from(task.max_batch_lifetime())?,
+                    /* max_batch_query_count */
+                    &i64::try_from(task.max_batch_query_count())?,
                     /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
                     /* time_precision */
                     &i64::try_from(task.time_precision().as_seconds())?,
@@ -400,7 +401,7 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT aggregator_role, aggregator_endpoints, vdaf, max_batch_lifetime,
+                "SELECT aggregator_role, aggregator_endpoints, vdaf, max_batch_query_count,
                 min_batch_size, time_precision, tolerable_clock_skew, collector_hpke_config
                 FROM tasks WHERE task_id = $1",
             )
@@ -476,7 +477,7 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf, max_batch_lifetime,
+                "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf, max_batch_query_count,
                     min_batch_size, time_precision, tolerable_clock_skew, collector_hpke_config 
                 FROM tasks",
             )
@@ -616,7 +617,7 @@ impl<C: Clock> Transaction<'_, C> {
             .map(|endpoint| Ok(Url::parse(&endpoint)?))
             .collect::<Result<_, Error>>()?;
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-        let max_batch_lifetime = row.get_bigint_and_convert("max_batch_lifetime")?;
+        let max_batch_query_count = row.get_bigint_and_convert("max_batch_query_count")?;
         let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
         let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let tolerable_clock_skew =
@@ -698,7 +699,7 @@ impl<C: Clock> Transaction<'_, C> {
             vdaf,
             aggregator_role.as_role(),
             vdaf_verify_keys,
-            max_batch_lifetime,
+            max_batch_query_count,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,

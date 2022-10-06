@@ -92,8 +92,8 @@ pub async fn submit_measurements_and_verify_aggregate(
         before_timestamp
             .to_batch_unit_interval_start(leader_task.time_precision())
             .unwrap(),
-        // Use two minimum batch durations as the interval duration in order to avoid a race
-        // condition if this test happens to run very close to the end of a batch window.
+        // Use two time precisions as the interval duration in order to avoid a race condition if
+        // this test happens to run very close to the end of a batch window.
         Duration::from_seconds(2 * leader_task.time_precision().as_seconds()),
     )
     .unwrap();
