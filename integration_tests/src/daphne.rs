@@ -80,7 +80,7 @@ impl<'a> Daphne<'a> {
         let dap_collect_id_key: [u8; 16] = random();
 
         let dap_task_list = serde_json::to_string(&HashMap::from([(
-            hex::encode(task.task_id().as_ref()),
+            hex::encode(task.id().as_ref()),
             DaphneDapTaskConfig {
                 version: "v01".to_string(),
                 leader_url: task.aggregator_url(&Role::Leader).unwrap().clone(),
@@ -97,11 +97,11 @@ impl<'a> Daphne<'a> {
         // Daphne currently only supports one auth token per task. Janus supports multiple tokens
         // per task to allow rotation; we supply Daphne with the "primary" token.
         let aggregator_bearer_token_list = json!({
-            hex::encode(task.task_id().as_ref()): String::from_utf8(task.primary_aggregator_auth_token().as_bytes().to_vec()).unwrap()
+            hex::encode(task.id().as_ref()): String::from_utf8(task.primary_aggregator_auth_token().as_bytes().to_vec()).unwrap()
         }).to_string();
         let collector_bearer_token_list = if task.role() == &Role::Leader {
             json!({
-                hex::encode(task.task_id().as_ref()): String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec()).unwrap()
+                hex::encode(task.id().as_ref()): String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec()).unwrap()
             }).to_string()
         } else {
             String::new()
