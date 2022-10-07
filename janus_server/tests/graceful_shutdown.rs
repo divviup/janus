@@ -5,8 +5,10 @@
 
 use janus_core::{task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock};
 use janus_messages::Role;
-use janus_server::{datastore::test_util::ephemeral_datastore, task::Task};
-use rand::random;
+use janus_server::{
+    datastore::test_util::ephemeral_datastore,
+    task::{test_util::TaskBuilder, QueryType},
+};
 use reqwest::Url;
 use serde_yaml::Mapping;
 use std::{
@@ -120,8 +122,12 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         format!("{}", health_check_listen_address).into(),
     );
 
-    let task_id = random();
-    let task = Task::new_dummy(task_id, VdafInstance::Prio3Aes128Count.into(), Role::Leader);
+    let task = TaskBuilder::new(
+        QueryType::TimeInterval,
+        VdafInstance::Prio3Aes128Count.into(),
+        Role::Leader,
+    )
+    .build();
     datastore.put_task(&task).await.unwrap();
 
     // Save the above configuration to a temporary file, so that we can pass

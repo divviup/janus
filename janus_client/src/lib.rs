@@ -59,24 +59,20 @@ pub struct ClientParameters {
     /// entry is the leader's.
     #[derivative(Debug(format_with = "fmt_vector_of_urls"))]
     aggregator_endpoints: Vec<Url>,
-    /// The minimum batch duration of the task. This value is shared by all
-    /// parties in the protocol, and is used to compute report timestamps.
-    min_batch_duration: Duration,
+    /// The time precision of the task. This value is shared by all parties in the protocol, and is
+    /// used to compute report timestamps.
+    time_precision: Duration,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,
 }
 
 impl ClientParameters {
     /// Creates a new set of client task parameters.
-    pub fn new(
-        task_id: TaskId,
-        aggregator_endpoints: Vec<Url>,
-        min_batch_duration: Duration,
-    ) -> Self {
+    pub fn new(task_id: TaskId, aggregator_endpoints: Vec<Url>, time_precision: Duration) -> Self {
         Self::new_with_backoff(
             task_id,
             aggregator_endpoints,
-            min_batch_duration,
+            time_precision,
             http_request_exponential_backoff(),
         )
     }
@@ -85,7 +81,7 @@ impl ClientParameters {
     pub fn new_with_backoff(
         task_id: TaskId,
         mut aggregator_endpoints: Vec<Url>,
-        min_batch_duration: Duration,
+        time_precision: Duration,
         http_request_retry_parameters: ExponentialBackoff,
     ) -> Self {
         // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
@@ -98,14 +94,14 @@ impl ClientParameters {
         Self {
             task_id,
             aggregator_endpoints,
-            min_batch_duration,
+            time_precision,
             http_request_retry_parameters,
         }
     }
 
     /// The URL relative to which the API endpoints for the aggregator may be
     /// found, if the role is an aggregator, or an error otherwise.
-    fn aggregator_endpoint(&self, role: Role) -> Result<&Url, Error> {
+    fn aggregator_endpoint(&self, role: &Role) -> Result<&Url, Error> {
         Ok(&self.aggregator_endpoints[role
             .index()
             .ok_or(Error::InvalidParameter("role is not an aggregator"))?])
@@ -113,14 +109,14 @@ impl ClientParameters {
 
     /// URL from which the HPKE configuration for the server filling `role` may
     /// be fetched per draft-gpew-priv-ppm §4.3.1
-    fn hpke_config_endpoint(&self, role: Role) -> Result<Url, Error> {
+    fn hpke_config_endpoint(&self, role: &Role) -> Result<Url, Error> {
         Ok(self.aggregator_endpoint(role)?.join("hpke_config")?)
     }
 
     /// URL to which reports may be uploaded by clients per draft-gpew-priv-ppm
     /// §4.3.2
     fn upload_endpoint(&self) -> Result<Url, Error> {
-        Ok(self.aggregator_endpoint(Role::Leader)?.join("upload")?)
+        Ok(self.aggregator_endpoint(&Role::Leader)?.join("upload")?)
     }
 }
 
@@ -137,12 +133,12 @@ fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
 #[tracing::instrument(err)]
 pub async fn aggregator_hpke_config(
     client_parameters: &ClientParameters,
-    aggregator_role: Role,
-    task_id: TaskId,
+    aggregator_role: &Role,
+    task_id: &TaskId,
     http_client: &reqwest::Client,
 ) -> Result<HpkeConfig, Error> {
     let mut request_url = client_parameters.hpke_config_endpoint(aggregator_role)?;
-    request_url.set_query(Some(&format!("task_id={}", task_id)));
+    request_url.set_query(Some(&format!("task_id={task_id}")));
     let hpke_config_response = retry_http_request(
         client_parameters.http_request_retry_parameters.clone(),
         || async { http_client.get(request_url.clone()).send().await },
@@ -215,10 +211,8 @@ where
         let time = self
             .clock
             .now()
-            .to_batch_unit_interval_start(self.parameters.min_batch_duration)
-            .map_err(|_| {
-                Error::InvalidParameter("couldn't round time down to min_batch_duration")
-            })?;
+            .to_batch_unit_interval_start(&self.parameters.time_precision)
+            .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
         let report_metadata = ReportMetadata::new(
             random(),
             time,
@@ -226,21 +220,21 @@ where
         );
         let public_share = public_share.get_encoded();
         let associated_data = associated_data_for_report_share(
-            self.parameters.task_id,
+            &self.parameters.task_id,
             &report_metadata,
             &public_share,
         );
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
-            (&self.leader_hpke_config, Role::Leader),
-            (&self.helper_hpke_config, Role::Helper),
+            (&self.leader_hpke_config, &Role::Leader),
+            (&self.helper_hpke_config, &Role::Helper),
         ]
         .into_iter()
         .zip(input_shares)
         .map(|((hpke_config, receiver_role), input_share)| {
             Ok(hpke::seal(
                 hpke_config,
-                &HpkeApplicationInfo::new(Label::InputShare, Role::Client, receiver_role),
+                &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, receiver_role),
                 &input_share.get_encoded(),
                 &associated_data,
             )?)
@@ -290,17 +284,18 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{default_http_client, Client, ClientParameters, Error};
     use assert_matches::assert_matches;
-    use http::StatusCode;
+    use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key,
         retries::test_http_request_exponential_backoff, test_util::install_test_trace_subscriber,
         time::MockClock,
     };
-    use janus_messages::Time;
+    use janus_messages::{Duration, Report, Time};
     use mockito::mock;
-    use prio::vdaf::prio3::Prio3;
+    use prio::vdaf::{self, prio3::Prio3};
+    use rand::random;
     use url::Url;
 
     fn setup_client<V: vdaf::Client>(vdaf_client: V) -> Client<V, MockClock>
@@ -427,10 +422,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_bad_min_batch_duration() {
+    async fn upload_bad_time_precision() {
         install_test_trace_subscriber();
 
-        let client_parameters = ClientParameters::new(random(), vec![], Duration::from_seconds(0));
+        let client_parameters =
+            ClientParameters::new(random(), Vec::new(), Duration::from_seconds(0));
         let client = Client::new(
             client_parameters,
             Prio3::new_aes128_count(2).unwrap(),
@@ -449,7 +445,7 @@ mod tests {
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let mut client = setup_client(vdaf);
 
-        client.parameters.min_batch_duration = Duration::from_seconds(100);
+        client.parameters.time_precision = Duration::from_seconds(100);
         client.clock = MockClock::new(Time::from_seconds_since_epoch(101));
         assert_eq!(
             client.prepare_report(&1).unwrap().metadata().time(),

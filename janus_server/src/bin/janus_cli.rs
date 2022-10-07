@@ -176,7 +176,7 @@ async fn provision_tasks<C: Clock>(datastore: &Datastore<C>, tasks_file: &Path) 
                 for task in tasks.iter() {
                     // We attempt to delete the task, but ignore "task not found" errors since
                     // the task not existing is an OK outcome too.
-                    match tx.delete_task(&task.id).await {
+                    match tx.delete_task(task.id()).await {
                         Ok(_) | Err(datastore::Error::MutationTargetNotFound) => (),
                         err => err?,
                     }
@@ -359,9 +359,8 @@ mod tests {
         },
         config::CommonConfig,
         datastore::test_util::{ephemeral_datastore, ephemeral_db_handle},
-        task::Task,
+        task::{test_util::TaskBuilder, QueryType},
     };
-    use rand::random;
     use ring::aead::{UnboundKey, AES_128_GCM};
     use std::{
         collections::HashMap,
@@ -390,7 +389,7 @@ mod tests {
         .unwrap();
 
         let expected_datastore_keys =
-            vec!["datastore-key-1".to_string(), "datastore-key-2".to_string()];
+            Vec::from(["datastore-key-1".to_string(), "datastore-key-2".to_string()]);
 
         // Keys provided at command line, not present in k8s
         let mut binary_options = CommonBinaryOptions::default();
@@ -461,16 +460,18 @@ mod tests {
     #[tokio::test]
     async fn provision_tasks() {
         let tasks = Vec::from([
-            Task::new_dummy(
-                random(),
+            TaskBuilder::new(
+                QueryType::TimeInterval,
                 VdafInstance::Prio3Aes128Count.into(),
                 Role::Leader,
-            ),
-            Task::new_dummy(
-                random(),
+            )
+            .build(),
+            TaskBuilder::new(
+                QueryType::TimeInterval,
                 VdafInstance::Prio3Aes128Sum { bits: 64 }.into(),
                 Role::Helper,
-            ),
+            )
+            .build(),
         ]);
 
         let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
@@ -486,13 +487,13 @@ mod tests {
         super::provision_tasks(&ds, &tasks_path).await.unwrap();
 
         // Verify that the expected tasks were written.
-        let want_tasks: HashMap<_, _> = tasks.into_iter().map(|task| (task.id, task)).collect();
+        let want_tasks: HashMap<_, _> = tasks.into_iter().map(|task| (*task.id(), task)).collect();
         let got_tasks = ds
             .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap()
             .into_iter()
-            .map(|task| (task.id, task))
+            .map(|task| (*task.id(), task))
             .collect();
         assert_eq!(want_tasks, got_tasks);
     }

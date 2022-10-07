@@ -65,7 +65,7 @@ impl Display for Duration {
 }
 
 /// DAP protocol message representing an instant in time with a resolution of seconds.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Time(u64);
 
 impl Time {
@@ -836,7 +836,7 @@ impl ReportMetadata {
     }
 
     /// Retrieve the report ID from this report metadata.
-    pub fn report_id(&self) -> &ReportId {
+    pub fn id(&self) -> &ReportId {
         &self.report_id
     }
 

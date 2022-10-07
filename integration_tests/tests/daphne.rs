@@ -1,13 +1,11 @@
 #![cfg(feature = "daphne")]
 
-use common::{create_test_tasks, submit_measurements_and_verify_aggregate};
+use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 use integration_tests::{daphne::Daphne, janus::Janus};
 use interop_binaries::test_util::generate_network_name;
-use janus_core::{
-    hpke::test_util::generate_test_hpke_config_and_private_key,
-    test_util::{install_test_trace_subscriber, testcontainers::container_client},
-};
+use janus_core::test_util::{install_test_trace_subscriber, testcontainers::container_client};
 use janus_messages::Role;
+use janus_server::task::Task;
 
 mod common;
 
@@ -18,17 +16,19 @@ async fn daphne_janus() {
 
     // Start servers.
     let network = generate_network_name();
-    let (collector_hpke_config, collector_private_key) =
-        generate_test_hpke_config_and_private_key();
-    let (mut leader_task, mut helper_task) = create_test_tasks(&collector_hpke_config);
+    let (collector_private_key, leader_task, helper_task) = test_task_builders();
 
     // Daphne is hardcoded to serve from a path starting with /v01/.
-    for task in [&mut leader_task, &mut helper_task] {
-        task.aggregator_endpoints
-            .get_mut(Role::Leader.index().unwrap())
-            .unwrap()
-            .set_path("/v01/");
-    }
+    let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]
+        .into_iter()
+        .map(|task| {
+            let mut endpoints = task.aggregator_endpoints().to_vec();
+            endpoints[Role::Leader.index().unwrap()].set_path("/v01/");
+            task.with_aggregator_endpoints(endpoints).build()
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
 
     let container_client = container_client();
     let leader = Daphne::new(&container_client, &network, &leader_task).await;
@@ -50,17 +50,19 @@ async fn janus_daphne() {
 
     // Start servers.
     let network = generate_network_name();
-    let (collector_hpke_config, collector_private_key) =
-        generate_test_hpke_config_and_private_key();
-    let (mut leader_task, mut helper_task) = create_test_tasks(&collector_hpke_config);
+    let (collector_private_key, leader_task, helper_task) = test_task_builders();
 
     // Daphne is hardcoded to serve from a path starting with /v01/.
-    for task in [&mut leader_task, &mut helper_task] {
-        task.aggregator_endpoints
-            .get_mut(Role::Helper.index().unwrap())
-            .unwrap()
-            .set_path("/v01/");
-    }
+    let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]
+        .into_iter()
+        .map(|task| {
+            let mut endpoints = task.aggregator_endpoints().to_vec();
+            endpoints[Role::Helper.index().unwrap()].set_path("/v01/");
+            task.with_aggregator_endpoints(endpoints).build()
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
 
     let container_client = container_client();
     let leader = Janus::new_in_container(&container_client, &network, &leader_task).await;

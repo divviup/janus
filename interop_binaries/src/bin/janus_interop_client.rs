@@ -61,7 +61,7 @@ struct UploadRequest {
     measurement: Measurement,
     #[serde(default, rename = "nonceTime")]
     timestamp: Option<u64>,
-    min_batch_duration: u64,
+    time_precision: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -83,25 +83,25 @@ where
     let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
         .context("invalid base64url content in \"taskId\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
-    let min_batch_duration = Duration::from_seconds(request.min_batch_duration);
+    let time_precision = Duration::from_seconds(request.time_precision);
     let client_parameters = ClientParameters::new(
         task_id,
-        vec![request.leader, request.helper],
-        min_batch_duration,
+        Vec::<Url>::from([request.leader, request.helper]),
+        time_precision,
     );
 
     let leader_hpke_config = janus_client::aggregator_hpke_config(
         &client_parameters,
-        Role::Leader,
-        task_id,
+        &Role::Leader,
+        &task_id,
         http_client,
     )
     .await
     .context("failed to fetch leader's HPKE configuration")?;
     let helper_hpke_config = janus_client::aggregator_hpke_config(
         &client_parameters,
-        Role::Helper,
-        task_id,
+        &Role::Helper,
+        &task_id,
         http_client,
     )
     .await

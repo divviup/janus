@@ -15,11 +15,13 @@ pub mod trace;
 pub struct SecretBytes(Vec<u8>);
 
 impl SecretBytes {
-    pub fn new(buf: Vec<u8>) -> SecretBytes {
-        SecretBytes(buf)
+    pub fn new(buf: Vec<u8>) -> Self {
+        Self(buf)
     }
+}
 
-    pub fn as_bytes(&self) -> &[u8] {
+impl AsRef<[u8]> for SecretBytes {
+    fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }

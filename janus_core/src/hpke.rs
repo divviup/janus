@@ -37,7 +37,7 @@ fn hpke_dispatch_config_from_hpke_config(
 /// Construct the HPKE associated data for sealing or opening data enciphered for a report or report
 /// share, per §4.3.2 and 4.4.1.3 of draft-ietf-ppm-dap-02
 pub fn associated_data_for_report_share(
-    task_id: TaskId,
+    task_id: &TaskId,
     report_metadata: &ReportMetadata,
     public_share: &[u8],
 ) -> Vec<u8> {
@@ -83,12 +83,12 @@ pub struct HpkeApplicationInfo(Vec<u8>);
 
 impl HpkeApplicationInfo {
     /// Construct HPKE application info from the provided label and participant roles.
-    pub fn new(label: Label, sender_role: Role, recipient_role: Role) -> Self {
+    pub fn new(label: &Label, sender_role: &Role, recipient_role: &Role) -> Self {
         Self(
             [
                 label.as_bytes(),
-                &[sender_role as u8],
-                &[recipient_role as u8],
+                &[*sender_role as u8],
+                &[*recipient_role as u8],
             ]
             .concat(),
         )
@@ -235,7 +235,7 @@ mod tests {
     fn exchange_message() {
         let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
         let application_info =
-            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
+            HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
@@ -257,7 +257,7 @@ mod tests {
     fn wrong_private_key() {
         let (hpke_config, _) = generate_test_hpke_config_and_private_key();
         let application_info =
-            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
+            HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
@@ -280,14 +280,14 @@ mod tests {
     fn wrong_application_info() {
         let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
         let application_info =
-            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
+            HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
         let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
 
         let wrong_application_info =
-            HpkeApplicationInfo::new(Label::AggregateShare, Role::Client, Role::Leader);
+            HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Client, &Role::Leader);
         open(
             &hpke_config,
             &hpke_private_key,
@@ -302,7 +302,7 @@ mod tests {
     fn wrong_associated_data() {
         let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
         let application_info =
-            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
+            HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
@@ -339,7 +339,7 @@ mod tests {
         );
         let hpke_private_key = HpkePrivateKey::new(private_key);
         let application_info =
-            HpkeApplicationInfo::new(Label::InputShare, Role::Client, Role::Leader);
+            HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
 
         let ciphertext = seal(&hpke_config, &application_info, MESSAGE, ASSOCIATED_DATA).unwrap();
         let plaintext = open(

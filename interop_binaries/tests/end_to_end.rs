@@ -19,12 +19,13 @@ use std::time::Duration as StdDuration;
 use testcontainers::RunnableImage;
 
 const JSON_MEDIA_TYPE: &str = "application/json";
-const MIN_BATCH_DURATION: u64 = 3600;
+const TIME_PRECISION: u64 = 3600;
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
 /// the "Test Runner Operation" section in draft-dcook-ppm-dap-interop-test-design-01.
 async fn run(
+    query_type: serde_json::Value,
     vdaf_object: serde_json::Value,
     measurements: &[serde_json::Value],
     aggregation_parameter: &[u8],
@@ -233,14 +234,16 @@ async fn run(
             "taskId": task_id_encoded,
             "leader": internal_leader_endpoint,
             "helper": internal_helper_endpoint,
+            "queryType": query_type,
             "vdaf": vdaf_object,
             "leaderAuthenticationToken": aggregator_auth_token,
             "collectorAuthenticationToken": collector_auth_token,
             "aggregatorId": 0,
             "verifyKey": verify_key_encoded,
-            "maxBatchLifetime": 1,
+            "maxBatchQueryCount": 1,
+            "taskExpiration": u64::MAX,
             "minBatchSize": 1,
-            "minBatchDuration": MIN_BATCH_DURATION,
+            "timePrecision": TIME_PRECISION,
             "collectorHpkeConfig": collector_hpke_config_encoded,
         }))
         .send()
@@ -278,13 +281,15 @@ async fn run(
             "taskId": task_id_encoded,
             "leader": internal_leader_endpoint,
             "helper": internal_helper_endpoint,
+            "queryType": query_type,
             "vdaf": vdaf_object,
             "leaderAuthenticationToken": aggregator_auth_token,
             "aggregatorId": 1,
             "verifyKey": verify_key_encoded,
-            "maxBatchLifetime": 1,
+            "maxBatchQueryCount": 1,
+            "taskExpiration": u64::MAX,
             "minBatchSize": 1,
-            "minBatchDuration": MIN_BATCH_DURATION,
+            "timePrecision": TIME_PRECISION,
             "collectorHpkeConfig": collector_hpke_config_encoded,
         }))
         .send()
@@ -315,12 +320,12 @@ async fn run(
     // determine what batch time to start the aggregation at.
     let start_timestamp = RealClock::default().now();
     let batch_interval_start = start_timestamp
-        .to_batch_unit_interval_start(Duration::from_seconds(MIN_BATCH_DURATION))
+        .to_batch_unit_interval_start(&Duration::from_seconds(TIME_PRECISION))
         .unwrap()
         .as_seconds_since_epoch();
-    // Span the aggregation over two minimum batch durations, just in case our
-    // measurements spilled over a batch boundary.
-    let batch_interval_duration = MIN_BATCH_DURATION * 2;
+    // Span the aggregation over two time precisions, just in case our measurements spilled over a
+    // batch boundary.
+    let batch_interval_duration = TIME_PRECISION * 2;
 
     // Send one or more /internal/test/upload requests to the client.
     for measurement in measurements {
@@ -332,7 +337,7 @@ async fn run(
                 "helper": internal_helper_endpoint,
                 "vdaf": vdaf_object,
                 "measurement": measurement,
-                "minBatchDuration": MIN_BATCH_DURATION,
+                "timePrecision": TIME_PRECISION,
             }))
             .send()
             .await
@@ -452,6 +457,7 @@ async fn run(
 #[tokio::test]
 async fn e2e_prio3_count() {
     let result = run(
+        json!("TimeInterval"),
         json!({"type": "Prio3Aes128Count"}),
         &[
             json!("0"),
@@ -482,6 +488,7 @@ async fn e2e_prio3_count() {
 #[tokio::test]
 async fn e2e_prio3_sum() {
     let result = run(
+        json!("TimeInterval"),
         json!({"type": "Prio3Aes128Sum", "bits": "64"}),
         &[
             json!("0"),
@@ -501,6 +508,7 @@ async fn e2e_prio3_sum() {
 #[tokio::test]
 async fn e2e_prio3_histogram() {
     let result = run(
+        json!("TimeInterval"),
         json!({
             "type": "Prio3Aes128Histogram",
             "buckets": ["0", "1", "10", "100", "1000", "10000", "100000"],
@@ -526,6 +534,7 @@ async fn e2e_prio3_histogram() {
 #[tokio::test]
 async fn e2e_prio3_count_vec() {
     let result = run(
+        json!("TimeInterval"),
         json!({"type": "Prio3Aes128CountVec", "length": "4"}),
         &[
             json!(["0", "0", "0", "1"]),

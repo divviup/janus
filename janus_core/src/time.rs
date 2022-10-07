@@ -82,7 +82,7 @@ pub trait TimeExt: Sized {
     /// Compute the start of the batch interval containing this Time, given the batch unit duration.
     fn to_batch_unit_interval_start(
         &self,
-        min_batch_duration: Duration,
+        time_precision: &Duration,
     ) -> Result<Self, janus_messages::Error>;
 }
 
@@ -90,11 +90,11 @@ impl TimeExt for Time {
     /// Compute the start of the batch interval containing this Time, given the batch unit duration.
     fn to_batch_unit_interval_start(
         &self,
-        min_batch_duration: Duration,
+        time_precision: &Duration,
     ) -> Result<Self, janus_messages::Error> {
         let rem = self
             .as_seconds_since_epoch()
-            .checked_rem(min_batch_duration.as_seconds())
+            .checked_rem(time_precision.as_seconds())
             .ok_or(janus_messages::Error::IllegalTimeArithmetic(
                 "remainder would overflow/underflow",
             ))?;

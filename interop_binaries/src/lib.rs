@@ -1,7 +1,7 @@
 use base64::URL_SAFE_NO_PAD;
 use janus_core::hpke::{generate_hpke_config_and_private_key, HpkePrivateKey};
 use janus_messages::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role};
-use janus_server::task::{Task, VdafInstance};
+use janus_server::task::{QueryType, Task, VdafInstance};
 use prio::codec::Encode;
 use rand::random;
 use serde::{de::Visitor, Deserialize, Serialize};
@@ -143,15 +143,17 @@ pub struct AggregatorAddTaskRequest {
     pub task_id: String, // in unpadded base64url
     pub leader: Url,
     pub helper: Url,
+    pub query_type: QueryType,
     pub vdaf: VdafObject,
     pub leader_authentication_token: String,
     #[serde(default)]
     pub collector_authentication_token: Option<String>,
     pub aggregator_id: u8,
     pub verify_key: String, // in unpadded base64url
-    pub max_batch_lifetime: u64,
+    pub max_batch_query_count: u64,
+    pub task_expiration: u64, // in seconds since the epoch
     pub min_batch_size: u64,
-    pub min_batch_duration: u64,       // in seconds
+    pub time_precision: u64,           // in seconds
     pub collector_hpke_config: String, // in unpadded base64url
 }
 
@@ -165,32 +167,34 @@ pub struct AddTaskResponse {
 impl From<Task> for AggregatorAddTaskRequest {
     fn from(task: Task) -> Self {
         Self {
-            task_id: base64::encode_config(task.id.as_ref(), URL_SAFE_NO_PAD),
-            leader: task.aggregator_url(Role::Leader).unwrap().clone(),
-            helper: task.aggregator_url(Role::Helper).unwrap().clone(),
-            vdaf: task.vdaf.clone().into(),
+            task_id: base64::encode_config(task.id().as_ref(), URL_SAFE_NO_PAD),
+            leader: task.aggregator_url(&Role::Leader).unwrap().clone(),
+            helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
+            query_type: *task.query_type(),
+            vdaf: task.vdaf().clone().into(),
             leader_authentication_token: String::from_utf8(
-                task.aggregator_auth_tokens
-                    .first()
-                    .unwrap()
-                    .as_bytes()
-                    .to_vec(),
+                task.primary_aggregator_auth_token().as_bytes().to_vec(),
             )
             .unwrap(),
-            collector_authentication_token: task
-                .collector_auth_tokens
-                .first()
-                .map(|t| String::from_utf8(t.as_bytes().to_vec()).unwrap()),
-            aggregator_id: task.role.index().unwrap().try_into().unwrap(),
+            collector_authentication_token: if task.role() == &Role::Leader {
+                Some(
+                    String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec())
+                        .unwrap(),
+                )
+            } else {
+                None
+            },
+            aggregator_id: task.role().index().unwrap().try_into().unwrap(),
             verify_key: base64::encode_config(
-                task.vdaf_verify_keys().first().unwrap().as_bytes(),
+                task.vdaf_verify_keys().first().unwrap().as_ref(),
                 URL_SAFE_NO_PAD,
             ),
-            max_batch_lifetime: task.max_batch_lifetime,
-            min_batch_size: task.min_batch_size,
-            min_batch_duration: task.min_batch_duration.as_seconds(),
+            max_batch_query_count: task.max_batch_query_count(),
+            task_expiration: task.task_expiration().as_seconds_since_epoch(),
+            min_batch_size: task.min_batch_size(),
+            time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: base64::encode_config(
-                &task.collector_hpke_config.get_encoded(),
+                &task.collector_hpke_config().get_encoded(),
                 URL_SAFE_NO_PAD,
             ),
         }

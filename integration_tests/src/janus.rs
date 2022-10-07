@@ -53,7 +53,7 @@ impl<'a> Janus<'a> {
         task: &Task,
     ) -> Janus<'a> {
         // Start the Janus interop aggregator container running.
-        let endpoint = task.aggregator_url(task.role).unwrap();
+        let endpoint = task.aggregator_url(task.role()).unwrap();
         let container = container_client.run(
             RunnableImage::from(Aggregator::default())
                 .with_network(network)
@@ -77,7 +77,7 @@ impl<'a> Janus<'a> {
         assert_eq!(resp.get("status"), Some(&Some("success".to_string())));
 
         Self::Container {
-            role: task.role,
+            role: *task.role(),
             container,
         }
     }
