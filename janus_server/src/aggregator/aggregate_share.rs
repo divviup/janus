@@ -569,7 +569,7 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     // Check how many rows in the relevant table have an intersecting batch interval.
-    // Each such row consumes one unit of query count (§4.6).
+    // Each such row consumes one unit of query count.
     let intersecting_intervals: Vec<_> = match task.role() {
         Role::Leader => tx
             .get_collect_jobs_jobs_intersecting_interval::<L, A>(task.id(), &collect_interval)
