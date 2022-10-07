@@ -127,7 +127,7 @@ where
 
             if let Some(batch_unit_aggregation) = batch_unit_aggregations.into_iter().next() {
                 debug!(
-                    unit_interval_start = ?unit_interval.start(),
+                    unit_interval_start = %unit_interval.start(),
                     "accumulating into existing batch_unit_aggregation_row",
                 );
                 tx.update_batch_unit_aggregation(&batch_unit_aggregation.merged_with(
@@ -138,7 +138,7 @@ where
                 .await?;
             } else {
                 debug!(
-                    unit_interval_start = ?unit_interval.start(),
+                    unit_interval_start = %unit_interval.start(),
                     "inserting new batch_unit_aggregation row",
                 );
                 tx.put_batch_unit_aggregation(&BatchUnitAggregation::<L, A>::new(

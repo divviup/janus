@@ -132,13 +132,13 @@ where
             // (we'll pick up any additional jobs on the next iteration of this loop). We can't
             // overestimate since this task is the only place that permits are acquired.
             let max_acquire_count = sem.available_permits();
-            info!(max_acquire_count, "Acquiring jobs");
+            info!(%max_acquire_count, "Acquiring jobs");
             let start = Instant::now();
             let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
             let leases = match leases {
                 Ok(leases) => leases,
                 Err(error) => {
-                    error!(%error, "Couldn't acquire jobs");
+                    error!(?error, "Couldn't acquire jobs");
 
                     // Go ahead and step job discovery delay in this error case to ensure we don't
                     // tightly loop running transactions that will fail without any delay.
@@ -189,7 +189,7 @@ where
                     );
 
                     async move {
-                        info!(lease_expiry = ?lease.lease_expiry_time(), "Stepping job");
+                        info!(lease_expiry = %lease.lease_expiry_time(), "Stepping job");
                         let (start, mut status) = (Instant::now(), "success");
                         match time::timeout(
                             this.effective_lease_duration(lease.lease_expiry_time()),
@@ -199,7 +199,7 @@ where
                         {
                             Ok(Ok(_)) => debug!("Job stepped"),
                             Ok(Err(error)) => {
-                                error!(%error, "Couldn't step job");
+                                error!(?error, "Couldn't step job");
                                 status = "error"
                             }
                             Err(_err) => {

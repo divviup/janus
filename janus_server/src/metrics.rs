@@ -163,7 +163,7 @@ pub fn install_metrics_exporter(
                             .unwrap()
                             .into_response(),
                         Err(error) => {
-                            tracing::error!(%error, "Failed to encode Prometheus metrics");
+                            tracing::error!(?error, "Failed to encode Prometheus metrics");
                             StatusCode::INTERNAL_SERVER_ERROR.into_response()
                         }
                     }

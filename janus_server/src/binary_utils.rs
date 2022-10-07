@@ -28,7 +28,7 @@ use std::{
     time::Duration,
 };
 use tokio_postgres::NoTls;
-use tracing::info;
+use tracing::{debug, info};
 use warp::Filter;
 
 /// Reads, parses, and returns the config referenced by the given options, or None if no config file
@@ -108,7 +108,7 @@ pub async fn database_pool(db_config: &DbConfig, db_password: Option<&str>) -> R
         || async {
             pool.get().await.map_err(|error| match error {
                 PoolError::Timeout(TimeoutType::Create) | PoolError::Backend(_) => {
-                    tracing::debug!(%error, "transient error connecting to database");
+                    debug!(?error, "transient error connecting to database");
                     backoff::Error::transient(error)
                 }
                 _ => backoff::Error::permanent(error),

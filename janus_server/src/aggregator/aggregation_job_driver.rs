@@ -370,7 +370,7 @@ impl AggregationJobDriver {
             ) {
                 Ok(leader_input_share_bytes) => leader_input_share_bytes,
                 Err(error) => {
-                    info!(report_id = %report_aggregation.report_id(), %error, "Couldn't decrypt leader's encrypted input share");
+                    info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't decrypt leader's encrypted input share");
                     self.aggregate_step_failure_counter.add(
                         &Context::current(),
                         1,
@@ -389,7 +389,7 @@ impl AggregationJobDriver {
                 Ok(leader_input_share) => leader_input_share,
                 Err(error) => {
                     // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): is moving to Invalid on a decoding error appropriate?
-                    info!(report_id = %report_aggregation.report_id(), %error, "Couldn't decode leader's input share");
+                    info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't decode leader's input share");
                     self.aggregate_step_failure_counter.add(
                         &Context::current(),
                         1,
@@ -407,7 +407,7 @@ impl AggregationJobDriver {
             ) {
                 Ok(public_share) => public_share,
                 Err(error) => {
-                    info!(report_id = %report_aggregation.report_id(), %error, "Couldn't decode public share");
+                    info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't decode public share");
                     self.aggregate_step_failure_counter.add(
                         &Context::current(),
                         1,
@@ -430,7 +430,7 @@ impl AggregationJobDriver {
             ) {
                 Ok(prep_state_and_share) => prep_state_and_share,
                 Err(error) => {
-                    info!(report_id = %report_aggregation.report_id(), %error, "Couldn't initialize leader's preparation state");
+                    info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't initialize leader's preparation state");
                     self.aggregate_step_failure_counter.add(
                         &Context::current(),
                         1,
@@ -532,7 +532,7 @@ impl AggregationJobDriver {
                 {
                     Ok(leader_transition) => leader_transition,
                     Err(error) => {
-                        info!(report_id = %report_aggregation.report_id(), %error, "Prepare step failed");
+                        info!(report_id = %report_aggregation.report_id(), ?error, "Prepare step failed");
                         self.aggregate_step_failure_counter.add(
                             &Context::current(),
                             1,
@@ -651,7 +651,7 @@ impl AggregationJobDriver {
                                 ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg))
                             }
                             Err(error) => {
-                                info!(report_id = %report_aggregation.report_id(), %error, "Couldn't compute prepare message");
+                                info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't compute prepare message");
                                 self.aggregate_step_failure_counter.add(
                                     &Context::current(),
                                     1,
@@ -682,7 +682,7 @@ impl AggregationJobDriver {
                         ) {
                             Ok(_) => ReportAggregationState::Finished(out_share.clone()),
                             Err(error) => {
-                                warn!(report_id = %report_aggregation.report_id(), %error, "Could not update batch unit aggregation");
+                                warn!(report_id = %report_aggregation.report_id(), ?error, "Could not update batch unit aggregation");
                                 self.aggregate_step_failure_counter.add(
                                     &Context::current(),
                                     1,
@@ -874,9 +874,11 @@ impl AggregationJobDriver {
             let (this, datastore) = (Arc::clone(&self), Arc::clone(&datastore));
             Box::pin(async move {
                 if lease.lease_attempts() > maximum_attempts_before_failure {
-                    warn!(attempts = ?lease.lease_attempts(),
-                        max_attempts = ?maximum_attempts_before_failure,
-                        "Canceling job due to too many failed attempts");
+                    warn!(
+                        attempts = %lease.lease_attempts(),
+                        max_attempts = %maximum_attempts_before_failure,
+                        "Canceling job due to too many failed attempts"
+                    );
                     this.job_cancel_counter.add(&Context::current(), 1, &[]);
                     return this.cancel_aggregation_job(datastore, lease).await;
                 }

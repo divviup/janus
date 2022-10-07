@@ -1091,7 +1091,7 @@ impl VdafOps {
                 report.public_share(),
             ),
         ) {
-            info!(report.task_id = ?report.task_id(), report.metadata = ?report.metadata(), %error, "Report decryption failed");
+            info!(report.task_id = %report.task_id(), report.metadata = ?report.metadata(), ?error, "Report decryption failed");
             upload_decrypt_failure_counter.add(&Context::current(), 1, &[]);
             return Ok(());
         }
@@ -1194,7 +1194,7 @@ impl VdafOps {
                 .get(report_share.encrypted_input_share().config_id())
                 .ok_or_else(|| {
                     info!(
-                        config_id = ?report_share.encrypted_input_share().config_id(),
+                        config_id = %report_share.encrypted_input_share().config_id(),
                         "Helper encrypted input share references unknown HPKE config ID"
                     );
                     aggregate_step_failure_counter.add(
@@ -1222,7 +1222,7 @@ impl VdafOps {
                     info!(
                         task_id = %task.id(),
                         metadata = ?report_share.metadata(),
-                        %error,
+                        ?error,
                         "Couldn't decrypt helper's report share"
                     );
                     aggregate_step_failure_counter.add(
@@ -1242,14 +1242,14 @@ impl VdafOps {
             let input_share = plaintext.and_then(|plaintext| {
                 A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext)
                     .map_err(|error| {
-                        info!(task_id = %task.id(), metadata = ?report_share.metadata(), %error, "Couldn't decode helper's input share");
+                        info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's input share");
                         aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "input_share_decode_failure")]);
                         ReportShareError::VdafPrepError
                     })
             });
 
             let public_share = A::PublicShare::get_decoded_with_param(&vdaf, report_share.public_share()).map_err(|error|{
-                info!(task_id = %task.id(), metadata = ?report_share.metadata(), %error, "Couldn't decode public share");
+                info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode public share");
                 aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "public_share_decode_failure")]);
                 ReportShareError::VdafPrepError
             });
@@ -1270,7 +1270,7 @@ impl VdafOps {
                         &input_share,
                     )
                     .map_err(|error| {
-                        info!(task_id = %task.id(), report_id = %report_share.metadata().id(), %error, "Couldn't prepare_init report share");
+                        info!(task_id = %task.id(), report_id = %report_share.metadata().id(), ?error, "Couldn't prepare_init report share");
                         aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "prepare_init_failure")]);
                         ReportShareError::VdafPrepError
                     })
@@ -1525,7 +1525,7 @@ impl VdafOps {
                             }
 
                             Err(error) => {
-                                info!(task_id = %task.id(), job_id = %req.job_id(), report_id = %prep_step.report_id(), %error, "Prepare step failed");
+                                info!(task_id = %task.id(), job_id = %req.job_id(), report_id = %prep_step.report_id(), ?error, "Prepare step failed");
                                 aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "prepare_step_failure")]);
                                 response_prep_steps.push(PrepareStep::new(
                                     *prep_step.report_id(),
@@ -2284,7 +2284,7 @@ where
             .and(filter)
             .map(move |start: Instant, result: Result<T, Error>| {
                 let error_code = if let Err(error) = &result {
-                    warn!(%error, endpoint = name, "Error handling endpoint");
+                    warn!(?error, endpoint = name, "Error handling endpoint");
                     error.error_code()
                 } else {
                     ""

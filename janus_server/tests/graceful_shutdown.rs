@@ -222,7 +222,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     } else {
         binary_io_tasks.await;
         let elapsed = end - start;
-        info!(?elapsed, binary_name, "Graceful shutdown test succeeded");
+        info!(?elapsed, %binary_name, "Graceful shutdown test succeeded");
     }
 }
 
