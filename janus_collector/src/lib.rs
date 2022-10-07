@@ -69,7 +69,7 @@ use prio::{
 };
 use reqwest::{
     header::{HeaderValue, ToStrError, CONTENT_TYPE, LOCATION, RETRY_AFTER},
-    StatusCode,
+    Response, StatusCode,
 };
 use retry_after::FromHeaderValueError;
 use retry_after::RetryAfter;
@@ -78,6 +78,7 @@ use std::{
     time::{Duration as StdDuration, SystemTime},
 };
 use tokio::time::{sleep, Instant};
+use tracing::warn;
 use url::Url;
 
 /// Errors that may occur when performing collections.
@@ -354,26 +355,13 @@ where
                 if status == StatusCode::SEE_OTHER {
                     response
                 } else if status.is_client_error() || status.is_server_error() {
-                    if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
-                        problem_details.status = Some(status);
-                        return Err(Error::Http(problem_details));
-                    } else {
-                        return Err(Error::Http(HttpApiProblem::new(status)));
-                    }
+                    return Err(response_to_error(response).await);
                 } else {
                     return Err(Error::Http(HttpApiProblem::new(status)));
                 }
             }
             // Retryable error status code, but ran out of retries:
-            Err(Ok(response)) => {
-                let status = response.status();
-                if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
-                    problem_details.status = Some(status);
-                    return Err(Error::Http(problem_details));
-                } else {
-                    return Err(Error::Http(HttpApiProblem::new(status)));
-                }
-            }
+            Err(Ok(response)) => return Err(response_to_error(response).await),
             // Lower level errors, either unretryable or ran out of retries:
             Err(Err(error)) => return Err(Error::HttpClient(error)),
         };
@@ -428,26 +416,13 @@ where
                         return Ok(PollResult::NextAttempt(retry_after_opt));
                     }
                     _ if status.is_client_error() || status.is_server_error() => {
-                        if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
-                            problem_details.status = Some(status);
-                            return Err(Error::Http(problem_details));
-                        } else {
-                            return Err(Error::Http(HttpApiProblem::new(status)));
-                        }
+                        return Err(response_to_error(response).await);
                     }
                     _ => return Err(Error::Http(HttpApiProblem::new(status))),
                 }
             }
             // Retryable error status code, but ran out of retries:
-            Err(Ok(response)) => {
-                let status = response.status();
-                if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
-                    problem_details.status = Some(status);
-                    return Err(Error::Http(problem_details));
-                } else {
-                    return Err(Error::Http(HttpApiProblem::new(status)));
-                }
-            }
+            Err(Ok(response)) => return Err(response_to_error(response).await),
             // Lower level errors, either unretryable or ran out of retries:
             Err(Err(error)) => return Err(Error::HttpClient(error)),
         };
@@ -572,6 +547,25 @@ where
             .await?;
         self.poll_until_complete(&job).await
     }
+}
+
+/// Turn a [`reqwest::Response`] into an [`Error`]. If applicable, a JSON problem details document
+/// is parsed from the request's body, otherwise the error is solely constructed from the
+/// response's status code.
+async fn response_to_error(response: Response) -> Error {
+    let status = response.status();
+    if let Some(content_type) = response.headers().get(CONTENT_TYPE) {
+        if content_type == "application/problem+json" {
+            match response.json::<HttpApiProblem>().await {
+                Ok(mut problem) => {
+                    problem.status = Some(status);
+                    return Error::Http(problem);
+                }
+                Err(error) => warn!(%error, "Failed to parse problem details"),
+            }
+        }
+    }
+    Error::Http(HttpApiProblem::new(status))
 }
 
 #[cfg(feature = "test-util")]
@@ -912,6 +906,7 @@ mod tests {
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(500)
+            .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"http://example.com/test_server_error\"}")
             .expect_at_least(1)
             .create();
@@ -950,6 +945,7 @@ mod tests {
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(400)
+            .with_header("Content-Type", "application/problem+json")
             .with_body(
                 concat!(
                     "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
@@ -1013,6 +1009,7 @@ mod tests {
 
         let mock_collect_job_server_error_details = mock("GET", "/collect_job/1")
             .with_status(500)
+            .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"http://example.com/test_server_error\"}")
             .expect_at_least(1)
             .create();
@@ -1027,6 +1024,7 @@ mod tests {
 
         let mock_collect_job_bad_request = mock("GET", "/collect_job/1")
             .with_status(400)
+            .with_header("Content-Type", "application/problem+json")
             .with_body(concat!(
                 "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",
                 "\"detail\": \"The message type for a response was incorrect or the payload was malformed.\"}"
