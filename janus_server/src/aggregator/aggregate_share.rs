@@ -570,6 +570,7 @@ where
 {
     // Check how many rows in the relevant table have an intersecting batch interval.
     // Each such row consumes one unit of query count.
+    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
     let intersecting_intervals: Vec<_> = match task.role() {
         Role::Leader => tx
             .get_collect_jobs_jobs_intersecting_interval::<L, A>(task.id(), &collect_interval)
