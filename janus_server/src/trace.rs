@@ -188,19 +188,18 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
             map.insert(MetadataKey::from_str(key)?, MetadataValue::try_from(value)?);
         }
 
-        let tracer =
-            opentelemetry_otlp::new_pipeline()
-                .tracing()
-                .with_exporter(
-                    opentelemetry_otlp::new_exporter()
-                        .tonic()
-                        .with_endpoint(otlp_config.endpoint.clone())
-                        .with_metadata(map),
-                )
-                .with_trace_config(trace::config().with_resource(Resource::new(vec![
-                    KeyValue::new(SERVICE_NAME, "janus_server"),
-                ])))
-                .install_batch(opentelemetry::runtime::Tokio)?;
+        let tracer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_endpoint(otlp_config.endpoint.clone())
+                    .with_metadata(map),
+            )
+            .with_trace_config(trace::config().with_resource(Resource::new(Vec::from([
+                KeyValue::new(SERVICE_NAME, "janus_server"),
+            ]))))
+            .install_batch(opentelemetry::runtime::Tokio)?;
 
         // Filter out some spans from h2, internal to the OTLP exporter (via tonic). These spans
         // would otherwise drown out root spans from the application.

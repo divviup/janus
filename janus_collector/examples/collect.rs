@@ -479,7 +479,7 @@ mod tests {
             ErrorKind::ValueValidation,
         );
 
-        let base_arguments = vec![
+        let base_arguments = Vec::from([
             "collect",
             "--task-id",
             &task_id_encoded,
@@ -495,7 +495,7 @@ mod tests {
             "1000000",
             "--batch-interval-duration",
             "1000",
-        ];
+        ]);
 
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend(["--vdaf=count", "--buckets=1,2,3,4"]);

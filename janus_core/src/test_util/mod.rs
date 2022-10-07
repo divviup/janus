@@ -60,7 +60,9 @@ where
                 &public_share,
                 input_share,
             )?;
-            Ok(vec![PrepareTransition::Continue(prep_state, prep_share)])
+            Ok(Vec::from([PrepareTransition::Continue(
+                prep_state, prep_share,
+            )]))
         })
         .collect::<Result<Vec<Vec<PrepareTransition<V, L>>>, VdafError>>()
         .unwrap();

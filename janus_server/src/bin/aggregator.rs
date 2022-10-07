@@ -155,10 +155,10 @@ mod tests {
                 metrics_config: generate_metrics_config(),
                 health_check_listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             },
-            response_headers: vec![HeaderEntry {
+            response_headers: Vec::from([HeaderEntry {
                 name: "name".to_owned(),
                 value: "value".to_owned(),
-            }],
+            }]),
         })
     }
 

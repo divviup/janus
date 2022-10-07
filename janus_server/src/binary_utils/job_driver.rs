@@ -301,12 +301,12 @@ mod tests {
 
         let test_state = Arc::new(Mutex::new(TestState {
             job_acquire_counter: 0,
-            stepped_jobs: vec![],
+            stepped_jobs: Vec::new(),
         }));
         // View of incomplete jobs acquired from datastore fed to job finder closure
-        let incomplete_jobs = Arc::new(vec![
+        let incomplete_jobs = Arc::new(Vec::from([
             // First job finder call: acquire some jobs.
-            vec![
+            Vec::from([
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
@@ -317,13 +317,13 @@ mod tests {
                     job_id: random(),
                     lease_expiry: Time::from_seconds_since_epoch(200),
                 },
-            ],
+            ]),
             // Second job finder call will be immediately after the first: no more jobs
             // available yet. Should cause a minimum delay before job finder runs again.
-            vec![],
+            Vec::new(),
             // Third job finder call: return some new jobs to simulate lease being released and
             // re-acquired (it doesn't matter if the task and job IDs change).
-            vec![
+            Vec::from([
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
@@ -334,8 +334,8 @@ mod tests {
                     job_id: random(),
                     lease_expiry: Time::from_seconds_since_epoch(400),
                 },
-            ],
-        ]);
+            ]),
+        ]));
 
         // Run. Let the aggregation job driver step aggregation jobs, then kill it.
         let job_driver = Arc::new(JobDriver::new(
@@ -420,7 +420,7 @@ mod tests {
         assert!(final_test_state.job_acquire_counter >= 3);
         assert_eq!(
             final_test_state.stepped_jobs,
-            vec![
+            Vec::from([
                 // First acquirer run should have caused INCOMPLETE_JOBS[0] to be stepped.
                 SteppedJob {
                     observed_jobs_acquire_counter: 1,
@@ -444,7 +444,7 @@ mod tests {
                     task_id: incomplete_jobs[2][1].task_id,
                     job_id: incomplete_jobs[2][1].job_id,
                 },
-            ]
+            ])
         );
     }
 }

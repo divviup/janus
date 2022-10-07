@@ -30,7 +30,7 @@ fn decode_dap_message(message_file: &str, media_type: &str) -> Result<Box<dyn De
         Box::new(File::open(message_file)?) as Box<dyn Read>
     };
 
-    let mut message_buf = vec![];
+    let mut message_buf = Vec::new();
     reader.read_to_end(&mut message_buf)?;
 
     let mut binary_message = Cursor::new(message_buf.as_slice());
