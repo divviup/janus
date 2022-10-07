@@ -62,7 +62,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     // Create client.
     let vdaf = Prio3::new_aes128_count(2).unwrap();
     let client_parameters = ClientParameters::new(
-        *leader_task.task_id(),
+        *leader_task.id(),
         aggregator_endpoints.clone(),
         *leader_task.time_precision(),
     );
@@ -70,7 +70,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     let leader_report_config = janus_client::aggregator_hpke_config(
         &client_parameters,
         &Role::Leader,
-        leader_task.task_id(),
+        leader_task.id(),
         &http_client,
     )
     .await
@@ -78,7 +78,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     let helper_report_config = janus_client::aggregator_hpke_config(
         &client_parameters,
         &Role::Helper,
-        leader_task.task_id(),
+        leader_task.id(),
         &http_client,
     )
     .await
@@ -121,7 +121,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     )
     .unwrap();
     let collector_params = CollectorParameters::new(
-        *leader_task.task_id(),
+        *leader_task.id(),
         aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
         leader_task.primary_collector_auth_token().clone(),
         leader_task.collector_hpke_config().clone(),

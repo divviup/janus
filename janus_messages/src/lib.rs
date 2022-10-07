@@ -836,7 +836,7 @@ impl ReportMetadata {
     }
 
     /// Retrieve the report ID from this report metadata.
-    pub fn report_id(&self) -> &ReportId {
+    pub fn id(&self) -> &ReportId {
         &self.report_id
     }
 

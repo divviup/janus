@@ -229,7 +229,7 @@ impl CollectJobDriver {
 
                     let batch_unit_aggregations = tx
                         .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
-                            task.task_id(),
+                            task.id(),
                             collect_job.batch_interval(),
                             collect_job.aggregation_parameter(),
                         )
@@ -255,7 +255,7 @@ impl CollectJobDriver {
 
         // Send an aggregate share request to the helper.
         let req = AggregateShareReq::new(
-            *task.task_id(),
+            *task.id(),
             BatchSelector::new_time_interval(*collect_job.batch_interval()),
             collect_job.aggregation_parameter().get_encoded(),
             report_count,
@@ -536,13 +536,13 @@ where
     // Only happens if there were no batch unit aggregations, which would get caught by the
     // min_batch_size check below, but we have to unwrap the option.
     let total_aggregate_share = total_aggregate_share
-        .ok_or_else(|| Error::InvalidBatchSize(*task.task_id(), total_report_count))?;
+        .ok_or_else(|| Error::InvalidBatchSize(*task.id(), total_report_count))?;
 
     // Refuse to service time-interval aggregate share requests if there are too few reports
     // included.
     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
     if total_report_count < task.min_batch_size() {
-        return Err(Error::InvalidBatchSize(*task.task_id(), total_report_count));
+        return Err(Error::InvalidBatchSize(*task.id(), total_report_count));
     }
 
     // TODO(#468): This should check against the task's max batch size for fixed size queries
@@ -572,17 +572,14 @@ where
     // Each such row consumes one unit of query count (§4.6).
     let intersecting_intervals: Vec<_> = match task.role() {
         Role::Leader => tx
-            .get_collect_jobs_jobs_intersecting_interval::<L, A>(task.task_id(), &collect_interval)
+            .get_collect_jobs_jobs_intersecting_interval::<L, A>(task.id(), &collect_interval)
             .await?
             .into_iter()
             .map(|job| *job.batch_interval())
             .collect(),
 
         Role::Helper => tx
-            .get_aggregate_share_jobs_intersecting_interval::<L, A>(
-                task.task_id(),
-                &collect_interval,
-            )
+            .get_aggregate_share_jobs_intersecting_interval::<L, A>(task.id(), &collect_interval)
             .await?
             .into_iter()
             .map(|job| *job.batch_interval())
@@ -598,7 +595,7 @@ where
         .any(|interval| interval != &collect_interval)
     {
         return Err(datastore::Error::User(
-            Error::BatchOverlap(*task.task_id(), collect_interval).into(),
+            Error::BatchOverlap(*task.id(), collect_interval).into(),
         ));
     }
 
@@ -607,17 +604,16 @@ where
     let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
     if intersecting_intervals.len() == max_batch_query_count {
         debug!(
-            task_id = %task.task_id(), ?collect_interval,
+            task_id = %task.id(), ?collect_interval,
             "Refusing aggregate share request because query count has been consumed"
         );
         return Err(datastore::Error::User(
-            Error::BatchQueriedTooManyTimes(*task.task_id(), intersecting_intervals.len() as u64)
-                .into(),
+            Error::BatchQueriedTooManyTimes(*task.id(), intersecting_intervals.len() as u64).into(),
         ));
     }
     if intersecting_intervals.len() > max_batch_query_count {
         error!(
-            task_id = %task.task_id(), ?collect_interval,
+            task_id = %task.id(), ?collect_interval,
             "query count has been consumed more times than task allows"
         );
 
@@ -690,7 +686,7 @@ mod tests {
         let aggregation_param = AggregationParam(0);
 
         let collect_job = CollectJob::new(
-            *task.task_id(),
+            *task.id(),
             Uuid::new_v4(),
             batch_interval,
             aggregation_param,
@@ -711,7 +707,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        *task.task_id(),
+                        *task.id(),
                         aggregation_job_id,
                         aggregation_param,
                         AggregationJobState::Finished,
@@ -727,7 +723,7 @@ mod tests {
                         Vec::new(),
                     );
                     tx.put_client_report(&Report::new(
-                        *task.task_id(),
+                        *task.id(),
                         report_metadata.clone(),
                         Vec::new(),
                         Vec::new(),
@@ -738,9 +734,9 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        *task.task_id(),
+                        *task.id(),
                         aggregation_job_id,
-                        *report_metadata.report_id(),
+                        *report_metadata.id(),
                         *report_metadata.time(),
                         0,
                         ReportAggregationState::Finished(OutputShare()),
@@ -751,7 +747,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        *task.task_id(),
+                        *task.id(),
                         clock.now(),
                         aggregation_param,
                         AggregateShare(0),
@@ -763,7 +759,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        *task.task_id(),
+                        *task.id(),
                         clock.now().add(&Duration::from_seconds(1000)).unwrap(),
                         aggregation_param,
                         AggregateShare(0),
@@ -777,7 +773,7 @@ mod tests {
                             .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 1)
                             .await?
                             .remove(0);
-                        assert_eq!(task.task_id(), lease.leased().task_id());
+                        assert_eq!(task.id(), lease.leased().task_id());
                         assert_eq!(
                             collect_job.collect_job_id(),
                             lease.leased().collect_job_id()
@@ -821,7 +817,7 @@ mod tests {
 
                     let collect_job_id = Uuid::new_v4();
                     tx.put_collect_job(&CollectJob::new(
-                        *task.task_id(),
+                        *task.id(),
                         collect_job_id,
                         batch_interval,
                         aggregation_param,
@@ -834,7 +830,7 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        *task.task_id(),
+                        *task.id(),
                         aggregation_job_id,
                         aggregation_param,
                         AggregationJobState::Finished,
@@ -850,7 +846,7 @@ mod tests {
                         Vec::new(),
                     );
                     tx.put_client_report(&Report::new(
-                        *task.task_id(),
+                        *task.id(),
                         report_metadata.clone(),
                         Vec::new(),
                         Vec::new(),
@@ -861,9 +857,9 @@ mod tests {
                         DUMMY_VERIFY_KEY_LENGTH,
                         dummy_vdaf::Vdaf,
                     >::new(
-                        *task.task_id(),
+                        *task.id(),
                         aggregation_job_id,
-                        *report_metadata.report_id(),
+                        *report_metadata.id(),
                         *report_metadata.time(),
                         0,
                         ReportAggregationState::Finished(OutputShare()),
@@ -876,7 +872,7 @@ mod tests {
                             .remove(0),
                     );
 
-                    assert_eq!(task.task_id(), lease.leased().task_id());
+                    assert_eq!(task.id(), lease.leased().task_id());
                     assert_eq!(&collect_job_id, lease.leased().collect_job_id());
                     Ok((collect_job_id, lease))
                 })
@@ -895,7 +891,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_matches!(error, Error::InvalidBatchSize(error_task_id, 0) => {
-            assert_eq!(task.task_id(), &error_task_id)
+            assert_eq!(task.id(), &error_task_id)
         });
 
         // Put some batch unit aggregations in the DB
@@ -906,7 +902,7 @@ mod tests {
                     DUMMY_VERIFY_KEY_LENGTH,
                     dummy_vdaf::Vdaf,
                 >::new(
-                    *task.task_id(),
+                    *task.id(),
                     clock.now(),
                     aggregation_param,
                     AggregateShare(0),
@@ -919,7 +915,7 @@ mod tests {
                     DUMMY_VERIFY_KEY_LENGTH,
                     dummy_vdaf::Vdaf,
                 >::new(
-                    *task.task_id(),
+                    *task.id(),
                     clock.now().add(&Duration::from_seconds(1000)).unwrap(),
                     aggregation_param,
                     AggregateShare(0),
@@ -935,7 +931,7 @@ mod tests {
         .unwrap();
 
         let leader_request = AggregateShareReq::new(
-            *task.task_id(),
+            *task.id(),
             BatchSelector::new_time_interval(batch_interval),
             aggregation_param.get_encoded(),
             10,

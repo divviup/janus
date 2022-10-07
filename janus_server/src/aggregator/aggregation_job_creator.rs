@@ -123,7 +123,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 Ok(tasks) => tasks
                     .into_iter()
                     .filter_map(|task| match task.role() {
-                        Role::Leader => Some((*task.task_id(), task)),
+                        Role::Leader => Some((*task.id(), task)),
                         _ => None,
                     })
                     .collect::<HashMap<_, _>>(),
@@ -183,7 +183,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         job_creation_time_histogram: Histogram<f64>,
         task: Arc<Task>,
     ) {
-        debug!(task_id = %task.task_id(), "Job creation worker started");
+        debug!(task_id = %task.id(), "Job creation worker started");
         let first_tick_instant = Instant::now()
             + Duration::from_secs(
                 thread_rng().gen_range(0..self.aggregation_job_creation_interval.as_secs()),
@@ -194,17 +194,17 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         loop {
             select! {
                 _ = aggregation_job_creation_ticker.tick() => {
-                    info!(task_id = %task.task_id(), "Creating aggregation jobs for task");
+                    info!(task_id = %task.id(), "Creating aggregation jobs for task");
                     let (start, mut status) = (Instant::now(), "success");
                     if let Err(error) = self.create_aggregation_jobs_for_task(Arc::clone(&task)).await {
-                        error!(task_id = %task.task_id(), %error, "Couldn't create aggregation jobs for task");
+                        error!(task_id = %task.id(), %error, "Couldn't create aggregation jobs for task");
                         status = "error";
                     }
                     job_creation_time_histogram.record(&Context::current(), start.elapsed().as_secs_f64(), &[KeyValue::new("status", status)]);
                 }
 
                 _ = &mut shutdown => {
-                    debug!(task_id = %task.task_id(), "Job creation worker stopped");
+                    debug!(task_id = %task.id(), "Job creation worker stopped");
                     return;
                 }
             }
@@ -273,7 +273,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 Box::pin(async move {
                     // Find some unaggregated client reports, and group them by their batch unit.
                     let report_ids_by_batch_unit = tx
-                        .get_unaggregated_client_report_ids_for_task(task.task_id())
+                        .get_unaggregated_client_report_ids_for_task(task.id())
                         .await?
                         .into_iter()
                         .map(|(report_id, time)| {
@@ -299,13 +299,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                             let aggregation_job_id = random();
                             debug!(
-                                task_id = %task.task_id(),
+                                task_id = %task.id(),
                                 %aggregation_job_id,
                                 report_count = agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
                             agg_jobs.push(AggregationJob::<L, A>::new(
-                                *task.task_id(),
+                                *task.id(),
                                 aggregation_job_id,
                                 (),
                                 AggregationJobState::InProgress,
@@ -313,7 +313,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                             for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
                                 report_aggs.push(ReportAggregation::<L, A>::new(
-                                    *task.task_id(),
+                                    *task.id(),
                                     aggregation_job_id,
                                     *report_id,
                                     *time,
@@ -372,9 +372,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Find some client reports that are covered by a collect request,
                     // but haven't been aggregated yet, and group them by their batch unit.
                     let result_vec = tx
-                        .get_unaggregated_client_report_ids_by_collect_for_task::<L, A>(
-                            task.task_id(),
-                        )
+                        .get_unaggregated_client_report_ids_by_collect_for_task::<L, A>(task.id())
                         .await?
                         .into_iter()
                         .map(|(report_id, report_time, aggregation_param)| {
@@ -398,13 +396,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         {
                             let aggregation_job_id = random();
                             debug!(
-                                task_id = %task.task_id(),
+                                task_id = %task.id(),
                                 %aggregation_job_id,
                                 report_count = agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
                             agg_jobs.push(AggregationJob::<L, A>::new(
-                                *task.task_id(),
+                                *task.id(),
                                 aggregation_job_id,
                                 aggregation_param.clone(),
                                 AggregationJobState::InProgress,
@@ -412,7 +410,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                             for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
                                 report_aggs.push(ReportAggregation::<L, A>::new(
-                                    *task.task_id(),
+                                    *task.id(),
                                     aggregation_job_id,
                                     *report_id,
                                     *time,
@@ -509,7 +507,7 @@ mod tests {
             Role::Leader,
         )
         .build();
-        let leader_report = new_dummy_report(*leader_task.task_id(), report_time);
+        let leader_report = new_dummy_report(*leader_task.id(), report_time);
 
         let helper_task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -517,7 +515,7 @@ mod tests {
             Role::Helper,
         )
         .build();
-        let helper_report = new_dummy_report(*helper_task.task_id(), report_time);
+        let helper_report = new_dummy_report(*helper_task.id(), report_time);
 
         ds.run_tx(|tx| {
             let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
@@ -561,12 +559,12 @@ mod tests {
                         let leader_agg_jobs = read_aggregate_jobs_for_task_prio3_count::<
                             HashSet<_>,
                             _,
-                        >(tx, leader_task.task_id())
+                        >(tx, leader_task.id())
                         .await;
                         let helper_agg_jobs = read_aggregate_jobs_for_task_prio3_count::<
                             HashSet<_>,
                             _,
-                        >(tx, helper_task.task_id())
+                        >(tx, helper_task.id())
                         .await;
                         Ok((leader_agg_jobs, helper_agg_jobs))
                     })
@@ -580,7 +578,7 @@ mod tests {
             report_times_and_ids,
             HashSet::from([(
                 *leader_report.metadata().time(),
-                *leader_report.metadata().report_id()
+                *leader_report.metadata().id()
             )])
         );
     }
@@ -620,7 +618,7 @@ mod tests {
         // aggregation job to be created containing these reports.
         let report_time = clock.now();
         let cur_batch_unit_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.task_id(), report_time))
+            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE)
                 .collect();
 
@@ -629,7 +627,7 @@ mod tests {
         // expect an aggregation job to be created for these reports.
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let small_batch_unit_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.task_id(), report_time))
+            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE - 1)
                 .collect();
 
@@ -637,7 +635,7 @@ mod tests {
         // reports. We expect these reports will be split into more than one aggregation job.
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let big_batch_unit_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.task_id(), report_time))
+            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
@@ -645,7 +643,7 @@ mod tests {
             .iter()
             .chain(&small_batch_unit_reports)
             .chain(&big_batch_unit_reports)
-            .map(|report| *report.metadata().report_id())
+            .map(|report| *report.metadata().id())
             .collect();
 
         ds.run_tx(|tx| {
@@ -690,10 +688,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    Ok(
-                        read_aggregate_jobs_for_task_prio3_count::<Vec<_>, _>(tx, task.task_id())
-                            .await,
-                    )
+                    Ok(read_aggregate_jobs_for_task_prio3_count::<Vec<_>, _>(tx, task.id()).await)
                 })
             })
             .await
@@ -744,8 +739,8 @@ mod tests {
             )
             .build(),
         );
-        let first_report = new_dummy_report(*task.task_id(), clock.now());
-        let second_report = new_dummy_report(*task.task_id(), clock.now());
+        let first_report = new_dummy_report(*task.id(), clock.now());
+        let second_report = new_dummy_report(*task.id(), clock.now());
 
         ds.run_tx(|tx| {
             let (task, first_report) = (Arc::clone(&task), first_report.clone());
@@ -777,11 +772,10 @@ mod tests {
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
-                    Ok(read_aggregate_jobs_for_task_prio3_count::<HashSet<_>, _>(
-                        tx,
-                        task.task_id(),
+                    Ok(
+                        read_aggregate_jobs_for_task_prio3_count::<HashSet<_>, _>(tx, task.id())
+                            .await,
                     )
-                    .await)
                 })
             })
             .await
@@ -810,11 +804,10 @@ mod tests {
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
-                    Ok(read_aggregate_jobs_for_task_prio3_count::<HashSet<_>, _>(
-                        tx,
-                        task.task_id(),
+                    Ok(
+                        read_aggregate_jobs_for_task_prio3_count::<HashSet<_>, _>(tx, task.id())
+                            .await,
                     )
-                    .await)
                 })
             })
             .await
@@ -826,11 +819,11 @@ mod tests {
             HashSet::from([
                 (
                     *first_report.metadata().time(),
-                    *first_report.metadata().report_id()
+                    *first_report.metadata().id()
                 ),
                 (
                     *second_report.metadata().time(),
-                    *second_report.metadata().report_id()
+                    *second_report.metadata().id()
                 )
             ])
         );
@@ -865,7 +858,7 @@ mod tests {
         // one such collect job)
         let report_time = clock.now().sub(task.time_precision()).unwrap();
         let batch_1_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.task_id(), report_time))
+            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE)
                 .collect();
 
@@ -873,7 +866,7 @@ mod tests {
         // in two aggregation jobs per overlapping collect job. (and there are two such collect jobs)
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let batch_2_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.task_id(), report_time))
+            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
@@ -924,7 +917,7 @@ mod tests {
                         dummy_vdaf::Vdaf,
                         Vec<_>,
                         _,
-                    >(tx, task.task_id(), &vdaf)
+                    >(tx, task.id(), &vdaf)
                     .await)
                 })
             })
@@ -939,7 +932,7 @@ mod tests {
                 Box::pin(async move {
                     // This will encompass the members of batch_2_reports.
                     tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
-                        *task.task_id(),
+                        *task.id(),
                         Uuid::new_v4(),
                         Interval::new(report_time, *task.time_precision()).unwrap(),
                         AggregationParam(7),
@@ -948,7 +941,7 @@ mod tests {
                     .await?;
                     // This will encompass the members of both batch_1_reports and batch_2_reports.
                     tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
-                        *task.task_id(),
+                        *task.id(),
                         Uuid::new_v4(),
                         Interval::new(
                             report_time,
@@ -986,7 +979,7 @@ mod tests {
                         dummy_vdaf::Vdaf,
                         Vec<_>,
                         _,
-                    >(tx, task.task_id(), &vdaf)
+                    >(tx, task.id(), &vdaf)
                     .await)
                 })
             })
@@ -1028,11 +1021,11 @@ mod tests {
         );
         let mut expected_pairs = Vec::with_capacity(MAX_AGGREGATION_JOB_SIZE * 3 + 2);
         for report in batch_1_reports.iter() {
-            expected_pairs.push((*report.metadata().report_id(), AggregationParam(11)));
+            expected_pairs.push((*report.metadata().id(), AggregationParam(11)));
         }
         for report in batch_2_reports.iter() {
-            expected_pairs.push((*report.metadata().report_id(), AggregationParam(7)));
-            expected_pairs.push((*report.metadata().report_id(), AggregationParam(11)));
+            expected_pairs.push((*report.metadata().id(), AggregationParam(7)));
+            expected_pairs.push((*report.metadata().id(), AggregationParam(11)));
         }
         seen_pairs.sort();
         expected_pairs.sort();
@@ -1059,7 +1052,7 @@ mod tests {
                         dummy_vdaf::Vdaf,
                         Vec<_>,
                         _,
-                    >(tx, task.task_id(), &vdaf)
+                    >(tx, task.id(), &vdaf)
                     .await)
                 })
             })
@@ -1116,7 +1109,7 @@ mod tests {
                 .unwrap()
                 .into_iter()
                 .map(|agg_job| async {
-                    let agg_job_id = *agg_job.aggregation_job_id();
+                    let agg_job_id = *agg_job.id();
                     tx.get_report_aggregations_for_aggregation_job(
                         vdaf,
                         &Role::Leader,
@@ -1125,7 +1118,7 @@ mod tests {
                     )
                     .map_ok(move |report_aggs| {
                         (
-                            *agg_job.aggregation_job_id(),
+                            *agg_job.id(),
                             report_aggs
                                 .into_iter()
                                 .map(|ra| (*ra.time(), *ra.report_id()))

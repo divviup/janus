@@ -187,7 +187,7 @@ impl<C: Clock> Transaction<'_, C> {
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &task.task_id().as_ref(),
+                    /* task_id */ &task.id().as_ref(),
                     /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
                     /* aggregator_endpoints */ &endpoints,
                     /* query_type */ &Json(task.query_type()),
@@ -212,7 +212,7 @@ impl<C: Clock> Transaction<'_, C> {
             let ord = i64::try_from(ord)?;
 
             let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.task_id().as_ref());
+            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
             row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
             let encrypted_aggregator_auth_token = self.crypter.encrypt(
@@ -231,7 +231,7 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         let aggregator_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.task_id().as_ref(),
+            /* task_id */ &task.id().as_ref(),
             /* ords */ &aggregator_auth_token_ords,
             /* tokens */ &aggregator_auth_tokens,
         ];
@@ -244,7 +244,7 @@ impl<C: Clock> Transaction<'_, C> {
             let ord = i64::try_from(ord)?;
 
             let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.task_id().as_ref());
+            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
             row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
 
             let encrypted_collector_auth_token = self.crypter.encrypt(
@@ -262,7 +262,7 @@ impl<C: Clock> Transaction<'_, C> {
             SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], $3::BYTEA[])"
         ).await?;
         let collector_auth_tokens_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.task_id().as_ref(),
+            /* task_id */ &task.id().as_ref(),
             /* ords */ &collector_auth_token_ords,
             /* tokens */ &collector_auth_tokens,
         ];
@@ -274,7 +274,7 @@ impl<C: Clock> Transaction<'_, C> {
         let mut hpke_private_keys: Vec<Vec<u8>> = Vec::new();
         for (hpke_config, hpke_private_key) in task.hpke_keys().values() {
             let mut row_id = [0u8; TaskId::LEN + size_of::<u8>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.task_id().as_ref());
+            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
             row_id[TaskId::LEN..].copy_from_slice(&u8::from(*hpke_config.id()).to_be_bytes());
 
             let encrypted_hpke_private_key = self.crypter.encrypt(
@@ -296,7 +296,7 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         let hpke_configs_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.task_id().as_ref(),
+            /* task_id */ &task.id().as_ref(),
             /* config_id */ &hpke_config_ids,
             /* configs */ &hpke_configs,
             /* private_keys */ &hpke_private_keys,
@@ -308,7 +308,7 @@ impl<C: Clock> Transaction<'_, C> {
         for vdaf_verify_key in task.vdaf_verify_keys() {
             let encrypted_vdaf_verify_key = self.crypter.encrypt(
                 "task_vdaf_verify_keys",
-                task.task_id().as_ref(),
+                task.id().as_ref(),
                 "vdaf_verify_key",
                 vdaf_verify_key.as_ref(),
             )?;
@@ -322,7 +322,7 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         let vdaf_verify_keys_params: &[&(dyn ToSql + Sync)] = &[
-            /* task_id */ &task.task_id().as_ref(),
+            /* task_id */ &task.id().as_ref(),
             /* vdaf_verify_keys */ &vdaf_verify_keys,
         ];
         let vdaf_verify_keys_future = self.tx.execute(&stmt, vdaf_verify_keys_params);
@@ -907,7 +907,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &report.task_id().get_encoded(),
-                    /* report_id */ &report.metadata().report_id().as_ref(),
+                    /* report_id */ &report.metadata().id().as_ref(),
                     /* client_timestamp */ &report.metadata().time().as_naive_date_time(),
                     /* extensions */ &encoded_extensions,
                     /* public_share */ &report.public_share(),
@@ -973,7 +973,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.get_encoded(),
-                    /* report_id */ &report_share.metadata().report_id().as_ref(),
+                    /* report_id */ &report_share.metadata().id().as_ref(),
                     /* client_timestamp */
                     &report_share.metadata().time().as_naive_date_time(),
                 ],
@@ -1179,7 +1179,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &aggregation_job.task_id().as_ref(),
-                    /* aggregation_job_id */ &aggregation_job.aggregation_job_id().as_ref(),
+                    /* aggregation_job_id */ &aggregation_job.id().as_ref(),
                     /* aggregation_param */
                     &aggregation_job.aggregation_parameter().get_encoded(),
                     /* state */ &aggregation_job.state(),
@@ -1215,7 +1215,7 @@ impl<C: Clock> Transaction<'_, C> {
                         /* state */ &aggregation_job.state(),
                         /* task_id */ &aggregation_job.task_id().as_ref(),
                         /* aggregation_job_id */
-                        &aggregation_job.aggregation_job_id().as_ref(),
+                        &aggregation_job.id().as_ref(),
                     ],
                 )
                 .await?,
@@ -2687,7 +2687,7 @@ pub mod models {
         }
 
         /// Returns the aggregation job ID associated with this aggregation job.
-        pub fn aggregation_job_id(&self) -> &AggregationJobId {
+        pub fn id(&self) -> &AggregationJobId {
             &self.aggregation_job_id
         }
 
@@ -3991,12 +3991,12 @@ mod tests {
             (VdafInstance::Poplar1 { bits: 64 }, Role::Helper),
         ] {
             let task = TaskBuilder::new(QueryType::TimeInterval, vdaf.into(), role).build();
-            want_tasks.insert(*task.task_id(), task.clone());
+            want_tasks.insert(*task.id(), task.clone());
 
             let err = ds
                 .run_tx(|tx| {
                     let task = task.clone();
-                    Box::pin(async move { tx.delete_task(task.task_id()).await })
+                    Box::pin(async move { tx.delete_task(task.id()).await })
                 })
                 .await
                 .unwrap_err();
@@ -4005,7 +4005,7 @@ mod tests {
             let retrieved_task = ds
                 .run_tx(|tx| {
                     let task = task.clone();
-                    Box::pin(async move { tx.get_task(task.task_id()).await })
+                    Box::pin(async move { tx.get_task(task.id()).await })
                 })
                 .await
                 .unwrap();
@@ -4016,7 +4016,7 @@ mod tests {
             let retrieved_task = ds
                 .run_tx(|tx| {
                     let task = task.clone();
-                    Box::pin(async move { tx.get_task(task.task_id()).await })
+                    Box::pin(async move { tx.get_task(task.id()).await })
                 })
                 .await
                 .unwrap();
@@ -4024,7 +4024,7 @@ mod tests {
 
             ds.run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.delete_task(task.task_id()).await })
+                Box::pin(async move { tx.delete_task(task.id()).await })
             })
             .await
             .unwrap();
@@ -4032,7 +4032,7 @@ mod tests {
             let retrieved_task = ds
                 .run_tx(|tx| {
                     let task = task.clone();
-                    Box::pin(async move { tx.get_task(task.task_id()).await })
+                    Box::pin(async move { tx.get_task(task.id()).await })
                 })
                 .await
                 .unwrap();
@@ -4041,7 +4041,7 @@ mod tests {
             let err = ds
                 .run_tx(|tx| {
                     let task = task.clone();
-                    Box::pin(async move { tx.delete_task(task.task_id()).await })
+                    Box::pin(async move { tx.delete_task(task.id()).await })
                 })
                 .await
                 .unwrap_err();
@@ -4055,7 +4055,7 @@ mod tests {
             let retrieved_task = ds
                 .run_tx(|tx| {
                     let task = task.clone();
-                    Box::pin(async move { tx.get_task(task.task_id()).await })
+                    Box::pin(async move { tx.get_task(task.id()).await })
                 })
                 .await
                 .unwrap();
@@ -4067,7 +4067,7 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .map(|task| (*task.task_id(), task))
+            .map(|task| (*task.id(), task))
             .collect();
         assert_eq!(want_tasks, got_tasks);
     }
@@ -4084,7 +4084,7 @@ mod tests {
         )
         .build();
         let report = Report::new(
-            *task.task_id(),
+            *task.id(),
             ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 Time::from_seconds_since_epoch(12345),
@@ -4122,7 +4122,7 @@ mod tests {
             .run_tx(|tx| {
                 let report = report.clone();
                 Box::pin(async move {
-                    tx.get_client_report(report.task_id(), report.metadata().report_id())
+                    tx.get_client_report(report.task_id(), report.metadata().id())
                         .await
                 })
             })
@@ -4177,25 +4177,25 @@ mod tests {
         .build();
 
         let first_unaggregated_report = Report::new(
-            *task.task_id(),
+            *task.id(),
             ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(),
             Vec::new(),
         );
         let second_unaggregated_report = Report::new(
-            *task.task_id(),
+            *task.id(),
             ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(),
             Vec::new(),
         );
         let aggregated_report = Report::new(
-            *task.task_id(),
+            *task.id(),
             ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(),
             Vec::new(),
         );
         let unrelated_report = Report::new(
-            *unrelated_task.task_id(),
+            *unrelated_task.id(),
             ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(),
             Vec::new(),
@@ -4233,7 +4233,7 @@ mod tests {
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
                 >::new(
-                    *task.task_id(),
+                    *task.id(),
                     aggregation_job_id,
                     (),
                     AggregationJobState::InProgress,
@@ -4242,9 +4242,9 @@ mod tests {
                 tx
                     .put_report_aggregation(
                         &ReportAggregation::new(
-                            *task.task_id(),
+                            *task.id(),
                             aggregation_job_id,
-                            *aggregated_report.metadata().report_id(),
+                            *aggregated_report.metadata().id(),
                             *aggregated_report.metadata().time(),
                             0,
                             ReportAggregationState::<
@@ -4264,7 +4264,7 @@ mod tests {
             ds.run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_for_task(task.task_id())
+                    tx.get_unaggregated_client_report_ids_for_task(task.id())
                         .await
                 })
             })
@@ -4276,11 +4276,11 @@ mod tests {
             got_reports,
             HashSet::from([
                 (
-                    *first_unaggregated_report.metadata().report_id(),
+                    *first_unaggregated_report.metadata().id(),
                     *first_unaggregated_report.metadata().time(),
                 ),
                 (
-                    *second_unaggregated_report.metadata().report_id(),
+                    *second_unaggregated_report.metadata().id(),
                     *second_unaggregated_report.metadata().time(),
                 ),
             ]),
@@ -4306,25 +4306,25 @@ mod tests {
         .build();
 
         let first_unaggregated_report = Report::new(
-            *task.task_id(),
+            *task.id(),
             ReportMetadata::new(random(), Time::from_seconds_since_epoch(12345), Vec::new()),
             Vec::new(),
             Vec::new(),
         );
         let second_unaggregated_report = Report::new(
-            *task.task_id(),
+            *task.id(),
             ReportMetadata::new(random(), Time::from_seconds_since_epoch(12346), Vec::new()),
             Vec::new(),
             Vec::new(),
         );
         let aggregated_report = Report::new(
-            *task.task_id(),
+            *task.id(),
             ReportMetadata::new(random(), Time::from_seconds_since_epoch(12347), Vec::new()),
             Vec::new(),
             Vec::new(),
         );
         let unrelated_report = Report::new(
-            *unrelated_task.task_id(),
+            *unrelated_task.id(),
             ReportMetadata::new(random(), Time::from_seconds_since_epoch(12348), Vec::new()),
             Vec::new(),
             Vec::new(),
@@ -4360,7 +4360,7 @@ mod tests {
                 // There are no client reports submitted under this task, so we shouldn't see
                 // this aggregation parameter at all.
                 tx.put_collect_job(&CollectJob::new(
-                    *unrelated_task.task_id(),
+                    *unrelated_task.id(),
                     Uuid::new_v4(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
@@ -4382,7 +4382,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(task.task_id())
+                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(task.id())
                         .await
                 })
             })
@@ -4394,12 +4394,12 @@ mod tests {
         ds.run_tx(|tx| {
             let (task, aggregated_report_id, aggregated_report_time) = (
                 task.clone(),
-                *aggregated_report.metadata().report_id(),
+                *aggregated_report.metadata().id(),
                 *aggregated_report.metadata().time(),
             );
             Box::pin(async move {
                 tx.put_collect_job(&CollectJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     Uuid::new_v4(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
@@ -4411,7 +4411,7 @@ mod tests {
                 ))
                 .await?;
                 tx.put_collect_job(&CollectJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     Uuid::new_v4(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
@@ -4425,7 +4425,7 @@ mod tests {
                 // No reports fall in this interval, so we shouldn't see it's aggregation
                 // parameter at all.
                 tx.put_collect_job(&CollectJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     Uuid::new_v4(),
                     Interval::new(
                         Time::from_seconds_since_epoch(8 * 3600),
@@ -4440,7 +4440,7 @@ mod tests {
                 let aggregation_job_id = random();
                 tx.put_aggregation_job(
                     &AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
-                        *task.task_id(),
+                        *task.id(),
                         aggregation_job_id,
                         AggregationParam(0),
                         AggregationJobState::InProgress,
@@ -4451,7 +4451,7 @@ mod tests {
                     DUMMY_VERIFY_KEY_LENGTH,
                     dummy_vdaf::Vdaf,
                 >::new(
-                    *task.task_id(),
+                    *task.id(),
                     aggregation_job_id,
                     aggregated_report_id,
                     aggregated_report_time,
@@ -4470,7 +4470,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(task.task_id())
+                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(task.id())
                         .await
                 })
             })
@@ -4479,27 +4479,27 @@ mod tests {
 
         let mut expected_reports = Vec::from([
             (
-                *first_unaggregated_report.metadata().report_id(),
+                *first_unaggregated_report.metadata().id(),
                 *first_unaggregated_report.metadata().time(),
                 AggregationParam(0),
             ),
             (
-                *first_unaggregated_report.metadata().report_id(),
+                *first_unaggregated_report.metadata().id(),
                 *first_unaggregated_report.metadata().time(),
                 AggregationParam(1),
             ),
             (
-                *second_unaggregated_report.metadata().report_id(),
+                *second_unaggregated_report.metadata().id(),
                 *second_unaggregated_report.metadata().time(),
                 AggregationParam(0),
             ),
             (
-                *second_unaggregated_report.metadata().report_id(),
+                *second_unaggregated_report.metadata().id(),
                 *second_unaggregated_report.metadata().time(),
                 AggregationParam(1),
             ),
             (
-                *aggregated_report.metadata().report_id(),
+                *aggregated_report.metadata().id(),
                 *aggregated_report.metadata().time(),
                 AggregationParam(1),
             ),
@@ -4514,7 +4514,7 @@ mod tests {
             let task = task.clone();
             Box::pin(async move {
                 tx.put_collect_job(&CollectJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     Uuid::new_v4(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
@@ -4526,7 +4526,7 @@ mod tests {
                 ))
                 .await?;
                 tx.put_collect_job(&CollectJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     Uuid::new_v4(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
@@ -4548,7 +4548,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(task.task_id())
+                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(task.id())
                         .await
                 })
             })
@@ -4592,12 +4592,9 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     let report_share_exists = tx
-                        .check_report_share_exists(
-                            task.task_id(),
-                            report_share.metadata().report_id(),
-                        )
+                        .check_report_share_exists(task.id(), report_share.metadata().id())
                         .await?;
-                    tx.put_report_share(task.task_id(), &report_share).await?;
+                    tx.put_report_share(task.id(), &report_share).await?;
                     Ok(report_share_exists)
                 })
             })
@@ -4609,7 +4606,7 @@ mod tests {
             .run_tx(|tx| {
                 let (task, report_share_metadata) = (task.clone(), report_share.metadata().clone());
                 Box::pin(async move {
-                    let report_share_exists = tx.check_report_share_exists(task.task_id(), report_share_metadata.report_id()).await?;
+                    let report_share_exists = tx.check_report_share_exists(task.id(), report_share_metadata.id()).await?;
                     let row = tx
                         .tx
                         .query_one(
@@ -4617,7 +4614,7 @@ mod tests {
                             FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
                             WHERE report_id = $1 AND client_timestamp = $2",
                             &[
-                                /* report_id */ &report_share_metadata.report_id().as_ref(),
+                                /* report_id */ &report_share_metadata.id().as_ref(),
                                 /* client_timestamp */ &report_share_metadata.time().as_naive_date_time(),
                             ],
                         )
@@ -4635,7 +4632,7 @@ mod tests {
             .unwrap();
 
         assert!(got_report_share_exists);
-        assert_eq!(task.task_id(), &got_task_id);
+        assert_eq!(task.id(), &got_task_id);
         assert!(got_extensions.is_none());
         assert!(got_input_shares.is_none());
     }
@@ -4656,7 +4653,7 @@ mod tests {
         )
         .build();
         let aggregation_job = AggregationJob::<PRG_SEED_SIZE, ToyPoplar1>::new(
-            *task.task_id(),
+            *task.id(),
             random(),
             BTreeSet::from([
                 IdpfInput::new("abc".as_bytes(), 0).unwrap(),
@@ -4679,11 +4676,8 @@ mod tests {
             .run_tx(|tx| {
                 let aggregation_job = aggregation_job.clone();
                 Box::pin(async move {
-                    tx.get_aggregation_job(
-                        aggregation_job.task_id(),
-                        aggregation_job.aggregation_job_id(),
-                    )
-                    .await
+                    tx.get_aggregation_job(aggregation_job.task_id(), aggregation_job.id())
+                        .await
                 })
             })
             .await
@@ -4704,11 +4698,8 @@ mod tests {
             .run_tx(|tx| {
                 let aggregation_job = aggregation_job.clone();
                 Box::pin(async move {
-                    tx.get_aggregation_job(
-                        aggregation_job.task_id(),
-                        aggregation_job.aggregation_job_id(),
-                    )
-                    .await
+                    tx.get_aggregation_job(aggregation_job.task_id(), aggregation_job.id())
+                        .await
                 })
             })
             .await
@@ -4747,7 +4738,7 @@ mod tests {
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
-                        *task.task_id(),
+                        *task.id(),
                         aggregation_job_id,
                         (),
                         AggregationJobState::InProgress,
@@ -4760,10 +4751,7 @@ mod tests {
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
                 >::new(
-                    *task.task_id(),
-                    random(),
-                    (),
-                    AggregationJobState::Finished,
+                    *task.id(), random(), (), AggregationJobState::Finished
                 ))
                 .await?;
 
@@ -4780,7 +4768,7 @@ mod tests {
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128Count,
                 >::new(
-                    *helper_task.task_id(),
+                    *helper_task.id(),
                     random(),
                     (),
                     AggregationJobState::InProgress,
@@ -4832,7 +4820,7 @@ mod tests {
             .map(|&agg_job_id| {
                 (
                     AcquiredAggregationJob::new(
-                        *task.task_id(),
+                        *task.id(),
                         agg_job_id,
                         VdafInstance::Prio3Aes128Count.into(),
                     ),
@@ -4914,7 +4902,7 @@ mod tests {
             .map(|&job_id| {
                 (
                     AcquiredAggregationJob::new(
-                        *task.task_id(),
+                        *task.id(),
                         job_id,
                         VdafInstance::Prio3Aes128Count.into(),
                     ),
@@ -5038,7 +5026,7 @@ mod tests {
         )
         .build();
         let first_aggregation_job = AggregationJob::<PRG_SEED_SIZE, ToyPoplar1>::new(
-            *task.task_id(),
+            *task.id(),
             random(),
             BTreeSet::from([
                 IdpfInput::new("abc".as_bytes(), 0).unwrap(),
@@ -5047,7 +5035,7 @@ mod tests {
             AggregationJobState::InProgress,
         );
         let second_aggregation_job = AggregationJob::<PRG_SEED_SIZE, ToyPoplar1>::new(
-            *task.task_id(),
+            *task.id(),
             random(),
             BTreeSet::from([
                 IdpfInput::new("ghi".as_bytes(), 2).unwrap(),
@@ -5077,7 +5065,7 @@ mod tests {
                 .build();
                 tx.put_task(&unrelated_task).await?;
                 tx.put_aggregation_job(&AggregationJob::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                    *unrelated_task.task_id(),
+                    *unrelated_task.id(),
                     random(),
                     BTreeSet::from([
                         IdpfInput::new("foo".as_bytes(), 10).unwrap(),
@@ -5093,15 +5081,15 @@ mod tests {
 
         // Run.
         let mut want_agg_jobs = Vec::from([first_aggregation_job, second_aggregation_job]);
-        want_agg_jobs.sort_by_key(|agg_job| *agg_job.aggregation_job_id());
+        want_agg_jobs.sort_by_key(|agg_job| *agg_job.id());
         let mut got_agg_jobs = ds
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.get_aggregation_jobs_for_task_id(task.task_id()).await })
+                Box::pin(async move { tx.get_aggregation_jobs_for_task_id(task.id()).await })
             })
             .await
             .unwrap();
-        got_agg_jobs.sort_by_key(|agg_job| *agg_job.aggregation_job_id());
+        got_agg_jobs.sort_by_key(|agg_job| *agg_job.id());
 
         // Verify.
         assert_eq!(want_agg_jobs, got_agg_jobs);
@@ -5145,14 +5133,14 @@ mod tests {
                             PRIO3_AES128_VERIFY_KEY_LENGTH,
                             Prio3Aes128Count,
                         >::new(
-                            *task.task_id(),
+                            *task.id(),
                             aggregation_job_id,
                             (),
                             AggregationJobState::InProgress,
                         ))
                         .await?;
                         tx.put_report_share(
-                            task.task_id(),
+                            task.id(),
                             &ReportShare::new(
                                 ReportMetadata::new(report_id, time, Vec::new()),
                                 Vec::from("public_share"),
@@ -5166,7 +5154,7 @@ mod tests {
                         .await?;
 
                         let report_aggregation = ReportAggregation::new(
-                            *task.task_id(),
+                            *task.id(),
                             aggregation_job_id,
                             report_id,
                             time,
@@ -5187,7 +5175,7 @@ mod tests {
                         tx.get_report_aggregation(
                             vdaf.as_ref(),
                             &Role::Leader,
-                            task.task_id(),
+                            task.id(),
                             &aggregation_job_id,
                             &report_id,
                         )
@@ -5220,7 +5208,7 @@ mod tests {
                         tx.get_report_aggregation(
                             vdaf.as_ref(),
                             &Role::Leader,
-                            task.task_id(),
+                            task.id(),
                             &aggregation_job_id,
                             &report_id,
                         )
@@ -5308,7 +5296,7 @@ mod tests {
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
                         Prio3Aes128Count,
                     >::new(
-                        *task.task_id(),
+                        *task.id(),
                         aggregation_job_id,
                         (),
                         AggregationJobState::InProgress,
@@ -5334,7 +5322,7 @@ mod tests {
                         let time = Time::from_seconds_since_epoch(12345);
                         let report_id = ReportId::from((ord as u128).to_be_bytes());
                         tx.put_report_share(
-                            task.task_id(),
+                            task.id(),
                             &ReportShare::new(
                                 ReportMetadata::new(report_id, time, Vec::new()),
                                 Vec::from("public_share"),
@@ -5348,7 +5336,7 @@ mod tests {
                         .await?;
 
                         let report_aggregation = ReportAggregation::new(
-                            *task.task_id(),
+                            *task.id(),
                             aggregation_job_id,
                             report_id,
                             time,
@@ -5371,7 +5359,7 @@ mod tests {
                     tx.get_report_aggregations_for_aggregation_job(
                         vdaf.as_ref(),
                         &Role::Leader,
-                        task.task_id(),
+                        task.id(),
                         &aggregation_job_id,
                     )
                     .await
@@ -5458,7 +5446,7 @@ mod tests {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.get_collect_job_id::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        task.task_id(),
+                        task.id(),
                         &batch_interval,
                         &(),
                     )
@@ -5474,7 +5462,7 @@ mod tests {
                 let task = task.clone();
                 Box::pin(async move {
                     let collect_job = CollectJob::new(
-                        *task.task_id(),
+                        *task.id(),
                         Uuid::new_v4(),
                         batch_interval,
                         (),
@@ -5492,7 +5480,7 @@ mod tests {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.get_collect_job_id::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        task.task_id(),
+                        task.id(),
                         &batch_interval,
                         &(),
                     )
@@ -5512,9 +5500,9 @@ mod tests {
                 let task = task.clone();
                 Box::pin(async move {
                     let collect_jobs_by_time = tx.get_collect_jobs_including_time::
-                        <PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task.task_id(), &timestamp).await?;
+                        <PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task.id(), &timestamp).await?;
                     let collect_jobs_by_interval = tx.get_collect_jobs_jobs_intersecting_interval::
-                        <PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task.task_id(), &interval).await?;
+                        <PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task.id(), &interval).await?;
                     Ok((collect_jobs_by_time, collect_jobs_by_interval))
                 })
             })
@@ -5525,7 +5513,7 @@ mod tests {
             PRIO3_AES128_VERIFY_KEY_LENGTH,
             Prio3Aes128Count,
         >::new(
-            *task.task_id(),
+            *task.id(),
             collect_job_id,
             batch_interval,
             (),
@@ -5560,7 +5548,7 @@ mod tests {
                 Box::pin(async move {
                     let collect_job_id = Uuid::new_v4();
                     tx.put_collect_job(&CollectJob::new(
-                        *task.task_id(),
+                        *task.id(),
                         collect_job_id,
                         different_batch_interval,
                         (),
@@ -5597,9 +5585,9 @@ mod tests {
                 let task = task.clone();
                 Box::pin(async move {
                     let collect_jobs_by_time = tx.get_collect_jobs_including_time::
-                        <PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task.task_id(), &timestamp).await?;
+                        <PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task.id(), &timestamp).await?;
                     let collect_jobs_by_interval = tx.get_collect_jobs_jobs_intersecting_interval::
-                        <PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task.task_id(), &interval).await?;
+                        <PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task.id(), &interval).await?;
                     Ok((collect_jobs_by_time, collect_jobs_by_interval))
                 })
             })
@@ -5610,14 +5598,14 @@ mod tests {
 
         let mut want_collect_jobs = Vec::from([
             CollectJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
-                *task.task_id(),
+                *task.id(),
                 collect_job_id,
                 batch_interval,
                 (),
                 CollectJobState::Start,
             ),
             CollectJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
-                *task.task_id(),
+                *task.id(),
                 different_collect_job_id,
                 different_batch_interval,
                 (),
@@ -5662,7 +5650,7 @@ mod tests {
 
                 let first_collect_job_id = Uuid::new_v4();
                 tx.put_collect_job(&CollectJob::new(
-                    *first_task.task_id(),
+                    *first_task.id(),
                     first_collect_job_id,
                     batch_interval,
                     (),
@@ -5673,7 +5661,7 @@ mod tests {
 
                 let second_collect_job_id = Uuid::new_v4();
                 tx.put_collect_job(&CollectJob::new(
-                    *second_task.task_id(),
+                    *second_task.id(),
                     second_collect_job_id,
                     batch_interval,
                     (),
@@ -5683,14 +5671,14 @@ mod tests {
                 .unwrap();
 
                 assert_eq!(
-                    Some(first_task.task_id()),
+                    Some(first_task.id()),
                     tx.get_collect_job_task_id(&first_collect_job_id)
                         .await
                         .unwrap()
                         .as_ref()
                 );
                 assert_eq!(
-                    Some(second_task.task_id()),
+                    Some(second_task.id()),
                     tx.get_collect_job_task_id(&second_collect_job_id)
                         .await
                         .unwrap()
@@ -5737,7 +5725,7 @@ mod tests {
                 tx.put_task(&task).await.unwrap();
 
                 let first_collect_job = CollectJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     Uuid::new_v4(),
                     first_batch_interval,
                     (),
@@ -5746,7 +5734,7 @@ mod tests {
                 tx.put_collect_job(&first_collect_job).await.unwrap();
 
                 let second_collect_job = CollectJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     Uuid::new_v4(),
                     second_batch_interval,
                     (),
@@ -5783,7 +5771,7 @@ mod tests {
                     ),
                     &[0, 1, 2, 3, 4, 5],
                     &associated_data_for_aggregate_share::<TimeInterval>(
-                        task.task_id(),
+                        task.id(),
                         &first_batch_interval,
                     ),
                 )
@@ -5847,7 +5835,7 @@ mod tests {
                 tx.put_task(&task).await?;
 
                 let abandoned_collect_job = CollectJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     Uuid::new_v4(),
                     abandoned_batch_interval,
                     (),
@@ -5856,7 +5844,7 @@ mod tests {
                 tx.put_collect_job(&abandoned_collect_job).await?;
 
                 let deleted_collect_job = CollectJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     Uuid::new_v4(),
                     deleted_batch_interval,
                     (),
@@ -5964,7 +5952,7 @@ mod tests {
                             crate::task::VdafInstance::Fake,
                             Role::Leader,
                         )
-                        .with_task_id(*task_id)
+                        .with_id(*task_id)
                         .build(),
                     )
                     .await?;
@@ -6085,7 +6073,7 @@ mod tests {
         >::new(
             task_id,
             aggregation_job_id,
-            *reports[0].metadata().report_id(),
+            *reports[0].metadata().id(),
             *reports[0].metadata().time(),
             0,
             ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
@@ -6307,7 +6295,7 @@ mod tests {
         >::new(
             task_id,
             aggregation_job_id,
-            *reports[0].metadata().report_id(),
+            *reports[0].metadata().id(),
             *reports[0].metadata().time(),
             0,
             ReportAggregationState::Start, // Shouldn't matter what state the report aggregation is in
@@ -6364,7 +6352,7 @@ mod tests {
         >::new(
             task_id,
             aggregation_job_id,
-            *reports[0].metadata().report_id(),
+            *reports[0].metadata().id(),
             *reports[0].metadata().time(),
             0,
             ReportAggregationState::Start,
@@ -6430,7 +6418,7 @@ mod tests {
             ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
-                *reports[0].metadata().report_id(),
+                *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
                 ReportAggregationState::Start,
@@ -6438,7 +6426,7 @@ mod tests {
             ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
-                *reports[1].metadata().report_id(),
+                *reports[1].metadata().id(),
                 *reports[1].metadata().time(),
                 0,
                 ReportAggregationState::Start,
@@ -6498,7 +6486,7 @@ mod tests {
             ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
-                *reports[0].metadata().report_id(),
+                *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
                 ReportAggregationState::Start,
@@ -6506,7 +6494,7 @@ mod tests {
             ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
-                *reports[0].metadata().report_id(),
+                *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
                 ReportAggregationState::Start,
@@ -6635,7 +6623,7 @@ mod tests {
             ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
-                *reports[0].metadata().report_id(),
+                *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
                 ReportAggregationState::Start,
@@ -6643,7 +6631,7 @@ mod tests {
             ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
-                *reports[0].metadata().report_id(),
+                *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
                 ReportAggregationState::Start,
@@ -6651,7 +6639,7 @@ mod tests {
             ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[2],
-                *reports[0].metadata().report_id(),
+                *reports[0].metadata().id(),
                 *reports[0].metadata().time(),
                 0,
                 ReportAggregationState::Start,
@@ -6765,7 +6753,7 @@ mod tests {
 
                 let first_batch_unit_aggregation =
                     BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *task.task_id(),
+                        *task.id(),
                         Time::from_seconds_since_epoch(100),
                         aggregation_param.clone(),
                         aggregate_share.clone(),
@@ -6775,7 +6763,7 @@ mod tests {
 
                 let second_batch_unit_aggregation =
                     BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *task.task_id(),
+                        *task.id(),
                         Time::from_seconds_since_epoch(150),
                         aggregation_param.clone(),
                         aggregate_share.clone(),
@@ -6785,7 +6773,7 @@ mod tests {
 
                 let third_batch_unit_aggregation =
                     BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *task.task_id(),
+                        *task.id(),
                         Time::from_seconds_since_epoch(200),
                         aggregation_param.clone(),
                         aggregate_share.clone(),
@@ -6796,7 +6784,7 @@ mod tests {
                 // Start of this aggregation's interval is before the interval queried below.
                 tx.put_batch_unit_aggregation(
                     &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *task.task_id(),
+                        *task.id(),
                         Time::from_seconds_since_epoch(25),
                         aggregation_param.clone(),
                         aggregate_share.clone(),
@@ -6818,7 +6806,7 @@ mod tests {
                 // Aggregation parameter differs from the one queried below.
                 tx.put_batch_unit_aggregation(
                     &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *task.task_id(),
+                        *task.id(),
                         Time::from_seconds_since_epoch(100),
                         BTreeSet::from([
                             IdpfInput::new("gh".as_bytes(), 2).unwrap(),
@@ -6834,7 +6822,7 @@ mod tests {
                 // End of this aggregation's interval is after the interval queried below.
                 tx.put_batch_unit_aggregation(
                     &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *task.task_id(),
+                        *task.id(),
                         Time::from_seconds_since_epoch(250),
                         aggregation_param.clone(),
                         aggregate_share.clone(),
@@ -6847,7 +6835,7 @@ mod tests {
                 // Start of this aggregation's interval is after the interval queried below.
                 tx.put_batch_unit_aggregation(
                     &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *task.task_id(),
+                        *task.id(),
                         Time::from_seconds_since_epoch(400),
                         aggregation_param.clone(),
                         aggregate_share.clone(),
@@ -6860,7 +6848,7 @@ mod tests {
                 // Task ID differs from that queried below.
                 tx.put_batch_unit_aggregation(
                     &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *other_task.task_id(),
+                        *other_task.id(),
                         Time::from_seconds_since_epoch(200),
                         aggregation_param.clone(),
                         aggregate_share.clone(),
@@ -6872,7 +6860,7 @@ mod tests {
 
                 let batch_unit_aggregations = tx
                     .get_batch_unit_aggregations_for_task_in_interval::<PRG_SEED_SIZE, ToyPoplar1>(
-                        task.task_id(),
+                        task.id(),
                         &Interval::new(
                             Time::from_seconds_since_epoch(50),
                             Duration::from_seconds(250),
@@ -6915,7 +6903,7 @@ mod tests {
 
                 let batch_unit_aggregations = tx
                     .get_batch_unit_aggregations_for_task_in_interval::<PRG_SEED_SIZE, ToyPoplar1>(
-                        task.task_id(),
+                        task.id(),
                         &Interval::new(
                             Time::from_seconds_since_epoch(50),
                             Duration::from_seconds(250),
@@ -6980,7 +6968,7 @@ mod tests {
                 let checksum = ReportIdChecksum::get_decoded(&[1; 32]).unwrap();
 
                 let aggregate_share_job = AggregateShareJob::new(
-                    *task.task_id(),
+                    *task.id(),
                     batch_interval,
                     (),
                     aggregate_share.clone(),
@@ -6996,7 +6984,7 @@ mod tests {
 
                 let aggregate_share_job_again = tx
                     .get_aggregate_share_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        task.task_id(),
+                        task.id(),
                         &batch_interval,
                         &().get_encoded(),
                     )
@@ -7008,7 +6996,7 @@ mod tests {
 
                 assert!(tx
                     .get_aggregate_share_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        task.task_id(),
+                        task.id(),
                         &other_batch_interval,
                         &().get_encoded(),
                     )
@@ -7019,12 +7007,12 @@ mod tests {
                 let want_aggregate_share_jobs = Vec::from([aggregate_share_job]);
 
                 let got_aggregate_share_jobs = tx.get_aggregate_share_jobs_including_time::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                    task.task_id(), &Time::from_seconds_since_epoch(150)).await?;
+                    task.id(), &Time::from_seconds_since_epoch(150)).await?;
                 assert_eq!(got_aggregate_share_jobs, want_aggregate_share_jobs);
 
                 let got_aggregate_share_jobs = tx.get_aggregate_share_jobs_intersecting_interval::
                     <PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        task.task_id(),
+                        task.id(),
                         &Interval::new(
                             Time::from_seconds_since_epoch(145),
                             Duration::from_seconds(10))

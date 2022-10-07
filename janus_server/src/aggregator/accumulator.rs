@@ -111,7 +111,7 @@ where
 
             let batch_unit_aggregations = tx
                 .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
-                    self.task.task_id(),
+                    self.task.id(),
                     &unit_interval,
                     &self.aggregation_param,
                 )
@@ -121,7 +121,7 @@ where
                 return Err(datastore::Error::DbState(format!(
                     "found {} batch unit aggregation rows for task {}, interval {unit_interval}",
                     batch_unit_aggregations.len(),
-                    self.task.task_id(),
+                    self.task.id(),
                 )));
             }
 
@@ -142,7 +142,7 @@ where
                     "inserting new batch_unit_aggregation row",
                 );
                 tx.put_batch_unit_aggregation(&BatchUnitAggregation::<L, A>::new(
-                    *self.task.task_id(),
+                    *self.task.id(),
                     *unit_interval.start(),
                     self.aggregation_param.clone(),
                     accumulation.aggregate_share.clone(),

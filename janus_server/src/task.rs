@@ -301,7 +301,7 @@ impl Task {
     }
 
     /// Retrieves the task ID associated with this task.
-    pub fn task_id(&self) -> &TaskId {
+    pub fn id(&self) -> &TaskId {
         &self.task_id
     }
 
@@ -747,7 +747,7 @@ pub mod test_util {
         }
 
         /// Associates the eventual task with the given task ID.
-        pub fn with_task_id(self, task_id: TaskId) -> Self {
+        pub fn with_id(self, task_id: TaskId) -> Self {
             Self(Task { task_id, ..self.0 })
         }
 
