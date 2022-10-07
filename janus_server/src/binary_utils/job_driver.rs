@@ -252,15 +252,20 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::task::VdafInstance;
+    use super::JobDriver;
+    use crate::{
+        datastore::{self, models::Lease},
+        task::VdafInstance,
+    };
     use janus_core::{
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::MockClock,
+        Runtime,
     };
-    use janus_messages::{AggregationJobId, TaskId};
+    use janus_messages::{AggregationJobId, Duration, TaskId, Time};
     use opentelemetry::global::meter;
     use rand::random;
+    use std::sync::Arc;
     use tokio::sync::Mutex;
 
     #[tokio::test]

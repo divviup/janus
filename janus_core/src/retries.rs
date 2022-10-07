@@ -118,9 +118,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_util::install_test_trace_subscriber;
+    use crate::{
+        retries::{retry_http_request, test_http_request_exponential_backoff},
+        test_util::install_test_trace_subscriber,
+    };
     use mockito::mock;
+    use reqwest::StatusCode;
+    use std::time::Duration;
     use tokio::net::TcpListener;
     use url::Url;
 

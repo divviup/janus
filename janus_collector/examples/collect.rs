@@ -379,11 +379,16 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{run, Error, Options, VdafType};
     use assert_matches::assert_matches;
-    use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
+    use base64::URL_SAFE_NO_PAD;
+    use clap::{error::ErrorKind, CommandFactory, Parser};
+    use janus_core::{
+        hpke::test_util::generate_test_hpke_config_and_private_key, task::AuthenticationToken,
+    };
     use prio::codec::Encode;
     use rand::random;
+    use reqwest::Url;
 
     #[test]
     fn verify_app() {
@@ -396,11 +401,8 @@ mod tests {
         let encoded_hpke_config = base64::encode_config(hpke_config.get_encoded(), URL_SAFE_NO_PAD);
         let encoded_private_key = base64::encode_config(hpke_private_key.as_ref(), URL_SAFE_NO_PAD);
 
-        let task_id: TaskId = random();
-        let task_id_encoded = base64::encode_config(task_id.get_encoded(), URL_SAFE_NO_PAD);
-
+        let task_id = random();
         let leader = Url::parse("https://example.com/dap/").unwrap();
-
         let auth_token = AuthenticationToken::from(b"collector-authentication-token".to_vec());
 
         let expected = Options {
@@ -416,6 +418,7 @@ mod tests {
             batch_interval_start: 1_000_000,
             batch_interval_duration: 1_000,
         };
+        let task_id_encoded = base64::encode_config(task_id.get_encoded(), URL_SAFE_NO_PAD);
         let correct_arguments = [
             "collect",
             "--task-id",
