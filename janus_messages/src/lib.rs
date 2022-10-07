@@ -2665,7 +2665,7 @@ mod tests {
                 CollectResp {
                     partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 23,
-                    encrypted_aggregate_shares: vec![
+                    encrypted_aggregate_shares: Vec::from([
                         HpkeCiphertext::new(
                             HpkeConfigId::from(10),
                             Vec::from("0123"),
@@ -2676,7 +2676,7 @@ mod tests {
                             Vec::from("01234"),
                             Vec::from("567"),
                         ),
-                    ],
+                    ]),
                 },
                 concat!(
                     concat!(
@@ -2747,7 +2747,7 @@ mod tests {
                         [4u8; 32],
                     )),
                     report_count: 23,
-                    encrypted_aggregate_shares: vec![
+                    encrypted_aggregate_shares: Vec::from([
                         HpkeCiphertext::new(
                             HpkeConfigId::from(10),
                             Vec::from("0123"),
@@ -2758,7 +2758,7 @@ mod tests {
                             Vec::from("01234"),
                             Vec::from("567"),
                         ),
-                    ],
+                    ]),
                 },
                 concat!(
                     concat!(
@@ -2899,12 +2899,12 @@ mod tests {
                 job_id: AggregationJobId([u8::MIN; 32]),
                 aggregation_parameter: Vec::from("012345"),
                 partial_batch_selector: PartialBatchSelector::new_time_interval(),
-                report_shares: vec![
+                report_shares: Vec::from([
                     ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                             Time::from_seconds_since_epoch(54321),
-                            vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
+                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                         ),
                         public_share: Vec::new(),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -2917,7 +2917,7 @@ mod tests {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542),
-                            vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
+                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("3210"))]),
                         ),
                         public_share: Vec::from("0123"),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -2926,7 +2926,7 @@ mod tests {
                             Vec::from("abfd"),
                         ),
                     },
-                ],
+                ]),
             },
             concat!(
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
@@ -3031,12 +3031,12 @@ mod tests {
                 partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
                     [2u8; 32],
                 )),
-                report_shares: vec![
+                report_shares: Vec::from([
                     ReportShare {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                             Time::from_seconds_since_epoch(54321),
-                            vec![Extension::new(ExtensionType::Tbd, Vec::from("0123"))],
+                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                         ),
                         public_share: Vec::new(),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -3049,7 +3049,7 @@ mod tests {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542),
-                            vec![Extension::new(ExtensionType::Tbd, Vec::from("3210"))],
+                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("3210"))]),
                         ),
                         public_share: Vec::from("0123"),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -3058,7 +3058,7 @@ mod tests {
                             Vec::from("abfd"),
                         ),
                     },
-                ],
+                ]),
             },
             concat!(
                 "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
@@ -3162,7 +3162,7 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateInitializeResp {
-                    prepare_steps: vec![],
+                    prepare_steps: Vec::new(),
                 },
                 concat!(concat!(
                     // prepare_steps
@@ -3171,7 +3171,7 @@ mod tests {
             ),
             (
                 AggregateInitializeResp {
-                    prepare_steps: vec![
+                    prepare_steps: Vec::from([
                         PrepareStep {
                             report_id: ReportId::from([
                                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
@@ -3184,7 +3184,7 @@ mod tests {
                             ]),
                             result: PrepareStepResult::Finished,
                         },
-                    ],
+                    ]),
                 },
                 concat!(concat!(
                     // prepare_steps
@@ -3213,7 +3213,7 @@ mod tests {
             AggregateContinueReq {
                 task_id: TaskId::from([u8::MIN; 32]),
                 job_id: AggregationJobId([u8::MAX; 32]),
-                prepare_steps: vec![
+                prepare_steps: Vec::from([
                     PrepareStep {
                         report_id: ReportId::from([
                             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
@@ -3226,7 +3226,7 @@ mod tests {
                         ]),
                         result: PrepareStepResult::Finished,
                     },
-                ],
+                ]),
             },
             concat!(
                 "0000000000000000000000000000000000000000000000000000000000000000", // task_id
@@ -3257,7 +3257,7 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateContinueResp {
-                    prepare_steps: vec![],
+                    prepare_steps: Vec::new(),
                 },
                 concat!(concat!(
                     // prepare_steps
@@ -3266,7 +3266,7 @@ mod tests {
             ),
             (
                 AggregateContinueResp {
-                    prepare_steps: vec![
+                    prepare_steps: Vec::from([
                         PrepareStep {
                             report_id: ReportId::from([
                                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
@@ -3279,7 +3279,7 @@ mod tests {
                             ]),
                             result: PrepareStepResult::Finished,
                         },
-                    ],
+                    ]),
                 },
                 concat!(concat!(
                     // prepare_steps

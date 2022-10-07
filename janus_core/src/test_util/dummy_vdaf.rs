@@ -137,7 +137,7 @@ impl vdaf::Client for Vdaf {
         &self,
         _: &Self::Measurement,
     ) -> Result<(Self::PublicShare, Vec<Self::InputShare>), VdafError> {
-        Ok(((), vec![(), ()]))
+        Ok(((), Vec::from([(), ()])))
     }
 }
 
