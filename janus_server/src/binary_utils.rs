@@ -342,7 +342,7 @@ pub fn setup_signal_handler() -> Result<impl Future<Output = ()>, std::io::Error
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::CommonBinaryOptions;
     use clap::CommandFactory;
 
     #[test]

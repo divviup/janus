@@ -1933,10 +1933,18 @@ impl Decode for AggregateShareResp {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        query_type::{self, FixedSize, TimeInterval},
+        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
+        AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId, BatchId,
+        BatchSelector, CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeAeadId,
+        HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
+        PartialBatchSelector, PrepareStep, PrepareStepResult, Query, Report, ReportId,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+    };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
-    use std::io::Cursor;
+    use std::{fmt::Debug, io::Cursor};
 
     fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
     where
