@@ -69,7 +69,7 @@ thiserror = "1.0"
 tokio = { version = "1.21", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.7", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
 tonic = { version = "0.8", optional = true, features = ["tls", "tls-webpki-roots"] }  # keep this version in sync with what opentelemetry-otlp uses
-tracing = "0.1.36"
+tracing = "0.1.37"
 tracing-log = "0.1.3"
 tracing-opentelemetry = { version = "0.18", optional = true }
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt", "json"] }
