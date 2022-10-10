@@ -14,17 +14,18 @@ use opentelemetry::{
     metrics::{Histogram, Unit},
     Context, KeyValue,
 };
-use prio::vdaf;
-use prio::vdaf::prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum};
-use prio::{codec::Encode, vdaf::prio3::Prio3Aes128CountVecMultithreaded};
+use prio::{
+    codec::Encode,
+    vdaf::prio3::Prio3Aes128CountVecMultithreaded,
+    vdaf::{
+        self,
+        prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
+    },
+};
 use rand::{random, thread_rng, Rng};
-use std::collections::HashMap;
-#[cfg(test)]
-use std::hash::Hash;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::select;
+use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
 use tokio::{
+    select,
     sync::oneshot::{self, Receiver, Sender},
     time::{self, Instant, MissedTickBehavior},
 };
@@ -85,7 +86,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn run(self: Arc<Self>) -> ! {
+    pub async fn run(self: Arc<Self>) -> Infallible {
         // TODO(#224): add support for handling only a subset of tasks in a single job (i.e. sharding).
 
         // Create metric instruments.
@@ -361,7 +362,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
-        A::AggregationParam: Send + Sync + Eq + Hash,
+        A::AggregationParam: Send + Sync + Eq + std::hash::Hash,
     {
         let max_aggregation_job_size = self.max_aggregation_job_size;
 

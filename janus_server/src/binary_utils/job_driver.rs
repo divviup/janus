@@ -8,6 +8,7 @@ use opentelemetry::{
     Context, KeyValue,
 };
 use std::{
+    convert::Infallible,
     fmt::{Debug, Display},
     future::Future,
     sync::Arc,
@@ -92,7 +93,7 @@ where
 
     /// Run this job driver, periodically seeking incomplete jobs and stepping them.
     #[tracing::instrument(skip(self))]
-    pub async fn run(self: Arc<Self>) -> ! {
+    pub async fn run(self: Arc<Self>) -> Infallible {
         // Create metric recorders.
         let job_acquire_time_histogram = self
             .meter
