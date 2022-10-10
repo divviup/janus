@@ -7,7 +7,7 @@ use opentelemetry::{
     metrics::{Meter, Unit},
     Context, KeyValue,
 };
-use std::{fmt::Debug, future::Future, sync::Arc};
+use std::{convert::Infallible, fmt::Debug, future::Future, sync::Arc};
 use tokio::{
     sync::Semaphore,
     time::{self, Instant},
@@ -88,7 +88,7 @@ where
 
     /// Run this job driver, periodically seeking incomplete jobs and stepping them.
     #[tracing::instrument(skip(self))]
-    pub async fn run(self: Arc<Self>) -> ! {
+    pub async fn run(self: Arc<Self>) -> Infallible {
         // Create metric recorders.
         let job_acquire_time_histogram = self
             .meter
