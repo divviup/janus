@@ -246,25 +246,6 @@ impl Task {
         collector_auth_tokens: Vec<AuthenticationToken>,
         hpke_keys: I,
     ) -> Result<Self, Error> {
-        // DAP currently only supports configurations of exactly two aggregators.
-        if aggregator_endpoints.len() != 2 {
-            return Err(Error::InvalidParameter("aggregator_endpoints"));
-        }
-        if !role.is_aggregator() {
-            return Err(Error::InvalidParameter("role"));
-        }
-        if aggregator_auth_tokens.is_empty() {
-            return Err(Error::InvalidParameter("aggregator_auth_tokens"));
-        }
-        if (role == Role::Leader) == (collector_auth_tokens.is_empty()) {
-            // Collector auth tokens are allowed & required if and only if this task is in the
-            // leader role.
-            return Err(Error::InvalidParameter("collector_auth_tokens"));
-        }
-        if vdaf_verify_keys.is_empty() {
-            return Err(Error::InvalidParameter("vdaf_verify_keys"));
-        }
-
         // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
         // path segments into these endpoints & the Url::join implementation is persnickety about
         // the slash at the end of the path.
@@ -277,11 +258,8 @@ impl Task {
             .into_iter()
             .map(|(cfg, key)| (*cfg.id(), (cfg, key)))
             .collect();
-        if hpke_keys.is_empty() {
-            return Err(Error::InvalidParameter("hpke_configs"));
-        }
 
-        Ok(Self {
+        let task = Self {
             task_id,
             aggregator_endpoints,
             query_type,
@@ -297,7 +275,34 @@ impl Task {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
-        })
+        };
+        task.validate()?;
+        Ok(task)
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        // DAP currently only supports configurations of exactly two aggregators.
+        if self.aggregator_endpoints.len() != 2 {
+            return Err(Error::InvalidParameter("aggregator_endpoints"));
+        }
+        if !self.role.is_aggregator() {
+            return Err(Error::InvalidParameter("role"));
+        }
+        if self.aggregator_auth_tokens.is_empty() {
+            return Err(Error::InvalidParameter("aggregator_auth_tokens"));
+        }
+        if (self.role == Role::Leader) == (self.collector_auth_tokens.is_empty()) {
+            // Collector auth tokens are allowed & required if and only if this task is in the
+            // leader role.
+            return Err(Error::InvalidParameter("collector_auth_tokens"));
+        }
+        if self.vdaf_verify_keys.is_empty() {
+            return Err(Error::InvalidParameter("vdaf_verify_keys"));
+        }
+        if self.hpke_keys.is_empty() {
+            return Err(Error::InvalidParameter("hpke_configs"));
+        }
+        Ok(())
     }
 
     /// Retrieves the task ID associated with this task.
@@ -833,25 +838,8 @@ pub mod test_util {
 
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
-            // Round-trip through Task::new() for its parameter validation.
-            Task::new(
-                self.0.task_id,
-                self.0.aggregator_endpoints,
-                self.0.query_type,
-                self.0.vdaf,
-                self.0.role,
-                self.0.vdaf_verify_keys,
-                self.0.max_batch_query_count,
-                self.0.task_expiration,
-                self.0.min_batch_size,
-                self.0.time_precision,
-                self.0.tolerable_clock_skew,
-                self.0.collector_hpke_config,
-                self.0.aggregator_auth_tokens,
-                self.0.collector_auth_tokens,
-                self.0.hpke_keys.into_iter().map(|(_, pair)| pair),
-            )
-            .unwrap()
+            self.0.validate().unwrap();
+            self.0
         }
     }
 
