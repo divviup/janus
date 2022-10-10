@@ -420,13 +420,13 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.0.8"
+version = "4.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5840cd9093aabeabf7fd932754c435b7674520fc3ddc935c397837050f0f1e4b"
+checksum = "385007cbbed899260395a4107435fead4cad80684461b3cc78238bdcb0bad58f"
 dependencies = [
  "atty",
  "bitflags",
- "clap_derive 4.0.8",
+ "clap_derive 4.0.10",
  "clap_lex 0.3.0",
  "once_cell",
  "strsim 0.10.0",
@@ -448,9 +448,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.0.8"
+version = "4.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92289ffc6fb4a85d85c246ddb874c05a87a2e540fb6ad52f7ca07c8c1e1840b1"
+checksum = "db342ce9fda24fb191e2ed4e102055a4d381c1086a06630174cd8da8d5d917ce"
 dependencies = [
  "heck 0.4.0",
  "proc-macro-error",
@@ -1680,7 +1680,7 @@ dependencies = [
  "backoff",
  "base64",
  "build_script_utils",
- "clap 4.0.8",
+ "clap 4.0.12",
  "futures",
  "hex",
  "interop_binaries",
@@ -1761,7 +1761,7 @@ dependencies = [
  "backoff",
  "base64",
  "chrono",
- "clap 4.0.8",
+ "clap 4.0.12",
  "derivative",
  "janus_collector",
  "janus_core",
@@ -1842,7 +1842,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
- "clap 4.0.8",
+ "clap 4.0.12",
  "console-subscriber",
  "deadpool",
  "deadpool-postgres",
