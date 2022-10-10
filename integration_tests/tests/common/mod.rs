@@ -34,7 +34,10 @@ pub fn test_task_builders() -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
     ]))
     .with_min_batch_size(46)
     .with_collector_hpke_config(collector_hpke_config);
-    let helper_task = leader_task.clone().with_role(Role::Helper);
+    let helper_task = leader_task
+        .clone()
+        .with_role(Role::Helper)
+        .with_collector_auth_tokens(Vec::new());
 
     (collector_private_key, leader_task, helper_task)
 }

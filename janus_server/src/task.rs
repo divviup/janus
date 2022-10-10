@@ -820,9 +820,38 @@ pub mod test_util {
             })
         }
 
+        /// Sets the collector authentication tokens for the task.
+        pub fn with_collector_auth_tokens(
+            self,
+            collector_auth_tokens: Vec<AuthenticationToken>,
+        ) -> Self {
+            Self(Task {
+                collector_auth_tokens,
+                ..self.0
+            })
+        }
+
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
-            self.0
+            // Round-trip through Task::new() for its parameter validation.
+            Task::new(
+                self.0.task_id,
+                self.0.aggregator_endpoints,
+                self.0.query_type,
+                self.0.vdaf,
+                self.0.role,
+                self.0.vdaf_verify_keys,
+                self.0.max_batch_query_count,
+                self.0.task_expiration,
+                self.0.min_batch_size,
+                self.0.time_precision,
+                self.0.tolerable_clock_skew,
+                self.0.collector_hpke_config,
+                self.0.aggregator_auth_tokens,
+                self.0.collector_auth_tokens,
+                self.0.hpke_keys.into_iter().map(|(_, pair)| pair),
+            )
+            .unwrap()
         }
     }
 
