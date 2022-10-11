@@ -951,6 +951,7 @@ mod tests {
             )
             .match_body(leader_request.get_encoded())
             .with_status(500)
+            .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes\"}")
             .create();
 

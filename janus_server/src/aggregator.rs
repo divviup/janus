@@ -33,6 +33,7 @@ use janus_core::{
         self, associated_data_for_aggregate_share, associated_data_for_report_share,
         HpkeApplicationInfo, Label,
     },
+    http::response_to_problem_details,
     task::{AuthenticationToken, DAP_AUTH_HEADER},
     time::Clock,
 };
@@ -2729,20 +2730,14 @@ async fn post_to_helper<T: Encode>(
                 KeyValue::new("endpoint", endpoint),
             ],
         );
-        if let Ok(mut problem_details) = response.json::<HttpApiProblem>().await {
-            problem_details.status = Some(status);
-            let type_opt = problem_details
-                .type_url
-                .as_ref()
-                .and_then(|str| str.parse::<DapProblemType>().ok());
-            return Err(Error::Http {
-                problem_details,
-                dap_problem_type: type_opt,
-            });
-        }
+        let problem_details = response_to_problem_details(response).await;
+        let dap_problem_type = problem_details
+            .type_url
+            .as_ref()
+            .and_then(|str| str.parse::<DapProblemType>().ok());
         return Err(Error::Http {
-            problem_details: HttpApiProblem::new(status),
-            dap_problem_type: None,
+            problem_details,
+            dap_problem_type,
         });
     }
 
@@ -7501,6 +7496,7 @@ mod tests {
             // Serve the response via mockito, and run it through post_to_helper's error handling.
             let error_mock = mock("POST", "/")
                 .with_status(response.status().as_u16().into())
+                .with_header("Content-Type", "application/problem+json")
                 .with_body(response.body())
                 .create();
             let actual_error = post_to_helper(

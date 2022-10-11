@@ -7,6 +7,7 @@ use http_api_problem::HttpApiProblem;
 use janus_core::{
     hpke::associated_data_for_report_share,
     hpke::{self, HpkeApplicationInfo, Label},
+    http::response_to_problem_details,
     retries::{http_request_exponential_backoff, retry_http_request},
     task::url_ensure_trailing_slash,
     time::{Clock, TimeExt},
@@ -147,11 +148,9 @@ pub async fn aggregator_hpke_config(
     .or_else(|e| e)?;
     let status = hpke_config_response.status();
     if !status.is_success() {
-        if let Ok(mut problem_details) = hpke_config_response.json::<HttpApiProblem>().await {
-            problem_details.status = Some(status);
-            return Err(Error::Http(problem_details));
-        }
-        return Err(Error::Http(HttpApiProblem::new(status)));
+        return Err(Error::Http(
+            response_to_problem_details(hpke_config_response).await,
+        ));
     }
 
     Ok(HpkeConfig::decode(&mut Cursor::new(
@@ -271,11 +270,9 @@ where
         .or_else(|e| e)?;
         let status = upload_response.status();
         if !status.is_success() {
-            if let Ok(mut problem_details) = upload_response.json::<HttpApiProblem>().await {
-                problem_details.status = Some(status);
-                return Err(Error::Http(problem_details));
-            }
-            return Err(Error::Http(HttpApiProblem::new(status)));
+            return Err(Error::Http(
+                response_to_problem_details(upload_response).await,
+            ));
         }
 
         Ok(())
@@ -393,6 +390,7 @@ mod tests {
         let mocked_upload = mock("POST", "/upload")
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(400)
+            .with_header("Content-Type", "application/problem+json")
             .with_body(
                 concat!(
                     "{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedMessage\", ",

@@ -1791,6 +1791,7 @@ dependencies = [
  "futures",
  "hex",
  "hpke-dispatch",
+ "http-api-problem",
  "janus_core",
  "janus_messages",
  "k8s-openapi",
