@@ -312,8 +312,8 @@ impl CollectJobDriver {
                             // appropriate status can be returned from polling the collect job URI and GC
                             // can run (#313).
                             info!(
-                                "collect job {} was deleted while lease was held. Discarding aggregate results.",
-                                collect_job.collect_job_id(),
+                                collect_job_id = %collect_job.collect_job_id(),
+                                "collect job was deleted while lease was held. Discarding aggregate results.",
                             );
                             metrics.deleted_jobs_encountered_counter.add(&Context::current(), 1, &[]);
                         }
@@ -463,8 +463,8 @@ impl CollectJobDriver {
             Box::pin(async move {
                 if collect_job_lease.lease_attempts() > maximum_attempts_before_failure {
                     warn!(
-                        attempts = ?collect_job_lease.lease_attempts(),
-                        max_attempts = ?maximum_attempts_before_failure,
+                        attempts = %collect_job_lease.lease_attempts(),
+                        max_attempts = %maximum_attempts_before_failure,
                         "Abandoning job due to too many failed attempts"
                     );
                     this.metrics
@@ -605,7 +605,7 @@ where
     let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
     if intersecting_intervals.len() == max_batch_query_count {
         debug!(
-            task_id = %task.id(), ?collect_interval,
+            task_id = %task.id(), %collect_interval,
             "Refusing aggregate share request because query count has been consumed"
         );
         return Err(datastore::Error::User(
@@ -614,7 +614,7 @@ where
     }
     if intersecting_intervals.len() > max_batch_query_count {
         error!(
-            task_id = %task.id(), ?collect_interval,
+            task_id = %task.id(), %collect_interval,
             "query count has been consumed more times than task allows"
         );
 

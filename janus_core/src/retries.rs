@@ -94,7 +94,7 @@ where
             }
             Err(error) => {
                 if error.is_timeout() || error.is_connect() {
-                    warn!(%error, "encountered retryable error");
+                    warn!(?error, "encountered retryable error");
                     return Err(backoff::Error::transient(Err(error)));
                 }
 
@@ -103,7 +103,7 @@ where
                     | std::io::ErrorKind::ConnectionReset
                     | std::io::ErrorKind::ConnectionAborted = io_error.kind()
                     {
-                        warn!(%error, "encountered retryable error");
+                        warn!(?error, "encountered retryable error");
                         return Err(backoff::Error::transient(Err(error)));
                     }
                 }

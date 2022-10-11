@@ -168,7 +168,7 @@ async fn provision_tasks<C: Clock>(datastore: &Datastore<C>, tasks_file: &Path) 
 
     // Write all tasks requested.
     let tasks = Arc::new(tasks);
-    info!(task_count = tasks.len(), "Writing tasks");
+    info!(task_count = %tasks.len(), "Writing tasks");
     datastore
         .run_tx(|tx| {
             let tasks = Arc::clone(&tasks);

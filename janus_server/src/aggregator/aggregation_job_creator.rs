@@ -130,7 +130,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .collect::<HashMap<_, _>>(),
 
                 Err(error) => {
-                    error!(%error, "Couldn't update tasks");
+                    error!(?error, "Couldn't update tasks");
                     task_update_time_histogram.record(
                         &Context::current(),
                         start.elapsed().as_secs_f64(),
@@ -147,7 +147,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 }
                 // We don't need to send on the channel: dropping the sender is enough to cause the
                 // receiver future to resolve with a RecvError, which will trigger shutdown.
-                info!(?task_id, "Stopping job creation worker");
+                info!(%task_id, "Stopping job creation worker");
                 false
             });
 
@@ -302,7 +302,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             debug!(
                                 task_id = %task.id(),
                                 %aggregation_job_id,
-                                report_count = agg_job_reports.len(),
+                                report_count = %agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
                             agg_jobs.push(AggregationJob::<L, A>::new(
@@ -399,7 +399,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             debug!(
                                 task_id = %task.id(),
                                 %aggregation_job_id,
-                                report_count = agg_job_reports.len(),
+                                report_count = %agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
                             agg_jobs.push(AggregationJob::<L, A>::new(
