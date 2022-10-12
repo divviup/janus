@@ -1,11 +1,11 @@
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
-use integration_tests::janus::Janus;
-use interop_binaries::test_util::generate_network_name;
+use janus_aggregator::task::Task;
 use janus_core::{
     hpke::HpkePrivateKey,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
-use janus_server::task::Task;
+use janus_integration_tests::janus::Janus;
+use janus_interop_binaries::test_util::generate_network_name;
 use std::env::{self, VarError};
 use testcontainers::clients::Cli;
 use url::Url;

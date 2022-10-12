@@ -1,16 +1,16 @@
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use base64::URL_SAFE_NO_PAD;
 use futures::future::join_all;
-use interop_binaries::{
-    test_util::{await_ready_ok, generate_network_name, generate_unique_name},
-    testcontainer::{Aggregator, Client, Collector},
-};
+use janus_aggregator::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use janus_core::{
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
     time::{Clock, RealClock, TimeExt},
 };
+use janus_interop_binaries::{
+    test_util::{await_ready_ok, generate_network_name, generate_unique_name},
+    testcontainer::{Aggregator, Client, Collector},
+};
 use janus_messages::{Duration, TaskId};
-use janus_server::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use prio::codec::Encode;
 use rand::random;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};

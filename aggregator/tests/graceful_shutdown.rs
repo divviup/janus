@@ -3,12 +3,12 @@
 //! process. The process should promptly shut down, and this test will fail if
 //! it times out waiting for the process to do so.
 
-use janus_core::{task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock};
-use janus_messages::Role;
-use janus_server::{
+use janus_aggregator::{
     datastore::test_util::ephemeral_datastore,
     task::{test_util::TaskBuilder, QueryType},
 };
+use janus_core::{task::VdafInstance, test_util::install_test_trace_subscriber, time::RealClock};
+use janus_messages::Role;
 use reqwest::Url;
 use serde_yaml::Mapping;
 use std::{

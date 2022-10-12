@@ -4,7 +4,7 @@ fn main() {
     // package, among other things.)
     #[cfg(feature = "testcontainer")]
     {
-        use build_script_utils::save_zstd_compressed_docker_image;
+        use janus_build_script_utils::save_zstd_compressed_docker_image;
         use std::{env, fs::File, process::Command};
 
         println!("cargo:rerun-if-env-changed=JANUS_INTEROP_CONTAINER");
@@ -23,12 +23,12 @@ fn main() {
                 // Dockerfile.interop & Dockerfile.interop_aggregator.
                 println!("cargo:rerun-if-changed=../Cargo.lock");
                 println!("cargo:rerun-if-changed=../Cargo.toml");
+                println!("cargo:rerun-if-changed=../aggregator");
+                println!("cargo:rerun-if-changed=../client");
+                println!("cargo:rerun-if-changed=../core");
                 println!("cargo:rerun-if-changed=../db/schema.sql");
                 println!("cargo:rerun-if-changed=../integration_tests");
                 println!("cargo:rerun-if-changed=../interop_binaries");
-                println!("cargo:rerun-if-changed=../janus_core");
-                println!("cargo:rerun-if-changed=../janus_client");
-                println!("cargo:rerun-if-changed=../janus_server");
 
                 // Build containers.
                 // Note: `docker build` has an `--output` flag which writes the output to somewhere, which

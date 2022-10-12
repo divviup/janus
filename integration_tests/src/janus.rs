@@ -1,18 +1,18 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-use interop_binaries::{
-    test_util::await_http_server, testcontainer::Aggregator, AggregatorAddTaskRequest,
+use janus_aggregator::{
+    binary_utils::{database_pool, datastore},
+    config::DbConfig,
+    task::Task,
 };
 use janus_core::{
     test_util::kubernetes::{Cluster, PortForward},
     time::RealClock,
 };
-use janus_messages::Role;
-use janus_server::{
-    binary_utils::{database_pool, datastore},
-    config::DbConfig,
-    task::Task,
+use janus_interop_binaries::{
+    test_util::await_http_server, testcontainer::Aggregator, AggregatorAddTaskRequest,
 };
+use janus_messages::Role;
 use k8s_openapi::api::core::v1::Secret;
 use portpicker::pick_unused_port;
 use std::{

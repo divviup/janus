@@ -2,15 +2,15 @@ use anyhow::{anyhow, Context};
 use backoff::ExponentialBackoffBuilder;
 use base64::URL_SAFE_NO_PAD;
 use clap::{value_parser, Arg, Command};
-use interop_binaries::{
+use janus_aggregator::task::VdafInstance;
+use janus_collector::{Collector, CollectorParameters};
+use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
+use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
     HpkeConfigRegistry, NumberAsString, VdafObject,
 };
-use janus_collector::{Collector, CollectorParameters};
-use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
 use janus_messages::{Duration, HpkeConfig, Interval, TaskId, Time};
-use janus_server::task::VdafInstance;
 use prio::{
     codec::{Decode, Encode},
     vdaf::{self, prio3::Prio3},

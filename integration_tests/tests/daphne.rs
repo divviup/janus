@@ -1,11 +1,11 @@
 #![cfg(feature = "daphne")]
 
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
-use integration_tests::{daphne::Daphne, janus::Janus};
-use interop_binaries::test_util::generate_network_name;
+use janus_aggregator::task::Task;
 use janus_core::test_util::{install_test_trace_subscriber, testcontainers::container_client};
+use janus_integration_tests::{daphne::Daphne, janus::Janus};
+use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
-use janus_server::task::Task;
 
 mod common;
 

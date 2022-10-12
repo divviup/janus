@@ -1,7 +1,7 @@
 fn main() {
     #[cfg(feature = "daphne")]
     {
-        use build_script_utils::save_zstd_compressed_docker_image;
+        use janus_build_script_utils::save_zstd_compressed_docker_image;
         use serde_json::json;
         use std::{env, fs::File, process::Command};
         use tempfile::tempdir;

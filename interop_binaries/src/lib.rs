@@ -1,7 +1,7 @@
 use base64::URL_SAFE_NO_PAD;
+use janus_aggregator::task::{QueryType, Task, VdafInstance};
 use janus_core::hpke::{generate_hpke_config_and_private_key, HpkePrivateKey};
 use janus_messages::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role};
-use janus_server::task::{QueryType, Task, VdafInstance};
 use prio::codec::Encode;
 use rand::random;
 use serde::{de::Visitor, Deserialize, Serialize};

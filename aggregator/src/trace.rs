@@ -163,7 +163,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
     #[cfg(feature = "jaeger")]
     if let Some(OpenTelemetryTraceConfiguration::Jaeger) = &config.open_telemetry_config {
         let tracer = opentelemetry_jaeger::new_agent_pipeline()
-            .with_service_name("janus_server")
+            .with_service_name("janus_aggregator")
             .install_batch(opentelemetry::runtime::Tokio)?;
         let telemetry = tracing_opentelemetry::layer()
             .with_threads(true)
@@ -197,7 +197,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
                     .with_metadata(map),
             )
             .with_trace_config(trace::config().with_resource(Resource::new(Vec::from([
-                KeyValue::new(SERVICE_NAME, "janus_server"),
+                KeyValue::new(SERVICE_NAME, "janus_aggregator"),
             ]))))
             .install_batch(opentelemetry::runtime::Tokio)?;
 
