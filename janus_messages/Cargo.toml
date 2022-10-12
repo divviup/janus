@@ -1,6 +1,6 @@
 [package]
 name = "janus_messages"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 description = "Distributed Aggregation Protocol message definitions used in Janus, the server powering ISRG's Divvi Up."
 documentation = "https://docs.rs/janus_messages"
