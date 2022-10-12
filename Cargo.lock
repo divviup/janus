@@ -281,13 +281,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "build_script_utils"
-version = "0.2.0"
-dependencies = [
- "zstd",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1640,75 +1633,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 
 [[package]]
-name = "integration_tests"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "backoff",
- "build_script_utils",
- "daphne",
- "futures",
- "hex",
- "http",
- "interop_binaries",
- "itertools",
- "janus_client",
- "janus_collector",
- "janus_core",
- "janus_messages",
- "janus_server",
- "k8s-openapi",
- "kube",
- "portpicker",
- "prio 0.10.0",
- "rand",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "testcontainers",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "interop_binaries"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "backoff",
- "base64",
- "build_script_utils",
- "clap 4.0.12",
- "futures",
- "hex",
- "interop_binaries",
- "janus_client",
- "janus_collector",
- "janus_core",
- "janus_messages",
- "janus_server",
- "lazy_static",
- "opentelemetry",
- "prio 0.10.0",
- "rand",
- "regex",
- "reqwest",
- "ring",
- "serde",
- "serde_json",
- "testcontainers",
- "tokio",
- "tracing",
- "tracing-log",
- "tracing-subscriber",
- "url",
- "warp",
- "zstd",
-]
-
-[[package]]
 name = "ipnet"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1728,6 +1652,77 @@ name = "itoa"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c8af84674fe1f223a982c933a0ee1086ac4d4052aa0fb8060c12c6ad838e754"
+
+[[package]]
+name = "janus_aggregator"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "assert_matches",
+ "atty",
+ "backoff",
+ "base64",
+ "bytes",
+ "chrono",
+ "clap 4.0.12",
+ "console-subscriber",
+ "deadpool",
+ "deadpool-postgres",
+ "derivative",
+ "futures",
+ "hex",
+ "http",
+ "http-api-problem",
+ "hyper",
+ "itertools",
+ "janus_aggregator",
+ "janus_core",
+ "janus_messages",
+ "k8s-openapi",
+ "kube",
+ "lazy_static",
+ "mockito",
+ "opentelemetry",
+ "opentelemetry-jaeger",
+ "opentelemetry-otlp",
+ "opentelemetry-prometheus",
+ "opentelemetry-semantic-conventions",
+ "postgres-protocol",
+ "postgres-types",
+ "prio 0.10.0",
+ "prometheus",
+ "rand",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "serde_test",
+ "serde_yaml 0.9.13",
+ "signal-hook",
+ "signal-hook-tokio",
+ "tempfile",
+ "testcontainers",
+ "thiserror",
+ "tokio",
+ "tokio-postgres",
+ "tonic",
+ "tracing",
+ "tracing-log",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "trycmd",
+ "url",
+ "uuid",
+ "wait-timeout",
+ "warp",
+]
+
+[[package]]
+name = "janus_build_script_utils"
+version = "0.2.0"
+dependencies = [
+ "zstd",
+]
 
 [[package]]
 name = "janus_client"
@@ -1815,6 +1810,75 @@ dependencies = [
 ]
 
 [[package]]
+name = "janus_integration_tests"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "backoff",
+ "daphne",
+ "futures",
+ "hex",
+ "http",
+ "itertools",
+ "janus_aggregator",
+ "janus_build_script_utils",
+ "janus_client",
+ "janus_collector",
+ "janus_core",
+ "janus_interop_binaries",
+ "janus_messages",
+ "k8s-openapi",
+ "kube",
+ "portpicker",
+ "prio 0.10.0",
+ "rand",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "testcontainers",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "janus_interop_binaries"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "backoff",
+ "base64",
+ "clap 4.0.12",
+ "futures",
+ "hex",
+ "janus_aggregator",
+ "janus_build_script_utils",
+ "janus_client",
+ "janus_collector",
+ "janus_core",
+ "janus_interop_binaries",
+ "janus_messages",
+ "lazy_static",
+ "opentelemetry",
+ "prio 0.10.0",
+ "rand",
+ "regex",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "testcontainers",
+ "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "url",
+ "warp",
+ "zstd",
+]
+
+[[package]]
 name = "janus_messages"
 version = "0.2.0"
 dependencies = [
@@ -1831,70 +1895,6 @@ dependencies = [
  "thiserror",
  "tracing-log",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "janus_server"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "assert_matches",
- "atty",
- "backoff",
- "base64",
- "bytes",
- "chrono",
- "clap 4.0.12",
- "console-subscriber",
- "deadpool",
- "deadpool-postgres",
- "derivative",
- "futures",
- "hex",
- "http",
- "http-api-problem",
- "hyper",
- "itertools",
- "janus_core",
- "janus_messages",
- "janus_server",
- "k8s-openapi",
- "kube",
- "lazy_static",
- "mockito",
- "opentelemetry",
- "opentelemetry-jaeger",
- "opentelemetry-otlp",
- "opentelemetry-prometheus",
- "opentelemetry-semantic-conventions",
- "postgres-protocol",
- "postgres-types",
- "prio 0.10.0",
- "prometheus",
- "rand",
- "reqwest",
- "ring",
- "serde",
- "serde_json",
- "serde_test",
- "serde_yaml 0.9.13",
- "signal-hook",
- "signal-hook-tokio",
- "tempfile",
- "testcontainers",
- "thiserror",
- "tokio",
- "tokio-postgres",
- "tonic",
- "tracing",
- "tracing-log",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "trycmd",
- "url",
- "uuid",
- "wait-timeout",
- "warp",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-//! Utilities for working with items in [`janus_messages`] that are only used in `janus_server`.
+//! Utilities for working with items in [`janus_messages`] that are only used in `janus_aggregator`.
 
 use chrono::NaiveDateTime;
 use janus_messages::{Duration, Error, Interval, Time};

@@ -1,5 +1,5 @@
 [package]
-name = "janus_server"
+name = "janus_aggregator"
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
@@ -45,8 +45,8 @@ http = "0.2.8"
 http-api-problem = "0.55.0"
 hyper = "0.14.20"
 itertools = "0.10.5"
-janus_core = { path = "../janus_core" }
-janus_messages = { path = "../janus_messages" }
+janus_core = { path = "../core" }
+janus_messages = { path = "../messages" }
 k8s-openapi = { version = "0.13.1", features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.65.0", default-features = false, features = ["client"] }
 lazy_static = { version = "1", optional = true }
@@ -89,7 +89,7 @@ hyper = "0.14.20"
 # lack of support for connecting to servers by IP addresses, which affects many
 # Kubernetes clusters. Enable the `test-util` feature for various utilities
 # used in unit tests.
-janus_server = { path = ".", features = ["kube-openssl", "test-util"] }
+janus_aggregator = { path = ".", features = ["kube-openssl", "test-util"] }
 mockito = "0.31.0"
 serde_test = "1.0.145"
 tempfile = "3.3.0"

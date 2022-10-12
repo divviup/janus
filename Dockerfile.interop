@@ -8,16 +8,16 @@ RUN apk add libc-dev protobuf-dev protoc
 WORKDIR /src
 COPY Cargo.toml /src/Cargo.toml
 COPY Cargo.lock /src/Cargo.lock
+COPY aggregator /src/aggregator
 COPY build_script_utils /src/build_script_utils
+COPY client /src/client
+COPY collector /src/collector
+COPY core /src/core
 COPY db /src/db
 COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
-COPY janus_collector /src/janus_collector
-COPY janus_core /src/janus_core
-COPY janus_client /src/janus_client
-COPY janus_messages /src/janus_messages
-COPY janus_server /src/janus_server
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --profile $PROFILE -p interop_binaries --bin $BINARY && cp /src/target/$PROFILE/$BINARY /$BINARY
+COPY messages /src/messages
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --profile $PROFILE -p janus_interop_binaries --bin $BINARY && cp /src/target/$PROFILE/$BINARY /$BINARY
 
 FROM alpine:3.16.2
 ARG BINARY

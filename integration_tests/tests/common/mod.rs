@@ -1,5 +1,6 @@
 use backoff::ExponentialBackoffBuilder;
 use itertools::Itertools;
+use janus_aggregator::task::{test_util::TaskBuilder, QueryType, Task};
 use janus_client::{Client, ClientParameters};
 use janus_collector::{
     test_util::collect_with_rewritten_url, Collection, Collector, CollectorParameters,
@@ -11,7 +12,6 @@ use janus_core::{
     time::{Clock, RealClock, TimeExt},
 };
 use janus_messages::{Duration, Interval, Role};
-use janus_server::task::{test_util::TaskBuilder, QueryType, Task};
 use prio::vdaf::prio3::Prio3;
 use rand::random;
 use reqwest::Url;

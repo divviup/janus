@@ -194,7 +194,10 @@ pub fn install_metrics_exporter(
                     stateless_temporality_selector(),
                     Tokio,
                 )
-                .with_resource(Resource::new([KeyValue::new(SERVICE_NAME, "janus_server")]))
+                .with_resource(Resource::new([KeyValue::new(
+                    SERVICE_NAME,
+                    "janus_aggregator",
+                )]))
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()
                         .tonic()

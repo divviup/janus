@@ -14,7 +14,7 @@ use url::Url;
 /// # Examples
 ///
 /// ```
-/// use janus_server::config::CommonConfig;
+/// use janus_aggregator::config::CommonConfig;
 ///
 /// let yaml_config = r#"
 /// ---
@@ -81,7 +81,7 @@ impl DbConfig {
 /// # Examples
 ///
 /// ```
-/// use janus_server::config::JobDriverConfig;
+/// use janus_aggregator::config::JobDriverConfig;
 ///
 /// let yaml_config = r#"
 /// ---

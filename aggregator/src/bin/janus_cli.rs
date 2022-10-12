@@ -2,8 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use base64::STANDARD_NO_PAD;
 use clap::Parser;
 use deadpool_postgres::Pool;
-use janus_core::time::{Clock, RealClock};
-use janus_server::{
+use janus_aggregator::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
     datastore::{self, Datastore},
@@ -11,6 +10,7 @@ use janus_server::{
     task::Task,
     trace::install_trace_subscriber,
 };
+use janus_core::time::{Clock, RealClock};
 use k8s_openapi::api::core::v1::Secret;
 use kube::api::{ObjectMeta, PostParams};
 use rand::{distributions::Standard, thread_rng, Rng};
@@ -350,9 +350,7 @@ mod tests {
     use super::{fetch_datastore_keys, Config, KubernetesSecretOptions, Options};
     use base64::STANDARD_NO_PAD;
     use clap::CommandFactory;
-    use janus_core::{task::VdafInstance, test_util::kubernetes, time::RealClock};
-    use janus_messages::Role;
-    use janus_server::{
+    use janus_aggregator::{
         binary_utils::CommonBinaryOptions,
         config::test_util::{
             generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
@@ -361,6 +359,8 @@ mod tests {
         datastore::test_util::{ephemeral_datastore, ephemeral_db_handle},
         task::{test_util::TaskBuilder, QueryType},
     };
+    use janus_core::{task::VdafInstance, test_util::kubernetes, time::RealClock};
+    use janus_messages::Role;
     use ring::aead::{UnboundKey, AES_128_GCM};
     use std::{
         collections::HashMap,

@@ -51,7 +51,7 @@ impl<C: Clock> Datastore<C> {
     /// new creates a new Datastore using the given Client for backing storage. It is assumed that
     /// the Client is connected to a database with a compatible version of the Janus database schema.
     pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter, clock: C) -> Datastore<C> {
-        let meter = opentelemetry::global::meter("janus_server");
+        let meter = opentelemetry::global::meter("janus_aggregator");
         let transaction_status_counter = meter
             .u64_counter("janus_database_transactions_total")
             .with_description("Count of database transactions run, with their status.")

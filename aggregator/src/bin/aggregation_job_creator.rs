@@ -1,11 +1,11 @@
 use anyhow::Context;
 use clap::Parser;
-use janus_core::time::RealClock;
-use janus_server::aggregator::aggregation_job_creator::AggregationJobCreator;
-use janus_server::binary_utils::{
-    janus_main, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
+use janus_aggregator::{
+    aggregator::aggregation_job_creator::AggregationJobCreator,
+    binary_utils::{janus_main, setup_signal_handler, BinaryOptions, CommonBinaryOptions},
+    config::{BinaryConfig, CommonConfig},
 };
-use janus_server::config::{BinaryConfig, CommonConfig};
+use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -104,7 +104,7 @@ impl BinaryConfig for Config {
 mod tests {
     use super::{Config, Options};
     use clap::CommandFactory;
-    use janus_server::config::{
+    use janus_aggregator::config::{
         test_util::{
             generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
         },

@@ -1,5 +1,5 @@
 [package]
-name = "integration_tests"
+name = "janus_integration_tests"
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
@@ -10,12 +10,12 @@ version.workspace = true
 
 [features]
 daphne = [
-    "dep:build_script_utils",
+    "dep:janus_build_script_utils",
     "dep:daphne",
     "dep:serde",
     "dep:serde_json",
     "dep:tempfile",
-    "interop_binaries/test-util",
+    "janus_interop_binaries/test-util",
 ]
 kube-openssl = ["kube/openssl-tls"]
 
@@ -25,10 +25,10 @@ backoff = { version = "0.4", features = ["tokio"] }
 daphne = { git = "https://github.com/cloudflare/daphne", rev = "80b53c4b0f2c93d5f9df66dfce237b20756c9147", optional = true }  # Match this to the version referenced in README.md.
 futures = "0.3.24"
 hex = "0.4"
-interop_binaries = { path = "../interop_binaries", features = ["testcontainer"] }
-janus_core = { path = "../janus_core", features = ["test-util"] }
-janus_messages = { path = "../janus_messages" }
-janus_server = { path = "../janus_server", features = ["test-util"] }
+janus_aggregator = { path = "../aggregator", features = ["test-util"] }
+janus_core = { path = "../core", features = ["test-util"] }
+janus_interop_binaries = { path = "../interop_binaries", features = ["testcontainer"] }
+janus_messages = { path = "../messages" }
 k8s-openapi = { version = "0.13.1", features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.65.0", default-features = false, features = ["client"] }
 portpicker = "0.1"
@@ -44,12 +44,12 @@ url = { version = "2.3.1", features = ["serde"] }
 [dev-dependencies]
 http = "0.2"
 itertools = "0.10"
-janus_client = { path = "../janus_client" }
-janus_collector = { path = "../janus_collector", features = ["test-util"] }
+janus_client = { path = "../client" }
+janus_collector = { path = "../collector", features = ["test-util"] }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 tempfile = "3"
 
 [build-dependencies]
-build_script_utils = { path = "../build_script_utils", optional = true }
+janus_build_script_utils = { path = "../build_script_utils", optional = true }
 serde_json = { version = "1", optional = true }
 tempfile = { version = "3", optional = true }

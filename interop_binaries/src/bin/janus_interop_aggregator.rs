@@ -1,14 +1,7 @@
 use anyhow::{anyhow, Context};
 use base64::URL_SAFE_NO_PAD;
 use clap::{value_parser, Arg, Command};
-use interop_binaries::{
-    install_tracing_subscriber,
-    status::{ERROR, SUCCESS},
-    AddTaskResponse, AggregatorAddTaskRequest, HpkeConfigRegistry,
-};
-use janus_core::{task::AuthenticationToken, time::RealClock, TokioRuntime};
-use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
-use janus_server::{
+use janus_aggregator::{
     aggregator::{
         aggregate_share::CollectJobDriver, aggregation_job_creator::AggregationJobCreator,
         aggregation_job_driver::AggregationJobDriver, aggregator_filter,
@@ -19,6 +12,13 @@ use janus_server::{
     task::Task,
     SecretBytes,
 };
+use janus_core::{task::AuthenticationToken, time::RealClock, TokioRuntime};
+use janus_interop_binaries::{
+    install_tracing_subscriber,
+    status::{ERROR, SUCCESS},
+    AddTaskResponse, AggregatorAddTaskRequest, HpkeConfigRegistry,
+};
+use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
 use opentelemetry::global::meter;
 use prio::codec::Decode;
 use rand::random;
