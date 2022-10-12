@@ -35,7 +35,7 @@ jobs:
         password: ${{ steps.gcp-auth.outputs.access_token }}
     - name: Get the version
       id: get_version
-      run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
+      run: echo VERSION=${GITHUB_REF/refs\/tags\//} >> $GITHUB_OUTPUT
     - name: update-version
       run: sed -i "s/^version =.*/version = \"${{ steps.get_version.outputs.VERSION }}\"/" janus_server/Cargo.toml
     - run: |-
