@@ -1,10 +1,12 @@
 [package]
 name = "janus_server"
-version = "0.1.11"
-edition = "2021"
-license = "MPL-2.0"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
 publish = false
-rust-version = "1.63"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 default = ["kube-rustls"]

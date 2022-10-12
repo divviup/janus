@@ -1,17 +1,16 @@
 [package]
 name = "janus_messages"
-version = "0.1.12"
-edition = "2021"
 description = "Distributed Aggregation Protocol message definitions used in Janus, the server powering ISRG's Divvi Up."
 documentation = "https://docs.rs/janus_messages"
-homepage = "https://divviup.org"
-license = "MPL-2.0"
-repository = "https://github.com/divviup/janus"
-rust-version = "1.63"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 dap-decode-bin = ["dep:structopt"]
-
 test-util = []
 
 [dependencies]

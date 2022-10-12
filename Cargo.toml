@@ -11,6 +11,14 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+edition = "2021"
+homepage = "https://divviup.org"
+license = "MPL-2.0"
+repository = "https://github.com/divviup/janus"
+rust-version = "1.64.0"
+version = "0.2.0"
+
 [profile.dev]
 # Disabling debug info improves build speeds & reduces
 # build artifact sizes (which helps CI caching).

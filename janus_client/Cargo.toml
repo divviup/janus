@@ -1,21 +1,21 @@
 [package]
 name = "janus_client"
-version = "0.1.11"
-edition = "2021"
 description = "Client for Janus, the server powering ISRG's Divvi Up."
 documentation = "https://docs.rs/janus_client"
-homepage = "https://divviup.org"
-license = "MPL-2.0"
-repository = "https://github.com/divviup/janus"
-rust-version = "1.63"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 backoff = { version = "0.4.0", features = ["tokio"] }
 derivative = "2.2.0"
 http = "0.2.8"
 http-api-problem = "0.55.0"
-janus_core = { version = "0.1", path = "../janus_core" }
-janus_messages = { version = "0.1", path = "../janus_messages" }
+janus_core = { version = "0.2", path = "../janus_core" }
+janus_messages = { version = "0.2", path = "../janus_messages" }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
 reqwest = { version = "0.11.12", default-features = false, features = ["rustls-tls", "json"] }
