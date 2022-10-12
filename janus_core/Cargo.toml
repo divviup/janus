@@ -1,13 +1,13 @@
 [package]
 name = "janus_core"
-version = "0.1.11"
-edition = "2021"
 description = "Core type definitions and utilities used in various components of Janus."
 documentation = "https://docs.rs/janus_core"
-homepage = "https://divviup.org"
-license = "MPL-2.0"
-repository = "https://github.com/divviup/janus"
-rust-version = "1.63"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [features]
 test-util = [
@@ -32,7 +32,7 @@ futures = "0.3.24"
 hex = "0.4"
 hpke-dispatch = "0.4.0"
 http-api-problem = "0.55.0"
-janus_messages = { version = "0.1", path = "../janus_messages" }
+janus_messages = { version = "0.2", path = "../janus_messages" }
 kube = { version = "0.65", optional = true, default-features = false, features = ["client", "rustls-tls"] }
 k8s-openapi = { version = "0.13.1", optional = true, features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 prio = { version = "0.10.0", features = ["multithreaded"] }
