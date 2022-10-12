@@ -1082,9 +1082,7 @@ impl VdafOps {
 
         // Reject reports after a task has expired.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
-        if report.metadata().time().is_after(task.task_expiration())
-            || clock.now().is_after(task.task_expiration())
-        {
+        if report.metadata().time().is_after(task.task_expiration()) {
             return Err(Error::ReportTooLate(
                 *report.task_id(),
                 *report.metadata().id(),
@@ -3262,33 +3260,6 @@ mod tests {
                 "detail": "Report could not be processed because it arrived too late.",
                 "instance": "..",
                 "taskid": format!("{}", report_2.task_id()),
-            })
-        );
-
-        // Late-delivered reports should be rejected if the task's expiration has passed.
-        let task_already_expired = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
-            Role::Leader,
-        )
-        .with_task_expiration(clock.now().sub(&Duration::from_seconds(60)).unwrap())
-        .build();
-        let report_3 = setup_report(&task_already_expired, &datastore, &clock).await;
-        let mut response = drive_filter(Method::POST, "/upload", &report_3.get_encoded(), &filter)
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:reportTooLate",
-                "title": "Report could not be processed because it arrived too late.",
-                "detail": "Report could not be processed because it arrived too late.",
-                "instance": "..",
-                "taskid": format!("{}", report_3.task_id()),
             })
         );
 
