@@ -1049,7 +1049,8 @@ impl VdafOps {
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        // §4.2.2 The leader's report is the first one
+        // The leader's report is the first one.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if report.encrypted_input_shares().len() != 2 {
             return Err(Error::UnrecognizedMessage(
                 Some(*report.task_id()),
@@ -1058,7 +1059,8 @@ impl VdafOps {
         }
         let leader_report = &report.encrypted_input_shares()[0];
 
-        // §4.2.2: verify that the report's HPKE config ID is known
+        // Verify that the report's HPKE config ID is known.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         let (hpke_config, hpke_private_key) = task
             .hpke_keys()
             .get(leader_report.config_id())
@@ -1068,9 +1070,20 @@ impl VdafOps {
 
         let report_deadline = clock.now().add(task.tolerable_clock_skew())?;
 
-        // §4.2.4: reject reports from too far in the future
+        // Reject reports from too far in the future.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if report.metadata().time().is_after(&report_deadline) {
             return Err(Error::ReportTooEarly(
+                *report.task_id(),
+                *report.metadata().id(),
+                *report.metadata().time(),
+            ));
+        }
+
+        // Reject reports after a task has expired.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+        if report.metadata().time().is_after(task.task_expiration()) {
+            return Err(Error::ReportTooLate(
                 *report.task_id(),
                 *report.metadata().id(),
                 *report.metadata().time(),
@@ -1109,7 +1122,7 @@ impl VdafOps {
                         ),
                     )?;
 
-                    // §4.2.2 and 4.3.2.2: reject reports whose report IDs have been seen before.
+                    // Reject reports whose report IDs have been seen before.
                     if existing_client_report.is_some() {
                         // TODO(#34): change this error type.
                         return Err(datastore::Error::User(
@@ -1122,8 +1135,9 @@ impl VdafOps {
                         ));
                     }
 
-                    // §4.3.2: reject reports whose timestamps fall into a batch interval
-                    // that has already been collected.
+                    // Reject reports whose timestamps fall into a batch interval that has already
+                    // been collected.
+                    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
                     if !conflicting_collect_jobs.is_empty() {
                         return Err(datastore::Error::User(
                             Error::ReportTooLate(
@@ -3077,9 +3091,10 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
 
         let report = setup_report(&task, &datastore, &clock).await;
-        let filter = aggregator_filter(Arc::new(datastore), clock.clone()).unwrap();
+        let filter = aggregator_filter(Arc::clone(&datastore), clock.clone()).unwrap();
 
         let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
@@ -3091,7 +3106,7 @@ mod tests {
             .unwrap()
             .is_empty());
 
-        // Verify that we reject duplicate reports with the staleReport type.
+        // Verify that we reject duplicate reports with the reportTooLate type.
         // TODO(#34): change this error type.
         let mut response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
@@ -3206,6 +3221,45 @@ mod tests {
                 "detail": "Report could not be processed because it arrived too early.",
                 "instance": "..",
                 "taskid": format!("{}", report.task_id()),
+            })
+        );
+
+        // Reports with timestamps past the task's expiration should be rejected.
+        let task_expire_soon = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .with_task_expiration(clock.now().add(&Duration::from_seconds(60)).unwrap())
+        .build();
+        let report_2 = setup_report(
+            &task_expire_soon,
+            &datastore,
+            &MockClock::new(
+                clock
+                    .now()
+                    .add(task.tolerable_clock_skew())
+                    .unwrap()
+                    .add(&Duration::from_seconds(120))
+                    .unwrap(),
+            ),
+        )
+        .await;
+        let mut response = drive_filter(Method::POST, "/upload", &report_2.get_encoded(), &filter)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": 400u16,
+                "type": "urn:ietf:params:ppm:dap:error:reportTooLate",
+                "title": "Report could not be processed because it arrived too late.",
+                "detail": "Report could not be processed because it arrived too late.",
+                "instance": "..",
+                "taskid": format!("{}", report_2.task_id()),
             })
         );
 
