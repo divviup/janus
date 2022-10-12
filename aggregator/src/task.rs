@@ -836,6 +836,14 @@ pub mod test_util {
             })
         }
 
+        /// Sets the task expiration time.
+        pub fn with_task_expiration(self, task_expiration: Time) -> Self {
+            Self(Task {
+                task_expiration,
+                ..self.0
+            })
+        }
+
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
             self.0.validate().unwrap();
