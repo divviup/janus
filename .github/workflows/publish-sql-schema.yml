@@ -27,7 +27,7 @@ jobs:
         install_components: "alpha"
     - name: Get the version
       id: get_version
-      run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
+      run: echo VERSION=${GITHUB_REF/refs\/tags\//} >> $GITHUB_OUTPUT
     - name: "Upload schema file(s)"
       run: gcloud alpha storage cp db/schema.sql gs://janus-artifacts-sql-schemas/${{ steps.get_version.outputs.VERSION }}/schema.sql
     - name: "Upload schema file(s) to latest"

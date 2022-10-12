@@ -482,7 +482,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, min_batch_size, time_precision,
-                    tolerable_clock_skew, collector_hpke_config 
+                    tolerable_clock_skew, collector_hpke_config
                 FROM tasks",
             )
             .await?;
