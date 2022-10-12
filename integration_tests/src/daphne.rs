@@ -2,9 +2,9 @@
 
 use crate::log_export_path;
 use daphne::DapGlobalConfig;
-use interop_binaries::test_util::{await_http_server, load_zstd_compressed_docker_image};
+use janus_aggregator::task::{Task, VdafInstance};
+use janus_interop_binaries::test_util::{await_http_server, load_zstd_compressed_docker_image};
 use janus_messages::{HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role};
-use janus_server::task::{Task, VdafInstance};
 use portpicker::pick_unused_port;
 use rand::random;
 use reqwest::Url;

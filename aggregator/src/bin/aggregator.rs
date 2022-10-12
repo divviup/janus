@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use http::HeaderMap;
-use janus_core::time::RealClock;
-use janus_server::{
+use janus_aggregator::{
     aggregator::aggregator_server,
     binary_utils::{janus_main, setup_signal_handler, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
+use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
 use std::{iter::Iterator, net::SocketAddr, sync::Arc};
 use tracing::info;
@@ -122,7 +122,7 @@ impl BinaryConfig for Config {
 mod tests {
     use super::{Config, HeaderEntry, Options};
     use clap::CommandFactory;
-    use janus_server::{
+    use janus_aggregator::{
         config::{
             test_util::{
                 generate_db_config, generate_metrics_config, generate_trace_config,

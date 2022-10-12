@@ -1,5 +1,5 @@
 [package]
-name = "interop_binaries"
+name = "janus_interop_binaries"
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ test-util = [
     "dep:zstd",
 ]
 testcontainer = [
-    "dep:build_script_utils",
+    "dep:janus_build_script_utils",
     "dep:testcontainers",
     "test-util",
 ]
@@ -30,11 +30,11 @@ clap = "4.0.12"
 futures = { version = "0.3.24", optional = true }
 hex = { version = "0.4", optional = true }
 lazy_static = { version = "1", optional = true }
-janus_client = { path = "../janus_client" }
-janus_collector = { path = "../janus_collector" }
-janus_core = { path = "../janus_core" }
-janus_messages = { path = "../janus_messages" }
-janus_server = { path = "../janus_server" }
+janus_aggregator = { path = "../aggregator" }
+janus_client = { path = "../client" }
+janus_collector = { path = "../collector" }
+janus_core = { path = "../core" }
+janus_messages = { path = "../messages" }
 opentelemetry = { version = "0.18", features = ["metrics"] }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
@@ -53,10 +53,10 @@ warp = "0.3"
 zstd = { version = "0.11", optional = true }
 
 [dev-dependencies]
-interop_binaries = { path = ".", features = ["testcontainer"] }
-janus_core = { path = "../janus_core", features = ["test-util"] }
+janus_interop_binaries = { path = ".", features = ["testcontainer"] }
+janus_core = { path = "../core", features = ["test-util"] }
 reqwest = { version = "0.11.12", default-features = false, features = ["json"] }
 testcontainers = "0.14.0"
 
 [build-dependencies]
-build_script_utils = { path = "../build_script_utils", optional = true }
+janus_build_script_utils = { path = "../build_script_utils", optional = true }

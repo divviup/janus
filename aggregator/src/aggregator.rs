@@ -2447,7 +2447,7 @@ pub fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
-    let meter = opentelemetry::global::meter("janus_server");
+    let meter = opentelemetry::global::meter("janus_aggregator");
     let response_time_histogram = meter
         .f64_histogram("janus_aggregator_response_time")
         .with_description("Elapsed time handling incoming requests, by endpoint & status.")
@@ -3396,7 +3396,7 @@ mod tests {
         let datastore = Arc::new(datastore);
         let report = setup_report(&task, &datastore, &clock).await;
 
-        let aggregator = Aggregator::new(Arc::clone(&datastore), clock, meter("janus_server"));
+        let aggregator = Aggregator::new(Arc::clone(&datastore), clock, meter("janus_aggregator"));
 
         (aggregator, task, report, datastore, db_handle)
     }

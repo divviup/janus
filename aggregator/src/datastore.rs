@@ -51,7 +51,7 @@ impl<C: Clock> Datastore<C> {
     /// new creates a new Datastore using the given Client for backing storage. It is assumed that
     /// the Client is connected to a database with a compatible version of the Janus database schema.
     pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter, clock: C) -> Datastore<C> {
-        let meter = opentelemetry::global::meter("janus_server");
+        let meter = opentelemetry::global::meter("janus_aggregator");
         let transaction_status_counter = meter
             .u64_counter("janus_database_transactions_total")
             .with_description("Count of database transactions run, with their status.")
@@ -482,7 +482,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, min_batch_size, time_precision,
-                    tolerable_clock_skew, collector_hpke_config 
+                    tolerable_clock_skew, collector_hpke_config
                 FROM tasks",
             )
             .await?;

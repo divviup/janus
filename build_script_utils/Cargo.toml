@@ -1,5 +1,5 @@
 [package]
-name = "build_script_utils"
+name = "janus_build_script_utils"
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true

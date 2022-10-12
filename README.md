@@ -11,8 +11,8 @@ Janus is currently in active development.
 
 ## Building
 
-Building Janus with `janus_server`'s `otlp` feature enabled requires the Protocol Buffers compiler,
-`protoc`, be installed on the machine performing the build.
+Building Janus with `janus_aggregator`'s `otlp` feature enabled requires the Protocol Buffers
+compiler, `protoc`, be installed on the machine performing the build.
 
 To build Janus, execute `cargo build`. There is also support for building containers with the Janus
 components; see `.github/workflows/ci-build.yml` for example Docker invocations.
@@ -38,7 +38,7 @@ aggregator --config-file <config-file> --role <role>
 * `database`: Enables implementations of `postgres_types::ToSql` and `postgres_types::FromSql` on `janus_core::Interval`.
 * `test-util`: Enables miscellaneous test-only APIs. This should not be used outside of tests, and any such APIs do not carry any stability guarantees.
 
-`janus_server` has the following features available.
+`janus_aggregator` has the following features available.
 
 * `jaeger`: Enables tracing support and a Jaeger exporter; [see below](#jaeger).
 * `kube-rustls`: Sets the `kube/rustls-tls` feature. This is enabled by default. Note that if both `kube/rustls-tls` and `kube/openssl-tls` are set, OpenSSL will take precedence.
@@ -57,7 +57,7 @@ If you experience issues with tests using Kind on Linux, you may need to [adjust
 To build a container image, run the following command.
 
 ```bash
-DOCKER_BUILDKIT=1 docker build --tag=janus_server .
+DOCKER_BUILDKIT=1 docker build --tag=janus_aggregator .
 ```
 
 ## Monitoring with `tokio-console`
@@ -96,7 +96,7 @@ logging_config:
 
 ### Honeycomb
 
-[Honeycomb](https://www.honeycomb.io/) is a Software-as-a-Service provider that offers an integrated observability tool. To use it, sign up for an account, create a team and environment, and retrieve the corresponding API key. Compile `janus_server` with the `otlp` feature enabled, to pull in the OTLP exporter. Add the following section to the configuration file, subtituting in the Honeycomb API key. Traces will be sent to Honeycomb via OTLP/gRPC.
+[Honeycomb](https://www.honeycomb.io/) is a Software-as-a-Service provider that offers an integrated observability tool. To use it, sign up for an account, create a team and environment, and retrieve the corresponding API key. Compile `janus_aggregator` with the `otlp` feature enabled, to pull in the OTLP exporter. Add the following section to the configuration file, subtituting in the Honeycomb API key. Traces will be sent to Honeycomb via OTLP/gRPC.
 
 ```yaml
 logging_config:
@@ -115,7 +115,7 @@ Application-level metrics from the server can be exported to one of the followin
 
 ### Prometheus
 
-When the Prometheus exporter is enabled, a server will listen on port 9464 for metrics scrape requests. Prometheus must be configured to scrape the server, either manually or via an auto-discovery mechanism. Compile `janus_server` with the `prometheus` feature enabled, and add the following to the configuration file.
+When the Prometheus exporter is enabled, a server will listen on port 9464 for metrics scrape requests. Prometheus must be configured to scrape the server, either manually or via an auto-discovery mechanism. Compile `janus_aggregator` with the `prometheus` feature enabled, and add the following to the configuration file.
 ```yaml
 metrics_config:
   exporter:
@@ -128,7 +128,7 @@ The IP address and port that Prometheus exporter listens on can optionally be se
 
 ### Honeycomb
 
-Honeycomb also supports OpenTelemetry-formatted metrics, though only on the Enterprise and Pro plans. Compile `janus_server` with the `otlp` feature enabled, and add the following section to the configuration file. Note that the OTLP/gRPC exporter will push metrics at regular intervals.
+Honeycomb also supports OpenTelemetry-formatted metrics, though only on the Enterprise and Pro plans. Compile `janus_aggregator` with the `otlp` feature enabled, and add the following section to the configuration file. Note that the OTLP/gRPC exporter will push metrics at regular intervals.
 
 ```yaml
 metrics_config:

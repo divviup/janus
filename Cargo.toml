@@ -1,13 +1,13 @@
 [workspace]
 members = [
+    "aggregator",
     "build_script_utils",
+    "client",
+    "collector",
+    "core",
     "integration_tests",
     "interop_binaries",
-    "janus_collector",
-    "janus_core",
-    "janus_client",
-    "janus_messages",
-    "janus_server"
+    "messages",
 ]
 resolver = "2"
 

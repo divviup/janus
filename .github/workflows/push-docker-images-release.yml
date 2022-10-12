@@ -36,14 +36,12 @@ jobs:
     - name: Get the version
       id: get_version
       run: echo VERSION=${GITHUB_REF/refs\/tags\//} >> $GITHUB_OUTPUT
-    - name: update-version
-      run: sed -i "s/^version =.*/version = \"${{ steps.get_version.outputs.VERSION }}\"/" janus_server/Cargo.toml
     - run: |-
-        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:latest \
-          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:${{ steps.get_version.outputs.VERSION }} \
+        docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregator:latest \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregator:${{ steps.get_version.outputs.VERSION }} \
           .
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:latest
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregator:latest
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregator:${{ steps.get_version.outputs.VERSION }}
     - run: |-
         docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:latest \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }} \
