@@ -1283,6 +1283,7 @@ mod tests {
         )]));
         let mocked_aggregate_failure = mock("POST", "/aggregate")
             .with_status(500)
+            .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
             .create();
         let mocked_aggregate_success = mock("POST", "/aggregate")
@@ -1501,6 +1502,7 @@ mod tests {
         )]));
         let mocked_aggregate_failure = mock("POST", "/aggregate")
             .with_status(500)
+            .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
             .create();
         let mocked_aggregate_success = mock("POST", "/aggregate")
