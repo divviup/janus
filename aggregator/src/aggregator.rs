@@ -3154,13 +3154,17 @@ mod tests {
 
         // should reject a report using the wrong HPKE config for the leader, and reply with
         // the error type outdatedConfig.
+        let unused_hpke_config_id = (0..)
+            .map(HpkeConfigId::from)
+            .find(|id| !task.hpke_keys().contains_key(id))
+            .unwrap();
         let bad_report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
             report.public_share().to_vec(),
             Vec::from([
                 HpkeCiphertext::new(
-                    HpkeConfigId::from(101),
+                    unused_hpke_config_id,
                     report.encrypted_input_shares()[0]
                         .encapsulated_key()
                         .to_vec(),
