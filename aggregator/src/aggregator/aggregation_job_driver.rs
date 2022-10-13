@@ -21,9 +21,10 @@ use janus_core::{
     time::Clock,
 };
 use janus_messages::{
-    query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-    AggregateInitializeResp, Duration, PartialBatchSelector, PrepareStep, PrepareStepResult,
-    Report, ReportShare, ReportShareError, Role,
+    query_type::{QueryType, TimeInterval},
+    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
+    Duration, PartialBatchSelector, PrepareStep, PrepareStepResult, Report, ReportShare,
+    ReportShareError, Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -86,27 +87,28 @@ impl AggregationJobDriver {
         datastore: Arc<Datastore<C>>,
         lease: Arc<Lease<AcquiredAggregationJob>>,
     ) -> Result<()> {
+        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match lease.leased().vdaf() {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 let vdaf = Arc::new(Prio3::new_aes128_count(2)?);
-                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(datastore, vdaf, lease)
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Count>(datastore, vdaf, lease)
                     .await
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
                 let vdaf = Arc::new(Prio3::new_aes128_count_vec_multithreaded(2, *length)?);
-                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128CountVecMultithreaded>(datastore, vdaf, lease)
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128CountVecMultithreaded>(datastore, vdaf, lease)
                     .await
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
                 let vdaf = Arc::new(Prio3::new_aes128_sum(2, *bits)?);
-                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Sum>(datastore, vdaf, lease)
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Sum>(datastore, vdaf, lease)
                     .await
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
                 ref buckets,
             }) => {
                 let vdaf = Arc::new(Prio3::new_aes128_histogram(2, buckets)?);
-                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Histogram>(datastore, vdaf, lease)
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Histogram>(datastore, vdaf, lease)
                     .await
             }
 
@@ -114,7 +116,12 @@ impl AggregationJobDriver {
         }
     }
 
-    async fn step_aggregation_job_generic<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn step_aggregation_job_generic<
+        const L: usize,
+        C: Clock,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         datastore: Arc<Datastore<C>>,
         vdaf: Arc<A>,
@@ -151,7 +158,7 @@ impl AggregationJobDriver {
                         )
                     })?;
 
-                    let aggregation_job_future = tx.get_aggregation_job::<L, A>(
+                    let aggregation_job_future = tx.get_aggregation_job::<L, Q, A>(
                         lease.leased().task_id(),
                         lease.leased().aggregation_job_id(),
                     );
@@ -248,13 +255,18 @@ impl AggregationJobDriver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn step_aggregation_job_aggregate_init<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn step_aggregation_job_aggregate_init<
+        const L: usize,
+        C: Clock,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         datastore: &Datastore<C>,
         vdaf: &A,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<Task>,
-        aggregation_job: AggregationJob<L, A>,
+        aggregation_job: AggregationJob<L, Q, A>,
         report_aggregations: Vec<ReportAggregation<L, A>>,
         client_reports: Vec<Report>,
         verify_key: VerifyKey<L>,
@@ -492,6 +504,7 @@ impl AggregationJobDriver {
     async fn step_aggregation_job_aggregate_continue<
         const L: usize,
         C: Clock,
+        Q: QueryType,
         A: vdaf::Aggregator<L>,
     >(
         &self,
@@ -499,7 +512,7 @@ impl AggregationJobDriver {
         vdaf: &A,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<Task>,
-        aggregation_job: AggregationJob<L, A>,
+        aggregation_job: AggregationJob<L, Q, A>,
         report_aggregations: Vec<ReportAggregation<L, A>>,
     ) -> Result<()>
     where
@@ -586,13 +599,18 @@ impl AggregationJobDriver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn process_response_from_helper<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn process_response_from_helper<
+        const L: usize,
+        C: Clock,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         datastore: &Datastore<C>,
         vdaf: &A,
         lease: Arc<Lease<AcquiredAggregationJob>>,
         task: Arc<Task>,
-        aggregation_job: AggregationJob<L, A>,
+        aggregation_job: AggregationJob<L, Q, A>,
         stepped_aggregations: &[SteppedAggregation<L, A>],
         mut report_aggregations_to_write: Vec<ReportAggregation<L, A>>,
         prep_steps: &[PrepareStep],
@@ -769,21 +787,22 @@ impl AggregationJobDriver {
         datastore: Arc<Datastore<C>>,
         lease: Lease<AcquiredAggregationJob>,
     ) -> Result<()> {
+        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match lease.leased().vdaf() {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
-                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(datastore, lease)
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Count>(datastore, lease)
                     .await
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }) => {
-                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128CountVecMultithreaded>(datastore, lease)
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128CountVecMultithreaded>(datastore, lease)
                     .await
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. }) => {
-                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Sum>(datastore, lease)
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Sum>(datastore, lease)
                     .await
             }
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
-                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Histogram>(datastore, lease)
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Histogram>(datastore, lease)
                     .await
             }
 
@@ -791,7 +810,12 @@ impl AggregationJobDriver {
         }
     }
 
-    async fn cancel_aggregation_job_generic<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn cancel_aggregation_job_generic<
+        const L: usize,
+        C: Clock,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         datastore: Arc<Datastore<C>>,
         lease: Lease<AcquiredAggregationJob>,
@@ -807,7 +831,7 @@ impl AggregationJobDriver {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<L, A>(
+                        .get_aggregation_job::<L, Q, A>(
                             lease.leased().task_id(),
                             lease.leased().aggregation_job_id(),
                         )
@@ -1012,10 +1036,12 @@ mod tests {
 
                 tx.put_aggregation_job(&AggregationJob::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Count,
                 >::new(
                     *task.id(),
                     aggregation_job_id,
+                    (),
                     (),
                     AggregationJobState::InProgress,
                 ))
@@ -1112,9 +1138,10 @@ mod tests {
         }
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
+                (),
                 (),
                 AggregationJobState::Finished,
             );
@@ -1137,7 +1164,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1223,10 +1250,12 @@ mod tests {
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -1326,9 +1355,10 @@ mod tests {
         mocked_aggregate_success.assert();
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
+                (),
                 (),
                 AggregationJobState::InProgress,
             );
@@ -1352,7 +1382,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1452,10 +1482,12 @@ mod tests {
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -1542,9 +1574,10 @@ mod tests {
         mocked_aggregate_success.assert();
 
         let want_aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
+                (),
                 (),
                 AggregationJobState::Finished,
             );
@@ -1582,7 +1615,7 @@ mod tests {
                 let (vdaf, task, report_metadata) = (Arc::clone(&vdaf), task.clone(), report.metadata().clone());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1668,9 +1701,10 @@ mod tests {
         let aggregation_job_id = random();
 
         let aggregation_job =
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
+                (),
                 (),
                 AggregationJobState::InProgress,
             );
@@ -1730,7 +1764,7 @@ mod tests {
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -1854,10 +1888,12 @@ mod tests {
 
                 tx.put_aggregation_job(&AggregationJob::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Count,
                 >::new(
                     *task.id(),
                     aggregation_job_id,
+                    (),
                     (),
                     AggregationJobState::InProgress,
                 ))
@@ -1957,7 +1993,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    tx.get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         task.id(),
                         &aggregation_job_id,
                     )
@@ -1969,9 +2005,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             aggregation_job_after,
-            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+            AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
+                (),
                 (),
                 AggregationJobState::Abandoned,
             ),

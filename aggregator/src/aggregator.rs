@@ -38,11 +38,12 @@ use janus_core::{
     time::Clock,
 };
 use janus_messages::{
-    query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-    AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq,
-    CollectResp, HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector,
-    PrepareStep, PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare,
-    ReportShareError, Role, TaskId, Time,
+    query_type::{QueryType, TimeInterval},
+    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
+    AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq, CollectResp,
+    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector, PrepareStep,
+    PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare, ReportShareError, Role,
+    TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -878,10 +879,12 @@ impl VdafOps {
         task: Arc<Task>,
         req: AggregateInitializeReq<TimeInterval>,
     ) -> Result<AggregateInitializeResp, Error> {
+        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match self {
             VdafOps::Prio3Aes128Count(vdaf, verify_key) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Count,
                     _,
                 >(
@@ -897,6 +900,7 @@ impl VdafOps {
             VdafOps::Prio3Aes128CountVec(vdaf, verify_key) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
                 >(
@@ -912,6 +916,7 @@ impl VdafOps {
             VdafOps::Prio3Aes128Sum(vdaf, verify_key) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Sum,
                     _,
                 >(
@@ -927,6 +932,7 @@ impl VdafOps {
             VdafOps::Prio3Aes128Histogram(vdaf, verify_key) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Histogram,
                     _,
                 >(
@@ -943,7 +949,12 @@ impl VdafOps {
             #[cfg(test)]
             VdafOps::Fake(vdaf) => {
                 const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
+                Self::handle_aggregate_init_generic::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    dummy_vdaf::Vdaf,
+                    _,
+                >(
                     datastore,
                     vdaf,
                     aggregate_step_failure_counter,
@@ -963,10 +974,12 @@ impl VdafOps {
         task: Arc<Task>,
         req: Arc<AggregateContinueReq>,
     ) -> Result<AggregateContinueResp, Error> {
+        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match self {
             VdafOps::Prio3Aes128Count(vdaf, _) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Count,
                     _,
                 >(
@@ -981,6 +994,7 @@ impl VdafOps {
             VdafOps::Prio3Aes128CountVec(vdaf, _) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
                 >(
@@ -995,6 +1009,7 @@ impl VdafOps {
             VdafOps::Prio3Aes128Sum(vdaf, _) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Sum,
                     _,
                 >(
@@ -1009,6 +1024,7 @@ impl VdafOps {
             VdafOps::Prio3Aes128Histogram(vdaf, _) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Histogram,
                     _,
                 >(
@@ -1024,7 +1040,12 @@ impl VdafOps {
             #[cfg(test)]
             VdafOps::Fake(vdaf) => {
                 const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
+                Self::handle_aggregate_continue_generic::<
+                    VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    dummy_vdaf::Vdaf,
+                    _,
+                >(
                     datastore,
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
@@ -1160,13 +1181,18 @@ impl VdafOps {
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
-    async fn handle_aggregate_init_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+    async fn handle_aggregate_init_generic<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+        C: Clock,
+    >(
         datastore: &Datastore<C>,
         vdaf: &A,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
         verify_key: &VerifyKey<L>,
-        req: AggregateInitializeReq<TimeInterval>,
+        req: AggregateInitializeReq<Q>,
     ) -> Result<AggregateInitializeResp, Error>
     where
         A: 'static + Send + Sync,
@@ -1311,9 +1337,10 @@ impl VdafOps {
 
         // Store data to datastore.
         let req = Arc::new(req);
-        let aggregation_job = Arc::new(AggregationJob::<L, A>::new(
+        let aggregation_job = Arc::new(AggregationJob::<L, Q, A>::new(
             *task.id(),
             *req.job_id(),
+            req.batch_selector().batch_identifier().clone(),
             agg_param,
             if saw_continue {
                 AggregationJobState::InProgress
@@ -1408,7 +1435,12 @@ impl VdafOps {
         Ok(AggregateInitializeResp::new(prep_steps))
     }
 
-    async fn handle_aggregate_continue_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+    async fn handle_aggregate_continue_generic<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+        C: Clock,
+    >(
         datastore: &Datastore<C>,
         vdaf: Arc<A>,
         aggregate_step_failure_counter: &Counter<u64>,
@@ -1437,7 +1469,7 @@ impl VdafOps {
                 Box::pin(async move {
                     // Read existing state.
                     let (aggregation_job, report_aggregations) = try_join!(
-                        tx.get_aggregation_job::<L, A>(task.id(), req.job_id()),
+                        tx.get_aggregation_job::<L, Q, A>(task.id(), req.job_id()),
                         tx.get_report_aggregations_for_aggregation_job(
                             vdaf.as_ref(),
                             &Role::Helper,
@@ -4467,10 +4499,12 @@ mod tests {
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -4587,7 +4621,7 @@ mod tests {
                 let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -4611,6 +4645,7 @@ mod tests {
             Some(AggregationJob::new(
                 *task.id(),
                 aggregation_job_id,
+                (),
                 (),
                 AggregationJobState::Finished,
             ))
@@ -4783,10 +4818,12 @@ mod tests {
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
+                        (),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -5043,10 +5080,12 @@ mod tests {
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         Prio3Aes128Count,
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
+                        (),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -5246,10 +5285,12 @@ mod tests {
 
                     tx.put_aggregation_job(&AggregationJob::<
                         DUMMY_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))
@@ -5359,10 +5400,12 @@ mod tests {
                     .await?;
                     tx.put_aggregation_job(&AggregationJob::<
                         DUMMY_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))
@@ -5433,7 +5476,7 @@ mod tests {
                 let (task, report_metadata) = (task.clone(), report_metadata.clone());
                 Box::pin(async move {
                     let aggregation_job = tx
-                        .get_aggregation_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
+                        .get_aggregation_job::<DUMMY_VERIFY_KEY_LENGTH, TimeInterval, dummy_vdaf::Vdaf>(
                             task.id(),
                             &aggregation_job_id,
                         )
@@ -5458,6 +5501,7 @@ mod tests {
             Some(AggregationJob::new(
                 *task.id(),
                 aggregation_job_id,
+                (),
                 dummy_vdaf::AggregationParam(0),
                 AggregationJobState::Finished,
             ))
@@ -5518,10 +5562,12 @@ mod tests {
                     .await?;
                     tx.put_aggregation_job(&AggregationJob::<
                         DUMMY_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))
@@ -5657,10 +5703,12 @@ mod tests {
 
                     tx.put_aggregation_job(&AggregationJob::<
                         DUMMY_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))
@@ -5789,10 +5837,12 @@ mod tests {
                     .await?;
                     tx.put_aggregation_job(&AggregationJob::<
                         DUMMY_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))
