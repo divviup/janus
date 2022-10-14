@@ -1210,16 +1210,16 @@ pub mod query_type {
 
     /// QueryType represents a DAP query type. This is a task-level configuration setting which
     /// determines how individual client reports are grouped together into batches for collection.
-    pub trait QueryType: Clone + Debug + PartialEq + Eq {
+    pub trait QueryType: Clone + Debug + PartialEq + Eq + 'static {
         /// The [`Code`] associated with this query type.
         const CODE: Code;
 
         /// The type of a batch identifier.
-        type BatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
+        type BatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode + Send + Sync;
 
         /// The type of a batch identifier as it appears in a `PartialBatchSelector`. Will be either
         /// the same type as `BatchIdentifier`, or `()`.
-        type PartialBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode;
+        type PartialBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode + Send + Sync;
 
         /// Computes the `PartialBatchIdentifier` corresponding to the given
         /// `BatchIdentifier`.
@@ -1573,7 +1573,7 @@ impl<Q: QueryType> AggregateInitializeReq<Q> {
     }
 
     /// Gets the partial batch selector associated with this aggregate initialization request.
-    pub fn batch_identifier(&self) -> &PartialBatchSelector<Q> {
+    pub fn batch_selector(&self) -> &PartialBatchSelector<Q> {
         &self.partial_batch_selector
     }
 

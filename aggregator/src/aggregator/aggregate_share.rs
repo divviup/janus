@@ -706,10 +706,12 @@ mod tests {
                     let aggregation_job_id = random();
                     tx.put_aggregation_job(&AggregationJob::<
                         DUMMY_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         aggregation_param,
                         AggregationJobState::Finished,
                     ))
@@ -829,10 +831,12 @@ mod tests {
                     let aggregation_job_id = random();
                     tx.put_aggregation_job(&AggregationJob::<
                         DUMMY_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
                         aggregation_job_id,
+                        (),
                         aggregation_param,
                         AggregationJobState::Finished,
                     ))

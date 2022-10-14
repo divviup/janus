@@ -9,7 +9,7 @@ use anyhow::Result;
 use futures::future::try_join_all;
 use itertools::Itertools;
 use janus_core::time::{Clock, TimeExt};
-use janus_messages::{Role, TaskId};
+use janus_messages::{query_type::TimeInterval, Role, TaskId};
 use opentelemetry::{
     metrics::{Histogram, Unit},
     Context, KeyValue,
@@ -214,6 +214,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
     #[tracing::instrument(skip(self), err)]
     async fn create_aggregation_jobs_for_task(&self, task: Arc<Task>) -> anyhow::Result<()> {
+        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match task.vdaf() {
             VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
                 self.create_aggregation_jobs_for_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
@@ -305,9 +306,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 report_count = %agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
-                            agg_jobs.push(AggregationJob::<L, A>::new(
+                            agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
+                                (),
                                 (),
                                 AggregationJobState::InProgress,
                             ));
@@ -402,9 +404,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 report_count = %agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
-                            agg_jobs.push(AggregationJob::<L, A>::new(
+                            agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
+                                (),
                                 aggregation_param.clone(),
                                 AggregationJobState::InProgress,
                             ));
@@ -456,7 +459,9 @@ mod tests {
         },
         messages::test_util::new_dummy_report,
         messages::TimeExt,
-        task::{test_util::TaskBuilder, QueryType, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{
+            test_util::TaskBuilder, QueryType as TaskQueryType, PRIO3_AES128_VERIFY_KEY_LENGTH,
+        },
     };
     use futures::{future::try_join_all, TryFutureExt};
     use janus_core::{
@@ -467,7 +472,10 @@ mod tests {
         },
         time::{Clock, MockClock, TimeExt as CoreTimeExt},
     };
-    use janus_messages::{AggregationJobId, Interval, Report, ReportId, Role, TaskId, Time};
+    use janus_messages::{
+        query_type::{QueryType, TimeInterval},
+        AggregationJobId, Interval, Report, ReportId, Role, TaskId, Time,
+    };
     use prio::{
         codec::ParameterizedDecode,
         vdaf::{
@@ -503,7 +511,7 @@ mod tests {
 
         let report_time = Time::from_seconds_since_epoch(0);
         let leader_task = TaskBuilder::new(
-            QueryType::TimeInterval,
+            TaskQueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
@@ -511,7 +519,7 @@ mod tests {
         let leader_report = new_dummy_report(*leader_task.id(), report_time);
 
         let helper_task = TaskBuilder::new(
-            QueryType::TimeInterval,
+            TaskQueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count.into(),
             Role::Helper,
         )
@@ -604,7 +612,7 @@ mod tests {
 
         let task = Arc::new(
             TaskBuilder::new(
-                QueryType::TimeInterval,
+                TaskQueryType::TimeInterval,
                 VdafInstance::Prio3Aes128Count.into(),
                 Role::Leader,
             )
@@ -734,7 +742,7 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let task = Arc::new(
             TaskBuilder::new(
-                QueryType::TimeInterval,
+                TaskQueryType::TimeInterval,
                 VdafInstance::Prio3Aes128Count.into(),
                 Role::Leader,
             )
@@ -847,7 +855,7 @@ mod tests {
         let vdaf = dummy_vdaf::Vdaf::new();
         let task = Arc::new(
             TaskBuilder::new(
-                QueryType::TimeInterval,
+                TaskQueryType::TimeInterval,
                 crate::task::VdafInstance::Fake,
                 Role::Leader,
             )
@@ -915,6 +923,7 @@ mod tests {
                 Box::pin(async move {
                     Ok(read_aggregate_jobs_for_task_generic::<
                         VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                         Vec<_>,
                         _,
@@ -977,6 +986,7 @@ mod tests {
                 Box::pin(async move {
                     Ok(read_aggregate_jobs_for_task_generic::<
                         VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                         Vec<_>,
                         _,
@@ -1050,6 +1060,7 @@ mod tests {
                 Box::pin(async move {
                     Ok(read_aggregate_jobs_for_task_generic::<
                         VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                         Vec<_>,
                         _,
@@ -1079,9 +1090,13 @@ mod tests {
         task_id: &TaskId,
     ) -> HashMap<AggregationJobId, T> {
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        read_aggregate_jobs_for_task_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, T, C>(
-            tx, task_id, &vdaf,
-        )
+        read_aggregate_jobs_for_task_generic::<
+            PRIO3_AES128_VERIFY_KEY_LENGTH,
+            TimeInterval,
+            Prio3Aes128Count,
+            T,
+            C,
+        >(tx, task_id, &vdaf)
         .await
         .map(|(agg_job_id, report_id, _aggregation_param)| (agg_job_id, report_id))
         .collect()
@@ -1092,7 +1107,7 @@ mod tests {
     /// aggregation job, and aggregation parameters. The container used to store the report IDs is
     /// up to the caller; ordered containers will store report IDs in the order they are included in
     /// the aggregate job.
-    async fn read_aggregate_jobs_for_task_generic<const L: usize, A, T, C: Clock>(
+    async fn read_aggregate_jobs_for_task_generic<const L: usize, Q: QueryType, A, T, C: Clock>(
         tx: &Transaction<'_, C>,
         task_id: &TaskId,
         vdaf: &A,
@@ -1105,7 +1120,7 @@ mod tests {
         for<'a> <A as Vdaf>::OutputShare: TryFrom<&'a [u8]>,
     {
         try_join_all(
-            tx.get_aggregation_jobs_for_task_id::<L, A>(task_id)
+            tx.get_aggregation_jobs_for_task_id::<L, Q, A>(task_id)
                 .await
                 .unwrap()
                 .into_iter()
