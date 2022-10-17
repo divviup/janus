@@ -17,7 +17,7 @@ COPY janus_messages /src/janus_messages
 COPY janus_server /src/janus_server
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --profile $PROFILE -p interop_binaries --bin janus_interop_aggregator && cp /src/target/$PROFILE/janus_interop_aggregator /janus_interop_aggregator
 
-FROM postgres:14-alpine
+FROM postgres:15-alpine
 RUN mkdir /logs
 RUN apk add --update supervisor && rm -rf /tmp/* /var/cache/apk/*
 COPY interop_binaries/supervisord.conf /supervisord.conf
