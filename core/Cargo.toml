@@ -30,7 +30,7 @@ chrono = "0.4"
 derivative = "2.2.0"
 futures = "0.3.24"
 hex = "0.4"
-hpke-dispatch = "0.4.0"
+hpke-dispatch = "0.5.0"
 http-api-problem = "0.55.0"
 janus_messages = { version = "0.2", path = "../messages" }
 kube = { version = "0.65", optional = true, default-features = false, features = ["client", "rustls-tls"] }

@@ -9,20 +9,11 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-daphne = [
-    "dep:janus_build_script_utils",
-    "dep:daphne",
-    "dep:serde",
-    "dep:serde_json",
-    "dep:tempfile",
-    "janus_interop_binaries/test-util",
-]
 kube-openssl = ["kube/openssl-tls"]
 
 [dependencies]
 anyhow = "1"
 backoff = { version = "0.4", features = ["tokio"] }
-daphne = { git = "https://github.com/cloudflare/daphne", rev = "80b53c4b0f2c93d5f9df66dfce237b20756c9147", optional = true }  # Match this to the version referenced in README.md.
 futures = "0.3.24"
 hex = "0.4"
 janus_aggregator = { path = "../aggregator", features = ["test-util"] }
@@ -34,8 +25,6 @@ kube = { version = "0.65.0", default-features = false, features = ["client"] }
 portpicker = "0.1"
 rand = "0.8"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
-serde = { version = "1", optional = true }
-serde_json = { version = "1", optional = true }
 testcontainers = "0.14.0"
 tokio = { version = "1", features = ["full", "tracing"] }
 tracing = "0.1.37"
@@ -48,8 +37,3 @@ janus_client = { path = "../client" }
 janus_collector = { path = "../collector", features = ["test-util"] }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 tempfile = "3"
-
-[build-dependencies]
-janus_build_script_utils = { path = "../build_script_utils", optional = true }
-serde_json = { version = "1", optional = true }
-tempfile = { version = "3", optional = true }
