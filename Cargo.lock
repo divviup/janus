@@ -1815,6 +1815,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "backoff",
+ "base64",
  "daphne",
  "futures",
  "hex",

@@ -1,7 +1,10 @@
 use base64::URL_SAFE_NO_PAD;
 use janus_aggregator::task::{QueryType, Task, VdafInstance};
 use janus_core::hpke::{generate_hpke_config_and_private_key, HpkePrivateKey};
-use janus_messages::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role};
+use janus_messages::{
+    query_type::{FixedSize, QueryType as _, TimeInterval},
+    HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
+};
 use prio::codec::Encode;
 use rand::random;
 use serde::{de::Visitor, Deserialize, Serialize};
@@ -137,24 +140,53 @@ impl From<VdafObject> for VdafInstance {
     }
 }
 
+#[derive(Debug)]
+pub struct BadRoleError;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AggregatorRole {
+    Leader,
+    Helper,
+}
+
+impl TryFrom<Role> for AggregatorRole {
+    type Error = BadRoleError;
+
+    fn try_from(role: Role) -> Result<Self, Self::Error> {
+        match role {
+            Role::Collector => Err(BadRoleError),
+            Role::Client => Err(BadRoleError),
+            Role::Leader => Ok(AggregatorRole::Leader),
+            Role::Helper => Ok(AggregatorRole::Helper),
+        }
+    }
+}
+
+impl From<AggregatorRole> for Role {
+    fn from(role: AggregatorRole) -> Self {
+        match role {
+            AggregatorRole::Leader => Role::Leader,
+            AggregatorRole::Helper => Role::Helper,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AggregatorAddTaskRequest {
     pub task_id: String, // in unpadded base64url
     pub leader: Url,
     pub helper: Url,
-    pub query_type: QueryType,
     pub vdaf: VdafObject,
-    pub leader_authentication_token: String,
-    #[serde(default)]
-    pub collector_authentication_token: Option<String>,
-    pub aggregator_id: u8,
+    pub role: AggregatorRole,
     pub verify_key: String, // in unpadded base64url
     pub max_batch_query_count: u64,
-    pub task_expiration: u64, // in seconds since the epoch
+    pub query_type: u8,
     pub min_batch_size: u64,
+    pub max_batch_size: Option<u64>,
     pub time_precision: u64,           // in seconds
     pub collector_hpke_config: String, // in unpadded base64url
+    pub task_expiration: u64,          // in seconds since the epoch
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -166,39 +198,54 @@ pub struct AddTaskResponse {
 
 impl From<Task> for AggregatorAddTaskRequest {
     fn from(task: Task) -> Self {
+        let (query_type, max_batch_size) = match task.query_type() {
+            QueryType::TimeInterval => (TimeInterval::CODE as u8, None),
+            QueryType::FixedSize { max_batch_size } => {
+                (FixedSize::CODE as u8, Some(*max_batch_size))
+            }
+        };
         Self {
             task_id: base64::encode_config(task.id().as_ref(), URL_SAFE_NO_PAD),
             leader: task.aggregator_url(&Role::Leader).unwrap().clone(),
             helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
-            query_type: *task.query_type(),
             vdaf: task.vdaf().clone().into(),
-            leader_authentication_token: String::from_utf8(
-                task.primary_aggregator_auth_token().as_bytes().to_vec(),
-            )
-            .unwrap(),
-            collector_authentication_token: if task.role() == &Role::Leader {
-                Some(
-                    String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec())
-                        .unwrap(),
-                )
-            } else {
-                None
-            },
-            aggregator_id: task.role().index().unwrap().try_into().unwrap(),
+            role: (*task.role()).try_into().unwrap(),
             verify_key: base64::encode_config(
                 task.vdaf_verify_keys().first().unwrap().as_ref(),
                 URL_SAFE_NO_PAD,
             ),
             max_batch_query_count: task.max_batch_query_count(),
-            task_expiration: task.task_expiration().as_seconds_since_epoch(),
+            query_type,
             min_batch_size: task.min_batch_size(),
+            max_batch_size,
             time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: base64::encode_config(
                 &task.collector_hpke_config().get_encoded(),
                 URL_SAFE_NO_PAD,
             ),
+            task_expiration: task.task_expiration().as_seconds_since_epoch(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TokenRole {
+    Leader,
+    Collector,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AddAuthenticationTokenRequest {
+    pub task_id: String, // in unpadded base64url
+    pub role: TokenRole,
+    pub token: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AddAuthenticationTokenResponse<'a> {
+    pub status: &'a str,
+    pub error: Option<String>,
 }
 
 pub fn install_tracing_subscriber() -> anyhow::Result<()> {

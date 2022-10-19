@@ -16,14 +16,15 @@ use janus_core::{task::AuthenticationToken, time::RealClock, TokioRuntime};
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
-    AddTaskResponse, AggregatorAddTaskRequest, HpkeConfigRegistry,
+    AddAuthenticationTokenRequest, AddAuthenticationTokenResponse, AddTaskResponse,
+    AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, TokenRole,
 };
-use janus_messages::{Duration, HpkeConfig, Role, TaskId, Time};
+use janus_messages::{BatchId, Duration, HpkeConfig, TaskId, Time};
 use opentelemetry::global::meter;
 use prio::codec::Decode;
 use rand::random;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -39,53 +40,85 @@ struct EndpointResponse<'a> {
     endpoint: &'a str,
 }
 
+#[derive(Debug, Deserialize)]
+struct FetchBatchIdsRequest {
+    task_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FetchBatchIdsResponse {
+    status: &'static str,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    batch_ids: Option<Vec<String>>,
+}
+
 async fn handle_add_task(
     datastore: &Datastore<RealClock>,
     keyring: &Mutex<HpkeConfigRegistry>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
     let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"taskId\"")?;
+        .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let vdaf = request.vdaf.into();
-    let leader_authentication_token =
-        AuthenticationToken::from(request.leader_authentication_token.into_bytes());
     let verify_key = SecretBytes::new(
         base64::decode_config(request.verify_key, URL_SAFE_NO_PAD)
-            .context("invalid base64url content in \"verifyKey\"")?,
+            .context("invalid base64url content in \"verify_key\"")?,
     );
     let time_precision = Duration::from_seconds(request.time_precision);
     let collector_hpke_config_bytes =
         base64::decode_config(request.collector_hpke_config, URL_SAFE_NO_PAD)
-            .context("invalid base64url content in \"collectorHpkeConfig\"")?;
+            .context("invalid base64url content in \"collector_hpke_config\"")?;
     let collector_hpke_config = HpkeConfig::get_decoded(&collector_hpke_config_bytes)
         .context("could not parse collector HPKE configuration")?;
 
-    let (role, collector_authentication_tokens) = match (
-        request.aggregator_id,
-        request.collector_authentication_token,
-    ) {
-        (0, None) => {
-            return Err(anyhow::anyhow!("collector authentication is missing"));
-        }
-        (0, Some(collector_authentication_token)) => (
-            Role::Leader,
-            Vec::from([AuthenticationToken::from(
-                collector_authentication_token.into_bytes(),
-            )]),
-        ),
-        (1, _) => (Role::Helper, Vec::new()),
-        _ => return Err(anyhow::anyhow!("invalid \"aggregator_id\" value")),
+    // The task will be initially configured with placeholder authentication tokens, to satisfy
+    // task parameter validation. The test harness should supply its own authentication tokens via
+    // `/internal/test/add_authentication_token`, in order to enable communication between
+    // aggregators and collectors.
+    let aggregator_authentication_tokens = Vec::from([AuthenticationToken::from(
+        format!(
+            "leader-placeholder-token-{}",
+            base64::encode_config(random::<[u8; 16]>(), URL_SAFE_NO_PAD)
+        )
+        .into_bytes(),
+    )]);
+    let collector_authentication_tokens = match &request.role {
+        AggregatorRole::Leader => Vec::from([AuthenticationToken::from(
+            format!(
+                "collector-placeholder-token-{}",
+                base64::encode_config(random::<[u8; 16]>(), URL_SAFE_NO_PAD)
+            )
+            .into_bytes(),
+        )]),
+        AggregatorRole::Helper => Vec::new(),
     };
 
     let (hpke_config, private_key) = keyring.lock().await.get_random_keypair();
 
+    let query_type = match request.query_type {
+        1 => janus_aggregator::task::QueryType::TimeInterval,
+        2 => janus_aggregator::task::QueryType::FixedSize {
+            max_batch_size: request
+                .max_batch_size
+                .ok_or_else(|| anyhow::anyhow!("\"max_batch_size\" is missing"))?,
+        },
+        _ => {
+            return Err(anyhow::anyhow!(
+                "invalid query type: {}",
+                request.query_type
+            ))
+        }
+    };
+
     let task = Task::new(
         task_id,
         Vec::from([request.leader, request.helper]),
-        request.query_type,
+        query_type,
         vdaf,
-        role,
+        request.role.into(),
         Vec::from([verify_key]),
         request.max_batch_query_count,
         Time::from_seconds_since_epoch(request.task_expiration),
@@ -95,7 +128,7 @@ async fn handle_add_task(
         // other aggregators running on the same host.
         Duration::from_seconds(1),
         collector_hpke_config,
-        Vec::from([leader_authentication_token]),
+        aggregator_authentication_tokens,
         collector_authentication_tokens,
         [(hpke_config, private_key)],
     )
@@ -108,6 +141,45 @@ async fn handle_add_task(
         })
         .await
         .context("error adding task to database")
+}
+
+async fn handle_add_authentication_token(
+    datastore: &Datastore<RealClock>,
+    request: AddAuthenticationTokenRequest,
+) -> anyhow::Result<()> {
+    let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
+        .context("invalid base64url content in \"task_id\"")?;
+    let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
+
+    datastore
+        .run_tx(move |tx| {
+            let new_token = AuthenticationToken::from(request.token.clone().into_bytes());
+            Box::pin(async move {
+                match &request.role {
+                    TokenRole::Leader => {
+                        tx.add_aggregator_authentication_token(&task_id, &new_token)
+                            .await
+                    }
+                    TokenRole::Collector => {
+                        tx.add_collector_authentication_token(&task_id, &new_token)
+                            .await
+                    }
+                }
+            })
+        })
+        .await
+        .context("error adding authentication token to task")
+}
+
+async fn handle_fetch_batch_ids(
+    _datastore: &Datastore<RealClock>,
+    request: FetchBatchIdsRequest,
+) -> anyhow::Result<Vec<BatchId>> {
+    let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
+        .context("invalid base64url content in \"task_id\"")?;
+    let _task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
+
+    Err(anyhow::anyhow!("fixed size queries are not yet supported"))
 }
 
 fn make_filter(
@@ -139,7 +211,8 @@ fn make_filter(
         )
         .into_response()
     });
-    let add_task_filter = warp::path!("add_task").and(warp::body::json()).then(
+    let add_task_filter = warp::path!("add_task").and(warp::body::json()).then({
+        let datastore = Arc::clone(&datastore);
         move |request: AggregatorAddTaskRequest| {
             let datastore = Arc::clone(&datastore);
             let keyring = Arc::clone(&keyring);
@@ -157,6 +230,57 @@ fn make_filter(
                 warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
                     .into_response()
             }
+        }
+    });
+    let add_authentication_token_filter = warp::path!("add_authentication_token")
+        .and(warp::body::json())
+        .then({
+            let datastore = Arc::clone(&datastore);
+            move |request: AddAuthenticationTokenRequest| {
+                let datastore = Arc::clone(&datastore);
+                async move {
+                    let response = match handle_add_authentication_token(&datastore, request).await
+                    {
+                        Ok(()) => AddAuthenticationTokenResponse {
+                            status: SUCCESS,
+                            error: None,
+                        },
+                        Err(e) => AddAuthenticationTokenResponse {
+                            status: ERROR,
+                            error: Some(format!("{:?}", e)),
+                        },
+                    };
+                    warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
+                        .into_response()
+                }
+            }
+        });
+    let fetch_batch_ids_filter = warp::path!("fetch_batch_ids").and(warp::body::json()).then(
+        move |request: FetchBatchIdsRequest| {
+            let datastore = Arc::clone(&datastore);
+            async move {
+                let response = match handle_fetch_batch_ids(&datastore, request).await {
+                    Ok(batch_ids) => FetchBatchIdsResponse {
+                        status: SUCCESS,
+                        error: None,
+                        batch_ids: Some(
+                            batch_ids
+                                .into_iter()
+                                .map(|batch_id| {
+                                    base64::encode_config(batch_id.as_ref(), URL_SAFE_NO_PAD)
+                                })
+                                .collect(),
+                        ),
+                    },
+                    Err(e) => FetchBatchIdsResponse {
+                        status: ERROR,
+                        error: Some(format!("{:?}", e)),
+                        batch_ids: None,
+                    },
+                };
+                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
+                    .into_response()
+            }
         },
     );
 
@@ -167,6 +291,10 @@ fn make_filter(
                 .or(endpoint_filter)
                 .unify()
                 .or(add_task_filter)
+                .unify()
+                .or(add_authentication_token_filter)
+                .unify()
+                .or(fetch_batch_ids_filter)
                 .unify(),
         )
         .or(dap_filter.map(Reply::into_response))

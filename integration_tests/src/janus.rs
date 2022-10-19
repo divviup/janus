@@ -1,5 +1,6 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
+use base64::URL_SAFE_NO_PAD;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore},
     config::DbConfig,
@@ -10,7 +11,8 @@ use janus_core::{
     time::RealClock,
 };
 use janus_interop_binaries::{
-    test_util::await_http_server, testcontainer::Aggregator, AggregatorAddTaskRequest,
+    test_util::await_http_server, testcontainer::Aggregator, AddAuthenticationTokenRequest,
+    AggregatorAddTaskRequest, TokenRole,
 };
 use janus_messages::Role;
 use k8s_openapi::api::core::v1::Secret;
@@ -74,7 +76,66 @@ impl<'a> Janus<'a> {
             .unwrap();
         assert!(resp.status().is_success());
         let resp: HashMap<String, Option<String>> = resp.json().await.unwrap();
-        assert_eq!(resp.get("status"), Some(&Some("success".to_string())));
+        assert_eq!(
+            resp.get("status"),
+            Some(&Some("success".to_string())),
+            "error: {:?}",
+            resp.get("error")
+        );
+
+        // Write the task's authentication tokens.
+        for token in task.aggregator_auth_tokens() {
+            let resp = http_client
+                .post(
+                    Url::parse(&format!(
+                        "http://127.0.0.1:{}/internal/test/add_authentication_token",
+                        port
+                    ))
+                    .unwrap(),
+                )
+                .json(&AddAuthenticationTokenRequest {
+                    task_id: base64::encode_config(task.id().as_ref(), URL_SAFE_NO_PAD),
+                    role: TokenRole::Leader,
+                    token: String::from_utf8(token.as_bytes().to_vec()).unwrap(),
+                })
+                .send()
+                .await
+                .unwrap();
+            assert!(resp.status().is_success());
+            let resp: HashMap<String, Option<String>> = resp.json().await.unwrap();
+            assert_eq!(
+                resp.get("status"),
+                Some(&Some("success".to_string())),
+                "error: {:?}",
+                resp.get("error")
+            );
+        }
+        for token in task.collector_auth_tokens() {
+            let resp = http_client
+                .post(
+                    Url::parse(&format!(
+                        "http://127.0.0.1:{}/internal/test/add_authentication_token",
+                        port
+                    ))
+                    .unwrap(),
+                )
+                .json(&AddAuthenticationTokenRequest {
+                    task_id: base64::encode_config(task.id().as_ref(), URL_SAFE_NO_PAD),
+                    role: TokenRole::Collector,
+                    token: String::from_utf8(token.as_bytes().to_vec()).unwrap(),
+                })
+                .send()
+                .await
+                .unwrap();
+            assert!(resp.status().is_success());
+            let resp: HashMap<String, Option<String>> = resp.json().await.unwrap();
+            assert_eq!(
+                resp.get("status"),
+                Some(&Some("success".to_string())),
+                "error: {:?}",
+                resp.get("error")
+            );
+        }
 
         Self::Container {
             role: *task.role(),

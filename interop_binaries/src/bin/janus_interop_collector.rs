@@ -8,7 +8,8 @@ use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
-    HpkeConfigRegistry, NumberAsString, VdafObject,
+    AddAuthenticationTokenRequest, AddAuthenticationTokenResponse, HpkeConfigRegistry,
+    NumberAsString, VdafObject,
 };
 use janus_messages::{Duration, HpkeConfig, Interval, TaskId, Time};
 use prio::{
@@ -28,16 +29,15 @@ use tokio::{spawn, sync::Mutex, task::JoinHandle};
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct AddTaskRequest {
     task_id: String,
     leader: Url,
     vdaf: VdafObject,
-    collector_authentication_token: String,
+    #[serde(rename = "query_type")]
+    _query_type: u8,
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct AddTaskResponse {
     status: &'static str,
     #[serde(default)]
@@ -46,12 +46,20 @@ struct AddTaskResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+struct RequestQuery {
+    #[serde(rename = "type")]
+    query_type: u8,
+    batch_interval_start: Option<u64>,
+    batch_interval_duration: Option<u64>,
+    #[serde(rename = "batch_id")]
+    _batch_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct CollectStartRequest {
     task_id: String,
     agg_param: String,
-    batch_interval_start: u64,
-    batch_interval_duration: u64,
+    query: RequestQuery,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,7 +90,6 @@ enum AggregationResult {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct CollectPollResponse {
     status: &'static str,
     #[serde(default)]
@@ -98,7 +105,7 @@ struct TaskState {
     hpke_config: HpkeConfig,
     leader_url: Url,
     vdaf: VdafObject,
-    auth_token: AuthenticationToken,
+    auth_tokens: Vec<AuthenticationToken>,
 }
 
 /// A collect job handle.
@@ -126,7 +133,7 @@ async fn handle_add_task(
     request: AddTaskRequest,
 ) -> anyhow::Result<HpkeConfig> {
     let task_id_bytes = base64::decode_config(request.task_id, base64::URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"taskId\"")?;
+        .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
 
     let mut tasks_guard = tasks.lock().await;
@@ -142,10 +149,28 @@ async fn handle_add_task(
         hpke_config: hpke_config.clone(),
         leader_url: request.leader,
         vdaf: request.vdaf,
-        auth_token: AuthenticationToken::from(request.collector_authentication_token.into_bytes()),
+        auth_tokens: Vec::new(),
     });
 
     Ok(hpke_config)
+}
+
+async fn handle_add_authentication_token(
+    tasks: &Mutex<HashMap<TaskId, TaskState>>,
+    request: AddAuthenticationTokenRequest,
+) -> anyhow::Result<()> {
+    let task_id_bytes = base64::decode_config(request.task_id, base64::URL_SAFE_NO_PAD)
+        .context("invalid base64url content in \"task_id\"")?;
+    let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
+
+    let mut tasks_guard = tasks.lock().await;
+    let task_state = tasks_guard.get_mut(&task_id).context("no such task")?;
+
+    task_state
+        .auth_tokens
+        .push(AuthenticationToken::from(request.token.into_bytes()));
+
+    Ok(())
 }
 
 async fn handle_collect_generic<V>(
@@ -180,15 +205,10 @@ async fn handle_collect_start(
     request: CollectStartRequest,
 ) -> anyhow::Result<Handle> {
     let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"taskId\"")?;
+        .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let agg_param = base64::decode_config(request.agg_param, URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"aggParam\"")?;
-    let batch_interval = Interval::new(
-        Time::from_seconds_since_epoch(request.batch_interval_start),
-        Duration::from_seconds(request.batch_interval_duration),
-    )
-    .context("invalid batch interval specification")?;
+        .context("invalid base64url content in \"agg_param\"")?;
 
     let tasks_guard = tasks.lock().await;
     let task_state = tasks_guard
@@ -198,7 +218,11 @@ async fn handle_collect_start(
     let collector_params = CollectorParameters::new(
         task_id,
         task_state.leader_url.clone(),
-        task_state.auth_token.clone(),
+        task_state
+            .auth_tokens
+            .last()
+            .context("task has no authentication tokens")?
+            .clone(),
         task_state.hpke_config.clone(),
         task_state.private_key.clone(),
     )
@@ -217,6 +241,31 @@ async fn handle_collect_start(
             .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
             .build(),
     );
+
+    let batch_interval = match request.query.query_type {
+        1 => Interval::new(
+            Time::from_seconds_since_epoch(
+                request
+                    .query
+                    .batch_interval_start
+                    .context("\"batch_interval_start\" was missing")?,
+            ),
+            Duration::from_seconds(
+                request
+                    .query
+                    .batch_interval_duration
+                    .context("\"batch_interval_duration\" was missing")?,
+            ),
+        )
+        .context("invalid batch interval specification")?,
+        2 => return Err(anyhow::anyhow!("fixed size queries are not yet supported")),
+        _ => {
+            return Err(anyhow::anyhow!(
+                "unsupported query type: {}",
+                request.query.query_type
+            ))
+        }
+    };
 
     let vdaf_instance = task_state.vdaf.clone().into();
     let task_handle = match vdaf_instance {
@@ -384,6 +433,28 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
             }
         }
     });
+    let add_authentication_token_filter = warp::path!("add_authentication_token")
+        .and(warp::body::json())
+        .then({
+            let tasks = Arc::clone(&tasks);
+            move |request: AddAuthenticationTokenRequest| {
+                let tasks = Arc::clone(&tasks);
+                async move {
+                    let response = match handle_add_authentication_token(&tasks, request).await {
+                        Ok(()) => AddAuthenticationTokenResponse {
+                            status: SUCCESS,
+                            error: None,
+                        },
+                        Err(e) => AddAuthenticationTokenResponse {
+                            status: ERROR,
+                            error: Some(format!("{:?}", e)),
+                        },
+                    };
+                    warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
+                        .into_response()
+                }
+            }
+        });
     let collect_start_filter =
         warp::path!("collect_start").and(warp::body::json()).then({
             let tasks = Arc::clone(&tasks);
@@ -446,6 +517,8 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     Ok(warp::path!("internal" / "test" / ..).and(warp::post()).and(
         ready_filter
             .or(add_task_filter)
+            .unify()
+            .or(add_authentication_token_filter)
             .unify()
             .or(collect_start_filter)
             .unify()

@@ -211,16 +211,9 @@ impl<C: Clock> Transaction<'_, C> {
         for (ord, token) in task.aggregator_auth_tokens().iter().enumerate() {
             let ord = i64::try_from(ord)?;
 
-            let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
-
-            let encrypted_aggregator_auth_token = self.crypter.encrypt(
-                "task_aggregator_auth_tokens",
-                &row_id,
-                "token",
-                token.as_bytes(),
-            )?;
+            let encrypted_aggregator_auth_token =
+                self.crypter
+                    .encrypt_aggregator_auth_token(task.id(), ord, token)?;
 
             aggregator_auth_token_ords.push(ord);
             aggregator_auth_tokens.push(encrypted_aggregator_auth_token);
@@ -243,16 +236,9 @@ impl<C: Clock> Transaction<'_, C> {
         for (ord, token) in task.collector_auth_tokens().iter().enumerate() {
             let ord = i64::try_from(ord)?;
 
-            let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
-            row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
-
-            let encrypted_collector_auth_token = self.crypter.encrypt(
-                "task_collector_auth_tokens",
-                &row_id,
-                "token",
-                token.as_bytes(),
-            )?;
+            let encrypted_collector_auth_token =
+                self.crypter
+                    .encrypt_collector_auth_token(task.id(), ord, token)?;
 
             collector_auth_token_ords.push(ord);
             collector_auth_tokens.push(encrypted_collector_auth_token);
@@ -716,6 +702,94 @@ impl<C: Clock> Transaction<'_, C> {
             collector_auth_tokens,
             hpke_configs,
         )?)
+    }
+
+    /// Add an aggregator authentication token to the task with the given `task_id`.
+    pub async fn add_aggregator_authentication_token(
+        &self,
+        task_id: &TaskId,
+        token: &AuthenticationToken,
+    ) -> Result<(), Error> {
+        let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_ref()];
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT MAX(ord) as max_ord FROM task_aggregator_auth_tokens
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        let max_ord_row = self.tx.query_one(&stmt, params).await?;
+
+        let max_ord: i64 = max_ord_row.get("max_ord");
+        let new_ord = max_ord + 1;
+
+        let encrypted_aggregator_auth_token = self
+            .crypter
+            .encrypt_aggregator_auth_token(task_id, new_ord, token)?;
+
+        let params: &[&(dyn ToSql + Sync)] = &[
+            &task_id.as_ref(),
+            &new_ord,
+            &encrypted_aggregator_auth_token,
+        ];
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "INSERT INTO task_aggregator_auth_tokens (task_id, ord, token)
+                SELECT (SELECT id FROM tasks WHERE task_id = $1), $2, $3",
+            )
+            .await?;
+        check_single_row_mutation(self.tx.execute(&stmt, params).await?)
+    }
+
+    /// Add a collector authentication token to the task with the given `task_id`.
+    pub async fn add_collector_authentication_token(
+        &self,
+        task_id: &TaskId,
+        token: &AuthenticationToken,
+    ) -> Result<(), Error> {
+        let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_ref()];
+        let stmt = self
+            .tx
+            .prepare_cached("SELECT aggregator_role FROM tasks WHERE task_id = $1")
+            .await?;
+        let role_row = self.tx.query_one(&stmt, params);
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT MAX(ord) as max_ord FROM task_collector_auth_tokens
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        let max_ord_row = self.tx.query_one(&stmt, params);
+
+        let (role_row, max_ord_row) = try_join!(role_row, max_ord_row)?;
+        let aggregator_role: AggregatorRole = role_row.get("aggregator_role");
+
+        if let AggregatorRole::Helper = aggregator_role {
+            return Err(Error::InvalidParameter(
+                "helper task cannot have collector auth tokens",
+            ));
+        }
+
+        let max_ord: i64 = max_ord_row.get("max_ord");
+        let new_ord = max_ord + 1;
+
+        let encrypted_collector_auth_token = self
+            .crypter
+            .encrypt_collector_auth_token(task_id, new_ord, token)?;
+
+        let params: &[&(dyn ToSql + Sync)] =
+            &[&task_id.as_ref(), &new_ord, &encrypted_collector_auth_token];
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "INSERT INTO task_collector_auth_tokens (task_id, ord, token)
+                SELECT (SELECT id FROM tasks WHERE task_id = $1), $2, $3",
+            )
+            .await?;
+        check_single_row_mutation(self.tx.execute(&stmt, params).await?)
     }
 
     /// get_client_report retrieves a client report by ID.
@@ -1689,7 +1763,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_ref(),
-                    /* collect_jobs.batchinterval */ &SqlInterval::from(interval),
+                    /* collect_jobs.batch_interval */ &SqlInterval::from(interval),
                 ],
             )
             .await?
@@ -2536,6 +2610,42 @@ impl Crypter {
         assert_eq!(aad_bytes.len(), aad_length);
 
         Ok(aad_bytes)
+    }
+
+    fn encrypt_aggregator_auth_token(
+        &self,
+        task_id: &TaskId,
+        ord: i64,
+        token: &AuthenticationToken,
+    ) -> Result<Vec<u8>, Error> {
+        let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
+        row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
+        row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
+
+        self.encrypt(
+            "task_aggregator_auth_tokens",
+            &row_id,
+            "token",
+            token.as_bytes(),
+        )
+    }
+
+    fn encrypt_collector_auth_token(
+        &self,
+        task_id: &TaskId,
+        ord: i64,
+        token: &AuthenticationToken,
+    ) -> Result<Vec<u8>, Error> {
+        let mut row_id = [0; TaskId::LEN + size_of::<i64>()];
+        row_id[..TaskId::LEN].copy_from_slice(task_id.as_ref());
+        row_id[TaskId::LEN..].copy_from_slice(&ord.to_be_bytes());
+
+        self.encrypt(
+            "task_collector_auth_tokens",
+            &row_id,
+            "token",
+            token.as_bytes(),
+        )
     }
 }
 
@@ -3952,7 +4062,11 @@ mod tests {
             Crypter, Error,
         },
         messages::{test_util::new_dummy_report, DurationExt, TimeExt},
-        task::{self, test_util::TaskBuilder, QueryType, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{
+            self,
+            test_util::{generate_auth_token, TaskBuilder},
+            QueryType, Task, PRIO3_AES128_VERIFY_KEY_LENGTH,
+        },
     };
     use assert_matches::assert_matches;
     use chrono::NaiveDate;
@@ -4109,6 +4223,88 @@ mod tests {
             .map(|task| (*task.id(), task))
             .collect();
         assert_eq!(want_tasks, got_tasks);
+    }
+
+    #[tokio::test]
+    async fn add_authentication_tokens() {
+        install_test_trace_subscriber();
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+
+        let original_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Leader,
+        )
+        .build();
+        let new_aggregator_token = generate_auth_token();
+        let new_collector_token = generate_auth_token();
+
+        let updated_task = ds
+            .run_tx(|tx| {
+                let original_task = original_task.clone();
+                let new_aggregator_token = new_aggregator_token.clone();
+                let new_collector_token = new_collector_token.clone();
+                Box::pin(async move {
+                    tx.put_task(&original_task).await?;
+                    tx.add_aggregator_authentication_token(
+                        original_task.id(),
+                        &new_aggregator_token,
+                    )
+                    .await?;
+                    tx.add_collector_authentication_token(original_task.id(), &new_collector_token)
+                        .await?;
+                    tx.get_task(original_task.id()).await
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        let original_agg_auth_tokens = original_task.aggregator_auth_tokens();
+        let original_collect_auth_tokens = original_task.collector_auth_tokens();
+        let updated_agg_auth_tokens = updated_task.aggregator_auth_tokens();
+        let updated_collect_auth_tokens = updated_task.collector_auth_tokens();
+
+        assert_eq!(
+            updated_agg_auth_tokens.len(),
+            original_agg_auth_tokens.len() + 1
+        );
+        assert_eq!(
+            updated_collect_auth_tokens.len(),
+            original_collect_auth_tokens.len() + 1
+        );
+        assert!(
+            &updated_agg_auth_tokens[..original_agg_auth_tokens.len()] == original_agg_auth_tokens
+        );
+        assert!(
+            &updated_collect_auth_tokens[..original_collect_auth_tokens.len()]
+                == original_collect_auth_tokens
+        );
+        assert!(updated_agg_auth_tokens[original_agg_auth_tokens.len()] == new_aggregator_token);
+        assert!(
+            updated_collect_auth_tokens[original_collect_auth_tokens.len()] == new_collector_token
+        );
+
+        // Confirm that adding a collector token to a helper's task fails.
+        let helper_task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count.into(),
+            Role::Helper,
+        )
+        .build();
+        let error = ds
+            .run_tx(|tx| {
+                let helper_task = helper_task.clone();
+                let new_collector_token = new_collector_token.clone();
+                Box::pin(async move {
+                    tx.put_task(&helper_task).await?;
+                    tx.add_collector_authentication_token(helper_task.id(), &new_collector_token)
+                        .await
+                })
+            })
+            .await
+            .unwrap_err();
+        assert_matches!(error, Error::InvalidParameter(_));
     }
 
     #[tokio::test]
