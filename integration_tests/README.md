@@ -2,8 +2,11 @@
 
 ## Daphne
 
-Note: The Daphne integration test has been temporarily disabled to accommodate implementation of
-DAP-02 and upgrading [`hpke`](https://crates.io/crates/hpke) to version 0.10.0.
+Note: The Daphne integration test has been temporarily disabled to accommodate
+implementation of DAP-02 (see
+[issue #493](https://github.com/divviup/janus/issues/493)), and the dependency on
+Daphne has been temporarily removed in order to break a dependency cycle and
+upgrade [`hpke`](https://crates.io/crates/hpke) to version 0.10.0.
 
 The [Daphne](https://github.com/cloudflare/daphne) testing functionality is implemented by running a
 compiled version of Daphne inside a container. The test container is built by this package's build
