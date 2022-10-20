@@ -710,7 +710,6 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: &TaskId,
         token: &AuthenticationToken,
     ) -> Result<(), Error> {
-        let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_ref()];
         let stmt = self
             .tx
             .prepare_cached(
@@ -718,7 +717,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        let max_ord_row = self.tx.query_one(&stmt, params).await?;
+        let max_ord_row = self.tx.query_one(&stmt, &[&task_id.as_ref()]).await?;
 
         let max_ord: i64 = max_ord_row.get("max_ord");
         let new_ord = max_ord + 1;
@@ -727,11 +726,6 @@ impl<C: Clock> Transaction<'_, C> {
             .crypter
             .encrypt_aggregator_auth_token(task_id, new_ord, token)?;
 
-        let params: &[&(dyn ToSql + Sync)] = &[
-            &task_id.as_ref(),
-            &new_ord,
-            &encrypted_aggregator_auth_token,
-        ];
         let stmt = self
             .tx
             .prepare_cached(
@@ -739,7 +733,18 @@ impl<C: Clock> Transaction<'_, C> {
                 SELECT (SELECT id FROM tasks WHERE task_id = $1), $2, $3",
             )
             .await?;
-        check_single_row_mutation(self.tx.execute(&stmt, params).await?)
+        check_single_row_mutation(
+            self.tx
+                .execute(
+                    &stmt,
+                    &[
+                        /* task_id */ &task_id.as_ref(),
+                        /* ord */ &new_ord,
+                        /* token */ &encrypted_aggregator_auth_token,
+                    ],
+                )
+                .await?,
+        )
     }
 
     /// Add a collector authentication token to the task with the given `task_id`.
@@ -780,8 +785,6 @@ impl<C: Clock> Transaction<'_, C> {
             .crypter
             .encrypt_collector_auth_token(task_id, new_ord, token)?;
 
-        let params: &[&(dyn ToSql + Sync)] =
-            &[&task_id.as_ref(), &new_ord, &encrypted_collector_auth_token];
         let stmt = self
             .tx
             .prepare_cached(
@@ -789,7 +792,18 @@ impl<C: Clock> Transaction<'_, C> {
                 SELECT (SELECT id FROM tasks WHERE task_id = $1), $2, $3",
             )
             .await?;
-        check_single_row_mutation(self.tx.execute(&stmt, params).await?)
+        check_single_row_mutation(
+            self.tx
+                .execute(
+                    &stmt,
+                    &[
+                        /* task_id */ &task_id.as_ref(),
+                        /* ord */ &new_ord,
+                        /* token */ &encrypted_collector_auth_token,
+                    ],
+                )
+                .await?,
+        )
     }
 
     /// get_client_report retrieves a client report by ID.
