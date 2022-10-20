@@ -30,11 +30,11 @@ chrono = "0.4"
 derivative = "2.2.0"
 futures = "0.3.24"
 hex = "0.4"
-hpke-dispatch = "0.4.0"
+hpke-dispatch = "0.5.0"
 http-api-problem = "0.55.0"
 janus_messages = { version = "0.2", path = "../messages" }
-kube = { version = "0.65", optional = true, default-features = false, features = ["client", "rustls-tls"] }
-k8s-openapi = { version = "0.13.1", optional = true, features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
+kube = { workspace = true, optional = true, features = ["rustls-tls"] }
+k8s-openapi = { workspace = true, optional = true }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
 reqwest = { version = "0.11.12", default-features = false, features = ["rustls-tls", "json"] }
@@ -60,6 +60,6 @@ janus_core = { path = ".", features = ["test-util"] }
 # `rustls-tls` feature when creating a default client) to work around rustls's
 # lack of support for connecting to servers by IP addresses, which affects many
 # Kubernetes clusters.
-kube = { version = "0.65", features = ["openssl-tls"] }  # ensure this remains compatible with the non-dev dependency
+kube = { workspace = true, features = ["openssl-tls"] }
 mockito = "0.31.0"
 url = "2.3.1"
