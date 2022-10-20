@@ -9,23 +9,24 @@ use janus_aggregator::{
     binary_utils::{database_pool, job_driver::JobDriver},
     config::DbConfig,
     datastore::{Crypter, Datastore},
-    task::Task,
+    task::{self, QueryType, Task, VdafInstance},
     SecretBytes,
 };
-use janus_core::{task::AuthenticationToken, time::RealClock, TokioRuntime};
+use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken, time::RealClock, TokioRuntime};
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
     AddAuthenticationTokenRequest, AddAuthenticationTokenResponse, AddTaskResponse,
-    AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry, TokenRole,
+    AggregatorAddTaskRequest, HpkeConfigRegistry, TokenRole,
 };
-use janus_messages::{BatchId, Duration, HpkeConfig, TaskId, Time};
+use janus_messages::{BatchId, Duration, HpkeConfig, Role, TaskId, Time};
 use opentelemetry::global::meter;
 use prio::codec::Decode;
 use rand::random;
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{hash_map::Entry, HashMap},
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration as StdDuration,
@@ -54,9 +55,114 @@ struct FetchBatchIdsResponse {
     batch_ids: Option<Vec<String>>,
 }
 
+struct TaskParameters {
+    task_id: TaskId,
+    aggregator_endpoints: Vec<Url>,
+    query_type: QueryType,
+    vdaf: VdafInstance,
+    role: Role,
+    vdaf_verify_keys: Vec<SecretBytes>,
+    max_batch_query_count: u64,
+    task_expiration: Time,
+    min_batch_size: u64,
+    time_precision: Duration,
+    collector_hpke_config: HpkeConfig,
+    hpke_keypair: (HpkeConfig, HpkePrivateKey),
+}
+
+struct PartialTaskState {
+    task_parameters: TaskParameters,
+    aggregator_auth_token: Option<AuthenticationToken>,
+    collector_auth_token: Option<AuthenticationToken>,
+}
+
+impl PartialTaskState {
+    pub fn new(task_parameters: TaskParameters) -> PartialTaskState {
+        PartialTaskState {
+            task_parameters,
+            aggregator_auth_token: None,
+            collector_auth_token: None,
+        }
+    }
+
+    pub fn add_aggregator_authentication_token(
+        &mut self,
+        token: AuthenticationToken,
+    ) -> anyhow::Result<Option<Task>> {
+        match (
+            self.task_parameters.role,
+            &mut self.aggregator_auth_token,
+            &self.collector_auth_token,
+        ) {
+            (_, Some(_), _) => Err(anyhow::anyhow!(
+                "multiple aggregator authentication tokens are not supported"
+            )),
+            (Role::Leader, aggregator_auth_token_opt @ None, Some(_))
+            | (Role::Helper, aggregator_auth_token_opt @ None, _) => {
+                *aggregator_auth_token_opt = Some(token);
+                Ok(Some(self.build_task()?))
+            }
+            (Role::Leader, aggregator_auth_token_opt @ None, None) => {
+                *aggregator_auth_token_opt = Some(token);
+                Ok(None)
+            }
+            (Role::Client, _, _) | (Role::Collector, _, _) => unreachable!(),
+        }
+    }
+
+    pub fn add_collector_authentication_token(
+        &mut self,
+        token: AuthenticationToken,
+    ) -> anyhow::Result<Option<Task>> {
+        match (
+            self.task_parameters.role,
+            &self.aggregator_auth_token,
+            &mut self.collector_auth_token,
+        ) {
+            (_, _, Some(_)) => Err(anyhow::anyhow!(
+                "multiple collector authentication tokens are not supported"
+            )),
+            (Role::Helper, _, _) => Err(anyhow::anyhow!(
+                "collector authentication tokens are not supported in tasks with the helper role"
+            )),
+            (Role::Leader, None, collector_auth_token_opt @ None) => {
+                *collector_auth_token_opt = Some(token);
+                Ok(None)
+            }
+            (Role::Leader, Some(_), collector_auth_token_opt @ None) => {
+                *collector_auth_token_opt = Some(token);
+                Ok(Some(self.build_task()?))
+            }
+            (Role::Client, _, _) | (Role::Collector, _, _) => unreachable!(),
+        }
+    }
+
+    fn build_task(&self) -> Result<Task, task::Error> {
+        Task::new(
+            self.task_parameters.task_id,
+            self.task_parameters.aggregator_endpoints.clone(),
+            self.task_parameters.query_type,
+            self.task_parameters.vdaf.clone(),
+            self.task_parameters.role,
+            self.task_parameters.vdaf_verify_keys.clone(),
+            self.task_parameters.max_batch_query_count,
+            self.task_parameters.task_expiration,
+            self.task_parameters.min_batch_size,
+            self.task_parameters.time_precision,
+            // We can be strict about clock skew since this executable is only intended for use with
+            // other aggregators running on the same host.
+            Duration::from_seconds(1),
+            self.task_parameters.collector_hpke_config.clone(),
+            self.aggregator_auth_token.iter().cloned().collect(),
+            self.collector_auth_token.iter().cloned().collect(),
+            [self.task_parameters.hpke_keypair.clone()],
+        )
+    }
+}
+
 async fn handle_add_task(
-    datastore: &Datastore<RealClock>,
     keyring: &Mutex<HpkeConfigRegistry>,
+    partial_tasks: &Mutex<HashMap<TaskId, PartialTaskState>>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
     let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
@@ -73,28 +179,6 @@ async fn handle_add_task(
             .context("invalid base64url content in \"collector_hpke_config\"")?;
     let collector_hpke_config = HpkeConfig::get_decoded(&collector_hpke_config_bytes)
         .context("could not parse collector HPKE configuration")?;
-
-    // The task will be initially configured with placeholder authentication tokens, to satisfy
-    // task parameter validation. The test harness should supply its own authentication tokens via
-    // `/internal/test/add_authentication_token`, in order to enable communication between
-    // aggregators and collectors.
-    let aggregator_authentication_tokens = Vec::from([AuthenticationToken::from(
-        format!(
-            "leader-placeholder-token-{}",
-            base64::encode_config(random::<[u8; 16]>(), URL_SAFE_NO_PAD)
-        )
-        .into_bytes(),
-    )]);
-    let collector_authentication_tokens = match &request.role {
-        AggregatorRole::Leader => Vec::from([AuthenticationToken::from(
-            format!(
-                "collector-placeholder-token-{}",
-                base64::encode_config(random::<[u8; 16]>(), URL_SAFE_NO_PAD)
-            )
-            .into_bytes(),
-        )]),
-        AggregatorRole::Helper => Vec::new(),
-    };
 
     let (hpke_config, private_key) = keyring.lock().await.get_random_keypair();
 
@@ -113,62 +197,66 @@ async fn handle_add_task(
         }
     };
 
-    let task = Task::new(
+    let task_parameters = TaskParameters {
         task_id,
-        Vec::from([request.leader, request.helper]),
+        aggregator_endpoints: Vec::from([request.leader, request.helper]),
         query_type,
         vdaf,
-        request.role.into(),
-        Vec::from([verify_key]),
-        request.max_batch_query_count,
-        Time::from_seconds_since_epoch(request.task_expiration),
-        request.min_batch_size,
+        role: request.role.into(),
+        vdaf_verify_keys: Vec::from([verify_key]),
+        max_batch_query_count: request.max_batch_query_count,
+        task_expiration: Time::from_seconds_since_epoch(request.task_expiration),
+        min_batch_size: request.min_batch_size,
         time_precision,
-        // We can be strict about clock skew since this executable is only intended for use with
-        // other aggregators running on the same host.
-        Duration::from_seconds(1),
         collector_hpke_config,
-        aggregator_authentication_tokens,
-        collector_authentication_tokens,
-        [(hpke_config, private_key)],
-    )
-    .context("error constructing task")?;
+        hpke_keypair: (hpke_config, private_key),
+    };
 
-    datastore
-        .run_tx(move |tx| {
-            let task = task.clone();
-            Box::pin(async move { tx.put_task(&task).await })
-        })
-        .await
-        .context("error adding task to database")
+    let mut partial_tasks_guard = partial_tasks.lock().await;
+    match partial_tasks_guard.entry(task_id) {
+        Entry::Occupied(_) => Err(anyhow::anyhow!(
+            "task already exists with TaskID {}",
+            task_id
+        )),
+        entry @ Entry::Vacant(_) => {
+            entry.or_insert_with(|| PartialTaskState::new(task_parameters));
+            Ok(())
+        }
+    }
 }
 
 async fn handle_add_authentication_token(
     datastore: &Datastore<RealClock>,
+    partial_tasks: &Mutex<HashMap<TaskId, PartialTaskState>>,
     request: AddAuthenticationTokenRequest,
 ) -> anyhow::Result<()> {
     let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
         .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
 
-    datastore
-        .run_tx(move |tx| {
-            let new_token = AuthenticationToken::from(request.token.clone().into_bytes());
-            Box::pin(async move {
-                match &request.role {
-                    TokenRole::Leader => {
-                        tx.add_aggregator_authentication_token(&task_id, &new_token)
-                            .await
-                    }
-                    TokenRole::Collector => {
-                        tx.add_collector_authentication_token(&task_id, &new_token)
-                            .await
-                    }
-                }
+    let token = AuthenticationToken::from(request.token.clone().into_bytes());
+
+    let mut partial_tasks_guard = partial_tasks.lock().await;
+    let partial_task = partial_tasks_guard
+        .get_mut(&task_id)
+        .ok_or_else(|| anyhow::anyhow!("unrecognized TaskID {}", task_id))?;
+
+    let task_opt = match request.role {
+        TokenRole::Leader => partial_task.add_aggregator_authentication_token(token)?,
+        TokenRole::Collector => partial_task.add_collector_authentication_token(token)?,
+    };
+
+    if let Some(task) = task_opt {
+        datastore
+            .run_tx(move |tx| {
+                let task = task.clone();
+                Box::pin(async move { tx.put_task(&task).await })
             })
-        })
-        .await
-        .context("error adding authentication token to task")
+            .await
+            .context("error adding task to database")
+    } else {
+        Ok(())
+    }
 }
 
 async fn handle_fetch_batch_ids(
@@ -187,6 +275,7 @@ fn make_filter(
     dap_serving_prefix: String,
 ) -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
+    let partial_tasks = Arc::new(Mutex::new(HashMap::new()));
     let dap_filter = aggregator_filter(Arc::clone(&datastore), RealClock::default())?;
 
     // Respect dap_serving_prefix.
@@ -212,12 +301,12 @@ fn make_filter(
         .into_response()
     });
     let add_task_filter = warp::path!("add_task").and(warp::body::json()).then({
-        let datastore = Arc::clone(&datastore);
+        let partial_tasks = Arc::clone(&partial_tasks);
         move |request: AggregatorAddTaskRequest| {
-            let datastore = Arc::clone(&datastore);
             let keyring = Arc::clone(&keyring);
+            let partial_tasks = Arc::clone(&partial_tasks);
             async move {
-                let response = match handle_add_task(&datastore, &keyring, request).await {
+                let response = match handle_add_task(&keyring, &partial_tasks, request).await {
                     Ok(()) => AddTaskResponse {
                         status: SUCCESS.to_string(),
                         error: None,
@@ -238,18 +327,21 @@ fn make_filter(
             let datastore = Arc::clone(&datastore);
             move |request: AddAuthenticationTokenRequest| {
                 let datastore = Arc::clone(&datastore);
+                let partial_tasks = Arc::clone(&partial_tasks);
                 async move {
-                    let response = match handle_add_authentication_token(&datastore, request).await
-                    {
-                        Ok(()) => AddAuthenticationTokenResponse {
-                            status: SUCCESS,
-                            error: None,
-                        },
-                        Err(e) => AddAuthenticationTokenResponse {
-                            status: ERROR,
-                            error: Some(format!("{:?}", e)),
-                        },
-                    };
+                    let response =
+                        match handle_add_authentication_token(&datastore, &partial_tasks, request)
+                            .await
+                        {
+                            Ok(()) => AddAuthenticationTokenResponse {
+                                status: SUCCESS,
+                                error: None,
+                            },
+                            Err(e) => AddAuthenticationTokenResponse {
+                                status: ERROR,
+                                error: Some(format!("{:?}", e)),
+                            },
+                        };
                     warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
                         .into_response()
                 }
