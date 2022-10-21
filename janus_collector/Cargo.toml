@@ -1,6 +1,6 @@
 [package]
 name = "janus_collector"
-version = "0.1.17"
+version = "0.1.18"
 edition = "2021"
 description = "Collector for Janus, the server powering ISRG's Divvi Up."
 documentation = "https://docs.rs/janus_collector"
