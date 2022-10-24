@@ -21,7 +21,7 @@ hex = "0.4"
 num_enum = "0.5.6"
 prio = { version = "0.10.0", default-features = false } # important: do not enable prio/crypto-dependencies by default!
 rand = "0.8"
-serde = { version = "1.0.145", features = ["derive"] }
+serde = { version = "1.0.147", features = ["derive"] }
 structopt = { version = "0.3.26", optional = true }
 thiserror = "1.0"
 
