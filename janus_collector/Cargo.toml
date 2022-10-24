@@ -30,7 +30,7 @@ anyhow = "1"
 assert_matches = "1"
 base64 = "0.13.0"
 chrono = "0.4"
-clap = { version = "4.0.15", features = ["derive", "env"] }
+clap = { version = "4.0.18", features = ["derive", "env"] }
 janus_core = { path = "../janus_core", features = ["test-util"] }
 mockito = "0.31.0"
 rand = "0.8"
