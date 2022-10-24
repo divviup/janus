@@ -1,9 +1,6 @@
 use backoff::ExponentialBackoffBuilder;
 use itertools::Itertools;
-use janus_aggregator::task::{
-    test_util::{generate_auth_token, TaskBuilder},
-    QueryType, Task,
-};
+use janus_aggregator::task::{test_util::TaskBuilder, QueryType, Task};
 use janus_client::{Client, ClientParameters};
 use janus_collector::{
     test_util::collect_with_rewritten_url, Collection, Collector, CollectorParameters,
@@ -36,8 +33,6 @@ pub fn test_task_builders() -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
         Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
     ]))
     .with_min_batch_size(46)
-    .with_aggregator_auth_tokens(Vec::from([generate_auth_token()]))
-    .with_collector_auth_tokens(Vec::from([generate_auth_token()]))
     .with_collector_hpke_config(collector_hpke_config);
     let helper_task = leader_task
         .clone()

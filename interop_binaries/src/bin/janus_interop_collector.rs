@@ -8,8 +8,7 @@ use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
-    AddAuthenticationTokenRequest, AddAuthenticationTokenResponse, HpkeConfigRegistry,
-    NumberAsString, VdafObject,
+    HpkeConfigRegistry, NumberAsString, VdafObject,
 };
 use janus_messages::{Duration, HpkeConfig, Interval, TaskId, Time};
 use prio::{
@@ -33,6 +32,7 @@ struct AddTaskRequest {
     task_id: String,
     leader: Url,
     vdaf: VdafObject,
+    collector_authentication_token: String,
     #[serde(rename = "query_type")]
     _query_type: u8,
 }
@@ -105,7 +105,7 @@ struct TaskState {
     hpke_config: HpkeConfig,
     leader_url: Url,
     vdaf: VdafObject,
-    auth_tokens: Vec<AuthenticationToken>,
+    auth_token: AuthenticationToken,
 }
 
 /// A collect job handle.
@@ -149,28 +149,10 @@ async fn handle_add_task(
         hpke_config: hpke_config.clone(),
         leader_url: request.leader,
         vdaf: request.vdaf,
-        auth_tokens: Vec::new(),
+        auth_token: AuthenticationToken::from(request.collector_authentication_token.into_bytes()),
     });
 
     Ok(hpke_config)
-}
-
-async fn handle_add_authentication_token(
-    tasks: &Mutex<HashMap<TaskId, TaskState>>,
-    request: AddAuthenticationTokenRequest,
-) -> anyhow::Result<()> {
-    let task_id_bytes = base64::decode_config(request.task_id, base64::URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"task_id\"")?;
-    let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
-
-    let mut tasks_guard = tasks.lock().await;
-    let task_state = tasks_guard.get_mut(&task_id).context("no such task")?;
-
-    task_state
-        .auth_tokens
-        .push(AuthenticationToken::from(request.token.into_bytes()));
-
-    Ok(())
 }
 
 async fn handle_collect_generic<V>(
@@ -218,11 +200,7 @@ async fn handle_collect_start(
     let collector_params = CollectorParameters::new(
         task_id,
         task_state.leader_url.clone(),
-        task_state
-            .auth_tokens
-            .last()
-            .context("task has no authentication tokens")?
-            .clone(),
+        task_state.auth_token.clone(),
         task_state.hpke_config.clone(),
         task_state.private_key.clone(),
     )
@@ -433,28 +411,6 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
             }
         }
     });
-    let add_authentication_token_filter = warp::path!("add_authentication_token")
-        .and(warp::body::json())
-        .then({
-            let tasks = Arc::clone(&tasks);
-            move |request: AddAuthenticationTokenRequest| {
-                let tasks = Arc::clone(&tasks);
-                async move {
-                    let response = match handle_add_authentication_token(&tasks, request).await {
-                        Ok(()) => AddAuthenticationTokenResponse {
-                            status: SUCCESS,
-                            error: None,
-                        },
-                        Err(e) => AddAuthenticationTokenResponse {
-                            status: ERROR,
-                            error: Some(format!("{:?}", e)),
-                        },
-                    };
-                    warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                        .into_response()
-                }
-            }
-        });
     let collect_start_filter =
         warp::path!("collect_start").and(warp::body::json()).then({
             let tasks = Arc::clone(&tasks);
@@ -517,8 +473,6 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     Ok(warp::path!("internal" / "test" / ..).and(warp::post()).and(
         ready_filter
             .or(add_task_filter)
-            .unify()
-            .or(add_authentication_token_filter)
             .unify()
             .or(collect_start_filter)
             .unify()

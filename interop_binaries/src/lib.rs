@@ -178,6 +178,9 @@ pub struct AggregatorAddTaskRequest {
     pub leader: Url,
     pub helper: Url,
     pub vdaf: VdafObject,
+    pub leader_authentication_token: String,
+    #[serde(default)]
+    pub collector_authentication_token: Option<String>,
     pub role: AggregatorRole,
     pub verify_key: String, // in unpadded base64url
     pub max_batch_query_count: u64,
@@ -209,6 +212,18 @@ impl From<Task> for AggregatorAddTaskRequest {
             leader: task.aggregator_url(&Role::Leader).unwrap().clone(),
             helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
             vdaf: task.vdaf().clone().into(),
+            leader_authentication_token: String::from_utf8(
+                task.primary_aggregator_auth_token().as_bytes().to_vec(),
+            )
+            .unwrap(),
+            collector_authentication_token: if task.role() == &Role::Leader {
+                Some(
+                    String::from_utf8(task.primary_collector_auth_token().as_bytes().to_vec())
+                        .unwrap(),
+                )
+            } else {
+                None
+            },
             role: (*task.role()).try_into().unwrap(),
             verify_key: base64::encode_config(
                 task.vdaf_verify_keys().first().unwrap().as_ref(),
@@ -226,26 +241,6 @@ impl From<Task> for AggregatorAddTaskRequest {
             task_expiration: task.task_expiration().as_seconds_since_epoch(),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TokenRole {
-    Leader,
-    Collector,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AddAuthenticationTokenRequest {
-    pub task_id: String, // in unpadded base64url
-    pub role: TokenRole,
-    pub token: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AddAuthenticationTokenResponse<'a> {
-    pub status: &'a str,
-    pub error: Option<String>,
 }
 
 pub fn install_tracing_subscriber() -> anyhow::Result<()> {

@@ -194,6 +194,7 @@ async fn run(
             "task_id": task_id_encoded,
             "leader": internal_leader_endpoint,
             "vdaf": vdaf_object,
+            "collector_authentication_token": collector_auth_token,
             "query_type": query_type,
         }))
         .send()
@@ -226,45 +227,6 @@ async fn run(
         .as_str()
         .expect("\"collector_hpke_config\" value is not a string");
 
-    // Send a /internal/test/add_authentication_token request to the collector.
-    let collector_add_auth_token_response = http_client
-        .post(
-            local_collector_endpoint
-                .join("/internal/test/add_authentication_token")
-                .unwrap(),
-        )
-        .json(&json!({
-            "task_id": task_id_encoded,
-            "role": "collector",
-            "token": collector_auth_token,
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(collector_add_auth_token_response.status(), StatusCode::OK);
-    assert_eq!(
-        collector_add_auth_token_response
-            .headers()
-            .get(CONTENT_TYPE)
-            .unwrap(),
-        JSON_MEDIA_TYPE,
-    );
-    let collector_add_auth_token_response_body = collector_add_auth_token_response
-        .json::<Value>()
-        .await
-        .unwrap();
-    let collector_add_auth_token_response_object = collector_add_auth_token_response_body
-        .as_object()
-        .expect("collector add_authentication_token response is not an object");
-    assert_eq!(
-        collector_add_auth_token_response_object
-            .get("status")
-            .expect("collector add_authentication_token response is missing \"status\""),
-        "success",
-        "error: {:?}",
-        collector_add_auth_token_response_object.get("error"),
-    );
-
     // Send a /internal/test/add_task request to the leader.
     let leader_add_task_response = http_client
         .post(
@@ -277,6 +239,8 @@ async fn run(
             "leader": internal_leader_endpoint,
             "helper": internal_helper_endpoint,
             "vdaf": vdaf_object,
+            "leader_authentication_token": aggregator_auth_token,
+            "collector_authentication_token": collector_auth_token,
             "role": "leader",
             "verify_key": verify_key_encoded,
             "max_batch_query_count": 1,
@@ -310,83 +274,6 @@ async fn run(
         leader_add_task_response_object.get("error"),
     );
 
-    // Send two /internal/test/add_authentication_token requests to the leader.
-    let leader_add_auth_token_response_1 = http_client
-        .post(
-            local_leader_endpoint
-                .join("/internal/test/add_authentication_token")
-                .unwrap(),
-        )
-        .json(&json!({
-            "task_id": task_id_encoded,
-            "role": "leader",
-            "token": aggregator_auth_token,
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(leader_add_auth_token_response_1.status(), StatusCode::OK);
-    assert_eq!(
-        leader_add_auth_token_response_1
-            .headers()
-            .get(CONTENT_TYPE)
-            .unwrap(),
-        JSON_MEDIA_TYPE,
-    );
-    let leader_add_auth_token_response_1_body = leader_add_auth_token_response_1
-        .json::<Value>()
-        .await
-        .unwrap();
-    let leader_add_auth_token_response_1_object = leader_add_auth_token_response_1_body
-        .as_object()
-        .expect("first leader add_authentication_token response is not an object");
-    assert_eq!(
-        leader_add_auth_token_response_1_object
-            .get("status")
-            .expect("first leader add_authentication_token response is missing \"status\""),
-        "success",
-        "error: {:?}",
-        leader_add_auth_token_response_1_object.get("error"),
-    );
-
-    let leader_add_auth_token_response_2 = http_client
-        .post(
-            local_leader_endpoint
-                .join("/internal/test/add_authentication_token")
-                .unwrap(),
-        )
-        .json(&json!({
-            "task_id": task_id_encoded,
-            "role": "collector",
-            "token": collector_auth_token,
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(leader_add_auth_token_response_2.status(), StatusCode::OK);
-    assert_eq!(
-        leader_add_auth_token_response_2
-            .headers()
-            .get(CONTENT_TYPE)
-            .unwrap(),
-        JSON_MEDIA_TYPE,
-    );
-    let leader_add_auth_token_response_2_body = leader_add_auth_token_response_2
-        .json::<Value>()
-        .await
-        .unwrap();
-    let leader_add_auth_token_response_2_object = leader_add_auth_token_response_2_body
-        .as_object()
-        .expect("second leader add_authentication_token response is not an object");
-    assert_eq!(
-        leader_add_auth_token_response_2_object
-            .get("status")
-            .expect("second leader add_authentication_token response is missing \"status\""),
-        "success",
-        "error: {:?}",
-        leader_add_auth_token_response_2_object.get("error"),
-    );
-
     // Send a /internal/test/add_task request to the helper.
     let helper_add_task_response = http_client
         .post(
@@ -399,6 +286,7 @@ async fn run(
             "leader": internal_leader_endpoint,
             "helper": internal_helper_endpoint,
             "vdaf": vdaf_object,
+            "leader_authentication_token": aggregator_auth_token,
             "role": "helper",
             "verify_key": verify_key_encoded,
             "max_batch_query_count": 1,
@@ -430,45 +318,6 @@ async fn run(
         "success",
         "error: {:?}",
         helper_add_task_response_object.get("error"),
-    );
-
-    // Send a /internal/test/add_authentication_token request to the helper.
-    let helper_add_auth_token_response = http_client
-        .post(
-            local_helper_endpoint
-                .join("/internal/test/add_authentication_token")
-                .unwrap(),
-        )
-        .json(&json!({
-            "task_id": task_id_encoded,
-            "role": "leader",
-            "token": aggregator_auth_token,
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(helper_add_auth_token_response.status(), StatusCode::OK);
-    assert_eq!(
-        helper_add_auth_token_response
-            .headers()
-            .get(CONTENT_TYPE)
-            .unwrap(),
-        JSON_MEDIA_TYPE,
-    );
-    let helper_add_auth_token_response_body = helper_add_auth_token_response
-        .json::<Value>()
-        .await
-        .unwrap();
-    let helper_add_auth_token_response_object = helper_add_auth_token_response_body
-        .as_object()
-        .expect("helper add_authentication_token response is not an object");
-    assert_eq!(
-        helper_add_auth_token_response_object
-            .get("status")
-            .expect("helper add_authentication_token response is missing \"status\""),
-        "success",
-        "error: {:?}",
-        helper_add_auth_token_response_object.get("error"),
     );
 
     // Record the time before generating reports, and round it down to
