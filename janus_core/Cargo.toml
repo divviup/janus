@@ -28,7 +28,7 @@ test-util = [
 backoff = { version = "0.4.0", features = ["tokio"] }
 chrono = "0.4"
 derivative = "2.2.0"
-futures = "0.3.24"
+futures = "0.3.25"
 hex = "0.4"
 hpke-dispatch = "0.4.0"
 janus_messages = { version = "0.1", path = "../janus_messages" }

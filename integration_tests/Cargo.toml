@@ -23,7 +23,7 @@ kube-openssl = ["kube/openssl-tls"]
 anyhow = "1"
 backoff = { version = "0.4", features = ["tokio"] }
 daphne = { git = "https://github.com/cloudflare/daphne", rev = "80b53c4b0f2c93d5f9df66dfce237b20756c9147", optional = true }  # Match this to the version referenced in README.md.
-futures = "0.3.24"
+futures = "0.3.25"
 hex = { version = "0.4", optional = true }
 interop_binaries = { path = "../interop_binaries", features = ["testcontainer"] }
 janus_core = { path = "../janus_core", features = ["test-util"] }
