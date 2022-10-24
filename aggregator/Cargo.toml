@@ -63,7 +63,7 @@ rand = { version = "0.8", features = ["min_const_gen"] }
 reqwest = { version = "0.11.12", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
 serde = { version = "1.0.145", features = ["derive"] }
-serde_json = "1.0.86"
+serde_json = "1.0.87"
 serde_yaml = "0.9.14"
 signal-hook = "0.3.14"
 signal-hook-tokio = { version = "0.3.1", features = ["futures-v0_3"] }
