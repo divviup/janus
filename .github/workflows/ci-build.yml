@@ -50,6 +50,8 @@ jobs:
         override: true
     - name: Install Protoc
       uses: arduino/setup-protoc@v1
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
     - name: Build
@@ -97,6 +99,8 @@ jobs:
         components: clippy, rustfmt
     - name: Install Protoc
       uses: arduino/setup-protoc@v1
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Format
       run: cargo fmt --message-format human -- --check
     - name: Clippy
