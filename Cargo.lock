@@ -367,9 +367,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.0.15"
+version = "4.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bf8832993da70a4c6d13c581f4463c2bdda27b9bf1c5498dc4365543abe6d6f"
+checksum = "335867764ed2de42325fafe6d18b8af74ba97ee0c590fa016f157535b42ab04b"
 dependencies = [
  "atty",
  "bitflags",
@@ -382,9 +382,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.0.13"
+version = "4.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c42f169caba89a7d512b5418b09864543eeb4d497416c917d7137863bd2076ad"
+checksum = "16a1b0f6422af32d5da0c58e2703320f379216ee70198241c84173a8c5ac28f3"
 dependencies = [
  "heck 0.4.0",
  "proc-macro-error",
@@ -1451,7 +1451,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
- "clap 4.0.15",
+ "clap 4.0.18",
  "console-subscriber",
  "deadpool",
  "deadpool-postgres",
@@ -1543,7 +1543,7 @@ dependencies = [
  "backoff",
  "base64",
  "chrono",
- "clap 4.0.15",
+ "clap 4.0.18",
  "derivative",
  "http-api-problem",
  "janus_collector",
@@ -1632,7 +1632,7 @@ dependencies = [
  "anyhow",
  "backoff",
  "base64",
- "clap 4.0.15",
+ "clap 4.0.18",
  "futures",
  "hex",
  "janus_aggregator",
