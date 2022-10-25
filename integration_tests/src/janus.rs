@@ -10,7 +10,8 @@ use janus_core::{
     time::RealClock,
 };
 use janus_interop_binaries::{
-    test_util::await_http_server, testcontainer::Aggregator, AggregatorAddTaskRequest,
+    log_export_path, test_util::await_http_server, testcontainer::Aggregator,
+    AggregatorAddTaskRequest,
 };
 use janus_messages::Role;
 use k8s_openapi::api::core::v1::Secret;
@@ -24,8 +25,6 @@ use std::{
 use testcontainers::{clients::Cli, Container, RunnableImage};
 use tracing::debug;
 use url::Url;
-
-use crate::log_export_path;
 
 /// Represents a running Janus test instance
 #[allow(clippy::large_enum_variant)]

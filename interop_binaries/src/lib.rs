@@ -5,7 +5,14 @@ use janus_messages::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
 use prio::codec::Encode;
 use rand::random;
 use serde::{de::Visitor, Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Display, marker::PhantomData, str::FromStr};
+use std::{
+    collections::HashMap,
+    env::{self, VarError},
+    fmt::Display,
+    marker::PhantomData,
+    path::PathBuf,
+    str::FromStr,
+};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 use url::Url;
@@ -251,6 +258,18 @@ impl HpkeConfigRegistry {
     /// Choose a random [`HpkeConfigId`], and then get the keypair associated with that ID.
     pub fn get_random_keypair(&mut self) -> (HpkeConfig, HpkePrivateKey) {
         self.fetch_keypair(random::<u8>().into())
+    }
+}
+
+/// log_export_path returns the path to export container logs to, or None if container logs are not
+/// configured to be exported.
+///
+/// The resulting value is based directly on the JANUS_E2E_LOGS_PATH environment variable.
+pub fn log_export_path() -> Option<PathBuf> {
+    match env::var("JANUS_E2E_LOGS_PATH") {
+        Ok(logs_path) => Some(PathBuf::from_str(&logs_path).unwrap()),
+        Err(VarError::NotPresent) => None,
+        Err(err) => panic!("Failed to parse JANUS_E2E_LOGS_PATH: {err}"),
     }
 }
 

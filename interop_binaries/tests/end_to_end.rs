@@ -7,6 +7,7 @@ use janus_core::{
     time::{Clock, RealClock, TimeExt},
 };
 use janus_interop_binaries::{
+    log_export_path,
     test_util::{await_ready_ok, generate_network_name, generate_unique_name},
     testcontainer::{Aggregator, Client, Collector},
 };
@@ -14,12 +15,80 @@ use janus_messages::{Duration, TaskId};
 use prio::codec::Encode;
 use rand::random;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
+use serde::Deserialize;
 use serde_json::{json, Value};
-use std::time::Duration as StdDuration;
-use testcontainers::RunnableImage;
+use std::{
+    fs::create_dir_all,
+    io::{stderr, Write},
+    ops::Deref,
+    process::Command,
+    time::Duration as StdDuration,
+};
+use testcontainers::{Container, Image, RunnableImage};
 
 const JSON_MEDIA_TYPE: &str = "application/json";
 const TIME_PRECISION: u64 = 3600;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ContainerInspectEntry {
+    name: String,
+}
+
+struct ContainerLogsDropGuard<'d, I: Image> {
+    container: Container<'d, I>,
+}
+
+impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
+    fn new(container: Container<I>) -> ContainerLogsDropGuard<I> {
+        ContainerLogsDropGuard { container }
+    }
+}
+
+impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
+    fn drop(&mut self) {
+        if let Some(base_dir) = log_export_path() {
+            create_dir_all(&base_dir).expect("could not create log output directory");
+
+            let id = self.container.id();
+
+            let inspect_output = Command::new("docker")
+                .args(["container", "inspect", id])
+                .output()
+                .expect("running `docker container inspect` failed");
+            stderr().write_all(&inspect_output.stderr).unwrap();
+            assert!(inspect_output.status.success());
+            let inspect_array: Vec<ContainerInspectEntry> =
+                serde_json::from_slice(&inspect_output.stdout).unwrap();
+            let inspect_entry = inspect_array
+                .first()
+                .expect("`docker container inspect` returned no results");
+            let name = &inspect_entry.name[inspect_entry
+                .name
+                .find('/')
+                .map(|index| index + 1)
+                .unwrap_or_default()..];
+
+            let destination = base_dir.join(name);
+
+            let copy_status = Command::new("docker")
+                .arg("cp")
+                .arg(format!("{}:/logs", id))
+                .arg(destination)
+                .status()
+                .expect("running `docker cp` failed");
+            assert!(copy_status.success());
+        }
+    }
+}
+
+impl<'d, I: Image> Deref for ContainerLogsDropGuard<'d, I> {
+    type Target = Container<'d, I>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.container
+    }
+}
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
@@ -36,33 +105,41 @@ async fn run(
     let container_client = container_client();
     let network = generate_network_name();
 
-    let client_container = container_client.run(
-        RunnableImage::from(Client::default())
-            .with_network(&network)
-            .with_container_name(generate_unique_name("client")),
+    let client_container = ContainerLogsDropGuard::new(
+        container_client.run(
+            RunnableImage::from(Client::default())
+                .with_network(&network)
+                .with_container_name(generate_unique_name("client")),
+        ),
     );
     let client_port = client_container.get_host_port_ipv4(Client::INTERNAL_SERVING_PORT);
 
     let leader_name = generate_unique_name("leader");
-    let leader_container = container_client.run(
-        RunnableImage::from(Aggregator::default())
-            .with_network(&network)
-            .with_container_name(leader_name.clone()),
+    let leader_container = ContainerLogsDropGuard::new(
+        container_client.run(
+            RunnableImage::from(Aggregator::default())
+                .with_network(&network)
+                .with_container_name(leader_name.clone()),
+        ),
     );
     let leader_port = leader_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
     let helper_name = generate_unique_name("helper");
-    let helper_container = container_client.run(
-        RunnableImage::from(Aggregator::default())
-            .with_network(&network)
-            .with_container_name(helper_name.clone()),
+    let helper_container = ContainerLogsDropGuard::new(
+        container_client.run(
+            RunnableImage::from(Aggregator::default())
+                .with_network(&network)
+                .with_container_name(helper_name.clone()),
+        ),
     );
     let helper_port = helper_container.get_host_port_ipv4(Aggregator::INTERNAL_SERVING_PORT);
 
-    let collector_container = container_client.run(
-        RunnableImage::from(Collector::default())
-            .with_network(&network)
-            .with_container_name(generate_unique_name("collector")),
+    let collector_container = ContainerLogsDropGuard::new(
+        container_client.run(
+            RunnableImage::from(Collector::default())
+                .with_network(&network)
+                .with_container_name(generate_unique_name("collector")),
+        ),
     );
     let collector_port = collector_container.get_host_port_ipv4(Collector::INTERNAL_SERVING_PORT);
 
