@@ -43,11 +43,9 @@ jobs:
       # `janus_core::test_util::kubernetes::EphemeralCluster`
       run: go install sigs.k8s.io/kind@v0.14.0
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@v1
       with:
         toolchain: stable
-        profile: minimal
-        override: true
     - name: Install Protoc
       uses: arduino/setup-protoc@v1
       with:
@@ -91,11 +89,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@v1
       with:
         toolchain: stable
-        profile: minimal
-        override: true
         components: clippy, rustfmt
     - name: Install Protoc
       uses: arduino/setup-protoc@v1
