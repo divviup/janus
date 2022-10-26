@@ -18,8 +18,8 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry
-    - id: "gcp-auth"
-      name: "Authenticate to GCP"
+    - id: "gcp-auth-private"
+      name: "Authenticate to GCP (private repositories)"
       uses: "google-github-actions/auth@v0"
       with:
         workload_identity_provider: ${{ secrets.GCP_ARTIFACT_PUBISHER_WORKLOAD_IDENTITY_PROVIDER }}
@@ -28,11 +28,21 @@ jobs:
         access_token_lifetime: "3600s"
         access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
         export_environment_variables: true
+    - id: "gcp-auth-public"
+      name: "Authenticate to GCP (public repositories)"
+      uses: "google-github-actions/auth@v0"
+      with:
+        workload_identity_provider: ${{ secrets.GCP_PUBLIC_ARTIFACT_PUBISHER_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_PUBLIC_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
+        token_format: "access_token"
+        access_token_lifetime: "3600s"
+        access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
+        export_environment_variables: true
     - uses: "docker/login-action@v2"
       with:
         registry: "us-west2-docker.pkg.dev"
         username: "oauth2accesstoken"
-        password: ${{ steps.gcp-auth.outputs.access_token }}
+        password: ${{ steps.gcp-auth-private.outputs.access_token }}
     - name: Get the version
       id: get_version
       run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
@@ -41,12 +51,16 @@ jobs:
     - run: |-
         docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:latest \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:${{ steps.get_version.outputs.VERSION }} \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_server:latest \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_server:${{ steps.get_version.outputs.VERSION }} \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:latest
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_server:${{ steps.get_version.outputs.VERSION }}
     - run: |-
         docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:latest \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }} \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_creator:latest \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=aggregation_job_creator \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:latest
@@ -54,6 +68,8 @@ jobs:
     - run: |-
         docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:latest \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }} \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_driver:latest \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=aggregation_job_driver \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:latest
@@ -61,6 +77,8 @@ jobs:
     - run: |-
         docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:latest \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }} \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collect_job_driver:latest \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=collect_job_driver \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:latest
@@ -68,6 +86,8 @@ jobs:
     - run: |-
         docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:latest \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }} \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_cli:latest \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_cli:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=janus_cli \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:latest
@@ -76,6 +96,8 @@ jobs:
     - run: |-
         docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:latest \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }} \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_client:latest \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=janus_interop_client \
           -f Dockerfile.interop .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_client:latest
@@ -83,13 +105,39 @@ jobs:
     - run: |-
         docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:latest \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }} \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_aggregator:latest \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }} \
           -f Dockerfile.interop_aggregator .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:latest
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }}
     - run: |-
         docker build --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:latest \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }} \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_collector:latest \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=janus_interop_collector \
           -f Dockerfile.interop .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:latest
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }}
+
+    - uses: "docker/login-action@v2"
+      with:
+        registry: "us-west2-docker.pkg.dev"
+        username: "oauth2accesstoken"
+        password: ${{ steps.gcp-auth-public.outputs.access_token }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_server:latest
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_server:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_creator:latest
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_driver:latest
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collect_job_driver:latest
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_cli:latest
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_cli:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_client:latest
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_aggregator:latest
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_collector:latest
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_collector:${{ steps.get_version.outputs.VERSION }}
