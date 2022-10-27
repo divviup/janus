@@ -2,6 +2,7 @@ use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 use janus_aggregator::task::Task;
 use janus_core::{
     hpke::HpkePrivateKey,
+    task::VdafInstance,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
 use janus_integration_tests::janus::Janus;
@@ -27,11 +28,11 @@ struct JanusPair<'a> {
 }
 
 impl<'a> JanusPair<'a> {
-    /// Set up a new Janus test instance with the provided task. If the environment variables listed
-    /// below are set, then the test instance is backed by an already-running Kubernetes cluster.
-    /// Otherwise, an ephemeral, in-process instance of Janus is spawned. In either case, the Janus
-    /// aggregators' API endpoints will be available on the local loopback interface, at the URLs in
-    /// `Self.leader_task.aggregator_endpoints`.
+    /// Set up a new Janus test instance with a new task, using the provided VDAF. If the
+    /// environment variables listed below are set, then the test instance is backed by an
+    /// already-running Kubernetes cluster. Otherwise, an ephemeral, in-process instance of Janus
+    /// is spawned. In either case, the Janus aggregators' API endpoints will be available on the
+    /// local loopback interface, at the URLs in `Self.leader_task.aggregator_endpoints`.
     ///
     /// If connecting to the Kubernetes cluster API (k8s API, not DAP API) at an IP address over
     /// HTTPS (e.g., "https://127.0.0.1:42356"), then the `integration_tests` package must be built
@@ -47,8 +48,8 @@ impl<'a> JanusPair<'a> {
     ///    permissions to view secrets and forward ports to services.
     ///  - `JANUS_E2E_LEADER_NAMESPACE`: The Kubernetes namespace where the DAP leader is deployed.
     ///  - `JANUS_E2E_HELPER_NAMESPACE`: The Kubernetes namespace where the DAP helper is deployed.
-    pub async fn new(container_client: &'a Cli) -> JanusPair<'a> {
-        let (collector_private_key, leader_task, helper_task) = test_task_builders();
+    pub async fn new(container_client: &'a Cli, vdaf: VdafInstance) -> JanusPair<'a> {
+        let (collector_private_key, leader_task, helper_task) = test_task_builders(vdaf);
 
         // The environment variables should either all be present, or all be absent
         let (leader_task, leader, helper) = match (
@@ -136,14 +137,33 @@ impl<'a> JanusPair<'a> {
     }
 }
 
-// This test places Janus in both the leader & helper roles.
+/// This test places Janus in both the leader & helper roles, and uses Prio3Aes128Count.
 #[tokio::test(flavor = "multi_thread")]
-async fn janus_janus() {
+async fn janus_janus_count() {
     install_test_trace_subscriber();
 
     // Start servers.
     let container_client = container_client();
-    let janus_pair = JanusPair::new(&container_client).await;
+    let janus_pair = JanusPair::new(&container_client, VdafInstance::Prio3Aes128Count).await;
+
+    // Run the behavioral test.
+    submit_measurements_and_verify_aggregate(
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &janus_pair.leader_task,
+        &janus_pair.collector_private_key,
+    )
+    .await;
+}
+
+/// This test places Janus in both the leader & helper roles, and uses Prio3Aes128Sum.
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_janus_sum_16() {
+    install_test_trace_subscriber();
+
+    // Start servers.
+    let container_client = container_client();
+    let janus_pair =
+        JanusPair::new(&container_client, VdafInstance::Prio3Aes128Sum { bits: 16 }).await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(

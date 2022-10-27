@@ -2,7 +2,10 @@
 
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 use janus_aggregator::task::Task;
-use janus_core::test_util::{install_test_trace_subscriber, testcontainers::container_client};
+use janus_core::{
+    task::VdafInstance,
+    test_util::{install_test_trace_subscriber, testcontainers::container_client},
+};
 use janus_integration_tests::{daphne::Daphne, janus::Janus};
 use janus_interop_binaries::test_util::generate_network_name;
 use janus_messages::Role;
@@ -16,7 +19,8 @@ async fn daphne_janus() {
 
     // Start servers.
     let network = generate_network_name();
-    let (collector_private_key, leader_task, helper_task) = test_task_builders();
+    let (collector_private_key, leader_task, helper_task) =
+        test_task_builders(VdafInstance::Prio3Aes128Count);
 
     // Daphne is hardcoded to serve from a path starting with /v01/.
     let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]
@@ -50,7 +54,8 @@ async fn janus_daphne() {
 
     // Start servers.
     let network = generate_network_name();
-    let (collector_private_key, leader_task, helper_task) = test_task_builders();
+    let (collector_private_key, leader_task, helper_task) =
+        test_task_builders(VdafInstance::Prio3Aes128Count);
 
     // Daphne is hardcoded to serve from a path starting with /v01/.
     let [leader_task, helper_task]: [Task; 2] = [leader_task, helper_task]
