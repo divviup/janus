@@ -197,3 +197,25 @@ async fn janus_janus_histogram_4_buckets() {
     )
     .await;
 }
+
+/// This test exercises Prio3Aes128CountVec with Janus as both the leader and the helper.
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_janus_count_vec_15() {
+    install_test_trace_subscriber();
+
+    // Start servers.
+    let container_client = container_client();
+    let janus_pair = JanusPair::new(
+        &container_client,
+        VdafInstance::Prio3Aes128CountVec { length: 15 },
+    )
+    .await;
+
+    // Run the behavioral test.
+    submit_measurements_and_verify_aggregate(
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &janus_pair.leader_task,
+        &janus_pair.collector_private_key,
+    )
+    .await;
+}

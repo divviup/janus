@@ -233,6 +233,37 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
+        task::VdafInstance::Real(VdafInstance::Prio3Aes128CountVec { length }) => {
+            let vdaf = Prio3::new_aes128_count_vec(2, *length).unwrap();
+
+            let measurements = iter::repeat_with(|| {
+                iter::repeat_with(|| random::<bool>() as u128)
+                    .take(*length)
+                    .collect::<Vec<_>>()
+            })
+            .take(total_measurements)
+            .collect::<Vec<_>>();
+            let aggregate_result =
+                measurements
+                    .iter()
+                    .fold(vec![0u128; *length], |mut accumulator, measurement| {
+                        for (sum, elem) in accumulator.iter_mut().zip(measurement.iter()) {
+                            *sum += *elem;
+                        }
+                        accumulator
+                    });
+
+            submit_measurements_and_verify_aggregate_generic(
+                vdaf,
+                aggregator_endpoints,
+                leader_task,
+                collector_private_key,
+                &measurements,
+                &(),
+                &aggregate_result,
+            )
+            .await;
+        }
         _ => panic!("Unsupported VdafInstance: {:?}", leader_task.vdaf()),
     }
 }
