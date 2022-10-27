@@ -3,7 +3,8 @@
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectJob, AggregateShareJob, AggregationJob, AggregatorRole,
     BatchUnitAggregation, CollectJob, CollectJobState, CollectJobStateCode, Lease, LeaseToken,
-    ReportAggregation, ReportAggregationState, ReportAggregationStateCode, SqlInterval,
+    OutstandingBatch, ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
+    SqlInterval,
 };
 #[cfg(test)]
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
@@ -13,12 +14,12 @@ use crate::{
     SecretBytes,
 };
 use anyhow::anyhow;
-use futures::try_join;
-
+use futures::future::try_join_all;
 use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken, time::Clock};
 use janus_messages::{
-    query_type::QueryType, AggregationJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
-    Interval, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
+    query_type::QueryType, AggregationJobId, BatchId, Duration, Extension, HpkeCiphertext,
+    HpkeConfig, Interval, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role,
+    TaskId, Time,
 };
 use opentelemetry::{metrics::Counter, Context, KeyValue};
 use postgres_types::{Json, ToSql};
@@ -30,8 +31,9 @@ use rand::random;
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{
     collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
-    pin::Pin,
+    ops::RangeInclusive, pin::Pin,
 };
+use tokio::try_join;
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
 use uuid::Uuid;
@@ -2342,6 +2344,109 @@ ORDER BY id DESC
 
         Ok(())
     }
+
+    /// Writes an outstanding batch. (This method does not take an [`OutstandingBatch`] as several
+    /// of the included values are read implicitly.)
+    pub async fn put_outstanding_batch(
+        &self,
+        task_id: &TaskId,
+        batch_id: &BatchId,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "INSERT INTO outstanding_batches (task_id, batch_id)
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2)",
+            )
+            .await?;
+
+        self.tx
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* batch_id */ batch_id.as_ref(),
+                ],
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Retrieves all [`OutstandingBatch`]es for a given task.
+    pub async fn get_outstanding_batches_for_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<OutstandingBatch>, Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT batch_id FROM outstanding_batches
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+
+        try_join_all(
+            self.tx
+                .query(&stmt, &[/* task_id */ task_id.as_ref()])
+                .await?
+                .into_iter()
+                .map(|row| async move {
+                    let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
+                    let size = self.read_batch_size(task_id, &batch_id).await?;
+                    Ok(OutstandingBatch::new(*task_id, batch_id, size))
+                }),
+        )
+        .await
+    }
+
+    // Return value is an inclusive range [min_size, max_size], where:
+    //  * min_size is the minimum possible number of reports included in the batch, i.e. all report
+    //    aggregations in the batch which have reached the FINISHED state.
+    //  * max_size is the maximum possible number of reports included in the batch, i.e. all report
+    //    aggregations in the batch which are in a non-failure state (START/WAITING/FINISHED).
+    async fn read_batch_size(
+        &self,
+        task_id: &TaskId,
+        batch_id: &BatchId,
+    ) -> Result<RangeInclusive<usize>, Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "WITH batch_report_aggregation_statuses AS
+                    (SELECT report_aggregations.state, COUNT(*) AS count FROM report_aggregations
+                     JOIN aggregation_jobs ON report_aggregations.aggregation_job_id = aggregation_jobs.id
+                     WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                     AND aggregation_jobs.batch_identifier = $2
+                     GROUP BY report_aggregations.state)
+                SELECT
+                    (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
+                     WHERE state IN ('FINISHED')) AS min_size,
+                    (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
+                     WHERE state IN ('START', 'WAITING', 'FINISHED')) AS max_size"
+            )
+            .await?;
+
+        let row = self
+            .tx
+            .query_one(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* batch_id */ batch_id.as_ref(),
+                ],
+            )
+            .await?;
+
+        Ok(RangeInclusive::new(
+            row.get::<_, Option<i64>>("min_size")
+                .unwrap_or_default()
+                .try_into()?,
+            row.get::<_, Option<i64>>("max_size")
+                .unwrap_or_default()
+                .try_into()?,
+        ))
+    }
 }
 
 fn check_single_row_mutation(row_count: u64) -> Result<(), Error> {
@@ -2599,9 +2704,9 @@ impl From<ring::error::Unspecified> for Error {
     }
 }
 
-/// This module contains models used by the datastore that are not PPM messages.
+/// This module contains models used by the datastore that are not DAP messages.
 pub mod models {
-    use std::fmt::Display;
+    use std::{fmt::Display, ops::RangeInclusive};
 
     use super::Error;
     use crate::{
@@ -2664,7 +2769,7 @@ pub mod models {
         }
     }
 
-    /// AggregationJob represents an aggregation job from the PPM specification.
+    /// AggregationJob represents an aggregation job from the DAP specification.
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
     pub struct AggregationJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>
@@ -3524,7 +3629,7 @@ pub mod models {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        /// The task ID for this aggregate share .
+        /// The task ID for this aggregate share.
         task_id: TaskId,
         /// The batch interval covered by the aggregate share.
         batch_interval: Interval,
@@ -3617,6 +3722,50 @@ pub mod models {
         A::AggregateShare: Eq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+    }
+
+    /// An outstanding batch, which is a batch which has not yet started collection. Such a batch
+    /// may have additional reports allocated to it. Only applies to fixed-size batches.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct OutstandingBatch {
+        /// The task ID for this outstanding batch.
+        task_id: TaskId,
+        /// The batch ID for this outstanding batch.
+        batch_id: BatchId,
+        /// The range of possible sizes of this batch. The minimum size is the count of reports
+        /// which have successfully completed the aggregation process, while the maximum size is the
+        /// count of reports which are currently being aggregated or have successfully completed the
+        /// aggregation process.
+        size: RangeInclusive<usize>,
+    }
+
+    impl OutstandingBatch {
+        /// Creates a new [`OutstandingBatch`].
+        pub fn new(task_id: TaskId, batch_id: BatchId, size: RangeInclusive<usize>) -> Self {
+            Self {
+                task_id,
+                batch_id,
+                size,
+            }
+        }
+
+        /// Gets the [`TaskId`] associated with this outstanding batch.
+        pub fn task_id(&self) -> &TaskId {
+            &self.task_id
+        }
+
+        /// Gets the [`BatchId`] associated with this outstanding batch.
+        pub fn id(&self) -> &BatchId {
+            &self.batch_id
+        }
+
+        /// Gets the range of possible sizes of this batch. The minimum size is the count of reports
+        /// which have successfully completed the aggregation process, while the maximum size is the
+        /// count of reports which are currently being aggregated or have successfully completed the
+        /// aggregation process.
+        pub fn size(&self) -> &RangeInclusive<usize> {
+            &self.size
+        }
     }
 
     /// The SQL timestamp epoch, midnight UTC on 2000-01-01.
@@ -3945,21 +4094,23 @@ mod tests {
         datastore::{
             models::{
                 AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregationJobState,
-                BatchUnitAggregation, CollectJob, CollectJobState, Lease, ReportAggregation,
-                ReportAggregationState, SqlInterval,
+                BatchUnitAggregation, CollectJob, CollectJobState, Lease, OutstandingBatch,
+                ReportAggregation, ReportAggregationState, SqlInterval,
             },
             test_util::{ephemeral_datastore, generate_aead_key},
             Crypter, Error,
         },
         messages::{test_util::new_dummy_report, DurationExt, TimeExt},
-        task::{self, test_util::TaskBuilder, QueryType, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{
+            test_util::TaskBuilder, QueryType, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH,
+        },
     };
     use assert_matches::assert_matches;
     use chrono::NaiveDate;
     use futures::future::try_join_all;
     use janus_core::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
-        task::VdafInstance,
+        task,
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
@@ -3987,13 +4138,12 @@ mod tests {
     use std::{
         collections::{BTreeSet, HashMap, HashSet},
         iter,
+        ops::RangeInclusive,
         sync::Arc,
     };
     use uuid::Uuid;
 
     use super::{models::AcquiredCollectJob, Datastore};
-
-    const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
     #[tokio::test]
     async fn roundtrip_task() {
@@ -4003,31 +4153,37 @@ mod tests {
         // Insert tasks, check that they can be retrieved by ID.
         let mut want_tasks = HashMap::new();
         for (vdaf, role) in [
-            (VdafInstance::Prio3Aes128Count, Role::Leader),
+            (task::VdafInstance::Prio3Aes128Count, Role::Leader),
             (
-                VdafInstance::Prio3Aes128CountVec { length: 8 },
+                task::VdafInstance::Prio3Aes128CountVec { length: 8 },
                 Role::Leader,
             ),
             (
-                VdafInstance::Prio3Aes128CountVec { length: 64 },
+                task::VdafInstance::Prio3Aes128CountVec { length: 64 },
                 Role::Helper,
             ),
-            (VdafInstance::Prio3Aes128Sum { bits: 64 }, Role::Helper),
-            (VdafInstance::Prio3Aes128Sum { bits: 32 }, Role::Helper),
             (
-                VdafInstance::Prio3Aes128Histogram {
+                task::VdafInstance::Prio3Aes128Sum { bits: 64 },
+                Role::Helper,
+            ),
+            (
+                task::VdafInstance::Prio3Aes128Sum { bits: 32 },
+                Role::Helper,
+            ),
+            (
+                task::VdafInstance::Prio3Aes128Histogram {
                     buckets: Vec::from([0, 100, 200, 400]),
                 },
                 Role::Leader,
             ),
             (
-                VdafInstance::Prio3Aes128Histogram {
+                task::VdafInstance::Prio3Aes128Histogram {
                     buckets: Vec::from([0, 25, 50, 75, 100]),
                 },
                 Role::Leader,
             ),
-            (VdafInstance::Poplar1 { bits: 8 }, Role::Helper),
-            (VdafInstance::Poplar1 { bits: 64 }, Role::Helper),
+            (task::VdafInstance::Poplar1 { bits: 8 }, Role::Helper),
+            (task::VdafInstance::Poplar1 { bits: 64 }, Role::Helper),
         ] {
             let task = TaskBuilder::new(QueryType::TimeInterval, vdaf.into(), role).build();
             want_tasks.insert(*task.id(), task.clone());
@@ -4118,7 +4274,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -4204,13 +4360,13 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
         let unrelated_task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -4409,7 +4565,7 @@ mod tests {
                     )
                     .unwrap(),
                     AggregationParam(255),
-                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await
             })
@@ -4423,7 +4579,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(task.id())
+                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<0, dummy_vdaf::Vdaf>(task.id())
                         .await
                 })
             })
@@ -4448,7 +4604,7 @@ mod tests {
                     )
                     .unwrap(),
                     AggregationParam(0),
-                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
                 tx.put_collect_job(&CollectJob::new(
@@ -4460,7 +4616,7 @@ mod tests {
                     )
                     .unwrap(),
                     AggregationParam(1),
-                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
                 // No reports fall in this interval, so we shouldn't see it's aggregation
@@ -4474,16 +4630,12 @@ mod tests {
                     )
                     .unwrap(),
                     AggregationParam(2),
-                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
 
                 let aggregation_job_id = random();
-                tx.put_aggregation_job(&AggregationJob::<
-                    DUMMY_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    dummy_vdaf::Vdaf,
-                >::new(
+                tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
                     (),
@@ -4491,10 +4643,7 @@ mod tests {
                     AggregationJobState::InProgress,
                 ))
                 .await?;
-                tx.put_report_aggregation(&ReportAggregation::<
-                    DUMMY_VERIFY_KEY_LENGTH,
-                    dummy_vdaf::Vdaf,
-                >::new(
+                tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
                     aggregated_report_id,
@@ -4514,7 +4663,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(task.id())
+                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<0, dummy_vdaf::Vdaf>(task.id())
                         .await
                 })
             })
@@ -4566,7 +4715,7 @@ mod tests {
                     )
                     .unwrap(),
                     dummy_vdaf::AggregationParam(0),
-                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
                 tx.put_collect_job(&CollectJob::new(
@@ -4578,7 +4727,7 @@ mod tests {
                     )
                     .unwrap(),
                     dummy_vdaf::AggregationParam(1),
-                    CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
                 Ok(())
@@ -4592,7 +4741,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(task.id())
+                    tx.get_unaggregated_client_report_ids_by_collect_for_task::<0, dummy_vdaf::Vdaf>(task.id())
                         .await
                 })
             })
@@ -4609,7 +4758,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -4690,7 +4839,7 @@ mod tests {
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
         let task = TaskBuilder::new(
             QueryType::FixedSize { max_batch_size: 10 },
-            task::VdafInstance::Fake,
+            VdafInstance::Fake,
             Role::Leader,
         )
         .build();
@@ -4757,7 +4906,7 @@ mod tests {
         const AGGREGATION_JOB_COUNT: usize = 10;
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -4806,7 +4955,7 @@ mod tests {
                 // We don't want to retrieve this one, either.
                 let helper_task = TaskBuilder::new(
                     QueryType::TimeInterval,
-                    VdafInstance::Prio3Aes128Count.into(),
+                    task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Helper,
                 )
                 .build();
@@ -4871,7 +5020,7 @@ mod tests {
                     AcquiredAggregationJob::new(
                         *task.id(),
                         agg_job_id,
-                        VdafInstance::Prio3Aes128Count.into(),
+                        task::VdafInstance::Prio3Aes128Count.into(),
                     ),
                     want_expiry_time,
                 )
@@ -4953,7 +5102,7 @@ mod tests {
                     AcquiredAggregationJob::new(
                         *task.id(),
                         job_id,
-                        VdafInstance::Prio3Aes128Count.into(),
+                        task::VdafInstance::Prio3Aes128Count.into(),
                     ),
                     want_expiry_time,
                 )
@@ -5069,7 +5218,7 @@ mod tests {
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
         let task = TaskBuilder::new(
             QueryType::FixedSize { max_batch_size: 10 },
-            task::VdafInstance::Fake,
+            VdafInstance::Fake,
             Role::Leader,
         )
         .build();
@@ -5103,7 +5252,7 @@ mod tests {
                 // is not returned.
                 let unrelated_task = TaskBuilder::new(
                     QueryType::FixedSize { max_batch_size: 10 },
-                    task::VdafInstance::Fake,
+                    VdafInstance::Fake,
                     Role::Leader,
                 )
                 .build();
@@ -5158,7 +5307,7 @@ mod tests {
         {
             let task = TaskBuilder::new(
                 QueryType::TimeInterval,
-                VdafInstance::Prio3Aes128Count.into(),
+                task::VdafInstance::Prio3Aes128Count.into(),
                 Role::Leader,
             )
             .build();
@@ -5293,16 +5442,14 @@ mod tests {
         let rslt = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    tx.update_report_aggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
-                        &ReportAggregation::new(
-                            random(),
-                            random(),
-                            ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                            Time::from_seconds_since_epoch(12345),
-                            0,
-                            ReportAggregationState::Invalid,
-                        ),
-                    )
+                    tx.update_report_aggregation::<0, dummy_vdaf::Vdaf>(&ReportAggregation::new(
+                        random(),
+                        random(),
+                        ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                        Time::from_seconds_since_epoch(12345),
+                        0,
+                        ReportAggregationState::Invalid,
+                    ))
                     .await
                 })
             })
@@ -5320,7 +5467,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -5462,7 +5609,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -5670,13 +5817,13 @@ mod tests {
 
         let first_task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
         let second_task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -5748,7 +5895,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -5860,7 +6007,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -6017,7 +6164,7 @@ mod tests {
                 }
 
                 for test_case in test_case.collect_job_test_cases.iter_mut() {
-                    let collect_job = CollectJob::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+                    let collect_job = CollectJob::<0, dummy_vdaf::Vdaf>::new(
                         test_case.task_id,
                         Uuid::new_v4(),
                         test_case.batch_interval,
@@ -6104,21 +6251,15 @@ mod tests {
         let task_id = random();
         let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
         let aggregation_job_id = random();
-        let aggregation_jobs = Vec::from([AggregationJob::<
-            DUMMY_VERIFY_KEY_LENGTH,
-            TimeInterval,
-            dummy_vdaf::Vdaf,
-        >::new(
-            task_id,
-            aggregation_job_id,
-            (),
-            AggregationParam(0),
-            AggregationJobState::Finished,
-        )]);
-        let report_aggregations = Vec::from([ReportAggregation::<
-            DUMMY_VERIFY_KEY_LENGTH,
-            dummy_vdaf::Vdaf,
-        >::new(
+        let aggregation_jobs =
+            Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                task_id,
+                aggregation_job_id,
+                (),
+                AggregationParam(0),
+                AggregationJobState::Finished,
+            )]);
+        let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
             aggregation_job_id,
             *reports[0].metadata().id(),
@@ -6231,18 +6372,15 @@ mod tests {
         let task_id = random();
         let other_task_id = random();
 
-        let aggregation_jobs = Vec::from([AggregationJob::<
-            DUMMY_VERIFY_KEY_LENGTH,
-            TimeInterval,
-            dummy_vdaf::Vdaf,
-        >::new(
-            // Aggregation job task ID does not match collect job task ID
-            other_task_id,
-            random(),
-            (),
-            AggregationParam(0),
-            AggregationJobState::Finished,
-        )]);
+        let aggregation_jobs =
+            Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                // Aggregation job task ID does not match collect job task ID
+                other_task_id,
+                random(),
+                (),
+                AggregationParam(0),
+                AggregationJobState::Finished,
+            )]);
 
         let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: false,
@@ -6279,18 +6417,15 @@ mod tests {
         let task_id = random();
         let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
 
-        let aggregation_jobs = Vec::from([AggregationJob::<
-            DUMMY_VERIFY_KEY_LENGTH,
-            TimeInterval,
-            dummy_vdaf::Vdaf,
-        >::new(
-            task_id,
-            random(),
-            (),
-            // Aggregation job agg param does not match collect job agg param
-            AggregationParam(1),
-            AggregationJobState::Finished,
-        )]);
+        let aggregation_jobs =
+            Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                task_id,
+                random(),
+                (),
+                // Aggregation job agg param does not match collect job agg param
+                AggregationParam(1),
+                AggregationJobState::Finished,
+            )]);
 
         let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: false,
@@ -6332,21 +6467,15 @@ mod tests {
             Time::from_seconds_since_epoch(200),
         )]);
         let aggregation_job_id = random();
-        let aggregation_jobs = Vec::from([AggregationJob::<
-            DUMMY_VERIFY_KEY_LENGTH,
-            TimeInterval,
-            dummy_vdaf::Vdaf,
-        >::new(
-            task_id,
-            aggregation_job_id,
-            (),
-            AggregationParam(0),
-            AggregationJobState::Finished,
-        )]);
-        let report_aggregations = Vec::from([ReportAggregation::<
-            DUMMY_VERIFY_KEY_LENGTH,
-            dummy_vdaf::Vdaf,
-        >::new(
+        let aggregation_jobs =
+            Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                task_id,
+                aggregation_job_id,
+                (),
+                AggregationParam(0),
+                AggregationJobState::Finished,
+            )]);
+        let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
             aggregation_job_id,
             *reports[0].metadata().id(),
@@ -6390,22 +6519,16 @@ mod tests {
         let task_id = random();
         let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
         let aggregation_job_id = random();
-        let aggregation_jobs = Vec::from([AggregationJob::<
-            DUMMY_VERIFY_KEY_LENGTH,
-            TimeInterval,
-            dummy_vdaf::Vdaf,
-        >::new(
-            task_id,
-            aggregation_job_id,
-            (),
-            AggregationParam(0),
-            AggregationJobState::Finished,
-        )]);
+        let aggregation_jobs =
+            Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                task_id,
+                aggregation_job_id,
+                (),
+                AggregationParam(0),
+                AggregationJobState::Finished,
+            )]);
 
-        let report_aggregations = Vec::from([ReportAggregation::<
-            DUMMY_VERIFY_KEY_LENGTH,
-            dummy_vdaf::Vdaf,
-        >::new(
+        let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
             task_id,
             aggregation_job_id,
             *reports[0].metadata().id(),
@@ -6455,14 +6578,14 @@ mod tests {
 
         let aggregation_job_ids: [_; 2] = random();
         let aggregation_jobs = Vec::from([
-            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, TimeInterval, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 (),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             ),
-            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, TimeInterval, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 (),
@@ -6473,7 +6596,7 @@ mod tests {
         ]);
 
         let report_aggregations = Vec::from([
-            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 *reports[0].metadata().id(),
@@ -6481,7 +6604,7 @@ mod tests {
                 0,
                 ReportAggregationState::Start,
             ),
-            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 *reports[1].metadata().id(),
@@ -6527,14 +6650,14 @@ mod tests {
         let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
         let aggregation_job_ids: [_; 2] = random();
         let aggregation_jobs = Vec::from([
-            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, TimeInterval, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 (),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             ),
-            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, TimeInterval, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 (),
@@ -6543,7 +6666,7 @@ mod tests {
             ),
         ]);
         let report_aggregations = Vec::from([
-            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 *reports[0].metadata().id(),
@@ -6551,7 +6674,7 @@ mod tests {
                 0,
                 ReportAggregationState::Start,
             ),
-            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 *reports[0].metadata().id(),
@@ -6660,21 +6783,21 @@ mod tests {
         let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
         let aggregation_job_ids: [_; 3] = random();
         let aggregation_jobs = Vec::from([
-            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, TimeInterval, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 (),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             ),
-            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, TimeInterval, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 (),
                 AggregationParam(1),
                 AggregationJobState::Finished,
             ),
-            AggregationJob::<DUMMY_VERIFY_KEY_LENGTH, TimeInterval, dummy_vdaf::Vdaf>::new(
+            AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[2],
                 (),
@@ -6683,7 +6806,7 @@ mod tests {
             ),
         ]);
         let report_aggregations = Vec::from([
-            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
                 *reports[0].metadata().id(),
@@ -6691,7 +6814,7 @@ mod tests {
                 0,
                 ReportAggregationState::Start,
             ),
-            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
                 *reports[0].metadata().id(),
@@ -6699,7 +6822,7 @@ mod tests {
                 0,
                 ReportAggregationState::Start,
             ),
-            ReportAggregation::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::new(
+            ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[2],
                 *reports[0].metadata().id(),
@@ -6784,14 +6907,14 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .with_time_precision(Duration::from_seconds(100))
         .build();
         let other_task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            task::VdafInstance::Prio3Aes128Count.into(),
             Role::Leader,
         )
         .build();
@@ -7011,7 +7134,7 @@ mod tests {
             Box::pin(async move {
                 let task = TaskBuilder::new(
                     QueryType::TimeInterval,
-                    VdafInstance::Prio3Aes128Count.into(),
+                    task::VdafInstance::Prio3Aes128Count.into(),
                     Role::Helper,
                 ).build();
                 tx.put_task(&task).await?;
@@ -7087,6 +7210,158 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn roundtrip_outstanding_batch() {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let (task_id, batch_id) = ds
+            .run_tx(|tx| {
+                let clock = clock.clone();
+                Box::pin(async move {
+                    let task = TaskBuilder::new(
+                        QueryType::FixedSize { max_batch_size: 10 },
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
+                    tx.put_task(&task).await?;
+                    let batch_id = random();
+                    tx.put_outstanding_batch(task.id(), &batch_id).await?;
+
+                    // Write a few aggregation jobs & report aggregations to produce useful
+                    // min_size/max_size values to validate later.
+                    let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        random(),
+                        batch_id,
+                        AggregationParam(0),
+                        AggregationJobState::Finished,
+                    );
+                    let report_aggregation_0_0 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_0.id(),
+                        random(),
+                        clock.now(),
+                        0,
+                        ReportAggregationState::Start, // Counted among max_size.
+                    );
+                    let report_aggregation_0_1 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_0.id(),
+                        random(),
+                        clock.now(),
+                        1,
+                        ReportAggregationState::Waiting((), Some(())), // Counted among max_size.
+                    );
+                    let report_aggregation_0_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_0.id(),
+                        random(),
+                        clock.now(),
+                        2,
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError), // Not counted among min_size or max_size.
+                    );
+                    let report_aggregation_0_3 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_0.id(),
+                        random(),
+                        clock.now(),
+                        3,
+                        ReportAggregationState::Invalid, // Not counted among min_size or max_size.
+                    );
+
+                    let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        random(),
+                        batch_id,
+                        AggregationParam(0),
+                        AggregationJobState::Finished,
+                    );
+                    let report_aggregation_1_0 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_1.id(),
+                        random(),
+                        clock.now(),
+                        0,
+                        ReportAggregationState::Finished(dummy_vdaf::OutputShare()), // Counted among min_size and max_size.
+                    );
+                    let report_aggregation_1_1 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_1.id(),
+                        random(),
+                        clock.now(),
+                        1,
+                        ReportAggregationState::Finished(dummy_vdaf::OutputShare()), // Counted among min_size and max_size.
+                    );
+                    let report_aggregation_1_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_1.id(),
+                        random(),
+                        clock.now(),
+                        2,
+                        ReportAggregationState::Failed(ReportShareError::VdafPrepError), // Not counted among min_size or max_size.
+                    );
+                    let report_aggregation_1_3 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job_1.id(),
+                        random(),
+                        clock.now(),
+                        3,
+                        ReportAggregationState::Invalid, // Not counted among min_size or max_size.
+                    );
+
+                    for aggregation_job in &[aggregation_job_0, aggregation_job_1] {
+                        tx.put_aggregation_job(aggregation_job).await?;
+                    }
+                    for report_aggregation in &[
+                        report_aggregation_0_0,
+                        report_aggregation_0_1,
+                        report_aggregation_0_2,
+                        report_aggregation_0_3,
+                        report_aggregation_1_0,
+                        report_aggregation_1_1,
+                        report_aggregation_1_2,
+                        report_aggregation_1_3,
+                    ] {
+                        tx.put_client_report(&Report::new(
+                            *report_aggregation.task_id(),
+                            ReportMetadata::new(
+                                *report_aggregation.report_id(),
+                                *report_aggregation.time(),
+                                Vec::new(),
+                            ),
+                            Vec::new(),
+                            Vec::new(),
+                        ))
+                        .await?;
+                        tx.put_report_aggregation(report_aggregation).await?;
+                    }
+
+                    Ok((*task.id(), batch_id))
+                })
+            })
+            .await
+            .unwrap();
+
+        let outstanding_batches = ds
+            .run_tx(|tx| {
+                Box::pin(async move { tx.get_outstanding_batches_for_task(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            outstanding_batches,
+            Vec::from([OutstandingBatch::new(
+                task_id,
+                batch_id,
+                RangeInclusive::new(2, 4)
+            )])
+        );
     }
 
     /// generate_vdaf_values generates some arbitrary VDAF values for use in testing. It is cribbed

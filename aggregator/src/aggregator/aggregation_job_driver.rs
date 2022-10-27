@@ -12,10 +12,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use derivative::Derivative;
-use futures::{
-    future::{try_join_all, BoxFuture, FutureExt},
-    try_join,
-};
+use futures::future::{try_join_all, BoxFuture, FutureExt};
 use janus_core::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
     time::Clock,
@@ -42,6 +39,7 @@ use prio::{
     },
 };
 use std::{fmt, sync::Arc};
+use tokio::try_join;
 use tracing::{info, warn};
 
 #[derive(Derivative)]

@@ -123,12 +123,12 @@ impl IntervalExt for Interval {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod test_util {
+#[cfg(feature = "test-util")]
+pub mod test_util {
     use janus_messages::{Report, ReportMetadata, TaskId, Time};
     use rand::random;
 
-    pub(crate) fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
+    pub fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
         Report::new(
             task_id,
             ReportMetadata::new(random(), when, Vec::new()),

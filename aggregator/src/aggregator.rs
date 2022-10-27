@@ -22,7 +22,6 @@ use crate::{
     task::{Task, VdafInstance, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use bytes::Bytes;
-use futures::try_join;
 use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
     HeaderMap, StatusCode,
@@ -73,7 +72,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, try_join};
 use tracing::{debug, error, info, warn};
 use url::Url;
 use uuid::Uuid;

@@ -109,6 +109,7 @@ CREATE TABLE aggregation_jobs(
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
+CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, batch_identifier);
 
 -- Specifies the possible state of aggregating a single report.
 CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
@@ -200,3 +201,14 @@ CREATE TABLE aggregate_share_jobs(
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 CREATE INDEX aggregate_share_jobs_interval_containment_index ON aggregate_share_jobs USING gist (task_id, batch_interval);
+
+-- The leader's view of outstanding batches, which are batches which have not yet started
+-- collection. Used for fixed-size tasks only.
+CREATE TABLE outstanding_batches(
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
+    task_id BIGINT NOT NULL, -- the task ID containing the batch
+    batch_id BYTEA NOT NULL, -- 32-byte BatchID as defined by the DAP specification.
+
+    CONSTRAINT unique_task_id_batch_id UNIQUE(task_id, batch_id),
+    CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
+);
