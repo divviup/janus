@@ -22,22 +22,20 @@ jobs:
       name: "Authenticate to GCP (private repositories)"
       uses: "google-github-actions/auth@v0"
       with:
-        workload_identity_provider: ${{ secrets.GCP_ARTIFACT_PUBISHER_WORKLOAD_IDENTITY_PROVIDER }}
+        workload_identity_provider: ${{ secrets.GCP_ARTIFACT_PUBLISHER_WORKLOAD_IDENTITY_PROVIDER }}
         service_account: ${{ secrets.GCP_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
         token_format: "access_token"
         access_token_lifetime: "3600s"
         access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
-        export_environment_variables: true
     - id: "gcp-auth-public"
       name: "Authenticate to GCP (public repositories)"
       uses: "google-github-actions/auth@v0"
       with:
-        workload_identity_provider: ${{ secrets.GCP_PUBLIC_ARTIFACT_PUBISHER_WORKLOAD_IDENTITY_PROVIDER }}
+        workload_identity_provider: ${{ secrets.GCP_PUBLIC_ARTIFACT_PUBLISHER_WORKLOAD_IDENTITY_PROVIDER }}
         service_account: ${{ secrets.GCP_PUBLIC_ARTIFACT_PUBLISHER_DEPLOY_SERVICE_ACCOUNT }}
         token_format: "access_token"
         access_token_lifetime: "3600s"
         access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
-        export_environment_variables: true
     - uses: "docker/login-action@v2"
       with:
         registry: "us-west2-docker.pkg.dev"
