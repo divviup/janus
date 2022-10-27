@@ -52,15 +52,14 @@ impl Measurement {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct UploadRequest {
     task_id: String,
     leader: Url,
     helper: Url,
     vdaf: VdafObject,
     measurement: Measurement,
-    #[serde(default, rename = "nonceTime")]
-    timestamp: Option<u64>,
+    #[serde(default)]
+    time: Option<u64>,
     time_precision: u64,
 }
 
@@ -81,7 +80,7 @@ where
     for<'a> Vec<u8>: From<&'a <V as Vdaf>::AggregateShare>,
 {
     let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"taskId\"")?;
+        .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let time_precision = Duration::from_seconds(request.time_precision);
     let client_parameters = ClientParameters::new(
@@ -107,7 +106,7 @@ where
     .await
     .context("failed to fetch helper's HPKE configuration")?;
 
-    match request.timestamp {
+    match request.time {
         Some(timestamp) => {
             let clock = MockClock::new(Time::from_seconds_since_epoch(timestamp));
             let client = janus_client::Client::new(

@@ -1689,7 +1689,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_ref(),
-                    /* collect_jobs.batchinterval */ &SqlInterval::from(interval),
+                    /* collect_jobs.batch_interval */ &SqlInterval::from(interval),
                 ],
             )
             .await?

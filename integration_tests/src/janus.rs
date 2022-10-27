@@ -73,7 +73,12 @@ impl<'a> Janus<'a> {
             .unwrap();
         assert!(resp.status().is_success());
         let resp: HashMap<String, Option<String>> = resp.json().await.unwrap();
-        assert_eq!(resp.get("status"), Some(&Some("success".to_string())));
+        assert_eq!(
+            resp.get("status"),
+            Some(&Some("success".to_string())),
+            "error: {:?}",
+            resp.get("error")
+        );
 
         Self::Container {
             role: *task.role(),

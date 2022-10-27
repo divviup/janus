@@ -11,7 +11,10 @@ use janus_interop_binaries::{
     test_util::{await_ready_ok, generate_network_name, generate_unique_name},
     testcontainer::{Aggregator, Client, Collector},
 };
-use janus_messages::{Duration, TaskId};
+use janus_messages::{
+    query_type::{QueryType, TimeInterval},
+    Duration, TaskId,
+};
 use prio::codec::Encode;
 use rand::random;
 use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
@@ -92,7 +95,7 @@ impl<'d, I: Image> Deref for ContainerLogsDropGuard<'d, I> {
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
-/// the "Test Runner Operation" section in draft-dcook-ppm-dap-interop-test-design-01.
+/// the "Test Runner Operation" section in draft-dcook-ppm-dap-interop-test-design.
 async fn run(
     query_type: serde_json::Value,
     vdaf_object: serde_json::Value,
@@ -181,8 +184,8 @@ async fn run(
                 .unwrap(),
         )
         .json(&json!({
-            "taskId": task_id_encoded,
-            "aggregatorId": 0,
+            "task_id": task_id_encoded,
+            "role": "leader",
             "hostname": local_leader_endpoint.host_str().unwrap(),
         }))
         .send()
@@ -223,8 +226,8 @@ async fn run(
                 .unwrap(),
         )
         .json(&json!({
-            "taskId": task_id_encoded,
-            "aggregatorId": 1,
+            "task_id": task_id_encoded,
+            "role": "helper",
             "hostname": local_helper_endpoint.host_str().unwrap(),
         }))
         .send()
@@ -265,10 +268,11 @@ async fn run(
                 .unwrap(),
         )
         .json(&json!({
-            "taskId": task_id_encoded,
+            "task_id": task_id_encoded,
             "leader": internal_leader_endpoint,
             "vdaf": vdaf_object,
-            "collectorAuthenticationToken": collector_auth_token,
+            "collector_authentication_token": collector_auth_token,
+            "query_type": query_type,
         }))
         .send()
         .await
@@ -295,10 +299,10 @@ async fn run(
         collector_add_task_response_object.get("error"),
     );
     let collector_hpke_config_encoded = collector_add_task_response_object
-        .get("collectorHpkeConfig")
-        .expect("collector add_task response is missing \"collectorHpkeConfig\"")
+        .get("collector_hpke_config")
+        .expect("collector add_task response is missing \"collector_hpke_config\"")
         .as_str()
-        .expect("\"collectorHpkeConfig\" value is not a string");
+        .expect("\"collector_hpke_config\" value is not a string");
 
     // Send a /internal/test/add_task request to the leader.
     let leader_add_task_response = http_client
@@ -308,20 +312,20 @@ async fn run(
                 .unwrap(),
         )
         .json(&json!({
-            "taskId": task_id_encoded,
+            "task_id": task_id_encoded,
             "leader": internal_leader_endpoint,
             "helper": internal_helper_endpoint,
-            "queryType": query_type,
             "vdaf": vdaf_object,
-            "leaderAuthenticationToken": aggregator_auth_token,
-            "collectorAuthenticationToken": collector_auth_token,
-            "aggregatorId": 0,
-            "verifyKey": verify_key_encoded,
-            "maxBatchQueryCount": 1,
-            "taskExpiration": u64::MAX,
-            "minBatchSize": 1,
-            "timePrecision": TIME_PRECISION,
-            "collectorHpkeConfig": collector_hpke_config_encoded,
+            "leader_authentication_token": aggregator_auth_token,
+            "collector_authentication_token": collector_auth_token,
+            "role": "leader",
+            "verify_key": verify_key_encoded,
+            "max_batch_query_count": 1,
+            "query_type": query_type,
+            "min_batch_size": 1,
+            "time_precision": TIME_PRECISION,
+            "collector_hpke_config": collector_hpke_config_encoded,
+            "task_expiration": u64::MAX,
         }))
         .send()
         .await
@@ -355,19 +359,19 @@ async fn run(
                 .unwrap(),
         )
         .json(&json!({
-            "taskId": task_id_encoded,
+            "task_id": task_id_encoded,
             "leader": internal_leader_endpoint,
             "helper": internal_helper_endpoint,
-            "queryType": query_type,
             "vdaf": vdaf_object,
-            "leaderAuthenticationToken": aggregator_auth_token,
-            "aggregatorId": 1,
-            "verifyKey": verify_key_encoded,
-            "maxBatchQueryCount": 1,
-            "taskExpiration": u64::MAX,
-            "minBatchSize": 1,
-            "timePrecision": TIME_PRECISION,
-            "collectorHpkeConfig": collector_hpke_config_encoded,
+            "leader_authentication_token": aggregator_auth_token,
+            "role": "helper",
+            "verify_key": verify_key_encoded,
+            "max_batch_query_count": 1,
+            "query_type": query_type,
+            "min_batch_size": 1,
+            "time_precision": TIME_PRECISION,
+            "collector_hpke_config": collector_hpke_config_encoded,
+            "task_expiration": u64::MAX,
         }))
         .send()
         .await
@@ -409,12 +413,12 @@ async fn run(
         let upload_response = http_client
             .post(local_client_endpoint.join("/internal/test/upload").unwrap())
             .json(&json!({
-                "taskId": task_id_encoded,
+                "task_id": task_id_encoded,
                 "leader": internal_leader_endpoint,
                 "helper": internal_helper_endpoint,
                 "vdaf": vdaf_object,
                 "measurement": measurement,
-                "timePrecision": TIME_PRECISION,
+                "time_precision": TIME_PRECISION,
             }))
             .send()
             .await
@@ -446,10 +450,13 @@ async fn run(
                 .unwrap(),
         )
         .json(&json!({
-            "taskId": task_id_encoded,
-            "aggParam": base64::encode_config(aggregation_parameter, URL_SAFE_NO_PAD),
-            "batchIntervalStart": batch_interval_start,
-            "batchIntervalDuration": batch_interval_duration,
+            "task_id": task_id_encoded,
+            "agg_param": base64::encode_config(aggregation_parameter, URL_SAFE_NO_PAD),
+            "query": {
+                "type": TimeInterval::CODE as u8,
+                "batch_interval_start": batch_interval_start,
+                "batch_interval_duration": batch_interval_duration,
+            },
         }))
         .send()
         .await
@@ -524,6 +531,12 @@ async fn run(
             "error: {:?}",
             collect_poll_response_object.get("error"),
         );
+        assert_eq!(
+            collect_poll_response_object
+                .get("report_count")
+                .expect("completed collect_poll response is missing \"report_count\""),
+            measurements.len()
+        );
         return collect_poll_response_object
             .get("result")
             .expect("completed collect_poll response is missing \"result\"")
@@ -534,7 +547,7 @@ async fn run(
 #[tokio::test]
 async fn e2e_prio3_count() {
     let result = run(
-        json!("TimeInterval"),
+        json!(TimeInterval::CODE as u8),
         json!({"type": "Prio3Aes128Count"}),
         &[
             json!("0"),
@@ -565,7 +578,7 @@ async fn e2e_prio3_count() {
 #[tokio::test]
 async fn e2e_prio3_sum() {
     let result = run(
-        json!("TimeInterval"),
+        json!(TimeInterval::CODE as u8),
         json!({"type": "Prio3Aes128Sum", "bits": "64"}),
         &[
             json!("0"),
@@ -585,7 +598,7 @@ async fn e2e_prio3_sum() {
 #[tokio::test]
 async fn e2e_prio3_histogram() {
     let result = run(
-        json!("TimeInterval"),
+        json!(TimeInterval::CODE as u8),
         json!({
             "type": "Prio3Aes128Histogram",
             "buckets": ["0", "1", "10", "100", "1000", "10000", "100000"],
@@ -611,7 +624,7 @@ async fn e2e_prio3_histogram() {
 #[tokio::test]
 async fn e2e_prio3_count_vec() {
     let result = run(
-        json!("TimeInterval"),
+        json!(TimeInterval::CODE as u8),
         json!({"type": "Prio3Aes128CountVec", "length": "4"}),
         &[
             json!(["0", "0", "0", "1"]),
