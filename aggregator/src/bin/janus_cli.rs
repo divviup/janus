@@ -462,13 +462,13 @@ mod tests {
         let tasks = Vec::from([
             TaskBuilder::new(
                 QueryType::TimeInterval,
-                VdafInstance::Prio3Aes128Count.into(),
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .build(),
             TaskBuilder::new(
                 QueryType::TimeInterval,
-                VdafInstance::Prio3Aes128Sum { bits: 64 }.into(),
+                VdafInstance::Prio3Aes128Sum { bits: 64 },
                 Role::Helper,
             )
             .build(),

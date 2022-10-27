@@ -2,9 +2,11 @@ use anyhow::{anyhow, Context};
 use backoff::ExponentialBackoffBuilder;
 use base64::URL_SAFE_NO_PAD;
 use clap::{value_parser, Arg, Command};
-use janus_aggregator::task::VdafInstance;
 use janus_collector::{Collector, CollectorParameters};
-use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
+use janus_core::{
+    hpke::HpkePrivateKey,
+    task::{AuthenticationToken, VdafInstance},
+};
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
@@ -247,7 +249,7 @@ async fn handle_collect_start(
 
     let vdaf_instance = task_state.vdaf.clone().into();
     let task_handle = match vdaf_instance {
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count {}) => {
+        VdafInstance::Prio3Aes128Count {} => {
             let vdaf =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
             handle_collect_generic(
@@ -260,7 +262,8 @@ async fn handle_collect_start(
             )
             .await?
         }
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+
+        VdafInstance::Prio3Aes128CountVec { length } => {
             let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3Aes128CountVec VDAF")?;
             handle_collect_generic(
@@ -276,7 +279,8 @@ async fn handle_collect_start(
             )
             .await?
         }
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+
+        VdafInstance::Prio3Aes128Sum { bits } => {
             let vdaf = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
             handle_collect_generic(
@@ -289,10 +293,9 @@ async fn handle_collect_start(
             )
             .await?
         }
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
-            ref buckets,
-        }) => {
-            let vdaf = Prio3::new_aes128_histogram(2, buckets)
+
+        VdafInstance::Prio3Aes128Histogram { buckets } => {
+            let vdaf = Prio3::new_aes128_histogram(2, &buckets)
                 .context("failed to construct Prio3Aes128Histogram VDAF")?;
             handle_collect_generic(
                 http_client,

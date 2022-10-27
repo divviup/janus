@@ -254,11 +254,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::JobDriver;
-    use crate::{
-        datastore::{self, models::Lease},
-        task::VdafInstance,
-    };
+    use crate::datastore::{self, models::Lease};
     use janus_core::{
+        task::VdafInstance,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::MockClock,
         Runtime,

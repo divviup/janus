@@ -1,5 +1,6 @@
 use reqwest::Url;
 use ring::constant_time;
+use serde::{Deserialize, Serialize};
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
@@ -8,7 +9,7 @@ pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 /// [draft-irtf-cfrg-vdaf-03][1] and implementations in [`prio::vdaf::prio3`].
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/03/
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum VdafInstance {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
     Prio3Aes128Count,
@@ -20,6 +21,13 @@ pub enum VdafInstance {
     Prio3Aes128Histogram { buckets: Vec<u64> },
     /// The `poplar1` VDAF. Support for this VDAF is experimental.
     Poplar1 { bits: usize },
+
+    #[cfg(feature = "test-util")]
+    Fake,
+    #[cfg(feature = "test-util")]
+    FakeFailsPrepInit,
+    #[cfg(feature = "test-util")]
+    FakeFailsPrepStep,
 }
 
 /// An authentication (bearer) token used by aggregators for aggregator-to-aggregator and
@@ -60,5 +68,104 @@ impl Eq for AuthenticationToken {}
 pub fn url_ensure_trailing_slash(url: &mut Url) {
     if !url.as_str().ends_with('/') {
         url.set_path(&format!("{}/", url.path()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VdafInstance;
+    use serde_test::{assert_tokens, Token};
+
+    #[test]
+    fn vdaf_serialization() {
+        // The `Vdaf` type must have a stable serialization, as it gets stored in a JSON database
+        // column.
+        assert_tokens(
+            &VdafInstance::Prio3Aes128Count,
+            &[Token::UnitVariant {
+                name: "VdafInstance",
+                variant: "Prio3Aes128Count",
+            }],
+        );
+        assert_tokens(
+            &VdafInstance::Prio3Aes128CountVec { length: 8 },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3Aes128CountVec",
+                    len: 1,
+                },
+                Token::Str("length"),
+                Token::U64(8),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &VdafInstance::Prio3Aes128Sum { bits: 64 },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3Aes128Sum",
+                    len: 1,
+                },
+                Token::Str("bits"),
+                Token::U32(64),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &VdafInstance::Prio3Aes128Histogram {
+                buckets: Vec::from([0, 100, 200, 400]),
+            },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3Aes128Histogram",
+                    len: 1,
+                },
+                Token::Str("buckets"),
+                Token::Seq { len: Some(4) },
+                Token::U64(0),
+                Token::U64(100),
+                Token::U64(200),
+                Token::U64(400),
+                Token::SeqEnd,
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &VdafInstance::Poplar1 { bits: 64 },
+            &[
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Poplar1",
+                    len: 1,
+                },
+                Token::Str("bits"),
+                Token::U64(64),
+                Token::StructVariantEnd,
+            ],
+        );
+        assert_tokens(
+            &VdafInstance::Fake,
+            &[Token::UnitVariant {
+                name: "VdafInstance",
+                variant: "Fake",
+            }],
+        );
+        assert_tokens(
+            &VdafInstance::FakeFailsPrepInit,
+            &[Token::UnitVariant {
+                name: "VdafInstance",
+                variant: "FakeFailsPrepInit",
+            }],
+        );
+        assert_tokens(
+            &VdafInstance::FakeFailsPrepStep,
+            &[Token::UnitVariant {
+                name: "VdafInstance",
+                variant: "FakeFailsPrepStep",
+            }],
+        );
     }
 }
