@@ -44,7 +44,6 @@ pub enum QueryType {
     },
 }
 
-// XXX: is this needed?
 /// The length of the verify key parameter for Prio3 AES-128 VDAF instantiations.
 pub const PRIO3_AES128_VERIFY_KEY_LENGTH: usize = 16;
 

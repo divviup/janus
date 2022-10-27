@@ -10,6 +10,7 @@ pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 ///
 /// [1]: https://datatracker.ietf.org/doc/draft-irtf-cfrg-vdaf/03/
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum VdafInstance {
     /// A `prio3` counter using the AES 128 pseudorandom generator.
     Prio3Aes128Count,
