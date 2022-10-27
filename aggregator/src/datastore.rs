@@ -31,7 +31,7 @@ use rand::random;
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{
     collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
-    pin::Pin,
+    ops::RangeInclusive, pin::Pin,
 };
 use tokio::try_join;
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
@@ -2393,16 +2393,14 @@ ORDER BY id DESC
                 .into_iter()
                 .map(|row| async move {
                     let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
-                    let (min_size, max_size) = self.read_batch_size(task_id, &batch_id).await?;
-                    Ok(OutstandingBatch::new(
-                        *task_id, batch_id, min_size, max_size,
-                    ))
+                    let size = self.read_batch_size(task_id, &batch_id).await?;
+                    Ok(OutstandingBatch::new(*task_id, batch_id, size))
                 }),
         )
         .await
     }
 
-    // Return value is (min_size, max_size), where:
+    // Return value is an inclusive range [min_size, max_size], where:
     //  * min_size is the minimum possible number of reports included in the batch, i.e. all report
     //    aggregations in the batch which have reached the FINISHED state.
     //  * max_size is the maximum possible number of reports included in the batch, i.e. all report
@@ -2411,7 +2409,7 @@ ORDER BY id DESC
         &self,
         task_id: &TaskId,
         batch_id: &BatchId,
-    ) -> Result<(usize, usize), Error> {
+    ) -> Result<RangeInclusive<usize>, Error> {
         let stmt = self
             .tx
             .prepare_cached(
@@ -2440,7 +2438,7 @@ ORDER BY id DESC
             )
             .await?;
 
-        Ok((
+        Ok(RangeInclusive::new(
             row.get::<_, Option<i64>>("min_size")
                 .unwrap_or_default()
                 .try_into()?,
@@ -2708,7 +2706,7 @@ impl From<ring::error::Unspecified> for Error {
 
 /// This module contains models used by the datastore that are not DAP messages.
 pub mod models {
-    use std::fmt::Display;
+    use std::{fmt::Display, ops::RangeInclusive};
 
     use super::Error;
     use crate::{
@@ -3734,22 +3732,20 @@ pub mod models {
         task_id: TaskId,
         /// The batch ID for this outstanding batch.
         batch_id: BatchId,
-        /// The minimum possible size of the batch (i.e. the count of reports which have
-        /// successfully completed the aggregation process).
-        min_size: usize,
-        /// The maximum possible size of the batch (i.e. the count of reports which are currently
-        /// being aggregated, or have successfully completed the aggregation process).
-        max_size: usize,
+        /// The range of possible sizes of this batch. The minimum size is the count of reports
+        /// which have successfully completed the aggregation process, while the maximum size is the
+        /// count of reports which are currently being aggregated or have successfully completed the
+        /// aggregation process.
+        size: RangeInclusive<usize>,
     }
 
     impl OutstandingBatch {
         /// Creates a new [`OutstandingBatch`].
-        pub fn new(task_id: TaskId, batch_id: BatchId, min_size: usize, max_size: usize) -> Self {
+        pub fn new(task_id: TaskId, batch_id: BatchId, size: RangeInclusive<usize>) -> Self {
             Self {
                 task_id,
                 batch_id,
-                min_size,
-                max_size,
+                size,
             }
         }
 
@@ -3763,17 +3759,12 @@ pub mod models {
             &self.batch_id
         }
 
-        /// Gets the minimum possible size of this batch with current aggregation jobs (i.e. the
-        /// count of reports which have successfully completed the aggregation process).
-        pub fn min_size(&self) -> usize {
-            self.min_size
-        }
-
-        /// Gets the maximum possible size of this batch with current aggregation jobs (i.e. the
-        /// count of reports which are currently being aggregated, or have successfully completed
-        /// the aggregation process).
-        pub fn max_size(&self) -> usize {
-            self.max_size
+        /// Gets the range of possible sizes of this batch. The minimum size is the count of reports
+        /// which have successfully completed the aggregation process, while the maximum size is the
+        /// count of reports which are currently being aggregated or have successfully completed the
+        /// aggregation process.
+        pub fn size(&self) -> &RangeInclusive<usize> {
+            &self.size
         }
     }
 
@@ -4147,6 +4138,7 @@ mod tests {
     use std::{
         collections::{BTreeSet, HashMap, HashSet},
         iter,
+        ops::RangeInclusive,
         sync::Arc,
     };
     use uuid::Uuid;
@@ -7364,7 +7356,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             outstanding_batches,
-            Vec::from([OutstandingBatch::new(task_id, batch_id, 2, 4)])
+            Vec::from([OutstandingBatch::new(
+                task_id,
+                batch_id,
+                RangeInclusive::new(2, 4)
+            )])
         );
     }
 

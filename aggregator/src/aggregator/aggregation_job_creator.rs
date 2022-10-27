@@ -26,7 +26,9 @@ use prio::{
     },
 };
 use rand::{random, thread_rng, Rng};
-use std::{collections::HashMap, convert::Infallible, iter, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, convert::Infallible, iter, ops::RangeInclusive, sync::Arc, time::Duration,
+};
 use tokio::{
     select,
     sync::oneshot::{self, Receiver, Sender},
@@ -419,7 +421,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         .into_iter()
                         .map(|outstanding_batch| (false, outstanding_batch))
                         .chain(iter::repeat_with(|| {
-                            (true, OutstandingBatch::new(*task.id(), random(), 0, 0))
+                            (
+                                true,
+                                OutstandingBatch::new(
+                                    *task.id(),
+                                    random(),
+                                    RangeInclusive::new(0, 0),
+                                ),
+                            )
                         }));
 
                     // Main loop: repeatedly consume some of the unaggregated report IDs to generate
@@ -429,7 +438,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     let mut report_aggregations = Vec::<ReportAggregation<L, A>>::new();
                     let mut new_batches = Vec::new();
                     let (mut is_batch_new, mut batch) = batch_iter.next().unwrap(); // unwrap safety: infinite iterator
-                    let mut batch_max_size = batch.max_size();
+                    let mut batch_max_size = *batch.size().end();
                     loop {
                         // Figure out desired aggregation job size:
                         //  * It can't be larger than the number of reports available.
@@ -463,7 +472,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 // Move on to the next unfilled batch to see if we can allocate
                                 // reports to it.
                                 (is_batch_new, batch) = batch_iter.next().unwrap(); // unwrap safety: infinite iterator
-                                batch_max_size = batch.max_size();
+                                batch_max_size = *batch.size().end();
                                 continue;
                             } else {
                                 // We have run out of preexisting batches to evaluate adding reports
@@ -1142,10 +1151,10 @@ mod tests {
         // Verify outstanding batches.
         let mut total_max_size = 0;
         for outstanding_batch in outstanding_batches {
-            assert_eq!(outstanding_batch.min_size(), 0);
-            assert!(MIN_BATCH_SIZE <= outstanding_batch.max_size());
-            assert!(outstanding_batch.max_size() <= MAX_BATCH_SIZE);
-            total_max_size += outstanding_batch.max_size();
+            assert_eq!(outstanding_batch.size().start(), &0);
+            assert!(&MIN_BATCH_SIZE <= outstanding_batch.size().end());
+            assert!(outstanding_batch.size().end() <= &MAX_BATCH_SIZE);
+            total_max_size += *outstanding_batch.size().end();
         }
         assert_eq!(total_max_size, report_ids.len());
 
