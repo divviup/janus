@@ -2,7 +2,8 @@
 
 use crate::log_export_path;
 use daphne::DapGlobalConfig;
-use janus_aggregator::task::{Task, VdafInstance};
+use janus_aggregator::task::Task;
+use janus_core::task::VdafInstance;
 use janus_interop_binaries::test_util::{await_http_server, load_zstd_compressed_docker_image};
 use janus_messages::{HpkeAeadId, HpkeConfig, HpkeKdfId, HpkeKemId, Role};
 use portpicker::pick_unused_port;
@@ -309,17 +310,15 @@ impl<'a> Drop for Daphne<'a> {
 
 fn daphne_vdaf_config_from_janus_vdaf(vdaf: &VdafInstance) -> daphne::VdafConfig {
     match vdaf {
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
-            daphne::VdafConfig::Prio3(daphne::Prio3Config::Count)
-        }
+        VdafInstance::Prio3Aes128Count => daphne::VdafConfig::Prio3(daphne::Prio3Config::Count),
 
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { buckets }) => {
+        VdafInstance::Prio3Aes128Histogram { buckets } => {
             daphne::VdafConfig::Prio3(daphne::Prio3Config::Histogram {
                 buckets: buckets.clone(),
             })
         }
 
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+        VdafInstance::Prio3Aes128Sum { bits } => {
             daphne::VdafConfig::Prio3(daphne::Prio3Config::Sum { bits: *bits })
         }
 

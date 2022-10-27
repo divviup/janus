@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Context};
 use base64::URL_SAFE_NO_PAD;
 use clap::{value_parser, Arg, Command};
-use janus_aggregator::task::VdafInstance;
 use janus_client::ClientParameters;
-use janus_core::time::{MockClock, RealClock};
+use janus_core::{
+    task::VdafInstance,
+    time::{MockClock, RealClock},
+};
 use janus_interop_binaries::{
     install_tracing_subscriber,
     status::{ERROR, SUCCESS},
@@ -145,32 +147,34 @@ async fn handle_upload(
 ) -> anyhow::Result<()> {
     let vdaf_instance = request.vdaf.clone().into();
     match vdaf_instance {
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count {}) => {
+        VdafInstance::Prio3Aes128Count {} => {
             let measurement = request.measurement.as_primitive()?;
             let vdaf_client =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+
+        VdafInstance::Prio3Aes128CountVec { length } => {
             let measurement = request.measurement.as_primitive_vec()?;
             let vdaf_client = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3Aes128CountVec VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+
+        VdafInstance::Prio3Aes128Sum { bits } => {
             let measurement = request.measurement.as_primitive()?;
             let vdaf_client = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
-        VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
-            ref buckets,
-        }) => {
+
+        VdafInstance::Prio3Aes128Histogram { ref buckets } => {
             let measurement = request.measurement.as_primitive()?;
             let vdaf_client = Prio3::new_aes128_histogram(2, buckets)
                 .context("failed to construct Prio3Aes128Histogram VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
+
         _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
     }
     Ok(())

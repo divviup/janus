@@ -3,12 +3,15 @@ use crate::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
     datastore::{self, models::OutstandingBatch, Datastore},
-    task::{self, Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::Result;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use janus_core::time::{Clock, TimeExt};
+use janus_core::{
+    task::VdafInstance,
+    time::{Clock, TimeExt},
+};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     Role, TaskId,
@@ -227,35 +230,35 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         task: Arc<Task>,
     ) -> anyhow::Result<()> {
         match (task.query_type(), task.vdaf()) {
-            (task::QueryType::TimeInterval, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count)) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Count) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { .. })) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128CountVec { .. }) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128CountVecMultithreaded
                 >(task).await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. })) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Sum { .. }) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task)
                     .await
             }
 
-            (task::QueryType::TimeInterval, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. })) => {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task)
                     .await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count)) => {
+            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128Count) => {
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task, max_batch_size)
                     .await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { .. })) => {
+            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128CountVec { .. }) => {
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -263,13 +266,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                 >(task, max_batch_size).await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. })) => {
+            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128Sum { .. }) => {
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task, max_batch_size)
                     .await
             }
 
-            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. })) => {
+            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128Histogram { .. }) => {
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task, max_batch_size)
                     .await
@@ -715,7 +718,7 @@ mod tests {
         let report_time = Time::from_seconds_since_epoch(0);
         let leader_task = TaskBuilder::new(
             TaskQueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -723,7 +726,7 @@ mod tests {
 
         let helper_task = TaskBuilder::new(
             TaskQueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -817,7 +820,7 @@ mod tests {
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
-                VdafInstance::Prio3Aes128Count.into(),
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .build(),
@@ -953,7 +956,7 @@ mod tests {
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
-                VdafInstance::Prio3Aes128Count.into(),
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .build(),
@@ -1084,7 +1087,7 @@ mod tests {
                 TaskQueryType::FixedSize {
                     max_batch_size: MAX_BATCH_SIZE as u64,
                 },
-                VdafInstance::Prio3Aes128Count.into(),
+                VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
             .with_min_batch_size(MIN_BATCH_SIZE as u64)
@@ -1196,12 +1199,11 @@ mod tests {
         // more reports are accepted for a time interval after that interval already has a collect
         // job.
 
-        const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
         let vdaf = dummy_vdaf::Vdaf::new();
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
-                crate::task::VdafInstance::Fake,
+                VdafInstance::Fake,
                 Role::Leader,
             )
             .build(),
@@ -1253,9 +1255,7 @@ mod tests {
             max_aggregation_job_size: MAX_AGGREGATION_JOB_SIZE,
         };
         job_creator
-            .create_aggregation_jobs_for_task_with_param::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
-                Arc::clone(&task),
-            )
+            .create_aggregation_jobs_for_task_with_param::<0, dummy_vdaf::Vdaf>(Arc::clone(&task))
             .await
             .unwrap();
 
@@ -1267,7 +1267,7 @@ mod tests {
                 let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
                 Box::pin(async move {
                     Ok(read_aggregate_jobs_for_task_generic::<
-                        VERIFY_KEY_LENGTH,
+                        0,
                         TimeInterval,
                         dummy_vdaf::Vdaf,
                         Vec<_>,
@@ -1286,7 +1286,7 @@ mod tests {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // This will encompass the members of batch_2_reports.
-                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
+                    tx.put_collect_job::<0, dummy_vdaf::Vdaf>(&CollectJob::new(
                         *task.id(),
                         Uuid::new_v4(),
                         Interval::new(report_time, *task.time_precision()).unwrap(),
@@ -1295,7 +1295,7 @@ mod tests {
                     ))
                     .await?;
                     // This will encompass the members of both batch_1_reports and batch_2_reports.
-                    tx.put_collect_job::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&CollectJob::new(
+                    tx.put_collect_job::<0, dummy_vdaf::Vdaf>(&CollectJob::new(
                         *task.id(),
                         Uuid::new_v4(),
                         Interval::new(
@@ -1317,9 +1317,7 @@ mod tests {
 
         // Run again, this time it should create some aggregation jobs.
         job_creator
-            .create_aggregation_jobs_for_task_with_param::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
-                Arc::clone(&task),
-            )
+            .create_aggregation_jobs_for_task_with_param::<0, dummy_vdaf::Vdaf>(Arc::clone(&task))
             .await
             .unwrap();
 
@@ -1330,7 +1328,7 @@ mod tests {
                 let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
                 Box::pin(async move {
                     Ok(read_aggregate_jobs_for_task_generic::<
-                        VERIFY_KEY_LENGTH,
+                        0,
                         TimeInterval,
                         dummy_vdaf::Vdaf,
                         Vec<_>,
@@ -1386,9 +1384,7 @@ mod tests {
         // Run once more, and confirm that no further aggregation jobs are created.
         // Run again, this time it should create some aggregation jobs.
         job_creator
-            .create_aggregation_jobs_for_task_with_param::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
-                Arc::clone(&task),
-            )
+            .create_aggregation_jobs_for_task_with_param::<0, dummy_vdaf::Vdaf>(Arc::clone(&task))
             .await
             .unwrap();
 
@@ -1400,7 +1396,7 @@ mod tests {
                 let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
                 Box::pin(async move {
                     Ok(read_aggregate_jobs_for_task_generic::<
-                        VERIFY_KEY_LENGTH,
+                        0,
                         TimeInterval,
                         dummy_vdaf::Vdaf,
                         Vec<_>,

@@ -19,7 +19,7 @@ use crate::{
         Datastore,
     },
     messages::TimeExt,
-    task::{Task, VdafInstance, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use bytes::Bytes;
 use http::{
@@ -33,7 +33,7 @@ use janus_core::{
         HpkeApplicationInfo, Label,
     },
     http::response_to_problem_details,
-    task::{AuthenticationToken, DAP_AUTH_HEADER},
+    task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER},
     time::Clock,
 };
 use janus_messages::{
@@ -83,9 +83,9 @@ use warp::{
     trace, Filter, Rejection, Reply,
 };
 
-#[cfg(test)]
+#[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
-#[cfg(test)]
+#[cfg(feature = "test-util")]
 use prio::vdaf::VdafError;
 
 /// Errors returned by functions and methods in this module
@@ -590,36 +590,34 @@ impl TaskAggregator {
     /// aggregator.
     fn new(task: Task) -> Result<Self, Error> {
         let vdaf_ops = match task.vdaf() {
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
+            VdafInstance::Prio3Aes128Count => {
                 let vdaf = Prio3::new_aes128_count(2)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Aes128Count(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+            VdafInstance::Prio3Aes128CountVec { length } => {
                 let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, *length)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Aes128CountVec(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+            VdafInstance::Prio3Aes128Sum { bits } => {
                 let vdaf = Prio3::new_aes128_sum(2, *bits)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Aes128Sum(Arc::new(vdaf), verify_key)
             }
 
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
-                buckets,
-            }) => {
+            VdafInstance::Prio3Aes128Histogram { buckets } => {
                 let vdaf = Prio3::new_aes128_histogram(2, buckets)?;
                 let verify_key = task.primary_vdaf_verify_key()?;
                 VdafOps::Prio3Aes128Histogram(Arc::new(vdaf), verify_key)
             }
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafInstance::Fake => VdafOps::Fake(Arc::new(dummy_vdaf::Vdaf::new())),
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafInstance::FakeFailsPrepInit => VdafOps::Fake(Arc::new(
                 dummy_vdaf::Vdaf::new().with_prep_init_fn(|_| -> Result<(), VdafError> {
                     Err(VdafError::Uncategorized(
@@ -628,11 +626,10 @@ impl TaskAggregator {
                 }),
             )),
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafInstance::FakeFailsPrepStep => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
                 VdafOps::Fake(Arc::new(dummy_vdaf::Vdaf::new().with_prep_step_fn(
-                    || -> Result<PrepareTransition<dummy_vdaf::Vdaf, VERIFY_KEY_LENGTH>, VdafError> {
+                    || -> Result<PrepareTransition<dummy_vdaf::Vdaf, 0>, VdafError> {
                         Err(VdafError::Uncategorized(
                             "FakeFailsPrepStep failed at prep_step".to_string(),
                         ))
@@ -793,7 +790,7 @@ enum VdafOps {
         VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
     ),
 
-    #[cfg(test)]
+    #[cfg(feature = "test-util")]
     Fake(Arc<dummy_vdaf::Vdaf>),
 }
 
@@ -817,6 +814,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128CountVec(_, _) => {
                 Self::handle_upload_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -831,6 +829,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128Sum(_, _) => {
                 Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum, _>(
                     datastore,
@@ -841,6 +840,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128Histogram(_, _) => Self::handle_upload_generic::<
                 PRIO3_AES128_VERIFY_KEY_LENGTH,
                 Prio3Aes128Histogram,
@@ -854,10 +854,9 @@ impl VdafOps {
             )
             .await,
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafOps::Fake(_) => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                Self::handle_upload_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
+                Self::handle_upload_generic::<0, dummy_vdaf::Vdaf, _>(
                     datastore,
                     clock,
                     upload_decrypt_failure_counter,
@@ -896,6 +895,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128CountVec(vdaf, verify_key) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -912,6 +912,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128Sum(vdaf, verify_key) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -928,6 +929,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128Histogram(vdaf, verify_key) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -945,7 +947,7 @@ impl VdafOps {
                 .await
             }
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafOps::Fake(vdaf) => {
                 const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
                 Self::handle_aggregate_init_generic::<
@@ -990,6 +992,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128CountVec(vdaf, _) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1005,6 +1008,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128Sum(vdaf, _) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1020,6 +1024,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128Histogram(vdaf, _) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1036,7 +1041,7 @@ impl VdafOps {
                 .await
             }
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafOps::Fake(vdaf) => {
                 const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
                 Self::handle_aggregate_continue_generic::<
@@ -1630,6 +1635,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128CountVec(_, _) => {
                 Self::handle_collect_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1638,6 +1644,7 @@ impl VdafOps {
                 >(datastore, task, collect_req)
                 .await
             }
+
             VdafOps::Prio3Aes128Sum(_, _) => {
                 Self::handle_collect_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum, _>(
                     datastore,
@@ -1646,6 +1653,7 @@ impl VdafOps {
                 )
                 .await
             }
+
             VdafOps::Prio3Aes128Histogram(_, _) => {
                 Self::handle_collect_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1655,15 +1663,10 @@ impl VdafOps {
                 .await
             }
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafOps::Fake(_) => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                Self::handle_collect_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    task,
-                    collect_req,
-                )
-                .await
+                Self::handle_collect_generic::<0, dummy_vdaf::Vdaf, _>(datastore, task, collect_req)
+                    .await
             }
         }
     }
@@ -1749,6 +1752,7 @@ impl VdafOps {
                 >(datastore, task, collect_job_id)
                 .await
             }
+
             VdafOps::Prio3Aes128CountVec(_, _) => {
                 Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1757,6 +1761,7 @@ impl VdafOps {
                 >(datastore, task, collect_job_id)
                 .await
             }
+
             VdafOps::Prio3Aes128Sum(_, _) => {
                 Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1765,6 +1770,7 @@ impl VdafOps {
                 >(datastore, task, collect_job_id)
                 .await
             }
+
             VdafOps::Prio3Aes128Histogram(_, _) => {
                 Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1774,10 +1780,9 @@ impl VdafOps {
                 .await
             }
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafOps::Fake(_) => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                Self::handle_get_collect_job_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
+                Self::handle_get_collect_job_generic::<0, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
                     collect_job_id,
@@ -1892,6 +1897,7 @@ impl VdafOps {
                 >(datastore, collect_job_id)
                 .await
             }
+
             VdafOps::Prio3Aes128CountVec(_, _) => {
                 Self::handle_delete_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1900,6 +1906,7 @@ impl VdafOps {
                 >(datastore, collect_job_id)
                 .await
             }
+
             VdafOps::Prio3Aes128Sum(_, _) => {
                 Self::handle_delete_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1908,6 +1915,7 @@ impl VdafOps {
                 >(datastore, collect_job_id)
                 .await
             }
+
             VdafOps::Prio3Aes128Histogram(_, _) => {
                 Self::handle_delete_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1917,10 +1925,9 @@ impl VdafOps {
                 .await
             }
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafOps::Fake(_) => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                Self::handle_delete_collect_job_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
+                Self::handle_delete_collect_job_generic::<0, dummy_vdaf::Vdaf, _>(
                     datastore,
                     collect_job_id,
                 )
@@ -1981,6 +1988,7 @@ impl VdafOps {
                 >(datastore, task, aggregate_share_req)
                 .await
             }
+
             VdafOps::Prio3Aes128CountVec(_, _) => {
                 Self::handle_aggregate_share_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1989,6 +1997,7 @@ impl VdafOps {
                 >(datastore, task, aggregate_share_req)
                 .await
             }
+
             VdafOps::Prio3Aes128Sum(_, _) => {
                 Self::handle_aggregate_share_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1997,6 +2006,7 @@ impl VdafOps {
                 >(datastore, task, aggregate_share_req)
                 .await
             }
+
             VdafOps::Prio3Aes128Histogram(_, _) => {
                 Self::handle_aggregate_share_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -2006,10 +2016,9 @@ impl VdafOps {
                 .await
             }
 
-            #[cfg(test)]
+            #[cfg(feature = "test-util")]
             VdafOps::Fake(_) => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
-                Self::handle_aggregate_share_generic::<VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf, _>(
+                Self::handle_aggregate_share_generic::<0, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
                     aggregate_share_req,
@@ -2892,7 +2901,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -3003,7 +3012,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -3116,7 +3125,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -3262,7 +3271,7 @@ mod tests {
         // Reports with timestamps past the task's expiration should be rejected.
         let task_expire_soon = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_task_expiration(clock.now().add(&Duration::from_seconds(60)).unwrap())
@@ -3365,7 +3374,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -3422,7 +3431,7 @@ mod tests {
     ) {
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -3661,7 +3670,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -3745,7 +3754,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -3833,7 +3842,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -4138,7 +4147,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            crate::task::VdafInstance::FakeFailsPrepInit,
+            VdafInstance::FakeFailsPrepInit,
             Role::Helper,
         )
         .build();
@@ -4215,7 +4224,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            crate::task::VdafInstance::FakeFailsPrepInit,
+            VdafInstance::FakeFailsPrepInit,
             Role::Helper,
         )
         .build();
@@ -4291,7 +4300,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            crate::task::VdafInstance::FakeFailsPrepInit,
+            VdafInstance::FakeFailsPrepInit,
             Role::Helper,
         )
         .build();
@@ -4368,7 +4377,7 @@ mod tests {
         let aggregation_job_id = random();
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -4686,7 +4695,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
@@ -5246,12 +5255,8 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -5363,7 +5368,7 @@ mod tests {
         // Prepare parameters.
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            crate::task::VdafInstance::FakeFailsPrepStep,
+            VdafInstance::FakeFailsPrepStep,
             Role::Helper,
         )
         .build();
@@ -5524,12 +5529,8 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -5640,12 +5641,8 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let aggregation_job_id = random();
         let report_metadata_0 = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -5799,12 +5796,8 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let aggregation_job_id = random();
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -5912,12 +5905,8 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -5966,12 +5955,8 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Leader,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -6030,12 +6015,8 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Leader,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -6094,7 +6075,7 @@ mod tests {
         // Prepare parameters.
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -6209,7 +6190,7 @@ mod tests {
         // Prepare parameters.
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -6344,7 +6325,7 @@ mod tests {
             generate_test_hpke_config_and_private_key();
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_collector_hpke_config(collector_hpke_config)
@@ -6527,12 +6508,8 @@ mod tests {
     async fn collect_request_batch_queried_too_many_times() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Leader,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
 
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
@@ -6629,12 +6606,8 @@ mod tests {
     async fn collect_request_batch_overlap() {
         install_test_trace_subscriber();
 
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Leader,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
 
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
@@ -6746,7 +6719,7 @@ mod tests {
         // Prepare parameters.
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
@@ -6841,12 +6814,8 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Leader,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -6900,12 +6869,8 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Helper,
-        )
-        .build();
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -6965,16 +6930,12 @@ mod tests {
 
         let (collector_hpke_config, collector_hpke_recipient) =
             generate_test_hpke_config_and_private_key();
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            crate::task::VdafInstance::Fake,
-            Role::Helper,
-        )
-        .with_max_batch_query_count(1)
-        .with_time_precision(Duration::from_seconds(500))
-        .with_min_batch_size(10)
-        .with_collector_hpke_config(collector_hpke_config.clone())
-        .build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+            .with_max_batch_query_count(1)
+            .with_time_precision(Duration::from_seconds(500))
+            .with_min_batch_size(10)
+            .with_collector_hpke_config(collector_hpke_config.clone())
+            .build();
 
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;

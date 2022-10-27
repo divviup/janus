@@ -1,6 +1,6 @@
 use backoff::ExponentialBackoffBuilder;
 use itertools::Itertools;
-use janus_aggregator::task::{self, test_util::TaskBuilder, QueryType, Task};
+use janus_aggregator::task::{test_util::TaskBuilder, QueryType, Task};
 use janus_client::{Client, ClientParameters};
 use janus_collector::{test_util::collect_with_rewritten_url, Collector, CollectorParameters};
 use janus_core::{
@@ -21,7 +21,7 @@ pub fn test_task_builders(vdaf: VdafInstance) -> (HpkePrivateKey, TaskBuilder, T
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
     let (collector_hpke_config, collector_private_key) =
         generate_test_hpke_config_and_private_key();
-    let leader_task = TaskBuilder::new(QueryType::TimeInterval, vdaf.into(), Role::Leader)
+    let leader_task = TaskBuilder::new(QueryType::TimeInterval, vdaf, Role::Leader)
         .with_aggregator_endpoints(Vec::from([
             Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
             Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
@@ -163,7 +163,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     let total_measurements: usize = leader_task.min_batch_size().try_into().unwrap();
 
     match leader_task.vdaf() {
-        task::VdafInstance::Real(VdafInstance::Prio3Aes128Count) => {
+        VdafInstance::Prio3Aes128Count => {
             let vdaf = Prio3::new_aes128_count(2).unwrap();
 
             let num_nonzero_measurements = total_measurements / 2;
@@ -185,7 +185,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        task::VdafInstance::Real(VdafInstance::Prio3Aes128Sum { bits }) => {
+        VdafInstance::Prio3Aes128Sum { bits } => {
             let vdaf = Prio3::new_aes128_sum(2, *bits).unwrap();
 
             let measurements = iter::repeat_with(|| (random::<u128>() as u128) >> (128 - bits))
@@ -203,7 +203,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        task::VdafInstance::Real(VdafInstance::Prio3Aes128Histogram { buckets }) => {
+        VdafInstance::Prio3Aes128Histogram { buckets } => {
             let vdaf = Prio3::new_aes128_histogram(2, buckets).unwrap();
 
             let mut aggregate_result = vec![0; buckets.len() + 1];
@@ -233,7 +233,7 @@ pub async fn submit_measurements_and_verify_aggregate(
             )
             .await;
         }
-        task::VdafInstance::Real(VdafInstance::Prio3Aes128CountVec { length }) => {
+        VdafInstance::Prio3Aes128CountVec { length } => {
             let vdaf = Prio3::new_aes128_count_vec(2, *length).unwrap();
 
             let measurements = iter::repeat_with(|| {

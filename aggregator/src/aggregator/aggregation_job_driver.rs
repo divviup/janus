@@ -8,13 +8,14 @@ use crate::{
         },
         Datastore,
     },
-    task::{Task, VdafInstance, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::{anyhow, Context as _, Result};
 use derivative::Derivative;
 use futures::future::{try_join_all, BoxFuture, FutureExt};
 use janus_core::{
     hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
+    task::VdafInstance,
     time::Clock,
 };
 use janus_messages::{
@@ -87,24 +88,25 @@ impl AggregationJobDriver {
     ) -> Result<()> {
         // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match lease.leased().vdaf() {
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
+            VdafInstance::Prio3Aes128Count => {
                 let vdaf = Arc::new(Prio3::new_aes128_count(2)?);
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Count>(datastore, vdaf, lease)
                     .await
             }
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
+
+            VdafInstance::Prio3Aes128CountVec { length } => {
                 let vdaf = Arc::new(Prio3::new_aes128_count_vec_multithreaded(2, *length)?);
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128CountVecMultithreaded>(datastore, vdaf, lease)
                     .await
             }
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
+
+            VdafInstance::Prio3Aes128Sum { bits } => {
                 let vdaf = Arc::new(Prio3::new_aes128_sum(2, *bits)?);
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Sum>(datastore, vdaf, lease)
                     .await
             }
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
-                ref buckets,
-            }) => {
+
+            VdafInstance::Prio3Aes128Histogram { buckets } => {
                 let vdaf = Arc::new(Prio3::new_aes128_histogram(2, buckets)?);
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Histogram>(datastore, vdaf, lease)
                     .await
@@ -787,19 +789,22 @@ impl AggregationJobDriver {
     ) -> Result<()> {
         // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match lease.leased().vdaf() {
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
+            VdafInstance::Prio3Aes128Count => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Count>(datastore, lease)
                     .await
             }
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }) => {
+
+            VdafInstance::Prio3Aes128CountVec { .. } => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128CountVecMultithreaded>(datastore, lease)
                     .await
             }
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. }) => {
+
+            VdafInstance::Prio3Aes128Sum { .. } => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Sum>(datastore, lease)
                     .await
             }
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. }) => {
+
+            VdafInstance::Prio3Aes128Histogram { .. } => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Histogram>(datastore, lease)
                     .await
             }
@@ -985,7 +990,7 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
@@ -1199,7 +1204,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
@@ -1418,7 +1423,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
@@ -1660,7 +1665,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
@@ -1839,7 +1844,7 @@ mod tests {
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count.into(),
+            VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .with_aggregator_endpoints(Vec::from([
