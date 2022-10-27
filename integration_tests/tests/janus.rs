@@ -137,7 +137,7 @@ impl<'a> JanusPair<'a> {
     }
 }
 
-/// This test places Janus in both the leader & helper roles, and uses Prio3Aes128Count.
+/// This test exercises Prio3Aes128Count with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_count() {
     install_test_trace_subscriber();
@@ -155,7 +155,7 @@ async fn janus_janus_count() {
     .await;
 }
 
-/// This test places Janus in both the leader & helper roles, and uses Prio3Aes128Sum.
+/// This test exercises Prio3Aes128Sum with Janus as both the leader and the helper.
 #[tokio::test(flavor = "multi_thread")]
 async fn janus_janus_sum_16() {
     install_test_trace_subscriber();
@@ -164,6 +164,30 @@ async fn janus_janus_sum_16() {
     let container_client = container_client();
     let janus_pair =
         JanusPair::new(&container_client, VdafInstance::Prio3Aes128Sum { bits: 16 }).await;
+
+    // Run the behavioral test.
+    submit_measurements_and_verify_aggregate(
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &janus_pair.leader_task,
+        &janus_pair.collector_private_key,
+    )
+    .await;
+}
+
+/// This test exercises Prio3Aes128Histogram with Janus as both the leader and the helper.
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_janus_histogram_4_buckets() {
+    install_test_trace_subscriber();
+
+    let buckets = Vec::from([3, 6, 8]);
+
+    // Start servers.
+    let container_client = container_client();
+    let janus_pair = JanusPair::new(
+        &container_client,
+        VdafInstance::Prio3Aes128Histogram { buckets },
+    )
+    .await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(

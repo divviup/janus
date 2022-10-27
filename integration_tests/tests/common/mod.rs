@@ -11,7 +11,7 @@ use janus_core::{
 };
 use janus_messages::{Duration, Interval, Role};
 use prio::vdaf::{self, prio3::Prio3};
-use rand::random;
+use rand::{random, thread_rng, Rng};
 use reqwest::Url;
 use std::iter;
 use tokio::time;
@@ -200,6 +200,36 @@ pub async fn submit_measurements_and_verify_aggregate(
                 &measurements,
                 &(),
                 &measurements.iter().sum(),
+            )
+            .await;
+        }
+        task::VdafInstance::Real(VdafInstance::Prio3Aes128Histogram { buckets }) => {
+            let vdaf = Prio3::new_aes128_histogram(2, buckets).unwrap();
+
+            let mut aggregate_result = vec![0; buckets.len() + 1];
+            aggregate_result.resize(buckets.len() + 1, 0);
+            let measurements = iter::repeat_with(|| {
+                let choice = thread_rng().gen_range(0..=buckets.len());
+                aggregate_result[choice] += 1;
+                let measurement = if choice == buckets.len() {
+                    // This goes into the counter covering the range that extends to positive infinity.
+                    buckets[buckets.len() - 1] + 1
+                } else {
+                    buckets[choice]
+                };
+                measurement as u128
+            })
+            .take(total_measurements)
+            .collect::<Vec<_>>();
+
+            submit_measurements_and_verify_aggregate_generic(
+                vdaf,
+                aggregator_endpoints,
+                leader_task,
+                collector_private_key,
+                &measurements,
+                &(),
+                &aggregate_result,
             )
             .await;
         }
