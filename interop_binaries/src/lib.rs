@@ -1,6 +1,9 @@
 use base64::URL_SAFE_NO_PAD;
-use janus_aggregator::task::{QueryType, Task, VdafInstance};
-use janus_core::hpke::{generate_hpke_config_and_private_key, HpkePrivateKey};
+use janus_aggregator::task::{QueryType, Task};
+use janus_core::{
+    hpke::{generate_hpke_config_and_private_key, HpkePrivateKey},
+    task::VdafInstance,
+};
 use janus_messages::{
     query_type::{FixedSize, QueryType as _, TimeInterval},
     HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
@@ -101,24 +104,20 @@ pub enum VdafObject {
 impl From<VdafInstance> for VdafObject {
     fn from(vdaf: VdafInstance) -> Self {
         match vdaf {
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count) => {
-                VdafObject::Prio3Aes128Count
-            }
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { length }) => {
-                VdafObject::Prio3Aes128CountVec {
-                    length: NumberAsString(length),
-                }
-            }
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits }) => {
-                VdafObject::Prio3Aes128Sum {
-                    bits: NumberAsString(bits),
-                }
-            }
-            VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
-                buckets,
-            }) => VdafObject::Prio3Aes128Histogram {
+            VdafInstance::Prio3Aes128Count => VdafObject::Prio3Aes128Count,
+
+            VdafInstance::Prio3Aes128CountVec { length } => VdafObject::Prio3Aes128CountVec {
+                length: NumberAsString(length),
+            },
+
+            VdafInstance::Prio3Aes128Sum { bits } => VdafObject::Prio3Aes128Sum {
+                bits: NumberAsString(bits),
+            },
+
+            VdafInstance::Prio3Aes128Histogram { buckets } => VdafObject::Prio3Aes128Histogram {
                 buckets: buckets.iter().copied().map(NumberAsString).collect(),
             },
+
             _ => panic!("Unsupported VDAF: {:?}", vdaf),
         }
     }
@@ -127,22 +126,17 @@ impl From<VdafInstance> for VdafObject {
 impl From<VdafObject> for VdafInstance {
     fn from(vdaf: VdafObject) -> Self {
         match vdaf {
-            VdafObject::Prio3Aes128Count => {
-                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count)
-            }
+            VdafObject::Prio3Aes128Count => VdafInstance::Prio3Aes128Count,
+
             VdafObject::Prio3Aes128CountVec { length } => {
-                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec {
-                    length: length.0,
-                })
+                VdafInstance::Prio3Aes128CountVec { length: length.0 }
             }
-            VdafObject::Prio3Aes128Sum { bits } => {
-                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { bits: bits.0 })
-            }
-            VdafObject::Prio3Aes128Histogram { buckets } => {
-                VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram {
-                    buckets: buckets.iter().map(|value| value.0).collect(),
-                })
-            }
+
+            VdafObject::Prio3Aes128Sum { bits } => VdafInstance::Prio3Aes128Sum { bits: bits.0 },
+
+            VdafObject::Prio3Aes128Histogram { buckets } => VdafInstance::Prio3Aes128Histogram {
+                buckets: buckets.iter().map(|value| value.0).collect(),
+            },
         }
     }
 }

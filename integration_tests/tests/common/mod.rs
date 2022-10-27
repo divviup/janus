@@ -25,7 +25,7 @@ pub fn test_task_builders() -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
         generate_test_hpke_config_and_private_key();
     let leader_task = TaskBuilder::new(
         QueryType::TimeInterval,
-        VdafInstance::Prio3Aes128Count.into(),
+        VdafInstance::Prio3Aes128Count,
         Role::Leader,
     )
     .with_aggregator_endpoints(Vec::from([
