@@ -11,7 +11,7 @@ use crate::{
     task::{Task, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use derivative::Derivative;
-use futures::{future::BoxFuture, try_join};
+use futures::future::BoxFuture;
 #[cfg(test)]
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{report_id::ReportIdChecksumExt, time::Clock};
@@ -35,6 +35,7 @@ use prio::{
     },
 };
 use std::sync::Arc;
+use tokio::try_join;
 use tracing::{debug, error, info, warn};
 
 #[cfg(test)]

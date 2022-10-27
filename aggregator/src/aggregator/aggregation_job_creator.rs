@@ -52,6 +52,7 @@ mod private {
     impl Sealed for janus_core::test_util::dummy_vdaf::Vdaf {}
 }
 
+// TODO(#680): add metrics to aggregation job creator.
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
     datastore: Datastore<C>,
@@ -247,13 +248,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Count)) => {
-                let max_batch_size = usize::try_from(*max_batch_size)?;
+                let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task, max_batch_size)
                     .await
             }
 
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128CountVec { .. })) => {
-                let max_batch_size = usize::try_from(*max_batch_size)?;
+                let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128CountVecMultithreaded
@@ -261,13 +262,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             }
 
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Sum { .. })) => {
-                let max_batch_size = usize::try_from(*max_batch_size)?;
+                let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task, max_batch_size)
                     .await
             }
 
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Real(janus_core::task::VdafInstance::Prio3Aes128Histogram { .. })) => {
-                let max_batch_size = usize::try_from(*max_batch_size)?;
+                let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task, max_batch_size)
                     .await
             }
@@ -387,7 +388,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     >(
         self: Arc<Self>,
         task: Arc<Task>,
-        max_batch_size: usize,
+        task_max_batch_size: u64,
     ) -> anyhow::Result<()>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -396,13 +397,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
+        let (task_min_batch_size, task_max_batch_size) = (
+            usize::try_from(task.min_batch_size())?,
+            usize::try_from(task_max_batch_size)?,
+        );
         Ok(self
             .datastore
             .run_tx(|tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
-                    let min_batch_size = usize::try_from(task.min_batch_size())?;
-
                     // Find unaggregated client reports & existing unfilled batches.
                     let (mut unaggregated_report_ids, outstanding_batches) = try_join!(
                         tx.get_unaggregated_client_report_ids_for_task(task.id()),
@@ -410,7 +413,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     )?;
 
                     // First attempt to allocate unaggregated reports to existing unfilled batches,
-                    // then generate new batches as necessary.
+                    // then generate new batches as necessary. This iterator has no end and
+                    // therefore it is safe to unwrap the result of a call to `next`.
                     let mut batch_iter = outstanding_batches
                         .into_iter()
                         .map(|outstanding_batch| (false, outstanding_batch))
@@ -424,8 +428,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     let mut aggregation_jobs = Vec::<AggregationJob<L, FixedSize, A>>::new();
                     let mut report_aggregations = Vec::<ReportAggregation<L, A>>::new();
                     let mut new_batches = Vec::new();
-                    let (mut is_batch_new, mut batch) = batch_iter.next().unwrap();
-                    let mut max_size = batch.max_size();
+                    let (mut is_batch_new, mut batch) = batch_iter.next().unwrap(); // unwrap safety: infinite iterator
+                    let mut batch_max_size = batch.max_size();
                     loop {
                         // Figure out desired aggregation job size:
                         //  * It can't be larger than the number of reports available.
@@ -438,16 +442,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         let aggregation_job_size = [
                             unaggregated_report_ids.len(),
                             this.max_aggregation_job_size,
-                            max_batch_size - max_size,
+                            task_max_batch_size - batch_max_size,
                         ]
                         .into_iter()
                         .min()
-                        .unwrap();
+                        .unwrap(); // unwrap safety: iterator is non-empty, so result is Some
 
                         if aggregation_job_size < this.min_aggregation_job_size {
-                            if !is_batch_new
-                                && max_size < min_batch_size
-                                && max_size + aggregation_job_size >= min_batch_size
+                            if batch_max_size < task_min_batch_size
+                                && batch_max_size + aggregation_job_size >= task_min_batch_size
                             {
                                 // This batch is short of the minimum batch size, and requires an
                                 // unusually small aggregation job (smaller than the normal minimum
@@ -459,8 +462,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             } else if !is_batch_new {
                                 // Move on to the next unfilled batch to see if we can allocate
                                 // reports to it.
-                                (is_batch_new, batch) = batch_iter.next().unwrap();
-                                max_size = batch.max_size();
+                                (is_batch_new, batch) = batch_iter.next().unwrap(); // unwrap safety: infinite iterator
+                                batch_max_size = batch.max_size();
                                 continue;
                             } else {
                                 // We have run out of preexisting batches to evaluate adding reports
@@ -502,12 +505,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                     )
                                 }),
                         );
+
                         if is_batch_new {
                             new_batches.push(*batch.id())
                         }
-
                         is_batch_new = false;
-                        max_size += aggregation_job_size;
+                        batch_max_size += aggregation_job_size;
                     }
 
                     // Write the outstanding batches, aggregation jobs, & report aggregations we
@@ -1095,7 +1098,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 for report in &reports {
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report(report).await?;
                 }
                 Ok(())
             })

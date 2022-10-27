@@ -14,8 +14,7 @@ use crate::{
     SecretBytes,
 };
 use anyhow::anyhow;
-use futures::{future::try_join_all, try_join};
-
+use futures::future::try_join_all;
 use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken, time::Clock};
 use janus_messages::{
     query_type::QueryType, AggregationJobId, BatchId, Duration, Extension, HpkeCiphertext,
@@ -34,6 +33,7 @@ use std::{
     collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
     pin::Pin,
 };
+use tokio::try_join;
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
 use uuid::Uuid;
@@ -3726,12 +3726,13 @@ pub mod models {
     {
     }
 
-    /// An outstanding batch, which is a batch which has not yet started collection.
+    /// An outstanding batch, which is a batch which has not yet started collection. Such a batch
+    /// may have additional reports allocated to it. Only applies to fixed-size batches.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct OutstandingBatch {
-        /// The task ID for this outstanding task.
+        /// The task ID for this outstanding batch.
         task_id: TaskId,
-        /// The batch ID for this outstanding task.
+        /// The batch ID for this outstanding batch.
         batch_id: BatchId,
         /// The minimum possible size of the batch (i.e. the count of reports which have
         /// successfully completed the aggregation process).
@@ -3768,7 +3769,7 @@ pub mod models {
             self.min_size
         }
 
-        /// Gets the maximum possible size of this batch with current aggregatino jobs (i.e. the
+        /// Gets the maximum possible size of this batch with current aggregation jobs (i.e. the
         /// count of reports which are currently being aggregated, or have successfully completed
         /// the aggregation process).
         pub fn max_size(&self) -> usize {
@@ -7233,7 +7234,7 @@ mod tests {
                     let task = TaskBuilder::new(
                         QueryType::FixedSize { max_batch_size: 10 },
                         VdafInstance::Fake,
-                        Role::Helper,
+                        Role::Leader,
                     )
                     .build();
                     tx.put_task(&task).await?;
