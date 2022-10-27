@@ -27,7 +27,6 @@ jobs:
         token_format: "access_token"
         access_token_lifetime: "3600s"
         access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
-        export_environment_variables: true
     - id: "gcp-auth-public"
       name: "Authenticate to GCP (public repositories)"
       uses: "google-github-actions/auth@v0"
@@ -37,7 +36,6 @@ jobs:
         token_format: "access_token"
         access_token_lifetime: "3600s"
         access_token_scopes: "https://www.googleapis.com/auth/cloud-platform"
-        export_environment_variables: true
     - uses: "docker/login-action@v2"
       with:
         registry: "us-west2-docker.pkg.dev"
