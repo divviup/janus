@@ -31,7 +31,7 @@ pub enum Error {
 }
 
 /// Identifiers for query types used by a task, along with query-type specific configuration.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum QueryType {
     /// Time-interval: used to support a collection style based on fixed time intervals.
     TimeInterval,
