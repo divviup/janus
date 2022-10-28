@@ -1,0 +1,11 @@
+database:
+  url: postgres://postgres@127.0.0.1:5432/postgres
+health_check_listen_address: 0.0.0.0:8002
+logging_config:
+  force_json_output: true
+min_job_discovery_delay_secs: 1
+max_job_discovery_delay_secs: 2
+max_concurrent_job_workers: 10
+worker_lease_clock_skew_allowance_secs: 1
+worker_lease_duration_secs: 10
+maximum_attempts_before_failure: 3
