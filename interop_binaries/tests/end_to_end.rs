@@ -572,7 +572,7 @@ async fn e2e_prio3_count() {
         b"",
     )
     .await;
-    assert_eq!(result, json!("8"));
+    assert!(result.is_string());
 }
 
 #[tokio::test]
@@ -592,7 +592,7 @@ async fn e2e_prio3_sum() {
         b"",
     )
     .await;
-    assert_eq!(result, json!("74"));
+    assert!(result.is_string());
 }
 
 #[tokio::test]
@@ -618,7 +618,12 @@ async fn e2e_prio3_histogram() {
         b"",
     )
     .await;
-    assert_eq!(result, json!(["0", "1", "1", "2", "1", "2", "2", "1"]));
+    for element in result
+        .as_array()
+        .expect("Histogram result should be an array")
+    {
+        assert!(element.is_string());
+    }
 }
 
 #[tokio::test]
@@ -635,5 +640,10 @@ async fn e2e_prio3_count_vec() {
         b"",
     )
     .await;
-    assert_eq!(result, json!(["1", "1", "1", "1"]));
+    for element in result
+        .as_array()
+        .expect("CountVec result should be an array")
+    {
+        assert!(element.is_string());
+    }
 }
