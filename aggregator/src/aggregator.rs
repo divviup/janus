@@ -1678,11 +1678,14 @@ impl VdafOps {
         req: Arc<CollectReq<TimeInterval>>,
     ) -> Result<Uuid, Error>
     where
-        A::AggregationParam: Send + Sync,
+        A::AggregationParam: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
     {
+        let aggregation_param =
+            A::AggregationParam::get_decoded(req.as_ref().aggregation_parameter())?;
+
         // Check that the batch interval is valid for the task
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
         if !task.validate_batch_interval(req.query().batch_interval()) {
@@ -1694,12 +1697,10 @@ impl VdafOps {
 
         Ok(datastore
             .run_tx(move |tx| {
+                let aggregation_param = aggregation_param.clone();
                 let task = task.clone();
                 let req = req.clone();
                 Box::pin(async move {
-                    let aggregation_param =
-                        A::AggregationParam::get_decoded(req.aggregation_parameter())?;
-
                     if let Some(collect_job_id) = tx
                         .get_collect_job_id::<L, A>(
                             task.id(),
@@ -2358,7 +2359,9 @@ where
                     Err(Error::InvalidConfiguration(_)) => {
                         StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
-                    Err(Error::MessageDecode(_)) => StatusCode::BAD_REQUEST.into_response(),
+                    Err(Error::MessageDecode(_)) => {
+                        build_problem_details_response(DapProblemType::UnrecognizedMessage, None)
+                    }
                     Err(Error::ReportTooLate(task_id, _, _)) => {
                         build_problem_details_response(DapProblemType::ReportTooLate, Some(task_id))
                     }
@@ -5974,7 +5977,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            Vec::new(),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
         let (parts, body) = warp::test::request()
@@ -6004,6 +6007,66 @@ mod tests {
                 "detail": "The batch implied by the query is invalid.",
                 "instance": "..",
                 "taskid": format!("{}", task.id()),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_request_invalid_aggregation_parameter() {
+        install_test_trace_subscriber();
+
+        // Prepare parameters.
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        datastore.put_task(&task).await.unwrap();
+
+        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+
+        let request = CollectReq::new(
+            *task.id(),
+            Query::new_time_interval(
+                Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    Duration::from_seconds(task.time_precision().as_seconds()),
+                )
+                .unwrap(),
+            ),
+            // dummy_vdaf::AggregationParam is a tuple struct wrapping a u8, so this is not a valid
+            // encoding of an aggregation parameter.
+            Vec::new(),
+        );
+
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path("/collect")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_collector_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, CollectReq::<TimeInterval>::MEDIA_TYPE)
+            .body(request.get_encoded())
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        // Collect request will be rejected because the aggregation parameter can't be decoded
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": StatusCode::BAD_REQUEST.as_u16(),
+                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+                "title": "The message type for a response was incorrect or the payload was malformed.",
+                "detail": "The message type for a response was incorrect or the payload was malformed.",
+                "instance": "..",
+                "taskid": serde_json::Value::Null,
             })
         );
     }
