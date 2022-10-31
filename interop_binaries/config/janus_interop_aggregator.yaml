@@ -1,0 +1,6 @@
+database:
+  url: postgres://postgres@127.0.0.1:5432/postgres
+health_check_listen_address: 0.0.0.0:8000
+logging_config:
+  force_json_output: true
+listen_address: 0.0.0.0:8080

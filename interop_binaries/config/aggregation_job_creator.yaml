@@ -1,0 +1,9 @@
+database:
+  url: postgres://postgres@127.0.0.1:5432/postgres
+health_check_listen_address: 0.0.0.0:8001
+logging_config:
+  force_json_output: true
+tasks_update_frequency_secs: 2
+aggregation_job_creation_interval_secs: 1
+min_aggregation_job_size: 1
+max_aggregation_job_size: 100
