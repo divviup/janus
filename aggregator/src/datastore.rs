@@ -1094,16 +1094,21 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "UPDATE aggregation_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
-                    FROM tasks
-                    WHERE tasks.id = aggregation_jobs.task_id
-                    AND aggregation_jobs.id IN (SELECT aggregation_jobs.id FROM aggregation_jobs
-                        JOIN tasks on tasks.id = aggregation_jobs.task_id
-                        WHERE tasks.aggregator_role = 'LEADER'
-                        AND aggregation_jobs.state = 'IN_PROGRESS'
-                        AND aggregation_jobs.lease_expiry <= $2
-                        ORDER BY aggregation_jobs.id DESC LIMIT $3)
-                    RETURNING tasks.task_id, tasks.vdaf, aggregation_jobs.aggregation_job_id, aggregation_jobs.lease_token, aggregation_jobs.lease_attempts",
+                "UPDATE aggregation_jobs SET
+                    lease_expiry = $1,
+                    lease_token = gen_random_bytes(16),
+                    lease_attempts = lease_attempts + 1
+                FROM tasks
+                WHERE tasks.id = aggregation_jobs.task_id
+                AND aggregation_jobs.id IN (SELECT aggregation_jobs.id FROM aggregation_jobs
+                    JOIN tasks on tasks.id = aggregation_jobs.task_id
+                    WHERE tasks.aggregator_role = 'LEADER'
+                    AND aggregation_jobs.state = 'IN_PROGRESS'
+                    AND aggregation_jobs.lease_expiry <= $2
+                    ORDER BY aggregation_jobs.id DESC LIMIT $3)
+                RETURNING tasks.task_id, tasks.query_type, tasks.vdaf,
+                          aggregation_jobs.aggregation_job_id, aggregation_jobs.lease_token,
+                          aggregation_jobs.lease_attempts",
             )
             .await?;
         self.tx
@@ -1121,6 +1126,7 @@ impl<C: Clock> Transaction<'_, C> {
                 let task_id = TaskId::get_decoded(row.get("task_id"))?;
                 let aggregation_job_id =
                     AggregationJobId::get_decoded(row.get("aggregation_job_id"))?;
+                let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
                 let lease_token_bytes: [u8; LeaseToken::LEN] = row
                     .get::<_, Vec<u8>>("lease_token")
@@ -1129,7 +1135,7 @@ impl<C: Clock> Transaction<'_, C> {
                 let lease_token = LeaseToken::from(lease_token_bytes);
                 let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
                 Ok(Lease::new(
-                    AcquiredAggregationJob::new(task_id, aggregation_job_id, vdaf),
+                    AcquiredAggregationJob::new(task_id, aggregation_job_id, query_type, vdaf),
                     lease_expiry_time,
                     lease_token,
                     lease_attempts,
@@ -2710,8 +2716,6 @@ impl From<ring::error::Unspecified> for Error {
 
 /// This module contains models used by the datastore that are not DAP messages.
 pub mod models {
-    use std::{fmt::Display, ops::RangeInclusive};
-
     use super::Error;
     use crate::{
         messages::{DurationExt, IntervalExt, TimeExt},
@@ -2735,6 +2739,7 @@ pub mod models {
     };
     use rand::{distributions::Standard, prelude::Distribution};
     use std::fmt::{Debug, Formatter};
+    use std::{fmt::Display, ops::RangeInclusive};
     use uuid::Uuid;
 
     // We have to manually implement [Partial]Eq for a number of types because the dervied
@@ -2998,10 +3003,11 @@ pub mod models {
 
     /// AcquiredAggregationJob represents an incomplete aggregation job whose lease has been
     /// acquired.
-    #[derive(Clone, Debug, PartialOrd, Ord, Eq, PartialEq)]
+    #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
     pub struct AcquiredAggregationJob {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
+        query_type: task::QueryType,
         vdaf: VdafInstance,
     }
 
@@ -3010,11 +3016,13 @@ pub mod models {
         pub fn new(
             task_id: TaskId,
             aggregation_job_id: AggregationJobId,
+            query_type: task::QueryType,
             vdaf: VdafInstance,
         ) -> Self {
             Self {
                 task_id,
                 aggregation_job_id,
+                query_type,
                 vdaf,
             }
         }
@@ -3027,6 +3035,11 @@ pub mod models {
         /// Returns the aggregation job ID associated with this acquired aggregation job.
         pub fn aggregation_job_id(&self) -> &AggregationJobId {
             &self.aggregation_job_id
+        }
+
+        /// Returns the query type associated with this acquired aggregation job.
+        pub fn query_type(&self) -> &task::QueryType {
+            &self.query_type
         }
 
         /// Returns the VDAF associated with this acquired aggregation job.
@@ -4105,7 +4118,7 @@ mod tests {
             Crypter, Error,
         },
         messages::{test_util::new_dummy_report, DurationExt, TimeExt},
-        task::{test_util::TaskBuilder, QueryType, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{self, test_util::TaskBuilder, QueryType, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
     use chrono::NaiveDate;
@@ -5008,6 +5021,7 @@ mod tests {
                     AcquiredAggregationJob::new(
                         *task.id(),
                         agg_job_id,
+                        task::QueryType::TimeInterval,
                         VdafInstance::Prio3Aes128Count,
                     ),
                     want_expiry_time,
@@ -5087,7 +5101,12 @@ mod tests {
             .iter()
             .map(|&job_id| {
                 (
-                    AcquiredAggregationJob::new(*task.id(), job_id, VdafInstance::Prio3Aes128Count),
+                    AcquiredAggregationJob::new(
+                        *task.id(),
+                        job_id,
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Prio3Aes128Count,
+                    ),
                     want_expiry_time,
                 )
             })
