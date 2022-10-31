@@ -17,7 +17,10 @@ use std::iter;
 use tokio::time;
 
 // Returns (collector_private_key, leader_task, helper_task).
-pub fn test_task_builders(vdaf: VdafInstance) -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
+pub fn test_task_builders(
+    vdaf: VdafInstance,
+    query_type: QueryType,
+) -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
     let (collector_hpke_config, collector_private_key) =
         generate_test_hpke_config_and_private_key();
@@ -26,6 +29,7 @@ pub fn test_task_builders(vdaf: VdafInstance) -> (HpkePrivateKey, TaskBuilder, T
             Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
             Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
         ]))
+        .with_query_type(query_type)
         .with_min_batch_size(46)
         .with_collector_hpke_config(collector_hpke_config);
     let helper_task = leader_task

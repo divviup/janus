@@ -1,5 +1,5 @@
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
-use janus_aggregator::task::Task;
+use janus_aggregator::task::{QueryType, Task};
 use janus_core::{
     hpke::HpkePrivateKey,
     task::VdafInstance,
@@ -48,8 +48,13 @@ impl<'a> JanusPair<'a> {
     ///    permissions to view secrets and forward ports to services.
     ///  - `JANUS_E2E_LEADER_NAMESPACE`: The Kubernetes namespace where the DAP leader is deployed.
     ///  - `JANUS_E2E_HELPER_NAMESPACE`: The Kubernetes namespace where the DAP helper is deployed.
-    pub async fn new(container_client: &'a Cli, vdaf: VdafInstance) -> JanusPair<'a> {
-        let (collector_private_key, leader_task, helper_task) = test_task_builders(vdaf);
+    pub async fn new(
+        container_client: &'a Cli,
+        vdaf: VdafInstance,
+        query_type: QueryType,
+    ) -> JanusPair<'a> {
+        let (collector_private_key, leader_task, helper_task) =
+            test_task_builders(vdaf, query_type);
 
         // The environment variables should either all be present, or all be absent
         let (leader_task, leader, helper) = match (
@@ -144,7 +149,12 @@ async fn janus_janus_count() {
 
     // Start servers.
     let container_client = container_client();
-    let janus_pair = JanusPair::new(&container_client, VdafInstance::Prio3Aes128Count).await;
+    let janus_pair = JanusPair::new(
+        &container_client,
+        VdafInstance::Prio3Aes128Count,
+        QueryType::TimeInterval,
+    )
+    .await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -163,8 +173,12 @@ async fn janus_janus_sum_16() {
 
     // Start servers.
     let container_client = container_client();
-    let janus_pair =
-        JanusPair::new(&container_client, VdafInstance::Prio3Aes128Sum { bits: 16 }).await;
+    let janus_pair = JanusPair::new(
+        &container_client,
+        VdafInstance::Prio3Aes128Sum { bits: 16 },
+        QueryType::TimeInterval,
+    )
+    .await;
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
@@ -188,6 +202,7 @@ async fn janus_janus_histogram_4_buckets() {
     let janus_pair = JanusPair::new(
         &container_client,
         VdafInstance::Prio3Aes128Histogram { buckets },
+        QueryType::TimeInterval,
     )
     .await;
 
@@ -211,6 +226,31 @@ async fn janus_janus_count_vec_15() {
     let janus_pair = JanusPair::new(
         &container_client,
         VdafInstance::Prio3Aes128CountVec { length: 15 },
+        QueryType::TimeInterval,
+    )
+    .await;
+
+    // Run the behavioral test.
+    submit_measurements_and_verify_aggregate(
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &janus_pair.leader_task,
+        &janus_pair.collector_private_key,
+        &ClientBackend::InProcess,
+    )
+    .await;
+}
+
+/// This test exercises the fixed-size query type with Janus as both the leader and the helper.
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_janus_fixed_size() {
+    install_test_trace_subscriber();
+
+    // Start servers.
+    let container_client = container_client();
+    let janus_pair = JanusPair::new(
+        &container_client,
+        VdafInstance::Prio3Aes128Count,
+        QueryType::FixedSize { max_batch_size: 50 },
     )
     .await;
 

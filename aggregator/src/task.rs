@@ -733,6 +733,14 @@ pub mod test_util {
             })
         }
 
+        /// Sets the task query type
+        pub fn with_query_type(self, query_type: QueryType) -> Self {
+            Self(Task {
+                query_type,
+                ..self.0
+            })
+        }
+
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
             self.0.validate().unwrap();
