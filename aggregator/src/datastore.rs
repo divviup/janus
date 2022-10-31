@@ -887,6 +887,39 @@ impl<C: Clock> Transaction<'_, C> {
             .collect::<Result<Vec<_>, Error>>()
     }
 
+    /// Return the number of reports in the provided task whose timestamp falls within the provided
+    /// interval, regardless of whether the reports have been aggregated or collected.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn count_client_reports_for_interval(
+        &self,
+        task_id: &TaskId,
+        batch_interval: &Interval,
+    ) -> Result<u64, Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT COUNT(1) AS count FROM client_reports
+                WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                AND client_reports.client_timestamp <@ $2::TSRANGE",
+            )
+            .await?;
+        let row = self
+            .tx
+            .query_one(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.as_ref(),
+                    /* batch_interval */ &SqlInterval::from(batch_interval),
+                ],
+            )
+            .await?;
+
+        Ok(row
+            .get::<_, Option<i64>>("count")
+            .unwrap_or_default()
+            .try_into()?)
+    }
+
     /// put_client_report stores a client report.
     #[tracing::instrument(skip(self), err)]
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
@@ -2719,7 +2752,7 @@ pub mod models {
     use super::Error;
     use crate::{
         messages::{DurationExt, IntervalExt, TimeExt},
-        task::{self},
+        task,
     };
     use base64::{display::Base64Display, URL_SAFE_NO_PAD};
     use derivative::Derivative;
@@ -4750,6 +4783,115 @@ mod tests {
             .unwrap();
         got_reports.sort();
         assert_eq!(got_reports, expected_reports);
+    }
+
+    #[tokio::test]
+    async fn count_client_reports_for_interval() {
+        install_test_trace_subscriber();
+
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+
+        let task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let unrelated_task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let no_reports_task =
+            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+
+        let first_report_in_interval = Report::new(
+            *task.id(),
+            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12340), Vec::new()),
+            Vec::new(),
+            Vec::new(),
+        );
+        let second_report_in_interval = Report::new(
+            *task.id(),
+            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12341), Vec::new()),
+            Vec::new(),
+            Vec::new(),
+        );
+        let report_outside_interval = Report::new(
+            *task.id(),
+            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12350), Vec::new()),
+            Vec::new(),
+            Vec::new(),
+        );
+        let report_for_other_task = Report::new(
+            *unrelated_task.id(),
+            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12341), Vec::new()),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        // Set up state.
+        ds.run_tx(|tx| {
+            let (
+                task,
+                unrelated_task,
+                no_reports_task,
+                first_report_in_interval,
+                second_report_in_interval,
+                report_outside_interval,
+                report_for_other_task,
+            ) = (
+                task.clone(),
+                unrelated_task.clone(),
+                no_reports_task.clone(),
+                first_report_in_interval.clone(),
+                second_report_in_interval.clone(),
+                report_outside_interval.clone(),
+                report_for_other_task.clone(),
+            );
+
+            Box::pin(async move {
+                tx.put_task(&task).await?;
+                tx.put_task(&unrelated_task).await?;
+                tx.put_task(&no_reports_task).await?;
+
+                tx.put_client_report(&first_report_in_interval).await?;
+                tx.put_client_report(&second_report_in_interval).await?;
+                tx.put_client_report(&report_outside_interval).await?;
+                tx.put_client_report(&report_for_other_task).await?;
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        let (report_count, no_reports_task_report_count) = ds
+            .run_tx(|tx| {
+                let (task, no_reports_task) = (task.clone(), no_reports_task.clone());
+                Box::pin(async move {
+                    let report_count = tx
+                        .count_client_reports_for_interval(
+                            task.id(),
+                            &Interval::new(
+                                Time::from_seconds_since_epoch(12340),
+                                Duration::from_seconds(5),
+                            )
+                            .unwrap(),
+                        )
+                        .await?;
+
+                    let no_reports_task_report_count = tx
+                        .count_client_reports_for_interval(
+                            no_reports_task.id(),
+                            &Interval::new(
+                                Time::from_seconds_since_epoch(12340),
+                                Duration::from_seconds(5),
+                            )
+                            .unwrap(),
+                        )
+                        .await?;
+
+                    Ok((report_count, no_reports_task_report_count))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(report_count, 2);
+        assert_eq!(no_reports_task_report_count, 0);
     }
 
     #[tokio::test]

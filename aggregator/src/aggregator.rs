@@ -1714,12 +1714,28 @@ impl VdafOps {
                     }
 
                     debug!(collect_request = ?req, "Cache miss, creating new collect job UUID");
-                    validate_batch_query_count_for_collect::<L, _, A>(
-                        tx,
-                        &task,
-                        *req.query().batch_interval(),
-                    )
-                    .await?;
+                    // TODO(#468): query count and client report count need to account for
+                    // fixed-size tasks
+                    let (_, report_count) = try_join!(
+                        validate_batch_query_count_for_collect::<L, _, A>(
+                            tx,
+                            &task,
+                            *req.query().batch_interval(),
+                        ),
+                        tx.count_client_reports_for_interval(
+                            task.id(),
+                            req.query().batch_interval()
+                        ),
+                    )?;
+
+                    // Batch size must be validated while handling CollectReq and hence before
+                    // creating a collect job.
+                    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+                    if !task.validate_batch_size(report_count) {
+                        return Err(datastore::Error::User(
+                            Error::InvalidBatchSize(*task.id(), report_count).into(),
+                        ));
+                    }
 
                     let collect_job_id = Uuid::new_v4();
                     tx.put_collect_job(&CollectJob::new(
@@ -6072,14 +6088,13 @@ mod tests {
     }
 
     #[tokio::test]
-    // TODO(#470): re-enable this test once the report count check is moved to the /collect handler
-    #[ignore]
     async fn collect_request_invalid_batch_size() {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
+            .with_min_batch_size(1)
+            .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
@@ -6096,7 +6111,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            Vec::new(),
+            dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
         let (parts, body) = warp::test::request()

@@ -539,14 +539,11 @@ where
     let total_aggregate_share = total_aggregate_share
         .ok_or_else(|| Error::InvalidBatchSize(*task.id(), total_report_count))?;
 
-    // Refuse to service time-interval aggregate share requests if there are too few reports
-    // included.
-    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-    if total_report_count < task.min_batch_size() {
+    // Validate batch size per
+    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+    if !task.validate_batch_size(total_report_count) {
         return Err(Error::InvalidBatchSize(*task.id(), total_report_count));
     }
-
-    // TODO(#468): This should check against the task's max batch size for fixed size queries
 
     Ok((total_aggregate_share, total_report_count, total_checksum))
 }
