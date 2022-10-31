@@ -35,7 +35,7 @@ bytes = "1.2.1"
 chrono = "0.4"
 console-subscriber = { version = "0.1.8", optional = true }
 deadpool = { version = "0.9.5", features = ["rt_tokio_1"] }
-deadpool-postgres = "0.10.1"
+deadpool-postgres = "0.10.3"
 derivative = "2.2.0"
 futures = "0.3.25"
 http = "0.2.8"
