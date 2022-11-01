@@ -1,9 +1,19 @@
+use std::env;
+
 fn main() {
+    // Skip running this build script for rust-analyzer.
+    println!("cargo:rerun-if-env-changed=RUSTC_WRAPPER");
+    if let Ok(rustc_wrapper) = env::var("RUSTC_WRAPPER") {
+        if rustc_wrapper.ends_with("/rust-analyzer") {
+            return;
+        }
+    }
+
     #[cfg(feature = "daphne")]
     {
         use janus_build_script_utils::save_zstd_compressed_docker_image;
         use serde_json::json;
-        use std::{env, fs::File, process::Command};
+        use std::{fs::File, process::Command};
         use tempfile::tempdir;
 
         // This build script is self-contained, so we only need to rebuild if the build script
