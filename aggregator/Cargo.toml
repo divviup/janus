@@ -43,7 +43,7 @@ derivative = "2.2.0"
 futures = "0.3.25"
 http = "0.2.8"
 http-api-problem = "0.55.0"
-hyper = "0.14.20"
+hyper = "0.14.22"
 itertools = "0.10.5"
 janus_core = { path = "../core" }
 janus_messages = { path = "../messages" }
@@ -83,7 +83,7 @@ warp = { version = "0.3", features = ["tls"] }
 [dev-dependencies]
 assert_matches = "1"
 hex = { version = "0.4.3", features = ["serde"] }
-hyper = "0.14.20"
+hyper = "0.14.22"
 # Enable `kube`'s `openssl-tls` feature (which takes precedence over the
 # `rustls-tls` feature when creating a default client) to work around rustls's
 # lack of support for connecting to servers by IP addresses, which affects many
