@@ -1,11 +1,21 @@
+use std::env;
+
 fn main() {
+    // Skip running this build script for rust-analyzer.
+    println!("cargo:rerun-if-env-changed=RUSTC_WRAPPER");
+    if let Ok(rustc_wrapper) = env::var("RUSTC_WRAPPER") {
+        if rustc_wrapper.ends_with("/rust-analyzer") {
+            return;
+        }
+    }
+
     // We only build the container image if the `testcontainer` feature is enabled, in order to
     // avoid infinite recursion in our build process (since building the container image builds this
-    // package, among other things.)
+    // crate, among other things.)
     #[cfg(feature = "testcontainer")]
     {
         use janus_build_script_utils::save_zstd_compressed_docker_image;
-        use std::{env, fs::File, process::Command};
+        use std::{fs::File, process::Command};
 
         println!("cargo:rerun-if-env-changed=JANUS_INTEROP_CONTAINER");
         let container_strategy = env::var("JANUS_INTEROP_CONTAINER")
