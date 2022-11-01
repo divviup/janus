@@ -1380,7 +1380,7 @@ impl<C: Clock> Transaction<'_, C> {
         let prep_state_bytes: Option<Vec<u8>> = row.get("prep_state");
         let prep_msg_bytes: Option<Vec<u8>> = row.get("prep_msg");
         let out_share_bytes: Option<Vec<u8>> = row.get("out_share");
-        let error_code: Option<i64> = row.get("error_code");
+        let error_code: Option<i16> = row.get("error_code");
 
         let error_code = match error_code {
             Some(c) => {
@@ -3235,7 +3235,7 @@ pub mod models {
                     (None, None, Some(output_share.into()), None)
                 }
                 ReportAggregationState::Failed(report_share_err) => {
-                    (None, None, None, Some(*report_share_err as i64))
+                    (None, None, None, Some(*report_share_err as i16))
                 }
                 ReportAggregationState::Invalid => (None, None, None, None),
             };
@@ -3252,7 +3252,7 @@ pub mod models {
         pub(super) prep_state: Option<Vec<u8>>,
         pub(super) prep_msg: Option<Vec<u8>>,
         pub(super) output_share: Option<Vec<u8>>,
-        pub(super) report_share_err: Option<i64>,
+        pub(super) report_share_err: Option<i16>,
     }
 
     // The private ReportAggregationStateCode exists alongside the public ReportAggregationState
