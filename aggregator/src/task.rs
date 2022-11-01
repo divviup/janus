@@ -266,7 +266,8 @@ impl Task {
         &self.hpke_keys
     }
 
-    /// Returns true if `batch_interval` is valid, per §4.6 of draft-gpew-priv-ppm.
+    /// Returns true if `batch_interval` is valid, per
+    /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
     pub(crate) fn validate_batch_interval(&self, batch_interval: &Interval) -> bool {
         // Batch interval should be greater than task's time precision
         batch_interval.duration().as_seconds() >= self.time_precision.as_seconds()
@@ -274,6 +275,22 @@ impl Task {
             && batch_interval.start().as_seconds_since_epoch() % self.time_precision.as_seconds() == 0
             // Batch interval duration must be a multiple of time precision
             && batch_interval.duration().as_seconds() % self.time_precision.as_seconds() == 0
+    }
+
+    /// Returns true if the `batch_size` is valid given this task's query type and batch size
+    /// parameters, per
+    /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+    pub(crate) fn validate_batch_size(&self, batch_size: u64) -> bool {
+        match self.query_type {
+            QueryType::TimeInterval => {
+                // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.2
+                batch_size >= self.min_batch_size()
+            }
+            QueryType::FixedSize { max_batch_size } => {
+                // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.2.2
+                batch_size >= self.min_batch_size() && batch_size <= max_batch_size
+            }
+        }
     }
 
     /// Returns the [`Url`] relative to which the server performing `role` serves its API.
