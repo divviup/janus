@@ -114,7 +114,7 @@ impl InteropClient {
         } else {
             InteropClient {
                 name: "us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/divviup_ts_interop_client".to_string(),
-                tag: "dap-draft-02".to_string(),
+                tag: "dap-draft-02@sha256:dc4c111adce5719fef9d231f79aecb842c3f626d51363b04355e987d6a40aadc".to_string(),
             }
         }
     }
