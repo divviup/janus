@@ -5,6 +5,11 @@ on:
     branches: [ main, release/** ]
   pull_request:
   workflow_dispatch:
+    inputs:
+      divviup_ts_interop_container:
+        description: divviup-ts container image tag for use in integration tests
+        required: false
+        type: string
 
 jobs:
   janus_build:
@@ -16,9 +21,13 @@ jobs:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
       DAPHNE_INTEROP_CONTAINER: prebuilt=${{ secrets.DAPHNE_PREBUILT_IMAGE_NAME_AND_TAG }}
-      DIVVIUP_TS_INTEROP_CONTAINER: ${{ secrets.DIVVIUP_TS_INTEROP_IMAGE_NAME_AND_TAG }}
       RUSTFLAGS: "-D warnings"
     steps:
+    - name: Set default input values
+      id: default-input-values
+      run: |
+        DIVVIUP_TS_INTEROP_CONTAINER= ${{ inputs.divviup_ts_interop_container }}
+        echo "divviup_ts_interop_container=${DIVVIUP_TS_INTEROP_CONTAINER:-us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/divviup_ts_interop_client:dap-draft-02@sha256:dc4c111adce5719fef9d231f79aecb842c3f626d51363b04355e987d6a40aadc}" >> $GITHUB_OUTPUT
     - uses: actions/checkout@v3
     # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry
     - id: "gcp-auth"
@@ -59,6 +68,7 @@ jobs:
       id: test
       env:
         JANUS_E2E_LOGS_PATH: ${{ github.workspace }}/test-logs
+        DIVVIUP_TS_INTEROP_CONTAINER: ${{ steps.default-input-values.outputs.divviup_ts_interop_container }}
       run: cargo test --all-targets
       # Continue on error so we can upload logs
       continue-on-error: true
