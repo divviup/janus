@@ -588,6 +588,7 @@ pub struct TaskAggregator {
 impl TaskAggregator {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
+    #[allow(clippy::result_large_err)]
     fn new(task: Task) -> Result<Self, Error> {
         let vdaf_ops = match task.vdaf() {
             VdafInstance::Prio3Aes128Count => {
@@ -2502,6 +2503,7 @@ where
 const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
+#[allow(clippy::result_large_err)]
 pub fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
@@ -2726,6 +2728,7 @@ pub fn aggregator_filter<C: Clock>(
 /// If the `SocketAddr`'s `port` is 0, an ephemeral port is used. Returns a
 /// `SocketAddr` representing the address and port the server are listening on
 /// and a future that can be `await`ed to begin serving requests.
+#[allow(clippy::result_large_err)]
 pub fn aggregator_server<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
