@@ -16,6 +16,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
       DAPHNE_INTEROP_CONTAINER: prebuilt=${{ secrets.DAPHNE_PREBUILT_IMAGE_NAME_AND_TAG }}
+      DIVVIUP_TS_INTEROP_CONTAINER: ${{ secrets.DIVVIUP_TS_INTEROP_IMAGE_NAME_AND_TAG }}
       RUSTFLAGS: "-D warnings"
     steps:
     - uses: actions/checkout@v3

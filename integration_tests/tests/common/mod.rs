@@ -1,7 +1,6 @@
 use backoff::ExponentialBackoffBuilder;
 use itertools::Itertools;
 use janus_aggregator::task::{test_util::TaskBuilder, QueryType, Task};
-use janus_client::{Client, ClientParameters};
 use janus_collector::{test_util::collect_with_rewritten_url, Collector, CollectorParameters};
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
@@ -9,6 +8,7 @@ use janus_core::{
     task::VdafInstance,
     time::{Clock, RealClock, TimeExt},
 };
+use janus_integration_tests::client::{ClientBackend, ClientImplementation, InteropClientEncoding};
 use janus_messages::{Duration, Interval, Role};
 use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
@@ -43,56 +43,34 @@ pub fn translate_url_for_external_access(url: &Url, external_port: u16) -> Url {
     translated
 }
 
-pub async fn submit_measurements_and_verify_aggregate_generic<V: vdaf::Client + vdaf::Collector>(
+/// A set of inputs and an expected output for a VDAF's aggregation.
+pub struct AggregationTestCase<V>
+where
+    V: vdaf::Client + vdaf::Collector,
+    Vec<u8>: for<'a> From<&'a V::AggregateShare>,
+{
+    measurements: Vec<V::Measurement>,
+    aggregation_parameter: V::AggregationParam,
+    aggregate_result: V::AggregateResult,
+}
+
+pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     vdaf: V,
     aggregator_endpoints: Vec<Url>,
     leader_task: &Task,
     collector_private_key: &HpkePrivateKey,
-    measurements: &[V::Measurement],
-    aggregation_parameter: &V::AggregationParam,
-    aggregate_result: &V::AggregateResult,
+    test_case: &AggregationTestCase<V>,
+    client_implementation: &ClientImplementation<'_, V>,
 ) where
+    V: vdaf::Client + vdaf::Collector + InteropClientEncoding,
     Vec<u8>: for<'a> From<&'a V::AggregateShare>,
     V::AggregateResult: PartialEq,
 {
-    let client_parameters = ClientParameters::new(
-        *leader_task.id(),
-        aggregator_endpoints.clone(),
-        *leader_task.time_precision(),
-    );
-    let http_client = janus_client::default_http_client().unwrap();
-    let leader_report_config = janus_client::aggregator_hpke_config(
-        &client_parameters,
-        &Role::Leader,
-        leader_task.id(),
-        &http_client,
-    )
-    .await
-    .unwrap();
-    let helper_report_config = janus_client::aggregator_hpke_config(
-        &client_parameters,
-        &Role::Helper,
-        leader_task.id(),
-        &http_client,
-    )
-    .await
-    .unwrap();
-
-    // Create client.
-    let client = Client::new(
-        client_parameters,
-        vdaf.clone(),
-        RealClock::default(),
-        &http_client,
-        leader_report_config,
-        helper_report_config,
-    );
-
     // Submit some measurements, recording a timestamp before measurement upload to allow us to
     // determine the correct collect interval.
     let before_timestamp = RealClock::default().now();
-    for measurement in measurements {
-        client.upload(measurement).await.unwrap();
+    for measurement in test_case.measurements.iter() {
+        client_implementation.upload(measurement).await.unwrap();
     }
 
     // Send a collect request.
@@ -128,7 +106,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V: vdaf::Client + 
     let collection = collect_with_rewritten_url(
         &collector,
         batch_interval,
-        aggregation_parameter,
+        &test_case.aggregation_parameter,
         "127.0.0.1",
         aggregator_endpoints[Role::Leader.index().unwrap()]
             .port()
@@ -140,15 +118,16 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V: vdaf::Client + 
     // Verify that we got the correct result.
     assert_eq!(
         collection.report_count(),
-        u64::try_from(measurements.len()).unwrap()
+        u64::try_from(test_case.measurements.len()).unwrap()
     );
-    assert_eq!(collection.aggregate_result(), aggregate_result);
+    assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
 }
 
 pub async fn submit_measurements_and_verify_aggregate(
     (leader_port, helper_port): (u16, u16),
     leader_task: &Task,
     collector_private_key: &HpkePrivateKey,
+    client_backend: &ClientBackend<'_>,
 ) {
     // Translate aggregator endpoints for our perspective outside the container network.
     let aggregator_endpoints: Vec<_> = leader_task
@@ -173,15 +152,24 @@ pub async fn submit_measurements_and_verify_aggregate(
                 .take(num_nonzero_measurements)
                 .interleave(iter::repeat(0).take(num_zero_measurements))
                 .collect::<Vec<_>>();
+            let test_case = AggregationTestCase {
+                measurements,
+                aggregation_parameter: (),
+                aggregate_result: num_nonzero_measurements.try_into().unwrap(),
+            };
+
+            let client_implementation = client_backend
+                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .await
+                .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
                 vdaf,
                 aggregator_endpoints,
                 leader_task,
                 collector_private_key,
-                &measurements,
-                &(),
-                &num_nonzero_measurements.try_into().unwrap(),
+                &test_case,
+                &client_implementation,
             )
             .await;
         }
@@ -191,15 +179,25 @@ pub async fn submit_measurements_and_verify_aggregate(
             let measurements = iter::repeat_with(|| (random::<u128>() as u128) >> (128 - bits))
                 .take(total_measurements)
                 .collect::<Vec<_>>();
+            let aggregate_result = measurements.iter().sum();
+            let test_case = AggregationTestCase {
+                measurements,
+                aggregation_parameter: (),
+                aggregate_result,
+            };
+
+            let client_implementation = client_backend
+                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .await
+                .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
                 vdaf,
                 aggregator_endpoints,
                 leader_task,
                 collector_private_key,
-                &measurements,
-                &(),
-                &measurements.iter().sum(),
+                &test_case,
+                &client_implementation,
             )
             .await;
         }
@@ -221,15 +219,24 @@ pub async fn submit_measurements_and_verify_aggregate(
             })
             .take(total_measurements)
             .collect::<Vec<_>>();
+            let test_case = AggregationTestCase {
+                measurements,
+                aggregation_parameter: (),
+                aggregate_result,
+            };
+
+            let client_implementation = client_backend
+                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .await
+                .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
                 vdaf,
                 aggregator_endpoints,
                 leader_task,
                 collector_private_key,
-                &measurements,
-                &(),
-                &aggregate_result,
+                &test_case,
+                &client_implementation,
             )
             .await;
         }
@@ -252,15 +259,24 @@ pub async fn submit_measurements_and_verify_aggregate(
                         }
                         accumulator
                     });
+            let test_case = AggregationTestCase {
+                measurements,
+                aggregation_parameter: (),
+                aggregate_result,
+            };
+
+            let client_implementation = client_backend
+                .build(leader_task, aggregator_endpoints.clone(), vdaf.clone())
+                .await
+                .unwrap();
 
             submit_measurements_and_verify_aggregate_generic(
                 vdaf,
                 aggregator_endpoints,
                 leader_task,
                 collector_private_key,
-                &measurements,
-                &(),
-                &aggregate_result,
+                &test_case,
+                &client_implementation,
             )
             .await;
         }
