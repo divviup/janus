@@ -124,7 +124,7 @@ impl EphemeralCluster {
         // Choose a cluster name.
         let mut randomness = [0u8; 4];
         thread_rng().fill(&mut randomness);
-        let kind_cluster_name = format!("janus-ephemeral-{}", hex::encode(&randomness));
+        let kind_cluster_name = format!("janus-ephemeral-{}", hex::encode(randomness));
 
         // Use kind to start the cluster, with the node image from kind v0.14.0 for Kubernetes 1.22,
         // matching current regular GKE release channel. This image version should be bumped in

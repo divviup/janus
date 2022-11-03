@@ -542,7 +542,7 @@ impl From<(HpkeConfig, HpkePrivateKey)> for SerializedHpkeKeypair {
     fn from(keypair: (HpkeConfig, HpkePrivateKey)) -> Self {
         Self {
             config: keypair.0.into(),
-            private_key: base64::encode_config(&keypair.1, URL_SAFE_NO_PAD),
+            private_key: base64::encode_config(keypair.1, URL_SAFE_NO_PAD),
         }
     }
 }
@@ -641,7 +641,7 @@ pub mod test_util {
     pub fn generate_auth_token() -> AuthenticationToken {
         let mut buf = [0; 16];
         thread_rng().fill(&mut buf);
-        base64::encode_config(&buf, base64::URL_SAFE_NO_PAD)
+        base64::encode_config(buf, base64::URL_SAFE_NO_PAD)
             .into_bytes()
             .into()
     }
