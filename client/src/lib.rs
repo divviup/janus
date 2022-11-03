@@ -102,6 +102,7 @@ impl ClientParameters {
 
     /// The URL relative to which the API endpoints for the aggregator may be
     /// found, if the role is an aggregator, or an error otherwise.
+    #[allow(clippy::result_large_err)]
     fn aggregator_endpoint(&self, role: &Role) -> Result<&Url, Error> {
         Ok(&self.aggregator_endpoints[role
             .index()
@@ -110,12 +111,14 @@ impl ClientParameters {
 
     /// URL from which the HPKE configuration for the server filling `role` may
     /// be fetched per draft-gpew-priv-ppm §4.3.1
+    #[allow(clippy::result_large_err)]
     fn hpke_config_endpoint(&self, role: &Role) -> Result<Url, Error> {
         Ok(self.aggregator_endpoint(role)?.join("hpke_config")?)
     }
 
     /// URL to which reports may be uploaded by clients per draft-gpew-priv-ppm
     /// §4.3.2
+    #[allow(clippy::result_large_err)]
     fn upload_endpoint(&self) -> Result<Url, Error> {
         Ok(self.aggregator_endpoint(&Role::Leader)?.join("upload")?)
     }
@@ -159,6 +162,7 @@ pub async fn aggregator_hpke_config(
 }
 
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Client`].
+#[allow(clippy::result_large_err)]
 pub fn default_http_client() -> Result<reqwest::Client, Error> {
     Ok(reqwest::Client::builder()
         .user_agent(CLIENT_USER_AGENT)
@@ -203,6 +207,7 @@ where
 
     /// Shard a measurement, encrypt its shares, and construct a [`janus_core::message::Report`]
     /// to be uploaded.
+    #[allow(clippy::result_large_err)]
     fn prepare_report(&self, measurement: &V::Measurement) -> Result<Report, Error> {
         let (public_share, input_shares) = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.

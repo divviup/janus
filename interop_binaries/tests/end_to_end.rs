@@ -92,8 +92,8 @@ async fn run(
     let collector_auth_token = base64::encode_config(rand::random::<[u8; 16]>(), URL_SAFE_NO_PAD);
     let verify_key = rand::random::<[u8; PRIO3_AES128_VERIFY_KEY_LENGTH]>();
 
-    let task_id_encoded = base64::encode_config(&task_id.get_encoded(), URL_SAFE_NO_PAD);
-    let verify_key_encoded = base64::encode_config(&verify_key, URL_SAFE_NO_PAD);
+    let task_id_encoded = base64::encode_config(task_id.get_encoded(), URL_SAFE_NO_PAD);
+    let verify_key_encoded = base64::encode_config(verify_key, URL_SAFE_NO_PAD);
 
     // Endpoints, from the POV of this test (i.e. the Docker host).
     let local_client_endpoint = Url::parse(&format!("http://127.0.0.1:{client_port}/")).unwrap();
