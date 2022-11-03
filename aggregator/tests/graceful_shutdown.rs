@@ -158,7 +158,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .env("RUSTLOG", "trace")
         .env(
             "DATASTORE_KEYS",
-            base64::encode_config(&db_handle.datastore_key_bytes(), base64::STANDARD_NO_PAD),
+            base64::encode_config(db_handle.datastore_key_bytes(), base64::STANDARD_NO_PAD),
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

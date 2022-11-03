@@ -233,7 +233,7 @@ async fn create_datastore_key(
         .sample_iter(Standard)
         .take(AES_128_GCM.key_len())
         .collect();
-    let secret_content = base64::encode_config(&key_bytes, STANDARD_NO_PAD);
+    let secret_content = base64::encode_config(key_bytes, STANDARD_NO_PAD);
 
     // Write the secret.
     secrets_api
