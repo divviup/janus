@@ -231,7 +231,7 @@ async fn create_datastore_key(
     // consumers of the secret we are about to write.
     let mut key_bytes = vec![0u8; AES_128_GCM.key_len()];
     thread_rng().fill(&mut key_bytes[..]);
-    let secret_content = base64::encode_config(&key_bytes, STANDARD_NO_PAD);
+    let secret_content = base64::encode_config(key_bytes, STANDARD_NO_PAD);
 
     // Write the secret.
     secrets_api

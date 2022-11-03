@@ -193,11 +193,11 @@ impl<'a> Daphne<'a> {
                 "DAP_HPKE_RECEIVER_CONFIG_LIST".to_string(),
                 dap_hpke_receiver_config_list,
             ),
-            ("DAP_BUCKET_KEY".to_string(), hex::encode(&dap_bucket_key)),
+            ("DAP_BUCKET_KEY".to_string(), hex::encode(dap_bucket_key)),
             ("DAP_BUCKET_COUNT".to_string(), "2".to_string()),
             (
                 "DAP_COLLECT_ID_KEY".to_string(),
-                hex::encode(&dap_collect_id_key),
+                hex::encode(dap_collect_id_key),
             ),
             ("DAP_TASK_LIST".to_string(), dap_task_list),
             (
