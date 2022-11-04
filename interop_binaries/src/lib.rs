@@ -15,10 +15,15 @@ use std::{
     collections::HashMap,
     env::{self, VarError},
     fmt::Display,
+    fs::create_dir_all,
+    io::{stderr, Write},
     marker::PhantomData,
+    ops::Deref,
     path::PathBuf,
+    process::Command,
     str::FromStr,
 };
+use testcontainers::{Container, Image};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 use url::Url;
@@ -306,6 +311,67 @@ pub fn log_export_path() -> Option<PathBuf> {
         Ok(logs_path) => Some(PathBuf::from_str(&logs_path).unwrap()),
         Err(VarError::NotPresent) => None,
         Err(err) => panic!("Failed to parse JANUS_E2E_LOGS_PATH: {err}"),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ContainerInspectEntry {
+    name: String,
+}
+
+pub struct ContainerLogsDropGuard<'d, I: Image> {
+    container: Container<'d, I>,
+}
+
+impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
+    pub fn new(container: Container<I>) -> ContainerLogsDropGuard<I> {
+        ContainerLogsDropGuard { container }
+    }
+}
+
+impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
+    fn drop(&mut self) {
+        if let Some(base_dir) = log_export_path() {
+            create_dir_all(&base_dir).expect("could not create log output directory");
+
+            let id = self.container.id();
+
+            let inspect_output = Command::new("docker")
+                .args(["container", "inspect", id])
+                .output()
+                .expect("running `docker container inspect` failed");
+            stderr().write_all(&inspect_output.stderr).unwrap();
+            assert!(inspect_output.status.success());
+            let inspect_array: Vec<ContainerInspectEntry> =
+                serde_json::from_slice(&inspect_output.stdout).unwrap();
+            let inspect_entry = inspect_array
+                .first()
+                .expect("`docker container inspect` returned no results");
+            let name = &inspect_entry.name[inspect_entry
+                .name
+                .find('/')
+                .map(|index| index + 1)
+                .unwrap_or_default()..];
+
+            let destination = base_dir.join(name);
+
+            let copy_status = Command::new("docker")
+                .arg("cp")
+                .arg(format!("{}:/logs", id))
+                .arg(destination)
+                .status()
+                .expect("running `docker cp` failed");
+            assert!(copy_status.success());
+        }
+    }
+}
+
+impl<'d, I: Image> Deref for ContainerLogsDropGuard<'d, I> {
+    type Target = Container<'d, I>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.container
     }
 }
 

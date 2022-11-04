@@ -5,7 +5,7 @@ use janus_core::{
     task::VdafInstance,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
 };
-use janus_integration_tests::janus::Janus;
+use janus_integration_tests::{client::ClientBackend, janus::Janus};
 use janus_interop_binaries::test_util::generate_network_name;
 use std::env::{self, VarError};
 use testcontainers::clients::Cli;
@@ -151,6 +151,7 @@ async fn janus_janus_count() {
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
+        &ClientBackend::InProcess,
     )
     .await;
 }
@@ -170,6 +171,7 @@ async fn janus_janus_sum_16() {
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
+        &ClientBackend::InProcess,
     )
     .await;
 }
@@ -194,6 +196,7 @@ async fn janus_janus_histogram_4_buckets() {
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
+        &ClientBackend::InProcess,
     )
     .await;
 }
@@ -216,6 +219,7 @@ async fn janus_janus_count_vec_15() {
         (janus_pair.leader.port(), janus_pair.helper.port()),
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
+        &ClientBackend::InProcess,
     )
     .await;
 }
