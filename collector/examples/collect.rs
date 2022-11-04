@@ -421,16 +421,13 @@ mod tests {
         let task_id_encoded = base64::encode_config(task_id.get_encoded(), URL_SAFE_NO_PAD);
         let correct_arguments = [
             "collect",
-            "--task-id",
-            &task_id_encoded,
+            &format!("--task-id={task_id_encoded}"),
             "--leader",
             leader.as_str(),
             "--auth-token",
             "collector-authentication-token",
-            "--hpke-config",
-            &encoded_hpke_config,
-            "--hpke-private-key",
-            &encoded_private_key,
+            &format!("--hpke-config={encoded_hpke_config}"),
+            &format!("--hpke-private-key={encoded_private_key}"),
             "--vdaf",
             "count",
             "--batch-interval-start",
@@ -438,8 +435,10 @@ mod tests {
             "--batch-interval-duration",
             "1000",
         ];
-        let got = Options::try_parse_from(correct_arguments).unwrap();
-        assert_eq!(got, expected);
+        match Options::try_parse_from(correct_arguments) {
+            Ok(got) => assert_eq!(got, expected),
+            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+        }
 
         assert_eq!(
             Options::try_parse_from(["collect"]).unwrap_err().kind(),
@@ -447,7 +446,8 @@ mod tests {
         );
 
         let mut bad_arguments = correct_arguments.clone();
-        bad_arguments[2] = "not valid base64";
+        let bad_argument = format!("--task-id=not valid base64");
+        bad_arguments[1] = &bad_argument;
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
@@ -455,53 +455,53 @@ mod tests {
 
         let mut bad_arguments = correct_arguments.clone();
         let short_encoded = base64::encode_config("too short", URL_SAFE_NO_PAD);
-        bad_arguments[2] = &short_encoded;
+        let bad_argument = format!("--task-id={short_encoded}");
+        bad_arguments[1] = &bad_argument;
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
         let mut bad_arguments = correct_arguments.clone();
-        bad_arguments[4] = "http:bad:url:///dap@";
+        bad_arguments[3] = "http:bad:url:///dap@";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
         let mut bad_arguments = correct_arguments.clone();
-        bad_arguments[8] = "not valid base64";
+        let bad_argument = format!("--hpke-config=not valid base64");
+        bad_arguments[6] = &bad_argument;
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
         let mut bad_arguments = correct_arguments.clone();
-        bad_arguments[10] = "not valid base64";
+        let bad_argument = format!("--hpke-private-key=not valid base64");
+        bad_arguments[7] = &bad_argument;
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
         let base_arguments = Vec::from([
-            "collect",
-            "--task-id",
-            &task_id_encoded,
-            "--leader",
-            leader.as_str(),
-            "--auth-token",
-            "collector-authentication-token",
-            "--hpke-config",
-            &encoded_hpke_config,
-            "--hpke-private-key",
-            &encoded_private_key,
-            "--batch-interval-start",
-            "1000000",
-            "--batch-interval-duration",
-            "1000",
+            "collect".to_string(),
+            format!("--task-id={task_id_encoded}"),
+            "--leader".to_string(),
+            leader.to_string(),
+            "--auth-token".to_string(),
+            "collector-authentication-token".to_string(),
+            format!("--hpke-config={encoded_hpke_config}"),
+            format!("--hpke-private-key={encoded_private_key}"),
+            "--batch-interval-start".to_string(),
+            "1000000".to_string(),
+            "--batch-interval-duration".to_string(),
+            "1000".to_string(),
         ]);
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=count", "--buckets=1,2,3,4"]);
+        bad_arguments.extend(["--vdaf=count".to_string(), "--buckets=1,2,3,4".to_string()]);
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
@@ -509,7 +509,7 @@ mod tests {
         );
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=sum", "--buckets=1,2,3,4"]);
+        bad_arguments.extend(["--vdaf=sum".to_string(), "--buckets=1,2,3,4".to_string()]);
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
@@ -517,7 +517,10 @@ mod tests {
         );
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=countvec", "--buckets=1,2,3,4"]);
+        bad_arguments.extend([
+            "--vdaf=countvec".to_string(),
+            "--buckets=1,2,3,4".to_string(),
+        ]);
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
@@ -525,7 +528,7 @@ mod tests {
         );
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=countvec", "--bits=3"]);
+        bad_arguments.extend(["--vdaf=countvec".to_string(), "--bits=3".to_string()]);
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
@@ -533,14 +536,17 @@ mod tests {
         );
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=histogram", "--buckets=1,2,3,4,apple"]);
+        bad_arguments.extend([
+            "--vdaf=histogram".to_string(),
+            "--buckets=1,2,3,4,apple".to_string(),
+        ]);
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation
         );
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=histogram"]);
+        bad_arguments.extend(["--vdaf=histogram".to_string()]);
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
@@ -548,7 +554,7 @@ mod tests {
         );
 
         let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend(["--vdaf=sum"]);
+        bad_arguments.extend(["--vdaf=sum".to_string()]);
         let bad_options = Options::try_parse_from(bad_arguments).unwrap();
         assert_matches!(
             run(bad_options).await.unwrap_err(),
@@ -556,15 +562,18 @@ mod tests {
         );
 
         let mut good_arguments = base_arguments.clone();
-        good_arguments.extend(["--vdaf=countvec", "--length=10"]);
+        good_arguments.extend(["--vdaf=countvec".to_string(), "--length=10".to_string()]);
         Options::try_parse_from(good_arguments).unwrap();
 
         let mut good_arguments = base_arguments.clone();
-        good_arguments.extend(["--vdaf=sum", "--bits=8"]);
+        good_arguments.extend(["--vdaf=sum".to_string(), "--bits=8".to_string()]);
         Options::try_parse_from(good_arguments).unwrap();
 
         let mut good_arguments = base_arguments.clone();
-        good_arguments.extend(["--vdaf=histogram", "--buckets=1,2,3,4"]);
+        good_arguments.extend([
+            "--vdaf=histogram".to_string(),
+            "--buckets=1,2,3,4".to_string(),
+        ]);
         Options::try_parse_from(good_arguments).unwrap();
     }
 }
