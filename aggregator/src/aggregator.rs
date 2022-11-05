@@ -13,15 +13,17 @@ use crate::{
     datastore::{
         self,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, CollectJob, CollectJobState,
-            ReportAggregation, ReportAggregationState,
+            AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation, CollectJob,
+            CollectJobState, ReportAggregation, ReportAggregationState,
         },
-        Datastore,
+        Datastore, Transaction,
     },
     messages::TimeExt,
-    task::{Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
+use async_trait::async_trait;
 use bytes::Bytes;
+use futures::future::try_join_all;
 use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
     HeaderMap, StatusCode,
@@ -37,9 +39,9 @@ use janus_core::{
     time::Clock,
 };
 use janus_messages::{
-    query_type::{QueryType, TimeInterval},
+    query_type::{FixedSize, QueryType, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
-    AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq, CollectResp,
+    AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq, CollectResp, Duration,
     HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector, PrepareStep,
     PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare, ReportShareError, Role,
     TaskId, Time,
@@ -87,6 +89,8 @@ use warp::{
 use janus_core::test_util::dummy_vdaf;
 #[cfg(feature = "test-util")]
 use prio::vdaf::VdafError;
+
+use self::accumulator::AccumulableQueryType;
 
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
@@ -365,11 +369,12 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(task_id));
         }
 
-        let req = AggregateInitializeReq::get_decoded(req_bytes)?;
-        assert_eq!(req.task_id(), &task_id);
-
         Ok(task_aggregator
-            .handle_aggregate_init(&self.datastore, &self.aggregate_step_failure_counter, req)
+            .handle_aggregate_init(
+                &self.datastore,
+                &self.aggregate_step_failure_counter,
+                req_bytes,
+            )
             .await?
             .get_encoded())
     }
@@ -683,14 +688,14 @@ impl TaskAggregator {
         &self,
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
-        req: AggregateInitializeReq<TimeInterval>,
+        req_bytes: &[u8],
     ) -> Result<AggregateInitializeResp, Error> {
         self.vdaf_ops
             .handle_aggregate_init(
                 datastore,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
-                req,
+                req_bytes,
             )
             .await
     }
@@ -876,11 +881,11 @@ impl VdafOps {
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
-        req: AggregateInitializeReq<TimeInterval>,
+        req_bytes: &[u8],
     ) -> Result<AggregateInitializeResp, Error> {
         // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
-        match self {
-            VdafOps::Prio3Aes128Count(vdaf, verify_key) => {
+        match (task.query_type(), self) {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(vdaf, verify_key)) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
@@ -892,12 +897,12 @@ impl VdafOps {
                     aggregate_step_failure_counter,
                     task,
                     verify_key,
-                    req,
+                    req_bytes,
                 )
                 .await
             }
 
-            VdafOps::Prio3Aes128CountVec(vdaf, verify_key) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(vdaf, verify_key)) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
@@ -909,12 +914,12 @@ impl VdafOps {
                     aggregate_step_failure_counter,
                     task,
                     verify_key,
-                    req,
+                    req_bytes,
                 )
                 .await
             }
 
-            VdafOps::Prio3Aes128Sum(vdaf, verify_key) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(vdaf, verify_key)) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
@@ -926,12 +931,12 @@ impl VdafOps {
                     aggregate_step_failure_counter,
                     task,
                     verify_key,
-                    req,
+                    req_bytes,
                 )
                 .await
             }
 
-            VdafOps::Prio3Aes128Histogram(vdaf, verify_key) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(vdaf, verify_key)) => {
                 Self::handle_aggregate_init_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
@@ -943,26 +948,104 @@ impl VdafOps {
                     aggregate_step_failure_counter,
                     task,
                     verify_key,
-                    req,
+                    req_bytes,
                 )
                 .await
             }
 
             #[cfg(feature = "test-util")]
-            VdafOps::Fake(vdaf) => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+            (task::QueryType::TimeInterval, VdafOps::Fake(vdaf)) => {
+                Self::handle_aggregate_init_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                    datastore,
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
+                    &VerifyKey::new([]),
+                    req_bytes,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(vdaf, verify_key)) => {
                 Self::handle_aggregate_init_generic::<
-                    VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    dummy_vdaf::Vdaf,
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Count,
                     _,
                 >(
                     datastore,
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    verify_key,
+                    req_bytes,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(vdaf, verify_key)) => {
+                Self::handle_aggregate_init_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(
+                    datastore,
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
+                    verify_key,
+                    req_bytes,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(vdaf, verify_key)) => {
+                Self::handle_aggregate_init_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Sum,
+                    _,
+                >(
+                    datastore,
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
+                    verify_key,
+                    req_bytes,
+                )
+                .await
+            }
+
+            (
+                task::QueryType::FixedSize { .. },
+                VdafOps::Prio3Aes128Histogram(vdaf, verify_key),
+            ) => {
+                Self::handle_aggregate_init_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Histogram,
+                    _,
+                >(
+                    datastore,
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
+                    verify_key,
+                    req_bytes,
+                )
+                .await
+            }
+
+            #[cfg(feature = "test-util")]
+            (task::QueryType::FixedSize { .. }, VdafOps::Fake(vdaf)) => {
+                Self::handle_aggregate_init_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                    datastore,
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
                     &VerifyKey::new([]),
-                    req,
+                    req_bytes,
                 )
                 .await
             }
@@ -1072,7 +1155,7 @@ impl VdafOps {
     where
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         // The leader's report is the first one.
@@ -1188,7 +1271,7 @@ impl VdafOps {
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
     async fn handle_aggregate_init_generic<
         const L: usize,
-        Q: QueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
         C: Clock,
     >(
@@ -1197,19 +1280,24 @@ impl VdafOps {
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
         verify_key: &VerifyKey<L>,
-        req: AggregateInitializeReq<Q>,
+        req_bytes: &[u8],
     ) -> Result<AggregateInitializeResp, Error>
     where
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
+        // Decode request, and verify that it is for the current task. We use an assert to check
+        // that the task IDs match as this should be guaranteed by the caller.
+        let req = AggregateInitializeReq::<Q>::get_decoded(req_bytes)?;
+        assert_eq!(req.task_id(), task.id());
+
         // If two ReportShare messages have the same report ID, then the helper MUST abort with
         // error "unrecognizedMessage". (§4.4.4.1)
         let mut seen_report_ids = HashSet::with_capacity(req.report_shares().len());
@@ -1367,7 +1455,7 @@ impl VdafOps {
                     // Write aggregation job.
                     tx.put_aggregation_job(&aggregation_job).await?;
 
-                    let mut accumulator = Accumulator::<L, A>::new(
+                    let mut accumulator = Accumulator::<L, Q, A>::new(
                         Arc::clone(&task),
                         aggregation_job.aggregation_parameter().clone(),
                     );
@@ -1418,9 +1506,10 @@ impl VdafOps {
                             share_data.agg_state
                         {
                             accumulator.update(
-                                output_share,
-                                share_data.report_share.metadata().time(),
+                                aggregation_job.batch_identifier(),
                                 share_data.report_share.metadata().id(),
+                                share_data.report_share.metadata().time(),
+                                output_share,
                             )?;
                         }
 
@@ -1442,7 +1531,7 @@ impl VdafOps {
 
     async fn handle_aggregate_continue_generic<
         const L: usize,
-        Q: QueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
         C: Clock,
     >(
@@ -1456,7 +1545,7 @@ impl VdafOps {
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
         A::PrepareShare: Send + Sync,
@@ -1488,7 +1577,7 @@ impl VdafOps {
                     let mut report_aggregations = report_aggregations.into_iter();
                     let (mut saw_continue, mut saw_finish) = (false, false);
                     let mut response_prep_steps = Vec::new();
-                    let mut accumulator = Accumulator::<L, A>::new(Arc::clone(&task), aggregation_job.aggregation_parameter().clone());
+                    let mut accumulator = Accumulator::<L, Q, A>::new(Arc::clone(&task), aggregation_job.aggregation_parameter().clone());
 
                     for prep_step in req.prepare_steps().iter() {
                         // Match preparation step received from leader to stored report aggregation,
@@ -1568,7 +1657,7 @@ impl VdafOps {
 
                             Ok(PrepareTransition::Finish(output_share)) => {
                                 saw_finish = true;
-                                accumulator.update(&output_share, report_aggregation.time(), prep_step.report_id())?;
+                                accumulator.update(aggregation_job.batch_identifier(), prep_step.report_id(), report_aggregation.time(), &output_share)?;
                                 response_prep_steps.push(PrepareStep::new(
                                     *prep_step.report_id(),
                                     PrepareStepResult::Finished,
@@ -1627,6 +1716,7 @@ impl VdafOps {
         task: Arc<Task>,
         collect_req: Arc<CollectReq<TimeInterval>>,
     ) -> Result<Uuid, Error> {
+        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
                 Self::handle_collect_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
@@ -1682,7 +1772,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         let aggregation_param =
             A::AggregationParam::get_decoded(req.as_ref().aggregation_parameter())?;
@@ -1819,7 +1909,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         let collect_job = datastore
             .run_tx(|tx| {
@@ -1962,7 +2052,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync + PartialEq + Eq,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         datastore
             .run_tx(move |tx| {
@@ -1997,6 +2087,7 @@ impl VdafOps {
         task: Arc<Task>,
         aggregate_share_req: Arc<AggregateShareReq<TimeInterval>>,
     ) -> Result<AggregateShareResp, Error> {
+        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match self {
             VdafOps::Prio3Aes128Count(_, _) => {
                 Self::handle_aggregate_share_generic::<
@@ -2055,7 +2146,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         let aggregate_share_job = datastore
             .run_tx(|tx| {
@@ -2087,11 +2178,12 @@ impl VdafOps {
                             let aggregation_param = A::AggregationParam::get_decoded(
                                 aggregate_share_req.aggregation_parameter(),
                             )?;
-                            let (batch_unit_aggregations, _) = try_join!(
-                                tx.get_batch_unit_aggregations_for_task_in_interval::<L, A>(
-                                    task.id(),
-                                    aggregate_share_req.batch_selector().batch_interval(),
-                                    &aggregation_param,
+                            let (batch_aggregations, _) = try_join!(
+                                TimeInterval::get_batch_aggregations_for_collect_identifier(
+                                    tx,
+                                    &task,
+                                    aggregate_share_req.batch_selector().batch_identifier(),
+                                    &aggregation_param
                                 ),
                                 validate_batch_query_count_for_collect::<L, _, A>(
                                     tx,
@@ -2101,9 +2193,12 @@ impl VdafOps {
                             )?;
 
                             let (helper_aggregate_share, report_count, checksum) =
-                                compute_aggregate_share::<L, A>(&task, &batch_unit_aggregations)
-                                    .await
-                                    .map_err(|e| datastore::Error::User(e.into()))?;
+                                compute_aggregate_share::<L, TimeInterval, A>(
+                                    &task,
+                                    &batch_aggregations,
+                                )
+                                .await
+                                .map_err(|e| datastore::Error::User(e.into()))?;
 
                             // Now that we are satisfied that the request is serviceable, we consume
                             // a query by recording the aggregate share request parameters and the
@@ -2845,16 +2940,141 @@ async fn post_to_helper<T: Encode>(
     }
 }
 
+/// CollectableQueryType represents a query type that can be collected by Janus. This trait extends
+/// [`QueryType`] with functionality required for collection.
+#[async_trait]
+pub trait CollectableQueryType: QueryType {
+    type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync;
+
+    /// Some query types (e.g. [`TimeInterval`]) can receive a batch identifier in collect requests
+    /// which refers to multiple batches. This method takes a batch identifier received in a collect
+    /// request and provides an iterator over the individual batches' identifiers.
+    fn batch_identifiers_for_collect_identifier(
+        _: &Task,
+        collect_identifier: &Self::BatchIdentifier,
+    ) -> Self::Iter;
+
+    /// Retrieves batch aggregations corresponding to all batches identified by the given collect
+    /// identifier.
+    async fn get_batch_aggregations_for_collect_identifier<
+        const L: usize,
+        A: vdaf::Aggregator<L>,
+        C: Clock,
+    >(
+        tx: &Transaction<C>,
+        task: &Task,
+        collect_identifier: &Self::BatchIdentifier,
+        aggregation_param: &A::AggregationParam,
+    ) -> Result<Vec<BatchAggregation<L, Self, A>>, datastore::Error>
+    where
+        A::AggregationParam: Send + Sync,
+        A::AggregateShare: Send + Sync,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+    {
+        let batch_aggregations = try_join_all(
+            Self::batch_identifiers_for_collect_identifier(task, collect_identifier).map(
+                |batch_identifier| {
+                    let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
+                    async move {
+                        tx.get_batch_aggregation(&task_id, &batch_identifier, &aggregation_param)
+                            .await
+                    }
+                },
+            ),
+        )
+        .await?;
+        Ok(batch_aggregations.into_iter().flatten().collect::<Vec<_>>())
+    }
+}
+
+impl CollectableQueryType for TimeInterval {
+    type Iter = TimeIntervalBatchIdentifierIter;
+
+    fn batch_identifiers_for_collect_identifier(
+        task: &Task,
+        batch_interval: &Self::BatchIdentifier,
+    ) -> Self::Iter {
+        TimeIntervalBatchIdentifierIter::new(task, batch_interval)
+    }
+}
+
+// This type only exists because the CollectableQueryType trait requires specifying the type of the
+// iterator explicitly (i.e. it cannot be inferred or replaced with an `impl Trait` expression), and
+// the type of the iterator created via method chaining does not have a type which is expressible.
+pub struct TimeIntervalBatchIdentifierIter {
+    step: u64,
+
+    total_step_count: u64,
+    start: Time,
+    time_precision: Duration,
+}
+
+impl TimeIntervalBatchIdentifierIter {
+    fn new(task: &Task, batch_interval: &Interval) -> Self {
+        // Sanity check that the given interval is of an appropriate length. We use an assert as
+        // this is expected to be checked before this method is used.
+        assert_eq!(
+            batch_interval.duration().as_seconds() % task.time_precision().as_seconds(),
+            0
+        );
+        let total_step_count =
+            batch_interval.duration().as_seconds() / task.time_precision().as_seconds();
+
+        Self {
+            step: 0,
+            total_step_count,
+            start: *batch_interval.start(),
+            time_precision: *task.time_precision(),
+        }
+    }
+}
+
+impl Iterator for TimeIntervalBatchIdentifierIter {
+    type Item = Interval;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.step == self.total_step_count {
+            return None;
+        }
+        // Unwrap safety: errors can only occur if the times being unwrapped cannot be represented
+        // as a Time. The relevant times can always be represented since they are internal to the
+        // batch interval used to create the iterator.
+        let interval = Interval::new(
+            self.start
+                .add(&Duration::from_seconds(
+                    self.step * self.time_precision.as_seconds(),
+                ))
+                .unwrap(),
+            self.time_precision,
+        )
+        .unwrap();
+        self.step += 1;
+        Some(interval)
+    }
+}
+
+impl CollectableQueryType for FixedSize {
+    type Iter = std::option::IntoIter<Self::BatchIdentifier>;
+
+    fn batch_identifiers_for_collect_identifier(
+        _: &Task,
+        batch_id: &Self::BatchIdentifier,
+    ) -> Self::Iter {
+        Some(*batch_id).into_iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         aggregator::{
-            aggregator_filter, error_handler, post_to_helper, Aggregator, DapProblemType,
-            DapProblemTypeParseError, Error,
+            aggregator_filter, error_handler, post_to_helper, Aggregator, CollectableQueryType,
+            DapProblemType, DapProblemTypeParseError, Error,
         },
         datastore::{
             models::{
-                AggregateShareJob, AggregationJob, AggregationJobState, BatchUnitAggregation,
+                AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
                 CollectJob, CollectJobState, ReportAggregation, ReportAggregationState,
             },
             test_util::{ephemeral_datastore, DbHandle},
@@ -3366,7 +3586,7 @@ mod tests {
                         random(),
                         clock
                             .now()
-                            .to_batch_unit_interval_start(task.time_precision())
+                            .to_batch_interval_start(task.time_precision())
                             .unwrap(),
                         Vec::new(),
                     ),
@@ -3656,7 +3876,7 @@ mod tests {
             report
                 .metadata()
                 .time()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             *task.time_precision(),
         )
@@ -3881,7 +4101,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3906,7 +4126,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3931,7 +4151,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3952,7 +4172,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3976,7 +4196,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -3996,7 +4216,7 @@ mod tests {
             &input_share,
         );
 
-        // report_share_5 falls into a batch unit that has already been collected.
+        // report_share_5 falls into a batch that has already been collected.
         let past_clock = MockClock::new(Time::from_seconds_since_epoch(
             task.time_precision().as_seconds() / 2,
         ));
@@ -4004,7 +4224,7 @@ mod tests {
             random(),
             past_clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4030,7 +4250,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4185,7 +4405,7 @@ mod tests {
                 random(),
                 clock
                     .now()
-                    .to_batch_unit_interval_start(task.time_precision())
+                    .to_batch_interval_start(task.time_precision())
                     .unwrap(),
                 Vec::new(),
             ),
@@ -4262,7 +4482,7 @@ mod tests {
                 random(),
                 clock
                     .now()
-                    .to_batch_unit_interval_start(task.time_precision())
+                    .to_batch_interval_start(task.time_precision())
                     .unwrap(),
                 Vec::new(),
             ),
@@ -4417,7 +4637,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4452,7 +4672,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4472,7 +4692,7 @@ mod tests {
             &transcript_1.input_shares[1],
         );
 
-        // report_share_2 falls into a batch unit that has already been collected.
+        // report_share_2 falls into a batch that has already been collected.
         let past_clock = MockClock::new(Time::from_seconds_since_epoch(
             task.time_precision().as_seconds() / 2,
         ));
@@ -4480,7 +4700,7 @@ mod tests {
             random(),
             past_clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4712,7 +4932,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregate_continue_accumulate_batch_unit_aggregation() {
+    async fn aggregate_continue_accumulate_batch_aggregation() {
         install_test_trace_subscriber();
 
         let task = TaskBuilder::new(
@@ -4725,9 +4945,9 @@ mod tests {
         let aggregation_job_id_1 = random();
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
         let datastore = Arc::new(datastore);
-        let first_batch_unit_interval_clock = MockClock::default();
-        let second_batch_unit_interval_clock = MockClock::new(
-            first_batch_unit_interval_clock
+        let first_batch_interval_clock = MockClock::default();
+        let second_batch_interval_clock = MockClock::new(
+            first_batch_interval_clock
                 .now()
                 .add(task.time_precision())
                 .unwrap(),
@@ -4741,9 +4961,9 @@ mod tests {
         // report_share_0 is a "happy path" report.
         let report_metadata_0 = ReportMetadata::new(
             random(),
-            first_batch_unit_interval_clock
+            first_batch_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4769,9 +4989,9 @@ mod tests {
         // output shares
         let report_metadata_1 = ReportMetadata::new(
             random(),
-            first_batch_unit_interval_clock
+            first_batch_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4793,12 +5013,12 @@ mod tests {
             &transcript_1.input_shares[1],
         );
 
-        // report share 2 aggregates successfully, but into a distinct batch unit aggregation.
+        // report share 2 aggregates successfully, but into a distinct batch aggregation.
         let report_metadata_2 = ReportMetadata::new(
             random(),
-            second_batch_unit_interval_clock
+            second_batch_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -4923,7 +5143,7 @@ mod tests {
 
         // Create aggregator filter, send request, and parse response.
         let filter =
-            aggregator_filter(datastore.clone(), first_batch_unit_interval_clock.clone()).unwrap();
+            aggregator_filter(datastore.clone(), first_batch_interval_clock.clone()).unwrap();
 
         let response = warp::test::request()
             .method("POST")
@@ -4944,18 +5164,23 @@ mod tests {
             AggregateContinueResp::MEDIA_TYPE
         );
 
-        let batch_unit_aggregations = datastore
+        let batch_aggregations = datastore
             .run_tx(|tx| {
                 let (task, report_metadata_0) = (task.clone(), report_metadata_0.clone());
                 Box::pin(async move {
-                    tx.get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        task.id(),
+                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        Prio3Aes128Count,
+                        _,
+                    >(
+                        tx,
+                        &task,
                         &Interval::new(
                             report_metadata_0
                                 .time()
-                                .to_batch_unit_interval_start(task.time_precision())
+                                .to_batch_interval_start(task.time_precision())
                                 .unwrap(),
-                            // Make interval big enough to capture both batch unit aggregations
+                            // Make interval big enough to capture both batch aggregations
                             Duration::from_seconds(task.time_precision().as_seconds() * 2),
                         )
                         .unwrap(),
@@ -4974,41 +5199,59 @@ mod tests {
             .updated_with(report_metadata_1.id());
 
         assert_eq!(
-            batch_unit_aggregations,
-            Vec::from([
-                BatchUnitAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
-                    *task.id(),
-                    report_metadata_0
-                        .time()
-                        .to_batch_unit_interval_start(task.time_precision())
+            batch_aggregations,
+            Vec::from(
+                [
+                    BatchAggregation::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        Interval::new(
+                            report_metadata_0
+                                .time()
+                                .to_batch_interval_start(task.time_precision())
+                                .unwrap(),
+                            *task.time_precision()
+                        )
                         .unwrap(),
-                    (),
-                    aggregate_share,
-                    2,
-                    checksum,
-                ),
-                BatchUnitAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
-                    *task.id(),
-                    report_metadata_2
-                        .time()
-                        .to_batch_unit_interval_start(task.time_precision())
+                        (),
+                        aggregate_share,
+                        2,
+                        checksum,
+                    ),
+                    BatchAggregation::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        Interval::new(
+                            report_metadata_2
+                                .time()
+                                .to_batch_interval_start(task.time_precision())
+                                .unwrap(),
+                            *task.time_precision()
+                        )
                         .unwrap(),
-                    (),
-                    AggregateShare::from(out_share_2.clone()),
-                    1,
-                    ReportIdChecksum::for_report_id(report_metadata_2.id()),
-                ),
-            ])
+                        (),
+                        AggregateShare::from(out_share_2.clone()),
+                        1,
+                        ReportIdChecksum::for_report_id(report_metadata_2.id()),
+                    ),
+                ]
+            )
         );
 
         // Aggregate some more reports, which should get accumulated into the
-        // batch_unit_aggregations rows created earlier.
-        // report_share_3 gets aggreated into the first batch unit interval.
+        // batch_aggregations rows created earlier.
+        // report_share_3 gets aggreated into the first batch interval.
         let report_metadata_3 = ReportMetadata::new(
             random(),
-            first_batch_unit_interval_clock
+            first_batch_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -5030,12 +5273,12 @@ mod tests {
             &transcript_3.input_shares[1],
         );
 
-        // report_share_4 gets aggregated into the second batch unit interval
+        // report_share_4 gets aggregated into the second batch interval
         let report_metadata_4 = ReportMetadata::new(
             random(),
-            second_batch_unit_interval_clock
+            second_batch_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -5057,12 +5300,12 @@ mod tests {
             &transcript_4.input_shares[1],
         );
 
-        // report share 5 also gets aggregated into the second batch unit interval
+        // report share 5 also gets aggregated into the second batch interval
         let report_metadata_5 = ReportMetadata::new(
             random(),
-            second_batch_unit_interval_clock
+            second_batch_interval_clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -5184,7 +5427,7 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(datastore.clone(), first_batch_unit_interval_clock).unwrap();
+        let filter = aggregator_filter(datastore.clone(), first_batch_interval_clock).unwrap();
 
         let response = warp::test::request()
             .method("POST")
@@ -5205,18 +5448,23 @@ mod tests {
             AggregateContinueResp::MEDIA_TYPE
         );
 
-        let batch_unit_aggregations = datastore
+        let batch_aggregations = datastore
             .run_tx(|tx| {
                 let (task, report_metadata_0) = (task.clone(), report_metadata_0.clone());
                 Box::pin(async move {
-                    tx.get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                        task.id(),
+                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        Prio3Aes128Count,
+                        _,
+                    >(
+                        tx,
+                        &task,
                         &Interval::new(
                             report_metadata_0
                                 .time()
-                                .to_batch_unit_interval_start(task.time_precision())
+                                .to_batch_interval_start(task.time_precision())
                                 .unwrap(),
-                            // Make interval big enough to capture both batch unit aggregations
+                            // Make interval big enough to capture both batch aggregations
                             Duration::from_seconds(task.time_precision().as_seconds() * 2),
                         )
                         .unwrap(),
@@ -5243,31 +5491,49 @@ mod tests {
             .updated_with(report_metadata_5.id());
 
         assert_eq!(
-            batch_unit_aggregations,
-            Vec::from([
-                BatchUnitAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
-                    *task.id(),
-                    report_metadata_0
-                        .time()
-                        .to_batch_unit_interval_start(task.time_precision())
+            batch_aggregations,
+            Vec::from(
+                [
+                    BatchAggregation::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        Interval::new(
+                            report_metadata_0
+                                .time()
+                                .to_batch_interval_start(task.time_precision())
+                                .unwrap(),
+                            *task.time_precision()
+                        )
                         .unwrap(),
-                    (),
-                    first_aggregate_share,
-                    3,
-                    first_checksum,
-                ),
-                BatchUnitAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
-                    *task.id(),
-                    report_metadata_2
-                        .time()
-                        .to_batch_unit_interval_start(task.time_precision())
+                        (),
+                        first_aggregate_share,
+                        3,
+                        first_checksum,
+                    ),
+                    BatchAggregation::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        Interval::new(
+                            report_metadata_2
+                                .time()
+                                .to_batch_interval_start(task.time_precision())
+                                .unwrap(),
+                            *task.time_precision()
+                        )
                         .unwrap(),
-                    (),
-                    second_aggregate_share,
-                    3,
-                    second_checksum,
-                ),
-            ])
+                        (),
+                        second_aggregate_share,
+                        3,
+                        second_checksum,
+                    ),
+                ]
+            )
         );
     }
 
@@ -6600,12 +6866,14 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                    tx.put_batch_aggregation(&BatchAggregation::<
                         DUMMY_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
-                        Time::from_seconds_since_epoch(0),
+                        Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
+                            .unwrap(),
                         dummy_vdaf::AggregationParam(0),
                         dummy_vdaf::AggregateShare(0),
                         10,
@@ -6698,12 +6966,14 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                    tx.put_batch_aggregation(&BatchAggregation::<
                         DUMMY_VERIFY_KEY_LENGTH,
+                        TimeInterval,
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
-                        Time::from_seconds_since_epoch(0),
+                        Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
+                            .unwrap(),
                         dummy_vdaf::AggregationParam(0),
                         dummy_vdaf::AggregateShare(0),
                         10,
@@ -7026,7 +7296,7 @@ mod tests {
 
         let filter = aggregator_filter(datastore.clone(), clock).unwrap();
 
-        // There are no batch unit_aggregations in the datastore yet
+        // There are no batch aggregations in the datastore yet
         let request = AggregateShareReq::new(
             *task.id(),
             BatchSelector::new_time_interval(
@@ -7067,7 +7337,7 @@ mod tests {
             })
         );
 
-        // Put some batch unit aggregations in the DB.
+        // Put some batch aggregations in the DB.
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
@@ -7076,12 +7346,17 @@ mod tests {
                         dummy_vdaf::AggregationParam(0),
                         dummy_vdaf::AggregationParam(1),
                     ] {
-                        tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                        tx.put_batch_aggregation(&BatchAggregation::<
                             DUMMY_VERIFY_KEY_LENGTH,
+                            TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
                             *task.id(),
-                            Time::from_seconds_since_epoch(500),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(500),
+                                *task.time_precision(),
+                            )
+                            .unwrap(),
                             aggregation_param,
                             dummy_vdaf::AggregateShare(64),
                             5,
@@ -7089,12 +7364,17 @@ mod tests {
                         ))
                         .await?;
 
-                        tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                        tx.put_batch_aggregation(&BatchAggregation::<
                             DUMMY_VERIFY_KEY_LENGTH,
+                            TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
                             *task.id(),
-                            Time::from_seconds_since_epoch(1500),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(1500),
+                                *task.time_precision(),
+                            )
+                            .unwrap(),
                             aggregation_param,
                             dummy_vdaf::AggregateShare(128),
                             5,
@@ -7102,12 +7382,17 @@ mod tests {
                         ))
                         .await?;
 
-                        tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                        tx.put_batch_aggregation(&BatchAggregation::<
                             DUMMY_VERIFY_KEY_LENGTH,
+                            TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
                             *task.id(),
-                            Time::from_seconds_since_epoch(2000),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(2000),
+                                *task.time_precision(),
+                            )
+                            .unwrap(),
                             aggregation_param,
                             dummy_vdaf::AggregateShare(256),
                             5,
@@ -7115,12 +7400,17 @@ mod tests {
                         ))
                         .await?;
 
-                        tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
+                        tx.put_batch_aggregation(&BatchAggregation::<
                             DUMMY_VERIFY_KEY_LENGTH,
+                            TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
                             *task.id(),
-                            Time::from_seconds_since_epoch(2500),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(2500),
+                                *task.time_precision(),
+                            )
+                            .unwrap(),
                             aggregation_param,
                             dummy_vdaf::AggregateShare(512),
                             5,
@@ -7245,7 +7535,7 @@ mod tests {
         // good.
         for (label, request, expected_result) in [
             (
-                "first and second batch units",
+                "first and second batchess",
                 AggregateShareReq::new(
                     *task.id(),
                     BatchSelector::new_time_interval(
@@ -7262,7 +7552,7 @@ mod tests {
                 dummy_vdaf::AggregateShare(64 + 128),
             ),
             (
-                "third and fourth batch units",
+                "third and fourth batches",
                 AggregateShareReq::new(
                     *task.id(),
                     BatchSelector::new_time_interval(
@@ -7276,7 +7566,7 @@ mod tests {
                     10,
                     ReportIdChecksum::get_decoded(&[8 ^ 4; 32]).unwrap(),
                 ),
-                // Should get sum over the third and fourth batch units
+                // Should get sum over the third and fourth batches
                 dummy_vdaf::AggregateShare(256 + 512),
             ),
         ] {
@@ -7344,7 +7634,7 @@ mod tests {
 
         // Requests for collection intervals that overlap with but are not identical to previous
         // collection intervals fail.
-        let all_batch_unit_request = AggregateShareReq::new(
+        let all_batch_request = AggregateShareReq::new(
             *task.id(),
             BatchSelector::new_time_interval(
                 Interval::new(
@@ -7365,7 +7655,7 @@ mod tests {
                 task.primary_aggregator_auth_token().as_bytes(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .body(all_batch_unit_request.get_encoded())
+            .body(all_batch_request.get_encoded())
             .filter(&filter)
             .await
             .unwrap()
@@ -7386,8 +7676,7 @@ mod tests {
         );
 
         // Previous sequence of aggregate share requests should have consumed the available queries
-        // for all the batch units. Further requests for any batch units will cause query count
-        // violations.
+        // for all the batches. Further requests for any batches will cause query count violations.
         for query_count_violation_request in [
             AggregateShareReq::new(
                 *task.id(),

@@ -69,10 +69,10 @@ pub struct AggregationJobCreator<C: Clock> {
     /// How frequently we attempt to create new aggregation jobs for each task.
     aggregation_job_creation_interval: Duration,
     /// The minimum number of client reports to include in an aggregation job. For time-interval
-    /// tasks, applies to the "current" batch unit only; historical batch units will create
-    /// aggregation jobs of any size, on the theory that almost all reports will have be received
-    /// for these batch units already. For fixed-size tasks, a single small aggregation job per
-    /// batch will be created if necessary to meet the batch size requirements.
+    /// tasks, applies to the "current" batch only; historical batches will create aggregation jobs
+    /// of any size, on the theory that almost all reports will have be received for these batches
+    /// already. For fixed-size tasks, a single small aggregation job per batch will be created if
+    /// necessary to meet the batch size requirements.
     min_aggregation_job_size: usize,
     /// The maximum number of client reports to include in an aggregation job.
     max_aggregation_job_size: usize,
@@ -306,18 +306,18 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .run_tx(|tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
-                    let current_batch_unit_start = this
+                    let current_batch_start = this
                         .clock
                         .now()
-                        .to_batch_unit_interval_start(task.time_precision())?;
+                        .to_batch_interval_start(task.time_precision())?;
 
-                    // Find some unaggregated client reports, and group them by their batch unit.
-                    let report_ids_by_batch_unit = tx
+                    // Find some unaggregated client reports, and group them by their batch.
+                    let report_ids_by_batch = tx
                         .get_unaggregated_client_report_ids_for_task(task.id())
                         .await?
                         .into_iter()
                         .map(|(report_id, time)| {
-                            time.to_batch_unit_interval_start(task.time_precision())
+                            time.to_batch_interval_start(task.time_precision())
                                 .map(|rounded_time| (rounded_time, (report_id, time)))
                                 .map_err(datastore::Error::from)
                         })
@@ -328,11 +328,11 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Generate aggregation jobs & report aggregations based on the reports we read.
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::new();
-                    for (batch_unit_start, report_times_and_ids) in report_ids_by_batch_unit {
+                    for (batch_start, report_times_and_ids) in report_ids_by_batch {
                         for agg_job_reports in
                             report_times_and_ids.chunks(this.max_aggregation_job_size)
                         {
-                            if batch_unit_start >= current_batch_unit_start
+                            if batch_start >= current_batch_start
                                 && agg_job_reports.len() < this.min_aggregation_job_size
                             {
                                 continue;
@@ -578,15 +578,15 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
-                    // Find some client reports that are covered by a collect request,
-                    // but haven't been aggregated yet, and group them by their batch unit.
+                    // Find some client reports that are covered by a collect request, but haven't
+                    // been aggregated yet, and group them by their batch.
                     let result_vec = tx
                         .get_unaggregated_client_report_ids_by_collect_for_task::<L, A>(task.id())
                         .await?
                         .into_iter()
                         .map(|(report_id, report_time, aggregation_param)| {
                             report_time
-                                .to_batch_unit_interval_start(task.time_precision())
+                                .to_batch_interval_start(task.time_precision())
                                 .map(|rounded_time| {
                                     ((rounded_time, aggregation_param), (report_id, report_time))
                                 })
@@ -599,8 +599,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Generate aggregation jobs and report aggregations.
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::with_capacity(report_count);
-                    for ((_batch_unit_start, aggregation_param), report_ids_and_times) in result_map
-                    {
+                    for ((_, aggregation_param), report_ids_and_times) in result_map {
                         for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
                         {
                             let aggregation_job_id = random();
@@ -825,56 +824,56 @@ mod tests {
             )
             .build(),
         );
-        let current_batch_unit = clock
+        let current_batch = clock
             .now()
-            .to_batch_unit_interval_start(task.time_precision())
+            .to_batch_interval_start(task.time_precision())
             .unwrap();
 
-        // In the current batch unit, create MIN_AGGREGATION_JOB_SIZE reports. We expect an
-        // aggregation job to be created containing these reports.
+        // In the current batch, create MIN_AGGREGATION_JOB_SIZE reports. We expect an aggregation
+        // job to be created containing these reports.
         let report_time = clock.now();
-        let cur_batch_unit_reports: Vec<Report> =
+        let cur_batch_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE)
                 .collect();
 
-        // In a previous "small" batch unit, create fewer than MIN_AGGREGATION_JOB_SIZE reports.
-        // Since the minimum aggregation job size applies only to the current batch window, we
-        // expect an aggregation job to be created for these reports.
+        // In a previous "small" batch, create fewer than MIN_AGGREGATION_JOB_SIZE reports. Since
+        // the minimum aggregation job size applies only to the current batch window, we expect an
+        // aggregation job to be created for these reports.
         let report_time = report_time.sub(task.time_precision()).unwrap();
-        let small_batch_unit_reports: Vec<Report> =
+        let small_batch_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE - 1)
                 .collect();
 
-        // In a (separate) previous "big" batch unit, create more than MAX_AGGREGATION_JOB_SIZE
-        // reports. We expect these reports will be split into more than one aggregation job.
+        // In a (separate) previous "big" batch, create more than MAX_AGGREGATION_JOB_SIZE reports.
+        // We expect these reports will be split into more than one aggregation job.
         let report_time = report_time.sub(task.time_precision()).unwrap();
-        let big_batch_unit_reports: Vec<Report> =
+        let big_batch_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
-        let all_report_ids: HashSet<ReportId> = cur_batch_unit_reports
+        let all_report_ids: HashSet<ReportId> = cur_batch_reports
             .iter()
-            .chain(&small_batch_unit_reports)
-            .chain(&big_batch_unit_reports)
+            .chain(&small_batch_reports)
+            .chain(&big_batch_reports)
             .map(|report| *report.metadata().id())
             .collect();
 
         ds.run_tx(|tx| {
             let task = task.clone();
-            let (cur_batch_unit_reports, small_batch_unit_reports, big_batch_unit_reports) = (
-                cur_batch_unit_reports.clone(),
-                small_batch_unit_reports.clone(),
-                big_batch_unit_reports.clone(),
+            let (cur_batch_reports, small_batch_reports, big_batch_reports) = (
+                cur_batch_reports.clone(),
+                small_batch_reports.clone(),
+                big_batch_reports.clone(),
             );
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                for report in cur_batch_unit_reports
+                for report in cur_batch_reports
                     .iter()
-                    .chain(&small_batch_unit_reports)
-                    .chain(&big_batch_unit_reports)
+                    .chain(&small_batch_reports)
+                    .chain(&big_batch_reports)
                 {
                     tx.put_client_report(report).await?;
                 }
@@ -917,24 +916,20 @@ mod tests {
             .unwrap();
         let mut seen_report_ids = HashSet::new();
         for (_, (_, times_and_ids)) in agg_jobs {
-            // All report IDs for aggregation job are in the same batch unit.
-            let batch_units: HashSet<Time> = times_and_ids
+            // All report IDs for aggregation job are in the same batch.
+            let batches: HashSet<Time> = times_and_ids
                 .iter()
-                .map(|(time, _)| {
-                    time.to_batch_unit_interval_start(task.time_precision())
-                        .unwrap()
-                })
+                .map(|(time, _)| time.to_batch_interval_start(task.time_precision()).unwrap())
                 .collect();
-            assert_eq!(batch_units.len(), 1);
-            let batch_unit = batch_units.into_iter().next().unwrap();
+            assert_eq!(batches.len(), 1);
+            let batch = batches.into_iter().next().unwrap();
 
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
             assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
-            // If we are in the current batch unit, the batch is at least MIN_AGGREGATION_JOB_SIZE in size.
-            assert!(
-                batch_unit < current_batch_unit || times_and_ids.len() >= MIN_AGGREGATION_JOB_SIZE
-            );
+            // If we are in the current batch, the batch is at least MIN_AGGREGATION_JOB_SIZE in
+            // size.
+            assert!(batch < current_batch || times_and_ids.len() >= MIN_AGGREGATION_JOB_SIZE);
 
             // Report IDs are non-repeated across or inside aggregation jobs.
             for (_, report_id) in times_and_ids {
@@ -1209,17 +1204,17 @@ mod tests {
             .build(),
         );
 
-        // Create MAX_AGGREGATION_JOB_SIZE reports in one batch unit. This should result in
-        // one aggregation job per overlapping collect job for these reports. (and there is
-        // one such collect job)
+        // Create MAX_AGGREGATION_JOB_SIZE reports in one batch. This should result in one
+        // aggregation job per overlapping collect job for these reports. (and there is one such
+        // collect job)
         let report_time = clock.now().sub(task.time_precision()).unwrap();
         let batch_1_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE)
                 .collect();
 
-        // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch unit. This should result
-        // in two aggregation jobs per overlapping collect job. (and there are two such collect jobs)
+        // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
+        // two aggregation jobs per overlapping collect job. (and there are two such collect jobs)
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let batch_2_reports: Vec<Report> =
             iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
@@ -1344,15 +1339,12 @@ mod tests {
         let mut seen_pairs = Vec::new();
         let mut aggregation_jobs_per_aggregation_param = HashMap::new();
         for (aggregation_job, times_and_ids) in agg_jobs.iter() {
-            // Check that all report IDs for an aggregation job are in the same batch unit.
-            let batch_units: HashSet<Time> = times_and_ids
+            // Check that all report IDs for an aggregation job are in the same batch.
+            let batches: HashSet<Time> = times_and_ids
                 .iter()
-                .map(|(time, _)| {
-                    time.to_batch_unit_interval_start(task.time_precision())
-                        .unwrap()
-                })
+                .map(|(time, _)| time.to_batch_interval_start(task.time_precision()).unwrap())
                 .collect();
-            assert_eq!(batch_units.len(), 1);
+            assert_eq!(batches.len(), 1);
 
             assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 

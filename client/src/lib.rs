@@ -215,7 +215,7 @@ where
         let time = self
             .clock
             .now()
-            .to_batch_unit_interval_start(&self.parameters.time_precision)
+            .to_batch_interval_start(&self.parameters.time_precision)
             .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
         let report_metadata = ReportMetadata::new(
             random(),

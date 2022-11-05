@@ -83,8 +83,8 @@ struct Config {
     /// How frequently we attempt to create new aggregation jobs for each task, in seconds.
     aggregation_job_creation_interval_secs: u64,
     /// The minimum number of client reports to include in an aggregation job. Applies to the
-    /// "current" batch unit only; historical batch units will create aggregation jobs of any size,
-    /// on the theory that almost all reports will have be received for these batch units already.
+    /// "current" batch only; historical batches will create aggregation jobs of any size, on the
+    /// theory that almost all reports will have be received for these batches already.
     min_aggregation_job_size: usize,
     /// The maximum number of client reports to include in an aggregation job.
     max_aggregation_job_size: usize,

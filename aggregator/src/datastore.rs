@@ -2,14 +2,14 @@
 
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectJob, AggregateShareJob, AggregationJob, AggregatorRole,
-    BatchUnitAggregation, CollectJob, CollectJobState, CollectJobStateCode, Lease, LeaseToken,
+    BatchAggregation, CollectJob, CollectJobState, CollectJobStateCode, Lease, LeaseToken,
     OutstandingBatch, ReportAggregation, ReportAggregationState, ReportAggregationStateCode,
     SqlInterval,
 };
 #[cfg(test)]
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
 use crate::{
-    messages::{IntervalExt, TimeExt},
+    messages::TimeExt,
     task::{self, Task},
     SecretBytes,
 };
@@ -1590,7 +1590,7 @@ impl<C: Clock> Transaction<'_, C> {
         collect_job_id: &Uuid,
     ) -> Result<Option<CollectJob<L, A>>, Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
@@ -1663,7 +1663,7 @@ impl<C: Clock> Transaction<'_, C> {
         timestamp: &Time,
     ) -> Result<Vec<CollectJob<L, A>>, Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
@@ -1710,7 +1710,7 @@ impl<C: Clock> Transaction<'_, C> {
         interval: &Interval,
     ) -> Result<Vec<CollectJob<L, A>>, Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
@@ -1752,7 +1752,7 @@ impl<C: Clock> Transaction<'_, C> {
         row: &Row,
     ) -> Result<CollectJob<L, A>, Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let sql_interval: SqlInterval = row.try_get("batch_interval")?;
@@ -1790,7 +1790,7 @@ impl<C: Clock> Transaction<'_, C> {
                 )
                 .map_err(|err| {
                     Error::DbState(format!(
-                        "leader_aggregate_share stored in database is invalid: {}",
+                        "leader_aggregate_share stored in database is invalid: {:?}",
                         err
                     ))
                 })?;
@@ -1978,7 +1978,7 @@ ORDER BY id DESC
     ) -> Result<(), Error>
     where
         A: vdaf::Aggregator<L>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let (report_count, leader_aggregate_share, helper_aggregate_share) = match collect_job
@@ -2031,11 +2031,60 @@ ORDER BY id DESC
         )
     }
 
-    /// Store a new `batch_unit_aggregations` row in the datastore.
-    #[tracing::instrument(skip(self), err)]
-    pub async fn put_batch_unit_aggregation<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn get_batch_aggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
         &self,
-        batch_unit_aggregation: &BatchUnitAggregation<L, A>,
+        task_id: &TaskId,
+        batch_identifier: &Q::BatchIdentifier,
+        aggregation_parameter: &A::AggregationParam,
+    ) -> Result<Option<BatchAggregation<L, Q, A>>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT aggregate_share, report_count, checksum
+                FROM batch_aggregations
+                WHERE
+                    task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND batch_identifier = $2
+                    AND aggregation_param = $3",
+            )
+            .await?;
+
+        self.tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.as_ref(),
+                    /* batch_identifier */ &batch_identifier.get_encoded(),
+                    /* aggregation_param */ &aggregation_parameter.get_encoded(),
+                ],
+            )
+            .await?
+            .map(|row| {
+                let aggregate_share = row.get_bytea_and_convert("aggregate_share")?;
+                let report_count = row.get_bigint_and_convert("report_count")?;
+                let checksum = ReportIdChecksum::get_decoded(row.get("checksum"))?;
+
+                Ok(BatchAggregation::new(
+                    *task_id,
+                    batch_identifier.clone(),
+                    aggregation_parameter.clone(),
+                    aggregate_share,
+                    report_count,
+                    checksum,
+                ))
+            })
+            .transpose()
+    }
+
+    /// Store a new `batch_aggregations` row in the datastore.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn put_batch_aggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+        &self,
+        batch_aggregation: &BatchAggregation<L, Q, A>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Encode + std::fmt::Debug,
@@ -2045,7 +2094,7 @@ ORDER BY id DESC
         let stmt = self
             .tx
             .prepare_cached(
-                "INSERT INTO batch_unit_aggregations (task_id, unit_interval_start,
+                "INSERT INTO batch_aggregations (task_id, batch_identifier,
                 aggregation_param, aggregate_share, report_count, checksum)
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)",
             )
@@ -2054,17 +2103,15 @@ ORDER BY id DESC
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &batch_unit_aggregation.task_id().as_ref(),
-                    /* unit_interval_start */
-                    &batch_unit_aggregation
-                        .unit_interval_start()
-                        .as_naive_date_time(),
+                    /* task_id */ &batch_aggregation.task_id().as_ref(),
+                    /* batch_identifier */
+                    &batch_aggregation.batch_identifier().get_encoded(),
                     /* aggregation_param */
-                    &batch_unit_aggregation.aggregation_parameter().get_encoded(),
-                    /* aggregate_share */ &batch_unit_aggregation.aggregate_share().into(),
+                    &batch_aggregation.aggregation_parameter().get_encoded(),
+                    /* aggregate_share */ &batch_aggregation.aggregate_share().into(),
                     /* report_count */
-                    &i64::try_from(batch_unit_aggregation.report_count())?,
-                    /* checksum */ &batch_unit_aggregation.checksum().get_encoded(),
+                    &i64::try_from(batch_aggregation.report_count())?,
+                    /* checksum */ &batch_aggregation.checksum().get_encoded(),
                 ],
             )
             .await?;
@@ -2072,12 +2119,12 @@ ORDER BY id DESC
         Ok(())
     }
 
-    /// Update an existing `batch_unit_aggregations` row with the `aggregate_share`, `checksum` and
-    /// `report_count` values in `batch_unit_aggregation`.
+    /// Update an existing `batch_aggregations` row with the values from the provided batch
+    /// aggregation.
     #[tracing::instrument(skip(self), err)]
-    pub async fn update_batch_unit_aggregation<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn update_batch_aggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
         &self,
-        batch_unit_aggregation: &BatchUnitAggregation<L, A>,
+        batch_aggregation: &BatchAggregation<L, Q, A>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Encode + std::fmt::Debug,
@@ -2087,11 +2134,11 @@ ORDER BY id DESC
         let stmt = self
             .tx
             .prepare_cached(
-                "UPDATE batch_unit_aggregations
+                "UPDATE batch_aggregations
                 SET aggregate_share = $1, report_count = $2, checksum = $3
                 WHERE
                     task_id = (SELECT id from TASKS WHERE task_id = $4)
-                    AND unit_interval_start = $5
+                    AND batch_identifier = $5
                     AND aggregation_param = $6",
             )
             .await?;
@@ -2101,87 +2148,21 @@ ORDER BY id DESC
                     &stmt,
                     &[
                         /* aggregate_share */
-                        &batch_unit_aggregation.aggregate_share().into(),
+                        &batch_aggregation.aggregate_share().into(),
                         /* report_count */
-                        &i64::try_from(batch_unit_aggregation.report_count())?,
-                        /* checksum */ &batch_unit_aggregation.checksum().get_encoded(),
-                        /* task_id */ &batch_unit_aggregation.task_id().as_ref(),
-                        /* unit_interval_start */
-                        &batch_unit_aggregation
-                            .unit_interval_start()
-                            .as_naive_date_time(),
+                        &i64::try_from(batch_aggregation.report_count())?,
+                        /* checksum */ &batch_aggregation.checksum().get_encoded(),
+                        /* task_id */ &batch_aggregation.task_id().as_ref(),
+                        /* batch_identifier */
+                        &batch_aggregation.batch_identifier().get_encoded(),
                         /* aggregation_param */
-                        &batch_unit_aggregation.aggregation_parameter().get_encoded(),
+                        &batch_aggregation.aggregation_parameter().get_encoded(),
                     ],
                 )
                 .await?,
         )?;
 
         Ok(())
-    }
-
-    /// Fetch all the `batch_unit_aggregations` rows whose `unit_interval_start` describes an
-    /// interval that falls within the provided `interval` and whose `aggregation_param` matches.
-    #[tracing::instrument(skip(self, aggregation_param), err)]
-    pub async fn get_batch_unit_aggregations_for_task_in_interval<
-        const L: usize,
-        A: vdaf::Aggregator<L>,
-    >(
-        &self,
-        task_id: &TaskId,
-        interval: &Interval,
-        aggregation_param: &A::AggregationParam,
-    ) -> Result<Vec<BatchUnitAggregation<L, A>>, Error>
-    where
-        A::AggregationParam: Encode + Clone,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "WITH tasks AS (SELECT id, time_precision FROM tasks WHERE task_id = $1)
-                SELECT unit_interval_start, aggregate_share, report_count, checksum
-                FROM batch_unit_aggregations
-                WHERE
-                    task_id = (SELECT id FROM tasks)
-                    AND unit_interval_start >= $2
-                    AND (unit_interval_start + (SELECT time_precision FROM tasks) * interval '1 second') <= $3
-                    AND aggregation_param = $4",
-            )
-            .await?;
-        let rows = self
-            .tx
-            .query(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* unit_interval_start */ &interval.start().as_naive_date_time(),
-                    /* unit_interval_end */ &interval.end().as_naive_date_time(),
-                    /* aggregation_param */ &aggregation_param.get_encoded(),
-                ],
-            )
-            .await?
-            .iter()
-            .map(|row| {
-                let unit_interval_start =
-                    Time::from_naive_date_time(&row.get("unit_interval_start"));
-                let aggregate_share = row.get_bytea_and_convert("aggregate_share")?;
-                let report_count = row.get_bigint_and_convert("report_count")?;
-                let checksum = ReportIdChecksum::get_decoded(row.get("checksum"))?;
-
-                Ok(BatchUnitAggregation::new(
-                    *task_id,
-                    unit_interval_start,
-                    aggregation_param.clone(),
-                    aggregate_share,
-                    report_count,
-                    checksum,
-                ))
-            })
-            .collect::<Result<_, Error>>()?;
-
-        Ok(rows)
     }
 
     /// Fetch an [`AggregateShareJob`] from the datastore corresponding to given parameters, or
@@ -2194,7 +2175,7 @@ ORDER BY id DESC
         aggregation_parameter: &[u8],
     ) -> Result<Option<AggregateShareJob<L, A>>, Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
@@ -2238,7 +2219,7 @@ ORDER BY id DESC
         timestamp: &Time,
     ) -> Result<Vec<AggregateShareJob<L, A>>, Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
@@ -2290,7 +2271,7 @@ ORDER BY id DESC
         interval: &Interval,
     ) -> Result<Vec<AggregateShareJob<L, A>>, Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
@@ -2338,7 +2319,7 @@ ORDER BY id DESC
         row: &Row,
     ) -> Result<AggregateShareJob<L, A>, Error>
     where
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         Ok(AggregateShareJob::new(
@@ -2359,7 +2340,7 @@ ORDER BY id DESC
     ) -> Result<(), Error>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         let stmt = self
             .tx
@@ -2529,7 +2510,7 @@ trait RowExt {
     /// Get a PostgreSQL `BYTEA` from the row and attempt to convert it to `T`.
     fn get_bytea_and_convert<T>(&self, idx: &'static str) -> Result<T, Error>
     where
-        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> T: TryFrom<&'a [u8]>;
 }
 
@@ -2570,12 +2551,13 @@ impl RowExt for Row {
 
     fn get_bytea_and_convert<T>(&self, idx: &'static str) -> Result<T, Error>
     where
-        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> T: TryFrom<&'a [u8]>,
     {
         let encoded: Vec<u8> = self.try_get(idx)?;
-        let decoded = T::try_from(&encoded)
-            .map_err(|e| Error::DbState(format!("{} stored in database is invalid: {}", idx, e)))?;
+        let decoded = T::try_from(&encoded).map_err(|err| {
+            Error::DbState(format!("{} stored in database is invalid: {:?}", idx, err))
+        })?;
         Ok(decoded)
     }
 }
@@ -2758,7 +2740,7 @@ pub mod models {
     use derivative::Derivative;
     use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance};
     use janus_messages::{
-        query_type::{FixedSize, QueryType},
+        query_type::{FixedSize, QueryType, TimeInterval},
         AggregationJobId, BatchId, Duration, HpkeCiphertext, Interval, ReportId, ReportIdChecksum,
         ReportShareError, Role, TaskId, Time,
     };
@@ -3340,24 +3322,21 @@ pub mod models {
     {
     }
 
-    /// BatchUnitAggregation corresponds to a row in the `batch_unit_aggregations` table and
-    /// represents the possibly-ongoing aggregation of the set of input shares that fall within the
-    /// interval defined by `unit_interval_start` and the relevant task's `time_precision`.
-    /// This is the finest-grained possible aggregate share we can emit for this task, hence "batch
-    /// unit". The aggregate share constructed to service a collect or aggregate share request
-    /// consists of one or more `BatchUnitAggregation`s merged together.
+    /// BatchAggregation corresponds to a row in the `batch_aggregations` table and represents the
+    /// possibly-ongoing aggregation of the set of input shares that fall within the batch
+    /// identifier by `batch_identifier`. This is the finest-grained possible aggregate share we can
+    /// emit for this task. The aggregate share constructed to service a collect or aggregate share
+    /// request consists of one or more `BatchAggregation`s merged together.
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub struct BatchUnitAggregation<const L: usize, A: vdaf::Aggregator<L>>
+    pub struct BatchAggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         /// The task ID for this aggregation result.
         task_id: TaskId,
-        /// This is an aggregation over report shares whose timestamp falls within the interval
-        /// starting at this time and of duration equal to the corresponding task's
-        /// `time_precision`. `unit_interval_start` is a multiple of `time_precision`.
-        unit_interval_start: Time,
+        /// The identifier of the batch being aggregated over.
+        batch_identifier: Q::BatchIdentifier,
         /// The VDAF aggregation parameter used to prepare and accumulate input shares.
         #[derivative(Debug = "ignore")]
         aggregation_parameter: A::AggregationParam,
@@ -3372,14 +3351,14 @@ pub mod models {
         checksum: ReportIdChecksum,
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> BatchUnitAggregation<L, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> BatchAggregation<L, Q, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        /// Creates a new [`BatchUnitAggregation`].
+        /// Creates a new [`BatchAggregation`].
         pub fn new(
             task_id: TaskId,
-            unit_interval_start: Time,
+            batch_identifier: Q::BatchIdentifier,
             aggregation_parameter: A::AggregationParam,
             aggregate_share: A::AggregateShare,
             report_count: u64,
@@ -3387,7 +3366,7 @@ pub mod models {
         ) -> Self {
             Self {
                 task_id,
-                unit_interval_start,
+                batch_identifier,
                 aggregation_parameter,
                 aggregate_share,
                 report_count,
@@ -3395,39 +3374,42 @@ pub mod models {
             }
         }
 
-        /// Returns the task ID associated with this batch unit aggregation.
+        /// Returns the task ID associated with this batch aggregation.
         pub fn task_id(&self) -> &TaskId {
             &self.task_id
         }
 
-        /// Returns the start of the batch unit interval associated with this batch unit
-        /// aggregation.
-        pub fn unit_interval_start(&self) -> &Time {
-            &self.unit_interval_start
+        /// Gets the batch identifier included in this batch aggregation.
+        ///
+        /// This method would typically be used for code which is generic over the query type.
+        /// Query-type specific code will typically call one of [`Self::batch_interval`] or
+        /// [`Self::batch_id`].
+        pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
+            &self.batch_identifier
         }
 
-        /// Returns the aggregation parameter associated with this batch unit aggregation.
+        /// Returns the aggregation parameter associated with this batch aggregation.
         pub fn aggregation_parameter(&self) -> &A::AggregationParam {
             &self.aggregation_parameter
         }
 
-        /// Returns the aggregate share associated with this batch unit aggregation.
+        /// Returns the aggregate share associated with this batch aggregation.
         pub fn aggregate_share(&self) -> &A::AggregateShare {
             &self.aggregate_share
         }
 
-        /// Returns the report count associated with this batch unit aggregation.
+        /// Returns the report count associated with this batch aggregation.
         pub fn report_count(&self) -> u64 {
             self.report_count
         }
 
-        /// Returns the checksum associated with this batch unit aggregation.
+        /// Returns the checksum associated with this batch aggregation.
         pub fn checksum(&self) -> &ReportIdChecksum {
             &self.checksum
         }
 
-        /// Returns a new [`BatchUnitAggregation`] corresponding to the current batch unit
-        /// aggregation merged with the given parameters.
+        /// Returns a new [`BatchAggregation`] corresponding to the current batch aggregation
+        /// merged with the given parameters.
         pub fn merged_with(
             self,
             aggregate_share: &A::AggregateShare,
@@ -3447,7 +3429,27 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for BatchUnitAggregation<L, A>
+    impl<const L: usize, A: vdaf::Aggregator<L>> BatchAggregation<L, TimeInterval, A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        /// Gets the batch interval associated with this batch aggregation.
+        pub fn batch_interval(&self) -> &Interval {
+            self.batch_identifier()
+        }
+    }
+
+    impl<const L: usize, A: vdaf::Aggregator<L>> BatchAggregation<L, FixedSize, A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        /// Gets the batch ID associated with this batch aggregation.
+        pub fn batch_id(&self) -> &BatchId {
+            self.batch_identifier()
+        }
+    }
+
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> PartialEq for BatchAggregation<L, Q, A>
     where
         A::AggregationParam: PartialEq,
         A::AggregateShare: PartialEq,
@@ -3455,7 +3457,7 @@ pub mod models {
     {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
-                && self.unit_interval_start == other.unit_interval_start
+                && self.batch_identifier == other.batch_identifier
                 && self.aggregation_parameter == other.aggregation_parameter
                 && self.aggregate_share == other.aggregate_share
                 && self.report_count == other.report_count
@@ -3463,7 +3465,7 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> Eq for BatchUnitAggregation<L, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> Eq for BatchAggregation<L, Q, A>
     where
         A::AggregationParam: Eq,
         A::AggregateShare: Eq,
@@ -4141,10 +4143,11 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::{
+        aggregator::CollectableQueryType,
         datastore::{
             models::{
                 AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregationJobState,
-                BatchUnitAggregation, CollectJob, CollectJobState, Lease, OutstandingBatch,
+                BatchAggregation, CollectJob, CollectJobState, Lease, OutstandingBatch,
                 ReportAggregation, ReportAggregationState, SqlInterval,
             },
             test_util::{ephemeral_datastore, generate_aead_key},
@@ -4176,15 +4179,13 @@ mod tests {
         field::Field64,
         vdaf::{
             self,
-            poplar1::{IdpfInput, Poplar1, ToyIdpf},
-            prg::PrgAes128,
             prio3::{Prio3, Prio3Aes128Count},
             AggregateShare, PrepareTransition,
         },
     };
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use std::{
-        collections::{BTreeSet, HashMap, HashSet},
+        collections::{HashMap, HashSet},
         iter,
         ops::RangeInclusive,
         sync::Arc,
@@ -4397,7 +4398,7 @@ mod tests {
 
         let when = MockClock::default()
             .now()
-            .to_batch_unit_interval_start(&Duration::from_seconds(1000))
+            .to_batch_interval_start(&Duration::from_seconds(1000))
             .unwrap();
 
         let task = TaskBuilder::new(
@@ -4736,7 +4737,7 @@ mod tests {
         assert_eq!(got_reports, expected_reports);
 
         // Add overlapping collect jobs with repeated aggregation parameters. Make sure we don't
-        // repeat result tuples, which could lead to double counting in batch unit aggregations.
+        // repeat result tuples, which could lead to double counting in batch aggregations.
         ds.run_tx(|tx| {
             let task = task.clone();
             Box::pin(async move {
@@ -7044,80 +7045,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn roundtrip_batch_unit_aggregation() {
+    async fn roundtrip_batch_aggregation_time_interval() {
         install_test_trace_subscriber();
-
-        const PRG_SEED_SIZE: usize = 16;
-        type ToyPoplar1 = Poplar1<ToyIdpf<Field64>, PrgAes128, PRG_SEED_SIZE>;
-
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
-            Role::Leader,
-        )
-        .with_time_precision(Duration::from_seconds(100))
-        .build();
-        let other_task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
-            Role::Leader,
-        )
-        .build();
-        let aggregate_share = AggregateShare::from(Vec::from([Field64::from(17)]));
-        let aggregation_param = BTreeSet::from([
-            IdpfInput::new("abc".as_bytes(), 0).unwrap(),
-            IdpfInput::new("def".as_bytes(), 1).unwrap(),
-        ]);
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         ds.run_tx(|tx| {
-            let (task, other_task, aggregate_share, aggregation_param) = (
-                task.clone(),
-                other_task.clone(),
-                aggregate_share.clone(),
-                aggregation_param.clone(),
-            );
             Box::pin(async move {
+                let time_precision = Duration::from_seconds(100);
+                let task =
+                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
+                        .with_time_precision(time_precision)
+                        .build();
+                let other_task =
+                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
+                        .build();
+                let aggregate_share = dummy_vdaf::AggregateShare(23);
+                let aggregation_param = AggregationParam(12);
+
                 tx.put_task(&task).await?;
                 tx.put_task(&other_task).await?;
 
-                let first_batch_unit_aggregation =
-                    BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
+                let first_batch_aggregation =
+                    BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        Time::from_seconds_since_epoch(100),
-                        aggregation_param.clone(),
+                        Interval::new(Time::from_seconds_since_epoch(100), time_precision).unwrap(),
+                        aggregation_param,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
                     );
 
-                let second_batch_unit_aggregation =
-                    BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
+                let second_batch_aggregation =
+                    BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        Time::from_seconds_since_epoch(150),
-                        aggregation_param.clone(),
+                        Interval::new(Time::from_seconds_since_epoch(200), time_precision).unwrap(),
+                        aggregation_param,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
                     );
 
-                let third_batch_unit_aggregation =
-                    BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
+                let third_batch_aggregation =
+                    BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        Time::from_seconds_since_epoch(200),
-                        aggregation_param.clone(),
+                        Interval::new(Time::from_seconds_since_epoch(300), time_precision).unwrap(),
+                        aggregation_param,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
                     );
 
                 // Start of this aggregation's interval is before the interval queried below.
-                tx.put_batch_unit_aggregation(
-                    &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
+                tx.put_batch_aggregation(
+                    &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        Time::from_seconds_since_epoch(25),
-                        aggregation_param.clone(),
+                        Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
+                        aggregation_param,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -7125,37 +7109,17 @@ mod tests {
                 )
                 .await?;
 
-                // Following three batch units are within the interval queried below.
-                tx.put_batch_unit_aggregation(&first_batch_unit_aggregation)
-                    .await?;
-                tx.put_batch_unit_aggregation(&second_batch_unit_aggregation)
-                    .await?;
+                // Following three batches are within the interval queried below.
+                tx.put_batch_aggregation(&first_batch_aggregation).await?;
+                tx.put_batch_aggregation(&second_batch_aggregation).await?;
+                tx.put_batch_aggregation(&third_batch_aggregation).await?;
 
-                // The end of this batch unit is exactly the end of the interval queried below.
-                tx.put_batch_unit_aggregation(&third_batch_unit_aggregation)
-                    .await?;
                 // Aggregation parameter differs from the one queried below.
-                tx.put_batch_unit_aggregation(
-                    &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
+                tx.put_batch_aggregation(
+                    &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        Time::from_seconds_since_epoch(100),
-                        BTreeSet::from([
-                            IdpfInput::new("gh".as_bytes(), 2).unwrap(),
-                            IdpfInput::new("jk".as_bytes(), 3).unwrap(),
-                        ]),
-                        aggregate_share.clone(),
-                        0,
-                        ReportIdChecksum::default(),
-                    ),
-                )
-                .await?;
-
-                // End of this aggregation's interval is after the interval queried below.
-                tx.put_batch_unit_aggregation(
-                    &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *task.id(),
-                        Time::from_seconds_since_epoch(250),
-                        aggregation_param.clone(),
+                        Interval::new(Time::from_seconds_since_epoch(100), time_precision).unwrap(),
+                        dummy_vdaf::AggregationParam(13),
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -7164,11 +7128,11 @@ mod tests {
                 .await?;
 
                 // Start of this aggregation's interval is after the interval queried below.
-                tx.put_batch_unit_aggregation(
-                    &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
+                tx.put_batch_aggregation(
+                    &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        Time::from_seconds_since_epoch(400),
-                        aggregation_param.clone(),
+                        Interval::new(Time::from_seconds_since_epoch(400), time_precision).unwrap(),
+                        aggregation_param,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -7177,11 +7141,11 @@ mod tests {
                 .await?;
 
                 // Task ID differs from that queried below.
-                tx.put_batch_unit_aggregation(
-                    &BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
+                tx.put_batch_aggregation(
+                    &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *other_task.id(),
-                        Time::from_seconds_since_epoch(200),
-                        aggregation_param.clone(),
+                        Interval::new(Time::from_seconds_since_epoch(200), time_precision).unwrap(),
+                        aggregation_param,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -7189,79 +7153,173 @@ mod tests {
                 )
                 .await?;
 
-                let batch_unit_aggregations = tx
-                    .get_batch_unit_aggregations_for_task_in_interval::<PRG_SEED_SIZE, ToyPoplar1>(
-                        task.id(),
+                let batch_aggregations =
+                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                        0,
+                        dummy_vdaf::Vdaf,
+                        _,
+                    >(
+                        tx,
+                        &task,
                         &Interval::new(
-                            Time::from_seconds_since_epoch(50),
-                            Duration::from_seconds(250),
+                            Time::from_seconds_since_epoch(100),
+                            Duration::from_seconds(3 * time_precision.as_seconds()),
                         )
                         .unwrap(),
                         &aggregation_param,
                     )
                     .await?;
 
-                assert_eq!(
-                    batch_unit_aggregations.len(),
-                    3,
-                    "{:#?}",
-                    batch_unit_aggregations,
-                );
-                assert!(
-                    batch_unit_aggregations.contains(&first_batch_unit_aggregation),
-                    "{:#?}",
-                    batch_unit_aggregations,
-                );
-                assert!(
-                    batch_unit_aggregations.contains(&second_batch_unit_aggregation),
-                    "{:#?}",
-                    batch_unit_aggregations,
-                );
-                assert!(batch_unit_aggregations.contains(&third_batch_unit_aggregation));
+                assert_eq!(batch_aggregations.len(), 3, "{:#?}", batch_aggregations);
+                for batch_aggregation in [
+                    &first_batch_aggregation,
+                    &second_batch_aggregation,
+                    &third_batch_aggregation,
+                ] {
+                    assert!(
+                        batch_aggregations.contains(batch_aggregation),
+                        "{:#?}",
+                        batch_aggregations
+                    );
+                }
 
-                let updated_first_batch_unit_aggregation =
-                    BatchUnitAggregation::<PRG_SEED_SIZE, ToyPoplar1>::new(
-                        *first_batch_unit_aggregation.task_id(),
-                        *first_batch_unit_aggregation.unit_interval_start(),
-                        first_batch_unit_aggregation.aggregation_parameter().clone(),
-                        AggregateShare::from(Vec::from([Field64::from(25)])),
+                let first_batch_aggregation =
+                    BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *first_batch_aggregation.task_id(),
+                        *first_batch_aggregation.batch_interval(),
+                        *first_batch_aggregation.aggregation_parameter(),
+                        dummy_vdaf::AggregateShare(92),
                         1,
                         ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
                     );
-
-                tx.update_batch_unit_aggregation(&updated_first_batch_unit_aggregation)
+                tx.update_batch_aggregation(&first_batch_aggregation)
                     .await?;
 
-                let batch_unit_aggregations = tx
-                    .get_batch_unit_aggregations_for_task_in_interval::<PRG_SEED_SIZE, ToyPoplar1>(
-                        task.id(),
+                let batch_aggregations =
+                    TimeInterval::get_batch_aggregations_for_collect_identifier::<
+                        0,
+                        dummy_vdaf::Vdaf,
+                        _,
+                    >(
+                        tx,
+                        &task,
                         &Interval::new(
-                            Time::from_seconds_since_epoch(50),
-                            Duration::from_seconds(250),
+                            Time::from_seconds_since_epoch(100),
+                            Duration::from_seconds(3 * time_precision.as_seconds()),
                         )
                         .unwrap(),
                         &aggregation_param,
                     )
                     .await?;
 
-                assert_eq!(
-                    batch_unit_aggregations.len(),
-                    3,
-                    "{:#?}",
-                    batch_unit_aggregations,
-                );
-                assert!(
-                    batch_unit_aggregations.contains(&updated_first_batch_unit_aggregation),
-                    "{:#?}",
-                    batch_unit_aggregations,
-                );
-                assert!(
-                    batch_unit_aggregations.contains(&second_batch_unit_aggregation),
-                    "{:#?}",
-                    batch_unit_aggregations,
-                );
-                assert!(batch_unit_aggregations.contains(&third_batch_unit_aggregation));
+                assert_eq!(batch_aggregations.len(), 3, "{:#?}", batch_aggregations);
+                for batch_aggregation in [
+                    &first_batch_aggregation,
+                    &second_batch_aggregation,
+                    &third_batch_aggregation,
+                ] {
+                    assert!(
+                        batch_aggregations.contains(batch_aggregation),
+                        "{:#?}",
+                        batch_aggregations
+                    );
+                }
 
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn roundtrip_batch_aggregation_fixed_size() {
+        install_test_trace_subscriber();
+
+        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                let task = TaskBuilder::new(
+                    QueryType::FixedSize { max_batch_size: 10 },
+                    VdafInstance::Fake,
+                    Role::Leader,
+                )
+                .build();
+                let other_task = TaskBuilder::new(
+                    QueryType::FixedSize { max_batch_size: 10 },
+                    VdafInstance::Fake,
+                    Role::Leader,
+                )
+                .build();
+                let batch_id = random();
+                let aggregate_share = dummy_vdaf::AggregateShare(23);
+                let aggregation_param = dummy_vdaf::AggregationParam(12);
+
+                tx.put_task(&task).await?;
+                tx.put_task(&other_task).await?;
+
+                let batch_aggregation = BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    *task.id(),
+                    batch_id,
+                    aggregation_param,
+                    aggregate_share.clone(),
+                    0,
+                    ReportIdChecksum::default(),
+                );
+
+                // Following three batches are within the interval queried below.
+                tx.put_batch_aggregation(&batch_aggregation).await?;
+
+                // Wrong batch ID.
+                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    *task.id(),
+                    random(),
+                    dummy_vdaf::AggregationParam(13),
+                    aggregate_share.clone(),
+                    0,
+                    ReportIdChecksum::default(),
+                ))
+                .await?;
+
+                // Task ID differs from that queried below.
+                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    *other_task.id(),
+                    batch_id,
+                    aggregation_param,
+                    aggregate_share.clone(),
+                    0,
+                    ReportIdChecksum::default(),
+                ))
+                .await?;
+
+                let got_batch_aggregation = tx
+                    .get_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        task.id(),
+                        &batch_id,
+                        &aggregation_param,
+                    )
+                    .await?;
+                assert_eq!(got_batch_aggregation.as_ref(), Some(&batch_aggregation));
+
+                let batch_aggregation = BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    *batch_aggregation.task_id(),
+                    *batch_aggregation.batch_id(),
+                    *batch_aggregation.aggregation_parameter(),
+                    dummy_vdaf::AggregateShare(92),
+                    1,
+                    ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
+                );
+                tx.update_batch_aggregation(&batch_aggregation).await?;
+
+                let got_batch_aggregation = tx
+                    .get_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        task.id(),
+                        &batch_id,
+                        &aggregation_param,
+                    )
+                    .await?;
+                assert_eq!(got_batch_aggregation, Some(batch_aggregation));
                 Ok(())
             })
         })
