@@ -11,6 +11,7 @@ use janus_messages::{
     Duration, Interval, Time,
 };
 use prio::vdaf;
+use std::iter;
 
 pub trait AccumulableQueryType: QueryType {
     /// This method converts various values related to a client report into a batch identifier. The
@@ -162,12 +163,12 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
 }
 
 impl CollectableQueryType for FixedSize {
-    type Iter = std::option::IntoIter<Self::BatchIdentifier>;
+    type Iter = iter::Once<Self::BatchIdentifier>;
 
     fn batch_identifiers_for_collect_identifier(
         _: &Task,
         batch_id: &Self::BatchIdentifier,
     ) -> Self::Iter {
-        Some(*batch_id).into_iter()
+        iter::once(*batch_id)
     }
 }
