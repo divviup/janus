@@ -43,7 +43,7 @@ use std::{fmt, sync::Arc};
 use tokio::try_join;
 use tracing::{info, warn};
 
-use super::accumulator::AccumulableQueryType;
+use super::query_type::AccumulableQueryType;
 
 #[derive(Derivative)]
 #[derivative(Debug)]

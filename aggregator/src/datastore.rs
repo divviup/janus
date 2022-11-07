@@ -3324,7 +3324,7 @@ pub mod models {
 
     /// BatchAggregation corresponds to a row in the `batch_aggregations` table and represents the
     /// possibly-ongoing aggregation of the set of input shares that fall within the batch
-    /// identifier by `batch_identifier`. This is the finest-grained possible aggregate share we can
+    /// identified by `batch_identifier`. This is the finest-grained possible aggregate share we can
     /// emit for this task. The aggregate share constructed to service a collect or aggregate share
     /// request consists of one or more `BatchAggregation`s merged together.
     #[derive(Clone, Derivative)]
@@ -4143,7 +4143,7 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::{
-        aggregator::CollectableQueryType,
+        aggregator::query_type::CollectableQueryType,
         datastore::{
             models::{
                 AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregationJobState,

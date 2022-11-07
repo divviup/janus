@@ -1,28 +1,20 @@
 //! In-memory accumulation of output shares.
 
-use super::Error;
+use super::{query_type::AccumulableQueryType, Error};
 use crate::{
     datastore::{self, models::BatchAggregation, Transaction},
     task::Task,
 };
 use derivative::Derivative;
 use futures::future::try_join_all;
-use janus_core::{
-    report_id::ReportIdChecksumExt,
-    time::{Clock, TimeExt},
-};
-use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
-    Interval, ReportId, ReportIdChecksum, Time,
-};
+use janus_core::{report_id::ReportIdChecksumExt, time::Clock};
+use janus_messages::{ReportId, ReportIdChecksum, Time};
 use prio::vdaf::{self, Aggregatable};
 use std::{collections::HashMap, sync::Arc};
-use tracing::debug;
 
-/// Accumulates output shares in memory and eventually flushes accumulations to a datastore. Janus'
-/// leader aligns aggregate jobs with batch intervals, but this is not generally required for DAP
-/// implementations, so we accumulate output shares into a HashMap mapping the Time at which the
-/// batch interval begins to the accumulated aggregate share, report count and checksum.
+/// Accumulates output shares in memory and eventually flushes accumulations to a datastore. We
+/// accumulate output shares into a [`HashMap`] mapping the batch identifier at which the batch
+/// interval begins to the accumulated aggregate share, report count and checksum.
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct Accumulator<const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L>>
@@ -96,10 +88,6 @@ where
                     .await?;
                 match batch_aggregation {
                     Some(batch_aggregation) => {
-                        debug!(
-                            ?batch_identifier,
-                            "Accumulating into existing batch aggregation",
-                        );
                         tx.update_batch_aggregation(&batch_aggregation.merged_with(
                             &accumulation.aggregate_share,
                             accumulation.report_count,
@@ -108,7 +96,6 @@ where
                         .await?;
                     }
                     None => {
-                        debug!(?batch_identifier, "Inserting new batch aggregation");
                         tx.put_batch_aggregation(&BatchAggregation::<L, Q, A>::new(
                             *self.task.id(),
                             batch_identifier.clone(),
@@ -150,40 +137,5 @@ where
         self.report_count += 1;
         self.checksum = self.checksum.updated_with(report_id);
         Ok(())
-    }
-}
-
-pub trait AccumulableQueryType: QueryType {
-    /// This method converts various values related to a client report into a batch identifier. The
-    /// arguments are somewhat arbitrary in the sense they are what "works out" to allow the
-    /// necessary functionality to be implemented for all query types.
-    fn to_batch_identifier(
-        _: &Task,
-        _: &Self::PartialBatchIdentifier,
-        client_timestamp: &Time,
-    ) -> Result<Self::BatchIdentifier, datastore::Error>;
-}
-
-impl AccumulableQueryType for TimeInterval {
-    fn to_batch_identifier(
-        task: &Task,
-        _: &Self::PartialBatchIdentifier,
-        client_timestamp: &Time,
-    ) -> Result<Self::BatchIdentifier, datastore::Error> {
-        let batch_interval_start = client_timestamp
-            .to_batch_interval_start(task.time_precision())
-            .map_err(|e| datastore::Error::User(e.into()))?;
-        Interval::new(batch_interval_start, *task.time_precision())
-            .map_err(|e| datastore::Error::User(e.into()))
-    }
-}
-
-impl AccumulableQueryType for FixedSize {
-    fn to_batch_identifier(
-        _: &Task,
-        batch_id: &Self::PartialBatchIdentifier,
-        _: &Time,
-    ) -> Result<Self::BatchIdentifier, datastore::Error> {
-        Ok(*batch_id)
     }
 }

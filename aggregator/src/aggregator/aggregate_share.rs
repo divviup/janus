@@ -39,7 +39,7 @@ use std::sync::Arc;
 use tokio::try_join;
 use tracing::{debug, error, info, warn};
 
-use super::CollectableQueryType;
+use super::query_type::CollectableQueryType;
 
 /// Holds various metrics instruments for a collect job driver.
 #[derive(Clone)]
