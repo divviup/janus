@@ -919,7 +919,8 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT COUNT(1) AS count FROM client_reports
                 WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND client_reports.client_timestamp <@ $2::TSRANGE",
+                AND client_reports.client_timestamp >= lower($2::TSRANGE)
+                AND client_reports.client_timestamp < upper($2::TSRANGE)",
             )
             .await?;
         let row = self
