@@ -20,6 +20,7 @@ use serde::{
 use std::{
     fmt::{self, Debug, Display, Formatter},
     io::{Cursor, Read},
+    num::TryFromIntError,
     str::FromStr,
 };
 
@@ -279,6 +280,20 @@ impl Decode for ReportId {
     }
 }
 
+impl FromStr for ReportId {
+    type Err = Box<dyn Debug>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = base64::decode_engine(s, &URL_SAFE_NO_PAD)
+            .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
+        let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| {
+            Box::new(format!("decoded base64 {s} has wrong length")) as Box<dyn Debug>
+        })?;
+
+        Ok(Self::from(bytes))
+    }
+}
+
 impl Distribution<ReportId> for Standard {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> ReportId {
         ReportId(rng.gen())
@@ -484,6 +499,20 @@ impl Decode for TaskId {
         let mut decoded = [0u8; Self::LEN];
         bytes.read_exact(&mut decoded)?;
         Ok(Self(decoded))
+    }
+}
+
+impl FromStr for TaskId {
+    type Err = Box<dyn Debug>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = base64::decode_engine(s, &URL_SAFE_NO_PAD)
+            .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
+        let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| {
+            Box::new(format!("decoded base64 {s} has wrong length")) as Box<dyn Debug>
+        })?;
+
+        Ok(Self::from(bytes))
     }
 }
 
@@ -957,46 +986,6 @@ impl Decode for HpkeConfigList {
     }
 }
 
-/// DAP protocol message representing client report metadata.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReportMetadata {
-    report_id: ReportId,
-    time: Time,
-}
-
-impl ReportMetadata {
-    /// Construct a report's metadata from its components.
-    pub fn new(report_id: ReportId, time: Time) -> Self {
-        Self { report_id, time }
-    }
-
-    /// Retrieve the report ID from this report metadata.
-    pub fn id(&self) -> &ReportId {
-        &self.report_id
-    }
-
-    /// Retrieve the client timestamp from this report metadata.
-    pub fn time(&self) -> &Time {
-        &self.time
-    }
-}
-
-impl Encode for ReportMetadata {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        self.report_id.encode(bytes);
-        self.time.encode(bytes);
-    }
-}
-
-impl Decode for ReportMetadata {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let report_id = ReportId::decode(bytes)?;
-        let time = Time::decode(bytes)?;
-
-        Ok(Self { report_id, time })
-    }
-}
-
 /// DAP protocol message representing the plaintext of an input share.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaintextInputShare {
@@ -1046,8 +1035,7 @@ impl Decode for PlaintextInputShare {
 /// DAP protocol message representing a client report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
-    task_id: TaskId,
-    metadata: ReportMetadata,
+    time: Time,
     public_share: Vec<u8>,
     encrypted_input_shares: Vec<HpkeCiphertext>,
 }
@@ -1058,29 +1046,23 @@ impl Report {
 
     /// Construct a report from its components.
     pub fn new(
-        task_id: TaskId,
-        metadata: ReportMetadata,
+        time: Time,
         public_share: Vec<u8>,
         encrypted_input_shares: Vec<HpkeCiphertext>,
     ) -> Self {
         Self {
-            task_id,
-            metadata,
+            time,
             public_share,
             encrypted_input_shares,
         }
     }
 
-    /// Retrieve the task identifier from this report.
-    pub fn task_id(&self) -> &TaskId {
-        &self.task_id
+    /// Get the time at which this report was generated.
+    pub fn time(&self) -> &Time {
+        &self.time
     }
 
-    /// Retrieve the metadata from this report.
-    pub fn metadata(&self) -> &ReportMetadata {
-        &self.metadata
-    }
-
+    /// Get the VDAF public share for this report.
     pub fn public_share(&self) -> &[u8] {
         &self.public_share
     }
@@ -1093,8 +1075,7 @@ impl Report {
 
 impl Encode for Report {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
-        self.metadata.encode(bytes);
+        self.time.encode(bytes);
         encode_u32_items(bytes, &(), &self.public_share);
         encode_u32_items(bytes, &(), &self.encrypted_input_shares);
     }
@@ -1102,14 +1083,12 @@ impl Encode for Report {
 
 impl Decode for Report {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
-        let metadata = ReportMetadata::decode(bytes)?;
+        let time = Time::decode(bytes)?;
         let public_share = decode_u32_items(&(), bytes)?;
         let encrypted_input_shares = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
-            task_id,
-            metadata,
+            time,
             public_share,
             encrypted_input_shares,
         })
@@ -1223,7 +1202,6 @@ impl<Q: QueryType> Decode for Query<Q> {
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct CollectReq<Q: QueryType> {
-    task_id: TaskId,
     query: Query<Q>,
     #[derivative(Debug = "ignore")]
     aggregation_parameter: Vec<u8>,
@@ -1234,17 +1212,11 @@ impl<Q: QueryType> CollectReq<Q> {
     pub const MEDIA_TYPE: &'static str = "application/dap-collect-req";
 
     /// Constructs a new collect request from its components.
-    pub fn new(task_id: TaskId, query: Query<Q>, aggregation_parameter: Vec<u8>) -> Self {
+    pub fn new(query: Query<Q>, aggregation_parameter: Vec<u8>) -> Self {
         Self {
-            task_id,
             query,
             aggregation_parameter,
         }
-    }
-
-    /// Gets the task ID associated with this collect request.
-    pub fn task_id(&self) -> &TaskId {
-        &self.task_id
     }
 
     /// Gets the query associated with this collect request.
@@ -1260,7 +1232,6 @@ impl<Q: QueryType> CollectReq<Q> {
 
 impl<Q: QueryType> Encode for CollectReq<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
         self.query.encode(bytes);
         encode_u32_items(bytes, &(), &self.aggregation_parameter);
     }
@@ -1268,12 +1239,10 @@ impl<Q: QueryType> Encode for CollectReq<Q> {
 
 impl<Q: QueryType> Decode for CollectReq<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
         let query = Query::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
-            task_id,
             query,
             aggregation_parameter,
         })
@@ -1722,13 +1691,13 @@ impl Decode for ReportShare {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrepareStep {
     report_id: ReportId,
-    result: PrepareStepResult,
+    state: PrepareStepState,
 }
 
 impl PrepareStep {
     /// Constructs a new prepare step from its components.
-    pub fn new(report_id: ReportId, result: PrepareStepResult) -> Self {
-        Self { report_id, result }
+    pub fn new(report_id: ReportId, state: PrepareStepState) -> Self {
+        Self { report_id, state }
     }
 
     /// Gets the report ID associated with this prepare step.
@@ -1736,41 +1705,41 @@ impl PrepareStep {
         &self.report_id
     }
 
-    /// Gets the result associated with this prepare step.
-    pub fn result(&self) -> &PrepareStepResult {
-        &self.result
+    /// Gets the state associated with this prepare step.
+    pub fn state(&self) -> &PrepareStepState {
+        &self.state
     }
 }
 
 impl Encode for PrepareStep {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.report_id.encode(bytes);
-        self.result.encode(bytes);
+        self.state.encode(bytes);
     }
 }
 
 impl Decode for PrepareStep {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_id = ReportId::decode(bytes)?;
-        let result = PrepareStepResult::decode(bytes)?;
+        let state = PrepareStepState::decode(bytes)?;
 
-        Ok(Self { report_id, result })
+        Ok(Self { report_id, state })
     }
 }
 
-/// DAP protocol message representing result-type-specific data associated with a preparation step
-/// in a VDAF evaluation. Included in a PrepareStep message.
+/// DAP protocol message representing state-specific data associated with a preparation step in a
+/// VDAF evaluation. Included in a PrepareStep message.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
-pub enum PrepareStepResult {
+pub enum PrepareStepState {
     Continued(#[derivative(Debug = "ignore")] Vec<u8>), // content is a serialized preparation message
     Finished,
     Failed(ReportShareError),
 }
 
-impl Encode for PrepareStepResult {
+impl Encode for PrepareStepState {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        // The encoding includes an implicit discriminator byte, called PrepareStepResult in the
+        // The encoding includes an implicit discriminator byte, called PrepareStepState in the
         // DAP spec.
         match self {
             Self::Continued(vdaf_msg) => {
@@ -1786,7 +1755,7 @@ impl Encode for PrepareStepResult {
     }
 }
 
-impl Decode for PrepareStepResult {
+impl Decode for PrepareStepState {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u8::decode(bytes)?;
         Ok(match val {
@@ -1873,92 +1842,124 @@ impl Decode for AggregationJobId {
     }
 }
 
+impl FromStr for AggregationJobId {
+    type Err = Box<dyn Debug>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = base64::decode_engine(s, &URL_SAFE_NO_PAD)
+            .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
+        let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| {
+            Box::new(format!("decoded base64 {s} has wrong length")) as Box<dyn Debug>
+        })?;
+
+        Ok(Self(bytes))
+    }
+}
+
 impl Distribution<AggregationJobId> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> AggregationJobId {
         AggregationJobId(rng.gen())
     }
 }
 
-/// DAP protocol message representing an aggregation initialization request from leader to helper.
+/// DAP protocol message representing client report metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReportMetadata {
+    report_id: ReportId,
+    time: Time,
+}
+
+impl ReportMetadata {
+    /// Construct a report's metadata from its components.
+    pub fn new(report_id: ReportId, time: Time) -> Self {
+        Self { report_id, time }
+    }
+
+    /// Retrieve the report ID from this report metadata.
+    pub fn id(&self) -> &ReportId {
+        &self.report_id
+    }
+
+    /// Retrieve the client timestamp from this report metadata.
+    pub fn time(&self) -> &Time {
+        &self.time
+    }
+}
+
+impl Encode for ReportMetadata {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.report_id.encode(bytes);
+        self.time.encode(bytes);
+    }
+}
+
+impl Decode for ReportMetadata {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let report_id = ReportId::decode(bytes)?;
+        let time = Time::decode(bytes)?;
+
+        Ok(Self { report_id, time })
+    }
+}
+
+/// DAP protocol message representing an aggregation job initialization request from leader to helper.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
-pub struct AggregateInitializeReq<Q: QueryType> {
-    task_id: TaskId,
-    job_id: AggregationJobId,
+pub struct AggregationJobInitializeReq<Q: QueryType> {
     #[derivative(Debug = "ignore")]
     aggregation_parameter: Vec<u8>,
     partial_batch_selector: PartialBatchSelector<Q>,
     report_shares: Vec<ReportShare>,
 }
 
-impl<Q: QueryType> AggregateInitializeReq<Q> {
+impl<Q: QueryType> AggregationJobInitializeReq<Q> {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-initialize-req";
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-put";
 
-    /// Constructs an aggregate initialization request from its components.
+    /// Constructs an aggregation job initialization request from its components.
     pub fn new(
-        task_id: TaskId,
-        job_id: AggregationJobId,
         aggregation_parameter: Vec<u8>,
         partial_batch_selector: PartialBatchSelector<Q>,
         report_shares: Vec<ReportShare>,
     ) -> Self {
         Self {
-            task_id,
-            job_id,
             aggregation_parameter,
             partial_batch_selector,
             report_shares,
         }
     }
 
-    /// Gets the task ID associated with this aggregate initialization request.
-    pub fn task_id(&self) -> &TaskId {
-        &self.task_id
-    }
-
-    /// Gets the aggregation job ID associated with this aggregate initialization request.
-    pub fn job_id(&self) -> &AggregationJobId {
-        &self.job_id
-    }
-
-    /// Gets the aggregation parameter associated with this aggregate initialization request.
+    /// Gets the aggregation parameter associated with this aggregation job initialization request.
     pub fn aggregation_parameter(&self) -> &[u8] {
         &self.aggregation_parameter
     }
 
-    /// Gets the partial batch selector associated with this aggregate initialization request.
+    /// Gets the partial batch selector associated with this aggregation job initialization request.
     pub fn batch_selector(&self) -> &PartialBatchSelector<Q> {
         &self.partial_batch_selector
     }
 
-    /// Gets the report shares associated with this aggregate initialization request.
+    /// Gets the report shares associated with this aggregation job initialization request.
     pub fn report_shares(&self) -> &[ReportShare] {
         &self.report_shares
     }
 }
 
-impl<Q: QueryType> Encode for AggregateInitializeReq<Q> {
+impl<Q: QueryType> Encode for AggregationJobInitializeReq<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
-        self.job_id.encode(bytes);
         encode_u32_items(bytes, &(), &self.aggregation_parameter);
         self.partial_batch_selector.encode(bytes);
         encode_u32_items(bytes, &(), &self.report_shares);
     }
 }
 
-impl<Q: QueryType> Decode for AggregateInitializeReq<Q> {
+impl<Q: QueryType> Decode for AggregationJobInitializeReq<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
-        let job_id = AggregationJobId::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let report_shares = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
-            task_id,
-            job_id,
             aggregation_parameter,
             partial_batch_selector,
             report_shares,
@@ -1966,129 +1967,98 @@ impl<Q: QueryType> Decode for AggregateInitializeReq<Q> {
     }
 }
 
-/// DAP protocol message representing an aggregation initialization response from helper to leader.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateInitializeResp {
-    prepare_steps: Vec<PrepareStep>,
-}
+/// DAP protocol message representing the round of an aggregation job.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AggregationJobRound(u16);
 
-impl AggregateInitializeResp {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-initialize-resp";
-
-    /// Constructs a new aggregate initialization response from its components.
-    pub fn new(prepare_steps: Vec<PrepareStep>) -> Self {
-        Self { prepare_steps }
-    }
-
-    /// Gets the prepare steps associated with this aggregate initialization response.
-    pub fn prepare_steps(&self) -> &[PrepareStep] {
-        &self.prepare_steps
+impl AggregationJobRound {
+    pub fn increment(&self) -> Self {
+        Self(self.0 + 1)
     }
 }
 
-impl Encode for AggregateInitializeResp {
+impl Display for AggregationJobRound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Encode for AggregationJobRound {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u32_items(bytes, &(), &self.prepare_steps);
+        self.0.encode(bytes);
     }
 }
 
-impl Decode for AggregateInitializeResp {
+impl Decode for AggregationJobRound {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let prepare_steps = decode_u32_items(&(), bytes)?;
-        Ok(Self { prepare_steps })
+        Ok(Self(u16::decode(bytes)?))
     }
 }
 
-/// DAP protocol message representing an aggregation continuation request from leader to helper.
+impl From<u16> for AggregationJobRound {
+    fn from(value: u16) -> Self {
+        AggregationJobRound(value)
+    }
+}
+
+impl TryFrom<i32> for AggregationJobRound {
+    type Error = TryFromIntError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        Ok(AggregationJobRound(u16::try_from(value)?))
+    }
+}
+
+impl From<AggregationJobRound> for u16 {
+    fn from(id: AggregationJobRound) -> u16 {
+        id.0
+    }
+}
+
+/// DAP protocol message representing an aggregation job.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateContinueReq {
-    task_id: TaskId,
-    job_id: AggregationJobId,
+pub struct AggregationJob {
+    round: AggregationJobRound,
     prepare_steps: Vec<PrepareStep>,
 }
 
-impl AggregateContinueReq {
+impl AggregationJob {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-continue-req";
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job";
 
-    /// Constructs a new aggregate continuation request from its components.
-    pub fn new(task_id: TaskId, job_id: AggregationJobId, prepare_steps: Vec<PrepareStep>) -> Self {
+    /// Constructs a new aggregation job from its components.
+    pub fn new(round: AggregationJobRound, prepare_steps: Vec<PrepareStep>) -> Self {
         Self {
-            task_id,
-            job_id,
+            round,
             prepare_steps,
         }
     }
 
-    /// Gets the task ID associated with this aggregate continuation request.
-    pub fn task_id(&self) -> &TaskId {
-        &self.task_id
+    pub fn round(&self) -> AggregationJobRound {
+        self.round
     }
 
-    /// Gets the aggregation job ID associated with this aggregate continuation request.
-    pub fn job_id(&self) -> &AggregationJobId {
-        &self.job_id
-    }
-
-    /// Gets the prepare steps associated with this aggregate continuation request.
+    /// Gets the prepare steps associated with this aggregation job.
     pub fn prepare_steps(&self) -> &[PrepareStep] {
         &self.prepare_steps
     }
 }
 
-impl Encode for AggregateContinueReq {
+impl Encode for AggregationJob {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
-        self.job_id.encode(bytes);
+        self.round.encode(bytes);
         encode_u32_items(bytes, &(), &self.prepare_steps);
     }
 }
 
-impl Decode for AggregateContinueReq {
+impl Decode for AggregationJob {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
-        let job_id = AggregationJobId::decode(bytes)?;
+        let round = AggregationJobRound::decode(bytes)?;
         let prepare_steps = decode_u32_items(&(), bytes)?;
         Ok(Self {
-            task_id,
-            job_id,
+            round,
             prepare_steps,
         })
-    }
-}
-
-/// DAP protocol message representing an aggregation continue response from helper to leader.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregateContinueResp {
-    prepare_steps: Vec<PrepareStep>,
-}
-
-impl AggregateContinueResp {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregate-continue-resp";
-
-    /// Constructs a new aggregate continuation response from its components.
-    pub fn new(prepare_steps: Vec<PrepareStep>) -> Self {
-        Self { prepare_steps }
-    }
-
-    /// Gets the prepare steps associated with this aggregate continuation response.
-    pub fn prepare_steps(&self) -> &[PrepareStep] {
-        &self.prepare_steps
-    }
-}
-
-impl Encode for AggregateContinueResp {
-    fn encode(&self, bytes: &mut Vec<u8>) {
-        encode_u32_items(bytes, &(), &self.prepare_steps);
-    }
-}
-
-impl Decode for AggregateContinueResp {
-    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let prepare_steps = decode_u32_items(&(), bytes)?;
-        Ok(Self { prepare_steps })
     }
 }
 
@@ -2163,7 +2133,6 @@ impl<Q: QueryType> Decode for BatchSelector<Q> {
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct AggregateShareReq<Q: QueryType> {
-    task_id: TaskId,
     batch_selector: BatchSelector<Q>,
     #[derivative(Debug = "ignore")]
     aggregation_parameter: Vec<u8>,
@@ -2177,24 +2146,17 @@ impl<Q: QueryType> AggregateShareReq<Q> {
 
     /// Constructs a new aggregate share request from its components.
     pub fn new(
-        task_id: TaskId,
         batch_selector: BatchSelector<Q>,
         aggregation_parameter: Vec<u8>,
         report_count: u64,
         checksum: ReportIdChecksum,
     ) -> Self {
         Self {
-            task_id,
             batch_selector,
             aggregation_parameter,
             report_count,
             checksum,
         }
-    }
-
-    /// Gets the task ID associated with this aggregate share request.
-    pub fn task_id(&self) -> &TaskId {
-        &self.task_id
     }
 
     /// Gets the batch selector associated with this aggregate share request.
@@ -2220,7 +2182,6 @@ impl<Q: QueryType> AggregateShareReq<Q> {
 
 impl<Q: QueryType> Encode for AggregateShareReq<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.task_id.encode(bytes);
         self.batch_selector.encode(bytes);
         encode_u32_items(bytes, &(), &self.aggregation_parameter);
         self.report_count.encode(bytes);
@@ -2230,14 +2191,12 @@ impl<Q: QueryType> Encode for AggregateShareReq<Q> {
 
 impl<Q: QueryType> Decode for AggregateShareReq<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
-        let task_id = TaskId::decode(bytes)?;
         let batch_selector = BatchSelector::decode(bytes)?;
         let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let report_count = u64::decode(bytes)?;
         let checksum = ReportIdChecksum::decode(bytes)?;
 
         Ok(Self {
-            task_id,
             batch_selector,
             aggregation_parameter,
             report_count,
@@ -2288,16 +2247,8 @@ impl Decode for AggregateShareResp {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        query_type::{self, FixedSize, TimeInterval},
-        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, AggregateShareAad, AggregateShareReq, AggregateShareResp,
-        AggregationJobId, BatchId, BatchSelector, CollectReq, CollectResp, Duration, Extension,
-        ExtensionType, FixedSizeQuery, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId,
-        HpkeKdfId, HpkeKemId, HpkePublicKey, InputShareAad, Interval, PartialBatchSelector,
-        PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report, ReportId,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
-    };
+    use super::*;
+
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
     use serde_test::{assert_de_tokens_error, assert_tokens, Token};
@@ -2707,32 +2658,6 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_report_metadata() {
-        roundtrip_encoding(&[
-            (
-                ReportMetadata::new(
-                    ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                    Time::from_seconds_since_epoch(12345),
-                ),
-                concat!(
-                    "0102030405060708090A0B0C0D0E0F10", // report_id
-                    "0000000000003039",                 // time
-                ),
-            ),
-            (
-                ReportMetadata::new(
-                    ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                    Time::from_seconds_since_epoch(54321),
-                ),
-                concat!(
-                    "100F0E0D0C0B0A090807060504030201", // report_id
-                    "000000000000D431",                 // time
-                ),
-            ),
-        ])
-    }
-
-    #[test]
     fn roundtrip_plaintext_input_share() {
         roundtrip_encoding(&[
             (
@@ -2782,20 +2707,13 @@ mod tests {
         roundtrip_encoding(&[
             (
                 Report::new(
-                    TaskId::from([u8::MIN; TaskId::LEN]),
-                    ReportMetadata::new(
-                        ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                        Time::from_seconds_since_epoch(12345),
-                    ),
+                    Time::from_seconds_since_epoch(12345),
                     Vec::new(),
                     Vec::new(),
                 ),
                 concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
-                        // metadata
-                        "0102030405060708090A0B0C0D0E0F10", // report_id
-                        "0000000000003039",                 // time
+                        "0000000000003039", // time
                     ),
                     concat!(
                         // public_share
@@ -2809,11 +2727,7 @@ mod tests {
             ),
             (
                 Report::new(
-                    TaskId::from([u8::MAX; TaskId::LEN]),
-                    ReportMetadata::new(
-                        ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
-                        Time::from_seconds_since_epoch(54321),
-                    ),
+                    Time::from_seconds_since_epoch(54321),
                     Vec::from("3210"),
                     Vec::from([
                         HpkeCiphertext::new(
@@ -2829,11 +2743,8 @@ mod tests {
                     ]),
                 ),
                 concat!(
-                    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
                     concat!(
-                        // metadata
-                        "100F0E0D0C0B0A090807060504030201", // report_id
-                        "000000000000D431",                 // time
+                        "000000000000D431", // time
                     ),
                     concat!(
                         // public_share
@@ -2974,7 +2885,6 @@ mod tests {
         roundtrip_encoding(&[
             (
                 CollectReq::<TimeInterval> {
-                    task_id: TaskId::from([u8::MIN; 32]),
                     query: Query {
                         query_body: Interval::new(
                             Time::from_seconds_since_epoch(54321),
@@ -2985,7 +2895,6 @@ mod tests {
                     aggregation_parameter: Vec::new(),
                 },
                 concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id,
                     concat!(
                         // query
                         "01", // query_type
@@ -3004,7 +2913,6 @@ mod tests {
             ),
             (
                 CollectReq::<TimeInterval> {
-                    task_id: TaskId::from([13u8; 32]),
                     query: Query {
                         query_body: Interval::new(
                             Time::from_seconds_since_epoch(48913),
@@ -3015,7 +2923,6 @@ mod tests {
                     aggregation_parameter: Vec::from("012345"),
                 },
                 concat!(
-                    "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D", // task_id
                     concat!(
                         // query
                         "01", // query_type
@@ -3038,7 +2945,6 @@ mod tests {
         roundtrip_encoding(&[
             (
                 CollectReq::<FixedSize> {
-                    task_id: TaskId::from([u8::MIN; 32]),
                     query: Query {
                         query_body: FixedSizeQuery::ByBatchId {
                             batch_id: BatchId::from([10u8; 32]),
@@ -3047,7 +2953,6 @@ mod tests {
                     aggregation_parameter: Vec::new(),
                 },
                 concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id,
                     concat!(
                         "02", // query_type
                         concat!(
@@ -3065,14 +2970,12 @@ mod tests {
             ),
             (
                 CollectReq::<FixedSize> {
-                    task_id: TaskId::from([13u8; 32]),
                     query: Query::<FixedSize> {
                         query_body: FixedSizeQuery::CurrentBatch,
                     },
                     aggregation_parameter: Vec::from("012345"),
                 },
                 concat!(
-                    "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D", // task_id
                     concat!(
                         "02", // query_type
                         concat!(
@@ -3299,7 +3202,7 @@ mod tests {
                     report_id: ReportId::from([
                         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                     ]),
-                    result: PrepareStepResult::Continued(Vec::from("012345")),
+                    state: PrepareStepState::Continued(Vec::from("012345")),
                 },
                 concat!(
                     "0102030405060708090A0B0C0D0E0F10", // report_id
@@ -3316,7 +3219,7 @@ mod tests {
                     report_id: ReportId::from([
                         16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
                     ]),
-                    result: PrepareStepResult::Finished,
+                    state: PrepareStepState::Finished,
                 },
                 concat!(
                     "100F0E0D0C0B0A090807060504030201", // report_id
@@ -3326,7 +3229,7 @@ mod tests {
             (
                 PrepareStep {
                     report_id: ReportId::from([255; 16]),
-                    result: PrepareStepResult::Failed(ReportShareError::VdafPrepError),
+                    state: PrepareStepState::Failed(ReportShareError::VdafPrepError),
                 },
                 concat!(
                     "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // report_id
@@ -3371,12 +3274,10 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_aggregate_initialize_req() {
+    fn roundtrip_aggregation_job_initialize_req() {
         // TimeInterval.
         roundtrip_encoding(&[(
-            AggregateInitializeReq {
-                task_id: TaskId::from([u8::MAX; 32]),
-                job_id: AggregationJobId([u8::MIN; 32]),
+            AggregationJobInitializeReq {
                 aggregation_parameter: Vec::from("012345"),
                 partial_batch_selector: PartialBatchSelector::new_time_interval(),
                 report_shares: Vec::from([
@@ -3407,8 +3308,6 @@ mod tests {
                 ]),
             },
             concat!(
-                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
-                "0000000000000000000000000000000000000000000000000000000000000000", // job_id
                 concat!(
                     // aggregation_parameter
                     "00000006",     // length
@@ -3478,9 +3377,7 @@ mod tests {
 
         // FixedSize.
         roundtrip_encoding(&[(
-            AggregateInitializeReq::<FixedSize> {
-                task_id: TaskId::from([u8::MAX; 32]),
-                job_id: AggregationJobId([u8::MIN; 32]),
+            AggregationJobInitializeReq::<FixedSize> {
                 aggregation_parameter: Vec::from("012345"),
                 partial_batch_selector: PartialBatchSelector::new_fixed_size(BatchId::from(
                     [2u8; 32],
@@ -3513,8 +3410,6 @@ mod tests {
                 ]),
             },
             concat!(
-                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // task_id
-                "0000000000000000000000000000000000000000000000000000000000000000", // job_id
                 concat!(
                     // aggregation_parameter
                     "00000006",     // length
@@ -3586,146 +3481,59 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_aggregate_initialize_resp() {
+    fn roundtrip_aggregation_job() {
         roundtrip_encoding(&[
             (
-                AggregateInitializeResp {
+                AggregationJob {
+                    round: AggregationJobRound(0),
                     prepare_steps: Vec::new(),
                 },
-                concat!(concat!(
-                    // prepare_steps
-                    "00000000", // length
-                ),),
-            ),
-            (
-                AggregateInitializeResp {
-                    prepare_steps: Vec::from([
-                        PrepareStep {
-                            report_id: ReportId::from([
-                                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                            ]),
-                            result: PrepareStepResult::Continued(Vec::from("012345")),
-                        },
-                        PrepareStep {
-                            report_id: ReportId::from([
-                                16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
-                            ]),
-                            result: PrepareStepResult::Finished,
-                        },
-                    ]),
-                },
-                concat!(concat!(
-                    // prepare_steps
-                    "0000002C", // length
-                    concat!(
-                        "0102030405060708090A0B0C0D0E0F10", // report_id
-                        "00",                               // prepare_step_result
-                        concat!(
-                            // payload
-                            "00000006",     // length
-                            "303132333435", // opaque data
-                        ),
-                    ),
-                    concat!(
-                        "100F0E0D0C0B0A090807060504030201", // report_id
-                        "01",                               // prepare_step_result
-                    ),
-                )),
-            ),
-        ])
-    }
-
-    #[test]
-    fn roundtrip_aggregate_continue_req() {
-        roundtrip_encoding(&[(
-            AggregateContinueReq {
-                task_id: TaskId::from([u8::MIN; 32]),
-                job_id: AggregationJobId([u8::MAX; 32]),
-                prepare_steps: Vec::from([
-                    PrepareStep {
-                        report_id: ReportId::from([
-                            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-                        ]),
-                        result: PrepareStepResult::Continued(Vec::from("012345")),
-                    },
-                    PrepareStep {
-                        report_id: ReportId::from([
-                            16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
-                        ]),
-                        result: PrepareStepResult::Finished,
-                    },
-                ]),
-            },
-            concat!(
-                "0000000000000000000000000000000000000000000000000000000000000000", // task_id
-                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // job_id
                 concat!(
-                    // prepare_steps
-                    "0000002C", // length
+                    "0000", // round
                     concat!(
-                        "0102030405060708090A0B0C0D0E0F10", // report_id
-                        "00",                               // prepare_step_result
-                        concat!(
-                            // payload
-                            "00000006",     // length
-                            "303132333435", // opaque data
-                        ),
+                        // prepare_steps
+                        "00000000", // length
                     ),
-                    concat!(
-                        "100F0E0D0C0B0A090807060504030201", // report_id
-                        "01",                               // prepare_step_result
-                    )
                 ),
             ),
-        )])
-    }
-
-    #[test]
-    fn roundtrip_aggregate_continue_resp() {
-        roundtrip_encoding(&[
             (
-                AggregateContinueResp {
-                    prepare_steps: Vec::new(),
-                },
-                concat!(concat!(
-                    // prepare_steps
-                    "00000000", // length
-                ),),
-            ),
-            (
-                AggregateContinueResp {
+                AggregationJob {
+                    round: AggregationJobRound(1),
                     prepare_steps: Vec::from([
                         PrepareStep {
                             report_id: ReportId::from([
                                 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
                             ]),
-                            result: PrepareStepResult::Continued(Vec::from("012345")),
+                            state: PrepareStepState::Continued(Vec::from("012345")),
                         },
                         PrepareStep {
                             report_id: ReportId::from([
                                 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
                             ]),
-                            result: PrepareStepResult::Finished,
+                            state: PrepareStepState::Finished,
                         },
                     ]),
                 },
-                concat!(concat!(
-                    // prepare_steps
-                    "0000002C", // length
+                concat!(
+                    "0001", // round
                     concat!(
-                        "0102030405060708090A0B0C0D0E0F10", // report_id
-                        "00",                               // prepare_step_result
+                        // prepare_steps
+                        "0000002C", // length
                         concat!(
-                            // payload
-                            "00000006",     // length
-                            "303132333435", // opaque data
+                            "0102030405060708090A0B0C0D0E0F10", // report_id
+                            "00",                               // prepare_step_result
+                            concat!(
+                                // payload
+                                "00000006",     // length
+                                "303132333435", // opaque data
+                            ),
                         ),
-                    ),
-                    concat!(
-                        "100F0E0D0C0B0A090807060504030201", // report_id
-                        "01",                               // prepare_step_result
-                    ),
-                )),
+                        concat!(
+                            "100F0E0D0C0B0A090807060504030201", // report_id
+                            "01",                               // prepare_step_result
+                        ),
+                    )
+                ),
             ),
         ])
     }
@@ -3800,7 +3608,6 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateShareReq::<TimeInterval> {
-                    task_id: TaskId::from([u8::MIN; 32]),
                     batch_selector: BatchSelector {
                         batch_identifier: Interval::new(
                             Time::from_seconds_since_epoch(54321),
@@ -3813,7 +3620,6 @@ mod tests {
                     checksum: ReportIdChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
                 },
                 concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
                         // batch_selector
                         "01", // query_type
@@ -3834,7 +3640,6 @@ mod tests {
             ),
             (
                 AggregateShareReq::<TimeInterval> {
-                    task_id: TaskId::from([12u8; 32]),
                     batch_selector: BatchSelector {
                         batch_identifier: Interval::new(
                             Time::from_seconds_since_epoch(50821),
@@ -3847,7 +3652,6 @@ mod tests {
                     checksum: ReportIdChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
                 },
                 concat!(
-                    "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
                     concat!(
                         // batch_selector
                         "01", // query_type
@@ -3872,7 +3676,6 @@ mod tests {
         roundtrip_encoding(&[
             (
                 AggregateShareReq::<FixedSize> {
-                    task_id: TaskId::from([u8::MIN; 32]),
                     batch_selector: BatchSelector {
                         batch_identifier: BatchId::from([12u8; 32]),
                     },
@@ -3881,7 +3684,6 @@ mod tests {
                     checksum: ReportIdChecksum::get_decoded(&[u8::MIN; 32]).unwrap(),
                 },
                 concat!(
-                    "0000000000000000000000000000000000000000000000000000000000000000", // task_id
                     concat!(
                         // batch_selector
                         "02", // query_type
@@ -3898,7 +3700,6 @@ mod tests {
             ),
             (
                 AggregateShareReq::<FixedSize> {
-                    task_id: TaskId::from([12u8; 32]),
                     batch_selector: BatchSelector {
                         batch_identifier: BatchId::from([7u8; 32]),
                     },
@@ -3907,7 +3708,6 @@ mod tests {
                     checksum: ReportIdChecksum::get_decoded(&[u8::MAX; 32]).unwrap(),
                 },
                 concat!(
-                    "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
                     concat!(
                         // batch_selector
                         "02", // query_type

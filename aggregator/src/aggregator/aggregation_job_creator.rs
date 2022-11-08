@@ -15,7 +15,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    Interval, Role, TaskId,
+    AggregationJobRound, Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Unit},
@@ -352,6 +352,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 Some(batch_interval),
                                 (),
                                 AggregationJobState::InProgress,
+                                AggregationJobRound::from(0),
                             ));
 
                             for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
@@ -506,6 +507,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             Some(*batch.id()),
                             (),
                             AggregationJobState::InProgress,
+                            AggregationJobRound::from(0),
                         ));
                         report_aggregations.extend(
                             unaggregated_report_ids
@@ -625,6 +627,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 Some(batch_interval),
                                 aggregation_param.clone(),
                                 AggregationJobState::InProgress,
+                                AggregationJobRound::from(0),
                             ));
 
                             for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
@@ -694,7 +697,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobId, Interval, ReportId, Role, TaskId, Time,
+        AggregationJobRound, AggregationJobId, Interval, ReportId, Role, TaskId, Time,
     };
     use prio::{
         codec::ParameterizedDecode,
@@ -803,21 +806,12 @@ mod tests {
             .unwrap();
         assert!(helper_agg_jobs.is_empty());
         assert_eq!(leader_agg_jobs.len(), 1);
-        assert!(leader_agg_jobs
-            .iter()
-            .next()
-            .unwrap()
-            .1
-             .0
-            .batch_identifier()
-            .is_some());
-        let report_times_and_ids = leader_agg_jobs.into_iter().next().unwrap().1 .1;
+        let leader_agg_job = leader_agg_jobs.values().next().unwrap();
+        assert!(leader_agg_job.0.batch_identifier().is_some());
+        assert_eq!(leader_agg_job.0.round(), AggregationJobRound::from(0));
         assert_eq!(
-            report_times_and_ids,
-            HashSet::from([(
-                *leader_report.metadata().time(),
-                *leader_report.metadata().id()
-            )])
+            leader_agg_job.1,
+            HashSet::from([(*leader_report.time(), *leader_report.id())])
         );
     }
 
@@ -881,7 +875,7 @@ mod tests {
             .iter()
             .chain(&small_batch_reports)
             .chain(&big_batch_reports)
-            .map(|report| *report.metadata().id())
+            .map(|report| *report.id())
             .collect();
 
         ds.run_tx(|tx| {
@@ -938,7 +932,9 @@ mod tests {
             .await
             .unwrap();
         let mut seen_report_ids = HashSet::new();
-        for (_, (_, times_and_ids)) in agg_jobs {
+        for (_, (agg_job, times_and_ids)) in agg_jobs {
+            // Jobs are created in round 0
+            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
             // All report IDs for aggregation job are in the same batch.
             let batches: HashSet<Time> = times_and_ids
                 .iter()
@@ -1063,14 +1059,8 @@ mod tests {
         assert_eq!(
             report_ids,
             HashSet::from([
-                (
-                    *first_report.metadata().time(),
-                    *first_report.metadata().id()
-                ),
-                (
-                    *second_report.metadata().time(),
-                    *second_report.metadata().id()
-                )
+                (*first_report.time(), *first_report.id()),
+                (*second_report.time(), *second_report.id())
             ])
         );
     }
@@ -1119,10 +1109,7 @@ mod tests {
                 .take(MIN_BATCH_SIZE + MAX_BATCH_SIZE)
                 .collect();
 
-        let report_ids: HashSet<ReportId> = reports
-            .iter()
-            .map(|report| *report.metadata().id())
-            .collect();
+        let report_ids: HashSet<ReportId> = reports.iter().map(|report| *report.id()).collect();
 
         ds.run_tx(|tx| {
             let (task, reports) = (task.clone(), reports.clone());
@@ -1184,6 +1171,8 @@ mod tests {
         let mut seen_report_ids = HashSet::new();
         let mut batches_with_small_agg_jobs = HashSet::new();
         for (_, (agg_job, times_and_ids)) in agg_jobs {
+            // Aggregate jobs are created in round 0
+            assert_eq!(agg_job.round(), AggregationJobRound::from(0));
             // At most one aggregation job per batch will be smaller than the normal minimum
             // aggregation job size.
             if times_and_ids.len() < MIN_AGGREGATION_JOB_SIZE {
@@ -1363,6 +1352,8 @@ mod tests {
         let mut seen_pairs = Vec::new();
         let mut aggregation_jobs_per_aggregation_param = HashMap::new();
         for (aggregation_job, times_and_ids) in agg_jobs.iter() {
+            // Aggregate jobs are created in round 0
+            assert_eq!(aggregation_job.round(), AggregationJobRound::from(0));
             // Check that all report IDs for an aggregation job are in the same batch.
             let batches: HashSet<Time> = times_and_ids
                 .iter()
@@ -1387,11 +1378,11 @@ mod tests {
         );
         let mut expected_pairs = Vec::with_capacity(MAX_AGGREGATION_JOB_SIZE * 3 + 2);
         for report in batch_1_reports.iter() {
-            expected_pairs.push((*report.metadata().id(), AggregationParam(11)));
+            expected_pairs.push((*report.id(), AggregationParam(11)));
         }
         for report in batch_2_reports.iter() {
-            expected_pairs.push((*report.metadata().id(), AggregationParam(7)));
-            expected_pairs.push((*report.metadata().id(), AggregationParam(11)));
+            expected_pairs.push((*report.id(), AggregationParam(7)));
+            expected_pairs.push((*report.id(), AggregationParam(11)));
         }
         seen_pairs.sort();
         expected_pairs.sort();

@@ -2,7 +2,7 @@
 
 use super::{aggregate_share::compute_aggregate_share, query_type::CollectableQueryType};
 use crate::{
-    aggregator::{post_to_helper, Error},
+    aggregator::{send_request_to_helper, Error},
     datastore::{
         self,
         models::AcquiredCollectJob,
@@ -35,6 +35,7 @@ use prio::{
         },
     },
 };
+use reqwest::Method;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -235,17 +236,19 @@ impl CollectJobDriver {
 
         // Send an aggregate share request to the helper.
         let req = AggregateShareReq::<Q>::new(
-            *task.id(),
             BatchSelector::new(collect_job.batch_identifier().clone()),
             collect_job.aggregation_parameter().get_encoded(),
             report_count,
             checksum,
         );
 
-        let resp_bytes = post_to_helper(
+        let resp_bytes = send_request_to_helper(
             &self.http_client,
+            Method::PUT,
             task.aggregator_url(&Role::Helper)?
-                .join("aggregate_share")?,
+                .join("tasks/")?
+                .join(&format!("{}/", task.id()))?
+                .join("aggregate_shares")?,
             AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),
@@ -609,8 +612,8 @@ mod tests {
         Runtime,
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
-        HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
+        query_type::TimeInterval, AggregationJobRound, AggregateShareReq, AggregateShareResp,
+        BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -665,6 +668,7 @@ mod tests {
                             Some(batch_interval),
                             aggregation_param,
                             AggregationJobState::Finished,
+                            AggregationJobRound::from(1),
                         ),
                     )
                     .await?;
@@ -682,8 +686,8 @@ mod tests {
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
-                        *report.metadata().id(),
-                        *report.metadata().time(),
+                        *report.id(),
+                        *report.time(),
                         0,
                         ReportAggregationState::Finished(OutputShare()),
                     ))
@@ -785,6 +789,7 @@ mod tests {
                             Some(batch_interval),
                             aggregation_param,
                             AggregationJobState::Finished,
+                            AggregationJobRound::from(1),
                         ),
                     )
                     .await?;
@@ -802,8 +807,8 @@ mod tests {
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
-                        *report.metadata().id(),
-                        *report.metadata().time(),
+                        *report.id(),
+                        *report.time(),
                         0,
                         ReportAggregationState::Finished(OutputShare()),
                     ))
@@ -879,7 +884,6 @@ mod tests {
         .unwrap();
 
         let leader_request = AggregateShareReq::new(
-            *task.id(),
             BatchSelector::new_time_interval(batch_interval),
             aggregation_param.get_encoded(),
             10,
@@ -887,20 +891,23 @@ mod tests {
         );
 
         // Simulate helper failing to service the aggregate share request.
-        let mocked_failed_aggregate_share = mock("POST", "/aggregate_share")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .match_body(leader_request.get_encoded())
-            .with_status(500)
-            .with_header("Content-Type", "application/problem+json")
-            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes\"}")
-            .create();
+        let mocked_failed_aggregate_share = mock(
+            "PUT",
+            format!("/tasks/{}/aggregate_shares", task.id()).as_str(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(
+            CONTENT_TYPE.as_str(),
+            AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+        )
+        .match_body(leader_request.get_encoded())
+        .with_status(500)
+        .with_header("Content-Type", "application/problem+json")
+        .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes\"}")
+        .create();
 
         let error = collect_job_driver
             .step_collect_job(ds.clone(), Arc::clone(&lease))
@@ -940,20 +947,23 @@ mod tests {
             Vec::new(),
         ));
 
-        let mocked_aggregate_share = mock("POST", "/aggregate_share")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .match_body(leader_request.get_encoded())
-            .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
-            .create();
+        let mocked_aggregate_share = mock(
+            "PUT",
+            format!("/tasks/{}/aggregate_shares", task.id()).as_str(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(
+            CONTENT_TYPE.as_str(),
+            AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+        )
+        .match_body(leader_request.get_encoded())
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
+        .with_body(helper_response.get_encoded())
+        .create();
 
         collect_job_driver
             .step_collect_job(ds.clone(), Arc::clone(&lease))
@@ -1072,17 +1082,23 @@ mod tests {
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
-        let failure_mock = mock("POST", "/aggregate_share")
-            .with_status(500)
-            .expect(3)
-            .create();
+        let failure_mock = mock(
+            "PUT",
+            format!("/tasks/{}/aggregate_shares", collect_job.task_id()).as_str(),
+        )
+        .with_status(500)
+        .expect(3)
+        .create();
         // Set up an extra response that should never be used, to make sure the job driver doesn't
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
-        let no_more_requests_mock = mock("POST", "/aggregate_share")
-            .with_status(500)
-            .expect(1)
-            .create();
+        let no_more_requests_mock = mock(
+            "PUT",
+            format!("/tasks/{}/aggregate_shares", collect_job.task_id()).as_str(),
+        )
+        .with_status(500)
+        .expect(1)
+        .create();
 
         // Start up the job driver.
         let task_handle = runtime_manager
@@ -1156,11 +1172,14 @@ mod tests {
             Vec::new(),
         ));
 
-        let mocked_aggregate_share = mock("POST", "/aggregate_share")
-            .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
-            .create();
+        let mocked_aggregate_share = mock(
+            "PUT",
+            format!("/tasks/{}/aggregate_shares", collect_job.task_id()).as_str(),
+        )
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
+        .with_body(helper_response.get_encoded())
+        .create();
 
         let collect_job_driver = CollectJobDriver::new(
             reqwest::Client::builder().build().unwrap(),

@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
-    AggregateShareReq, AggregateShareResp, CollectReq, CollectResp, HpkeConfig, Report,
+    AggregateShareReq, AggregateShareResp, AggregationJob, AggregationJobInitializeReq, CollectReq,
+    CollectResp, HpkeConfig, Report,
 };
 use prio::codec::Decode;
 use std::{
@@ -34,25 +34,23 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
     reader.read_to_end(&mut message_buf)?;
 
     let decoded = match media_type {
-        MediaType::HpkeConfig => Box::new(HpkeConfig::get_decoded(&message_buf)?) as Box<dyn Debug>,
+        MediaType::HpkeConfigList => {
+            Box::new(HpkeConfig::get_decoded(&message_buf)?) as Box<dyn Debug>
+        }
         MediaType::Report => Box::new(Report::get_decoded(&message_buf)?) as Box<dyn Debug>,
-        MediaType::AggregateInitializeReq => {
-            if let Ok(decoded) = AggregateInitializeReq::<TimeInterval>::get_decoded(&message_buf) {
+        MediaType::AggregationJobInitializeReq => {
+            if let Ok(decoded) =
+                AggregationJobInitializeReq::<TimeInterval>::get_decoded(&message_buf)
+            {
                 Box::new(decoded) as Box<dyn Debug>
             } else {
-                Box::new(AggregateInitializeReq::<FixedSize>::get_decoded(
+                Box::new(AggregationJobInitializeReq::<FixedSize>::get_decoded(
                     &message_buf,
                 )?) as Box<dyn Debug>
             }
         }
-        MediaType::AggregateInitializeResp => {
-            Box::new(AggregateInitializeResp::get_decoded(&message_buf)?) as Box<dyn Debug>
-        }
-        MediaType::AggregateContinueReq => {
-            Box::new(AggregateContinueReq::get_decoded(&message_buf)?) as Box<dyn Debug>
-        }
-        MediaType::AggregateContinueResp => {
-            Box::new(AggregateContinueResp::get_decoded(&message_buf)?) as Box<dyn Debug>
+        MediaType::AggregationJob => {
+            Box::new(AggregationJob::get_decoded(&message_buf)?) as Box<dyn Debug>
         }
         MediaType::AggregateShareReq => {
             if let Ok(decoded) = AggregateShareReq::<TimeInterval>::get_decoded(&message_buf) {
@@ -87,18 +85,14 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
 #[derive(Debug, Clone, ValueEnum)]
 #[value()]
 enum MediaType {
-    #[value(name = "hpke-config")]
-    HpkeConfig,
+    #[value(name = "hpke-config-list")]
+    HpkeConfigList,
     #[value(name = "report")]
     Report,
-    #[value(name = "aggregate-initialize-req")]
-    AggregateInitializeReq,
-    #[value(name = "aggregate-initialize-resp")]
-    AggregateInitializeResp,
-    #[value(name = "aggregate-continue-req")]
-    AggregateContinueReq,
-    #[value(name = "aggregate-continue-resp")]
-    AggregateContinueResp,
+    #[value(name = "aggregaton-job-initialize-req")]
+    AggregationJobInitializeReq,
+    #[value(name = "aggregation-job")]
+    AggregationJob,
     #[value(name = "aggregate-share-req")]
     AggregateShareReq,
     #[value(name = "aggregate-share-resp")]

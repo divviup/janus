@@ -31,6 +31,8 @@ where
     pub prepare_messages: Vec<V::PrepareMessage>,
     /// The aggregate shares from each aggregator.
     pub aggregate_shares: Vec<V::AggregateShare>,
+    /// The aggregation parameter used to prepare the input shares.
+    pub aggregation_parameter: V::AggregationParam,
 }
 
 /// run_vdaf runs a VDAF state machine from sharding through to generating an output share,
@@ -94,6 +96,7 @@ where
                 prepare_transitions: prep_trans,
                 prepare_messages: prep_msgs,
                 aggregate_shares: agg_shares,
+                aggregation_parameter: aggregation_param.clone(),
             };
         }
         let prep_msg = vdaf.prepare_preprocess(prep_shares).unwrap();

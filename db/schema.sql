@@ -102,6 +102,7 @@ CREATE TABLE aggregation_jobs(
     batch_interval           TSRANGE,                         -- batch interval, as a TSRANGE, populated only for leader time-interval tasks. (will match batch_identifier when present)
     aggregation_param        BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     state                    AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
+    round                    INTEGER NOT NULL,                -- current round of the VDAF preparation protocol
 
     lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
     lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease

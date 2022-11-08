@@ -13,7 +13,7 @@ use janus_core::{
 };
 use janus_messages::{
     Duration, HpkeCiphertext, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare,
-    Report, ReportMetadata, Role, TaskId,
+    Report, ReportId, ReportMetadata, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -118,10 +118,12 @@ impl ClientParameters {
         Ok(self.aggregator_endpoint(role)?.join("hpke_config")?)
     }
 
-    /// URL to which reports may be uploaded by clients per draft-gpew-priv-ppm
-    /// §4.3.2
-    fn upload_endpoint(&self) -> Result<Url, Error> {
-        Ok(self.aggregator_endpoint(&Role::Leader)?.join("upload")?)
+    /// Create a new resource URI for a DAP report in the provided task.
+    #[allow(clippy::result_large_err)]
+    fn report_resource_uri(&self, task_id: &TaskId, report_id: &ReportId) -> Result<Url, Error> {
+        Ok(self
+            .aggregator_endpoint(&Role::Leader)?
+            .join(&format!("tasks/{task_id}/reports/{report_id}"))?)
     }
 }
 
@@ -219,7 +221,12 @@ where
 
     /// Shard a measurement, encrypt its shares, and construct a [`janus_core::message::Report`]
     /// to be uploaded.
-    fn prepare_report(&self, measurement: &V::Measurement) -> Result<Report, Error> {
+    #[allow(clippy::result_large_err)]
+    fn prepare_report(
+        &self,
+        measurement: &V::Measurement,
+        report_id: &ReportId,
+    ) -> Result<Report, Error> {
         let (public_share, input_shares) = self.vdaf_client.shard(measurement)?;
         assert_eq!(input_shares.len(), 2); // DAP only supports VDAFs using two aggregators.
 
@@ -228,7 +235,8 @@ where
             .now()
             .to_batch_interval_start(&self.parameters.time_precision)
             .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
-        let report_metadata = ReportMetadata::new(random(), time);
+
+        let report_metadata = ReportMetadata::new(*report_id, time);
         let encoded_public_share = public_share.get_encoded();
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
@@ -257,8 +265,7 @@ where
         .collect::<Result<_, Error>>()?;
 
         Ok(Report::new(
-            self.parameters.task_id,
-            report_metadata,
+            time,
             encoded_public_share,
             encrypted_input_shares,
         ))
@@ -269,13 +276,16 @@ where
     /// aggregator and then uploaded to the leader.
     #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
-        let report = self.prepare_report(measurement)?;
-        let upload_endpoint = self.parameters.upload_endpoint()?;
+        let report_id: ReportId = random();
+        let report = self.prepare_report(measurement, &report_id)?;
+        let upload_endpoint = self
+            .parameters
+            .report_resource_uri(&self.parameters.task_id, &report_id)?;
         let upload_response = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
             || async {
                 self.http_client
-                    .post(upload_endpoint.clone())
+                    .put(upload_endpoint.clone())
                     .header(CONTENT_TYPE, Report::MEDIA_TYPE)
                     .body(report.get_encoded())
                     .send()
@@ -305,11 +315,17 @@ mod tests {
         retries::test_http_request_exponential_backoff, test_util::install_test_trace_subscriber,
         time::MockClock,
     };
-    use janus_messages::{Duration, Report, Time};
-    use mockito::mock;
+    use janus_messages::{Duration, Report, ReportId, TaskId, Time};
+    use mockito::{mock, Matcher};
     use prio::vdaf::{self, prio3::Prio3};
     use rand::random;
     use url::Url;
+
+    fn report_uri_regex_matcher(task_id: &TaskId) -> Matcher {
+        // Matches on the relative path for a report resource. The Base64 URL-safe encoding of a
+        // report ID is always 22 characters.
+        Matcher::Regex(format!("^/tasks/{task_id}/reports/*{{22}}"))
+    }
 
     fn setup_client<V: vdaf::Client>(vdaf_client: V) -> Client<V, MockClock>
     where
@@ -354,13 +370,14 @@ mod tests {
     #[tokio::test]
     async fn upload_prio3_count() {
         install_test_trace_subscriber();
-        let mocked_upload = mock("POST", "/upload")
+
+        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
+        let mocked_upload = mock("PUT", report_uri_regex_matcher(&client.parameters.task_id))
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(200)
             .expect(1)
             .create();
 
-        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
         client.upload(&1).await.unwrap();
 
         mocked_upload.assert();
@@ -382,13 +399,14 @@ mod tests {
     async fn upload_prio3_http_status_code() {
         install_test_trace_subscriber();
 
-        let mocked_upload = mock("POST", "/upload")
+        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
+
+        let mocked_upload = mock("PUT", report_uri_regex_matcher(&client.parameters.task_id))
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(501)
             .expect(1)
             .create();
 
-        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
         assert_matches!(
             client.upload(&1).await,
             Err(Error::Http(problem)) => {
@@ -403,7 +421,9 @@ mod tests {
     async fn upload_problem_details() {
         install_test_trace_subscriber();
 
-        let mocked_upload = mock("POST", "/upload")
+        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
+
+        let mocked_upload = mock("PUT", report_uri_regex_matcher(&client.parameters.task_id))
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
@@ -416,7 +436,6 @@ mod tests {
             .expect(1)
             .create();
 
-        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
         assert_matches!(
             client.upload(&1).await,
             Err(Error::Http(problem)) => {
@@ -458,23 +477,24 @@ mod tests {
         install_test_trace_subscriber();
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let mut client = setup_client(vdaf);
+        let report_id: ReportId = random();
 
         client.parameters.time_precision = Duration::from_seconds(100);
         client.clock = MockClock::new(Time::from_seconds_since_epoch(101));
         assert_eq!(
-            client.prepare_report(&1).unwrap().metadata().time(),
+            client.prepare_report(&1, &report_id).unwrap().time(),
             &Time::from_seconds_since_epoch(100),
         );
 
         client.clock = MockClock::new(Time::from_seconds_since_epoch(5200));
         assert_eq!(
-            client.prepare_report(&1).unwrap().metadata().time(),
+            client.prepare_report(&1, &report_id).unwrap().time(),
             &Time::from_seconds_since_epoch(5200),
         );
 
         client.clock = MockClock::new(Time::from_seconds_since_epoch(9814));
         assert_eq!(
-            client.prepare_report(&1).unwrap().metadata().time(),
+            client.prepare_report(&1, &report_id).unwrap().time(),
             &Time::from_seconds_since_epoch(9800),
         );
     }

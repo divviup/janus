@@ -4,6 +4,7 @@ use std::str::FromStr;
 #[derive(Debug, PartialEq, Eq)]
 pub enum DapProblemType {
     UnrecognizedMessage,
+    RoundMismatch,
     UnrecognizedTask,
     MissingTaskId,
     UnrecognizedAggregationJob,
@@ -25,6 +26,7 @@ impl DapProblemType {
             DapProblemType::UnrecognizedMessage => {
                 "urn:ietf:params:ppm:dap:error:unrecognizedMessage"
             }
+            DapProblemType::RoundMismatch => "urn:ietf:params:ppm:dap:error:roundMismatch",
             DapProblemType::UnrecognizedTask => "urn:ietf:params:ppm:dap:error:unrecognizedTask",
             DapProblemType::MissingTaskId => "urn:ietf:params:ppm:dap:error:missingTaskID",
             DapProblemType::UnrecognizedAggregationJob => {
@@ -51,6 +53,9 @@ impl DapProblemType {
         match self {
             DapProblemType::UnrecognizedMessage => {
                 "The message type for a response was incorrect or the payload was malformed."
+            }
+            DapProblemType::RoundMismatch => {
+                "The leader and helper are not on the same round of VDAF preparation."
             }
             DapProblemType::UnrecognizedTask => {
                 "An endpoint received a message with an unknown task ID."

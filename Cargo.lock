@@ -1545,6 +1545,7 @@ version = "0.3.0"
 dependencies = [
  "assert_matches",
  "backoff",
+ "base64 0.21.0",
  "derivative",
  "http",
  "http-api-problem",
