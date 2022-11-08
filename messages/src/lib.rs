@@ -1206,7 +1206,7 @@ pub mod query_type {
     use num_enum::TryFromPrimitive;
     use prio::codec::{CodecError, Decode, Encode};
     use serde::{Deserialize, Serialize};
-    use std::{fmt::Debug, io::Cursor};
+    use std::{fmt::Debug, hash::Hash, io::Cursor};
 
     /// QueryType represents a DAP query type. This is a task-level configuration setting which
     /// determines how individual client reports are grouped together into batches for collection.
@@ -1215,17 +1215,25 @@ pub mod query_type {
         const CODE: Code;
 
         /// The type of a batch identifier.
-        type BatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode + Send + Sync;
+        type BatchIdentifier: Debug + Clone + Hash + PartialEq + Eq + Encode + Decode + Send + Sync;
 
         /// The type of a batch identifier as it appears in a `PartialBatchSelector`. Will be either
         /// the same type as `BatchIdentifier`, or `()`.
-        type PartialBatchIdentifier: Debug + Clone + PartialEq + Eq + Encode + Decode + Send + Sync;
+        type PartialBatchIdentifier: Debug
+            + Clone
+            + Hash
+            + PartialEq
+            + Eq
+            + Encode
+            + Decode
+            + Send
+            + Sync;
 
         /// Computes the `PartialBatchIdentifier` corresponding to the given
         /// `BatchIdentifier`.
         fn partial_batch_identifier(
-            batch_identifier: Self::BatchIdentifier,
-        ) -> Self::PartialBatchIdentifier;
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> &Self::PartialBatchIdentifier;
     }
 
     /// Represents a `time-interval` DAP query type.
@@ -1238,7 +1246,9 @@ pub mod query_type {
         type BatchIdentifier = Interval;
         type PartialBatchIdentifier = ();
 
-        fn partial_batch_identifier(_: Self::BatchIdentifier) -> Self::PartialBatchIdentifier {}
+        fn partial_batch_identifier(_: &Self::BatchIdentifier) -> &Self::PartialBatchIdentifier {
+            &()
+        }
     }
 
     /// Represents a `fixed-size` DAP query type.
@@ -1252,8 +1262,8 @@ pub mod query_type {
         type PartialBatchIdentifier = BatchId;
 
         fn partial_batch_identifier(
-            batch_identifier: Self::BatchIdentifier,
-        ) -> Self::PartialBatchIdentifier {
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> &Self::PartialBatchIdentifier {
             batch_identifier
         }
     }

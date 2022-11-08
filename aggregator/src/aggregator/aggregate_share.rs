@@ -5,7 +5,7 @@ use crate::{
     datastore::{
         self,
         models::AcquiredCollectJob,
-        models::{BatchUnitAggregation, CollectJobState, Lease},
+        models::{BatchAggregation, CollectJobState, Lease},
         Datastore, Transaction,
     },
     task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
@@ -16,8 +16,9 @@ use futures::future::BoxFuture;
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance, time::Clock};
 use janus_messages::{
-    query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
-    Interval, ReportIdChecksum, Role,
+    query_type::{QueryType, TimeInterval},
+    AggregateShareReq, AggregateShareResp, BatchSelector, Duration, Interval, ReportIdChecksum,
+    Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -38,8 +39,7 @@ use std::sync::Arc;
 use tokio::try_join;
 use tracing::{debug, error, info, warn};
 
-#[cfg(feature = "test-util")]
-const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+use super::query_type::CollectableQueryType;
 
 /// Holds various metrics instruments for a collect job driver.
 #[derive(Clone)]
@@ -176,7 +176,7 @@ impl CollectJobDriver {
 
             #[cfg(feature = "test-util")]
             VdafInstance::Fake => {
-                self.step_collect_job_generic::<DUMMY_VERIFY_KEY_LENGTH, C, dummy_vdaf::Vdaf>(
+                self.step_collect_job_generic::<0, C, dummy_vdaf::Vdaf>(
                     datastore,
                     lease,
                 )
@@ -198,12 +198,12 @@ impl CollectJobDriver {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: 'static + Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         A::OutputShare: PartialEq + Eq + Send + Sync + for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
-        let (task, collect_job, batch_unit_aggregations) = datastore
+        let (task, collect_job, batch_aggregations) = datastore
             .run_tx(|tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
@@ -228,15 +228,16 @@ impl CollectJobDriver {
                             )
                         })?;
 
-                    let batch_unit_aggregations = tx
-                        .get_batch_unit_aggregations_for_task_in_interval::<L, A>(
-                            task.id(),
+                    let batch_aggregations =
+                        TimeInterval::get_batch_aggregations_for_collect_identifier(
+                            tx,
+                            &task,
                             collect_job.batch_interval(),
                             collect_job.aggregation_parameter(),
                         )
                         .await?;
 
-                    Ok((task, collect_job, batch_unit_aggregations))
+                    Ok((task, collect_job, batch_aggregations))
                 })
             })
             .await?;
@@ -250,7 +251,7 @@ impl CollectJobDriver {
         }
 
         let (leader_aggregate_share, report_count, checksum) =
-            compute_aggregate_share::<L, A>(&task, &batch_unit_aggregations)
+            compute_aggregate_share::<L, TimeInterval, A>(&task, &batch_aggregations)
                 .await
                 .map_err(|e| datastore::Error::User(e.into()))?;
 
@@ -379,7 +380,7 @@ impl CollectJobDriver {
 
             #[cfg(feature = "test-util")]
             VdafInstance::Fake => {
-                self.abandon_collect_job_generic::<DUMMY_VERIFY_KEY_LENGTH, C, dummy_vdaf::Vdaf>(
+                self.abandon_collect_job_generic::<0, C, dummy_vdaf::Vdaf>(
                     datastore,
                     lease,
                 )
@@ -401,7 +402,7 @@ impl CollectJobDriver {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         let lease = Arc::new(lease);
         datastore
@@ -481,23 +482,23 @@ impl CollectJobDriver {
     }
 }
 
-/// Computes the aggregate share over the provided batch unit aggregations.
-/// The assumption is that all aggregation jobs contributing to those batch unit aggregations have
+/// Computes the aggregate share over the provided batch aggregations.
+/// The assumption is that all aggregation jobs contributing to those batch aggregations have
 /// been driven to completion, and that the query count requirements have been validated for the
-/// included batch units.
+/// included batches.
 #[tracing::instrument(err)]
-pub(crate) async fn compute_aggregate_share<const L: usize, A: vdaf::Aggregator<L>>(
+pub(crate) async fn compute_aggregate_share<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
     task: &Task,
-    batch_unit_aggregations: &[BatchUnitAggregation<L, A>],
+    batch_aggregations: &[BatchAggregation<L, Q, A>],
 ) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error>
 where
     Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
 {
     // At the moment we construct an aggregate share (either handling AggregateShareReq in the
     // helper or driving a collect job in the leader), there could be some incomplete aggregation
-    // jobs whose results not been accumulated into the batch unit aggregations we just queried from
-    // the datastore, meaning we will aggregate over an incomplete view of data, which:
+    // jobs whose results not been accumulated into the batch aggregations we just queried from the
+    // datastore, meaning we will aggregate over an incomplete view of data, which:
     //
     //  * reduces fidelity of the resulting aggregates,
     //  * could cause us to fail to meet the minimum batch size for the task,
@@ -513,28 +514,28 @@ where
     // On the leader side, we know/assume that we would not be stepping a collect job unless we had
     // verified that the constituent aggregation jobs were finished.
     //
-    // In either case, we go ahead and service the aggregate share request with whatever batch unit
+    // In either case, we go ahead and service the aggregate share request with whatever batch
     // aggregations are available now.
     let mut total_report_count = 0;
     let mut total_checksum = ReportIdChecksum::default();
     let mut total_aggregate_share: Option<A::AggregateShare> = None;
 
-    for batch_unit_aggregation in batch_unit_aggregations {
+    for batch_aggregation in batch_aggregations {
         // XOR this batch interval's checksum into the overall checksum
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
-        total_checksum = total_checksum.combined_with(batch_unit_aggregation.checksum());
+        total_checksum = total_checksum.combined_with(batch_aggregation.checksum());
 
         // Sum all the report counts
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
-        total_report_count += batch_unit_aggregation.report_count();
+        total_report_count += batch_aggregation.report_count();
 
         match &mut total_aggregate_share {
-            Some(share) => share.merge(batch_unit_aggregation.aggregate_share())?,
-            None => total_aggregate_share = Some(batch_unit_aggregation.aggregate_share().clone()),
+            Some(share) => share.merge(batch_aggregation.aggregate_share())?,
+            None => total_aggregate_share = Some(batch_aggregation.aggregate_share().clone()),
         }
     }
 
-    // Only happens if there were no batch unit aggregations, which would get caught by the
+    // Only happens if there were no batch aggregations, which would get caught by the
     // min_batch_size check below, but we have to unwrap the option.
     let total_aggregate_share = total_aggregate_share
         .ok_or_else(|| Error::InvalidBatchSize(*task.id(), total_report_count))?;
@@ -563,7 +564,7 @@ pub(crate) async fn validate_batch_query_count_for_collect<
     collect_interval: Interval,
 ) -> Result<(), datastore::Error>
 where
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
+    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     // Check how many rows in the relevant table have an intersecting batch interval.
@@ -631,7 +632,7 @@ mod tests {
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
-                AcquiredCollectJob, AggregationJob, AggregationJobState, BatchUnitAggregation,
+                AcquiredCollectJob, AggregationJob, AggregationJobState, BatchAggregation,
                 CollectJob, CollectJobState, Lease, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
@@ -664,22 +665,21 @@ mod tests {
     use url::Url;
     use uuid::Uuid;
 
-    use super::DUMMY_VERIFY_KEY_LENGTH;
-
     async fn setup_collect_job_test_case(
         clock: MockClock,
         datastore: Arc<Datastore<MockClock>>,
         acquire_lease: bool,
     ) -> (
         Option<Lease<AcquiredCollectJob>>,
-        CollectJob<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>,
+        CollectJob<0, dummy_vdaf::Vdaf>,
     ) {
+        let time_precision = Duration::from_seconds(500);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_aggregator_endpoints(Vec::from([
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
                 Url::parse(&mockito::server_url()).unwrap(),
             ]))
-            .with_time_precision(Duration::from_seconds(500))
+            .with_time_precision(time_precision)
             .with_min_batch_size(10)
             .build();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
@@ -699,28 +699,26 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    tx.put_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
+                    tx.put_collect_job::<0, dummy_vdaf::Vdaf>(&collect_job)
                         .await?;
 
                     let aggregation_job_id = random();
-                    tx.put_aggregation_job(&AggregationJob::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        (),
-                        aggregation_param,
-                        AggregationJobState::Finished,
-                    ))
+                    tx.put_aggregation_job(
+                        &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            (),
+                            aggregation_param,
+                            AggregationJobState::Finished,
+                        ),
+                    )
                     .await?;
 
                     let report_metadata = ReportMetadata::new(
                         random(),
                         clock
                             .now()
-                            .to_batch_unit_interval_start(task.time_precision())
+                            .to_batch_interval_start(task.time_precision())
                             .unwrap(),
                         Vec::new(),
                     );
@@ -732,10 +730,7 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
+                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report_metadata.id(),
@@ -745,29 +740,31 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        clock.now(),
-                        aggregation_param,
-                        AggregateShare(0),
-                        5,
-                        ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
-                    ))
+                    tx.put_batch_aggregation(
+                        &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            Interval::new(clock.now(), time_precision).unwrap(),
+                            aggregation_param,
+                            AggregateShare(0),
+                            5,
+                            ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                        ),
+                    )
                     .await?;
-                    tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        clock.now().add(&Duration::from_seconds(1000)).unwrap(),
-                        aggregation_param,
-                        AggregateShare(0),
-                        5,
-                        ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
-                    ))
+                    tx.put_batch_aggregation(
+                        &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            Interval::new(
+                                clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                                time_precision,
+                            )
+                            .unwrap(),
+                            aggregation_param,
+                            AggregateShare(0),
+                            5,
+                            ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                        ),
+                    )
                     .await?;
 
                     if acquire_lease {
@@ -799,12 +796,13 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
+        let time_precision = Duration::from_seconds(500);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_aggregator_endpoints(Vec::from([
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
                 Url::parse(&mockito::server_url()).unwrap(),
             ]))
-            .with_time_precision(Duration::from_seconds(500))
+            .with_time_precision(time_precision)
             .with_min_batch_size(10)
             .build();
         let agg_auth_token = task.primary_aggregator_auth_token();
@@ -823,29 +821,27 @@ mod tests {
                         collect_job_id,
                         batch_interval,
                         aggregation_param,
-                        CollectJobState::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>::Start,
+                        CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
                     ))
                     .await?;
 
                     let aggregation_job_id = random();
-                    tx.put_aggregation_job(&AggregationJob::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        dummy_vdaf::Vdaf,
-                    >::new(
-                        *task.id(),
-                        aggregation_job_id,
-                        (),
-                        aggregation_param,
-                        AggregationJobState::Finished,
-                    ))
+                    tx.put_aggregation_job(
+                        &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            (),
+                            aggregation_param,
+                            AggregationJobState::Finished,
+                        ),
+                    )
                     .await?;
 
                     let report_metadata = ReportMetadata::new(
                         random(),
                         clock
                             .now()
-                            .to_batch_unit_interval_start(task.time_precision())
+                            .to_batch_interval_start(task.time_precision())
                             .unwrap(),
                         Vec::new(),
                     );
@@ -857,10 +853,7 @@ mod tests {
                     ))
                     .await?;
 
-                    tx.put_report_aggregation(&ReportAggregation::<
-                        DUMMY_VERIFY_KEY_LENGTH,
-                        dummy_vdaf::Vdaf,
-                    >::new(
+                    tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
                         *report_metadata.id(),
@@ -889,7 +882,7 @@ mod tests {
             &meter("collect_job_driver"),
         );
 
-        // No batch unit aggregations inserted yet
+        // No batch aggregations inserted yet.
         let error = collect_job_driver
             .step_collect_job(ds.clone(), Arc::clone(&lease))
             .await
@@ -898,34 +891,36 @@ mod tests {
             assert_eq!(task.id(), &error_task_id)
         });
 
-        // Put some batch unit aggregations in the DB
+        // Put some batch aggregations in the DB.
         ds.run_tx(|tx| {
             let (clock, task) = (clock.clone(), task.clone());
             Box::pin(async move {
-                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                    DUMMY_VERIFY_KEY_LENGTH,
-                    dummy_vdaf::Vdaf,
-                >::new(
-                    *task.id(),
-                    clock.now(),
-                    aggregation_param,
-                    AggregateShare(0),
-                    5,
-                    ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
-                ))
+                tx.put_batch_aggregation(
+                    &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        Interval::new(clock.now(), time_precision).unwrap(),
+                        aggregation_param,
+                        AggregateShare(0),
+                        5,
+                        ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
+                    ),
+                )
                 .await?;
 
-                tx.put_batch_unit_aggregation(&BatchUnitAggregation::<
-                    DUMMY_VERIFY_KEY_LENGTH,
-                    dummy_vdaf::Vdaf,
-                >::new(
-                    *task.id(),
-                    clock.now().add(&Duration::from_seconds(1000)).unwrap(),
-                    aggregation_param,
-                    AggregateShare(0),
-                    5,
-                    ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
-                ))
+                tx.put_batch_aggregation(
+                    &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        Interval::new(
+                            clock.now().add(&Duration::from_seconds(1000)).unwrap(),
+                            time_precision,
+                        )
+                        .unwrap(),
+                        aggregation_param,
+                        AggregateShare(0),
+                        5,
+                        ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
+                    ),
+                )
                 .await?;
 
                 Ok(())
@@ -978,7 +973,7 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job_id)
+                    .get_collect_job::<0, dummy_vdaf::Vdaf>(&collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -1023,7 +1018,7 @@ mod tests {
             let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job_id)
+                    .get_collect_job::<0, dummy_vdaf::Vdaf>(&collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -1072,9 +1067,7 @@ mod tests {
                 let collect_job = collect_job.clone();
                 Box::pin(async move {
                     let abandoned_collect_job = tx
-                        .get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
-                            collect_job.collect_job_id(),
-                        )
+                        .get_collect_job::<0, dummy_vdaf::Vdaf>(collect_job.collect_job_id())
                         .await?
                         .unwrap();
 
@@ -1164,10 +1157,8 @@ mod tests {
             .run_tx(|tx| {
                 let collect_job = collect_job.clone();
                 Box::pin(async move {
-                    tx.get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
-                        collect_job.collect_job_id(),
-                    )
-                    .await
+                    tx.get_collect_job::<0, dummy_vdaf::Vdaf>(collect_job.collect_job_id())
+                        .await
                 })
             })
             .await
@@ -1195,7 +1186,7 @@ mod tests {
         ds.run_tx(|tx| {
             let collect_job = collect_job.clone();
             Box::pin(async move {
-                tx.update_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(&collect_job)
+                tx.update_collect_job::<0, dummy_vdaf::Vdaf>(&collect_job)
                     .await
             })
         })
@@ -1234,9 +1225,7 @@ mod tests {
             let collect_job = collect_job.clone();
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<DUMMY_VERIFY_KEY_LENGTH, dummy_vdaf::Vdaf>(
-                        collect_job.collect_job_id(),
-                    )
+                    .get_collect_job::<0, dummy_vdaf::Vdaf>(collect_job.collect_job_id())
                     .await
                     .unwrap()
                     .unwrap();

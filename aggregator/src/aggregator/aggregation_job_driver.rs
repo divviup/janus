@@ -43,6 +43,8 @@ use std::{fmt, sync::Arc};
 use tokio::try_join;
 use tracing::{info, warn};
 
+use super::query_type::AccumulableQueryType;
+
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct AggregationJobDriver {
@@ -146,7 +148,7 @@ impl AggregationJobDriver {
     async fn step_aggregation_job_generic<
         const L: usize,
         C: Clock,
-        Q: QueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
     >(
         &self,
@@ -159,7 +161,7 @@ impl AggregationJobDriver {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
         A::OutputShare: PartialEq + Eq + Send + Sync + for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         for<'a> A::PrepareState:
@@ -285,7 +287,7 @@ impl AggregationJobDriver {
     async fn step_aggregation_job_aggregate_init<
         const L: usize,
         C: Clock,
-        Q: QueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
     >(
         &self,
@@ -303,7 +305,7 @@ impl AggregationJobDriver {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
         A::OutputShare: PartialEq + Eq + Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
@@ -531,7 +533,7 @@ impl AggregationJobDriver {
     async fn step_aggregation_job_aggregate_continue<
         const L: usize,
         C: Clock,
-        Q: QueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
     >(
         &self,
@@ -547,7 +549,7 @@ impl AggregationJobDriver {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::PrepareState: Send + Sync + Encode,
@@ -629,7 +631,7 @@ impl AggregationJobDriver {
     async fn process_response_from_helper<
         const L: usize,
         C: Clock,
-        Q: QueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
     >(
         &self,
@@ -647,7 +649,7 @@ impl AggregationJobDriver {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Display,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
@@ -659,7 +661,7 @@ impl AggregationJobDriver {
                 "missing, duplicate, out-of-order, or unexpected prepare steps in response"
             ));
         }
-        let mut accumulator = Accumulator::<L, A>::new(
+        let mut accumulator = Accumulator::<L, Q, A>::new(
             Arc::clone(&task),
             aggregation_job.aggregation_parameter().clone(),
         );
@@ -721,13 +723,14 @@ impl AggregationJobDriver {
                     // If the leader didn't finish too, we transition to INVALID.
                     if let PrepareTransition::Finish(out_share) = leader_transition {
                         match accumulator.update(
-                            out_share,
-                            report_aggregation.time(),
+                            aggregation_job.batch_identifier(),
                             report_aggregation.report_id(),
+                            report_aggregation.time(),
+                            out_share,
                         ) {
                             Ok(_) => ReportAggregationState::Finished(out_share.clone()),
                             Err(error) => {
-                                warn!(report_id = %report_aggregation.report_id(), ?error, "Could not update batch unit aggregation");
+                                warn!(report_id = %report_aggregation.report_id(), ?error, "Could not update batch aggregation");
                                 self.aggregate_step_failure_counter.add(
                                     &Context::current(),
                                     1,
@@ -794,13 +797,13 @@ impl AggregationJobDriver {
                             .iter()
                             .map(|aggregation_job| tx.update_aggregation_job(aggregation_job)),
                     );
-                    let batch_unit_aggregations_future = accumulator.flush_to_datastore(tx);
+                    let batch_aggregations_future = accumulator.flush_to_datastore(tx);
 
                     try_join!(
                         tx.release_aggregation_job(&lease),
                         report_aggregations_future,
                         aggregation_job_future,
-                        batch_unit_aggregations_future,
+                        batch_aggregations_future,
                     )?;
                     Ok(())
                 })
@@ -976,11 +979,11 @@ where
 mod tests {
     use super::AggregationJobDriver;
     use crate::{
-        aggregator::{DapProblemType, Error},
+        aggregator::{CollectableQueryType, DapProblemType, Error},
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, BatchUnitAggregation, ReportAggregation,
+                AggregationJob, AggregationJobState, BatchAggregation, ReportAggregation,
                 ReportAggregationState,
             },
             test_util::ephemeral_datastore,
@@ -1049,7 +1052,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -1263,7 +1266,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -1481,7 +1484,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -1700,7 +1703,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -1864,21 +1867,22 @@ mod tests {
         let batch_interval_start = report
             .metadata()
             .time()
-            .to_batch_unit_interval_start(task.time_precision())
+            .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let want_batch_unit_aggregations = Vec::from([BatchUnitAggregation::<
+        let want_batch_aggregations = Vec::from([BatchAggregation::<
             PRIO3_AES128_VERIFY_KEY_LENGTH,
+            TimeInterval,
             Prio3Aes128Count,
         >::new(
             *task.id(),
-            batch_interval_start,
+            Interval::new(batch_interval_start, *task.time_precision()).unwrap(),
             (),
             leader_aggregate_share,
             1,
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
 
-        let (got_aggregation_job, got_report_aggregation, got_batch_unit_aggregations) = ds
+        let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
             .run_tx(|tx| {
                 let (vdaf, task, report_metadata) = (Arc::clone(&vdaf), task.clone(), report.metadata().clone());
                 Box::pin(async move {
@@ -1899,16 +1903,15 @@ mod tests {
                         )
                         .await?
                         .unwrap();
-                    let batch_unit_aggregations = tx
-                        .get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                            task.id(),
-                            &Interval::new(
-                                report_metadata.time().to_batch_unit_interval_start(task.time_precision()).unwrap(),
-                                *task.time_precision()).unwrap(),
-                            &())
-                        .await
-                        .unwrap();
-                    Ok((aggregation_job, report_aggregation, batch_unit_aggregations))
+                    let batch_aggregations = TimeInterval::get_batch_aggregations_for_collect_identifier::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
+                        tx,
+                        &task,
+                        &Interval::new(
+                            report_metadata.time().to_batch_interval_start(task.time_precision()).unwrap(),
+                            *task.time_precision()).unwrap(),
+                        &(),
+                    ).await.unwrap();
+                    Ok((aggregation_job, report_aggregation, batch_aggregations))
                 })
             })
             .await
@@ -1916,7 +1919,7 @@ mod tests {
 
         assert_eq!(want_aggregation_job, got_aggregation_job);
         assert_eq!(want_report_aggregation, got_report_aggregation);
-        assert_eq!(want_batch_unit_aggregations, got_batch_unit_aggregations);
+        assert_eq!(want_batch_aggregations, got_batch_aggregations);
     }
 
     #[tokio::test]
@@ -1943,7 +1946,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -2105,24 +2108,20 @@ mod tests {
                 0,
                 ReportAggregationState::Finished(leader_output_share),
             );
-        let batch_interval_start = report
-            .metadata()
-            .time()
-            .to_batch_unit_interval_start(task.time_precision())
-            .unwrap();
-        let want_batch_unit_aggregations = Vec::from([BatchUnitAggregation::<
+        let want_batch_aggregations = Vec::from([BatchAggregation::<
             PRIO3_AES128_VERIFY_KEY_LENGTH,
+            FixedSize,
             Prio3Aes128Count,
         >::new(
             *task.id(),
-            batch_interval_start,
+            batch_id,
             (),
             leader_aggregate_share,
             1,
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
 
-        let (got_aggregation_job, got_report_aggregation, got_batch_unit_aggregations) = ds
+        let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
             .run_tx(|tx| {
                 let (vdaf, task, report_metadata) = (Arc::clone(&vdaf), task.clone(), report.metadata().clone());
                 Box::pin(async move {
@@ -2143,16 +2142,13 @@ mod tests {
                         )
                         .await?
                         .unwrap();
-                    let batch_unit_aggregations = tx
-                        .get_batch_unit_aggregations_for_task_in_interval::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
-                            task.id(),
-                            &Interval::new(
-                                report_metadata.time().to_batch_unit_interval_start(task.time_precision()).unwrap(),
-                                *task.time_precision()).unwrap(),
-                            &())
-                        .await
-                        .unwrap();
-                    Ok((aggregation_job, report_aggregation, batch_unit_aggregations))
+                    let batch_aggregations = FixedSize::get_batch_aggregations_for_collect_identifier::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
+                        tx,
+                        &task,
+                        &batch_id,
+                        &(),
+                    ).await?;
+                    Ok((aggregation_job, report_aggregation, batch_aggregations))
                 })
             })
             .await
@@ -2160,7 +2156,7 @@ mod tests {
 
         assert_eq!(want_aggregation_job, got_aggregation_job);
         assert_eq!(want_report_aggregation, got_report_aggregation);
-        assert_eq!(want_batch_unit_aggregations, got_batch_unit_aggregations);
+        assert_eq!(want_batch_aggregations, got_batch_aggregations);
     }
 
     #[tokio::test]
@@ -2186,7 +2182,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );
@@ -2374,7 +2370,7 @@ mod tests {
             random(),
             clock
                 .now()
-                .to_batch_unit_interval_start(task.time_precision())
+                .to_batch_interval_start(task.time_precision())
                 .unwrap(),
             Vec::new(),
         );

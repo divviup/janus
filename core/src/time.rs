@@ -79,16 +79,16 @@ impl Default for MockClock {
 
 /// Extension methods on [`Time`].
 pub trait TimeExt: Sized {
-    /// Compute the start of the batch interval containing this Time, given the batch unit duration.
-    fn to_batch_unit_interval_start(
+    /// Compute the start of the batch interval containing this Time, given the task time precision.
+    fn to_batch_interval_start(
         &self,
         time_precision: &Duration,
     ) -> Result<Self, janus_messages::Error>;
 }
 
 impl TimeExt for Time {
-    /// Compute the start of the batch interval containing this Time, given the batch unit duration.
-    fn to_batch_unit_interval_start(
+    /// Compute the start of the batch interval containing this Time, given the task time precision.
+    fn to_batch_interval_start(
         &self,
         time_precision: &Duration,
     ) -> Result<Self, janus_messages::Error> {

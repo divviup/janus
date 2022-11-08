@@ -92,7 +92,7 @@ async fn run(
     let collector_auth_token = base64::encode_config(rand::random::<[u8; 16]>(), URL_SAFE_NO_PAD);
     let verify_key = rand::random::<[u8; PRIO3_AES128_VERIFY_KEY_LENGTH]>();
 
-    let task_id_encoded = base64::encode_config(task_id.get_encoded(), URL_SAFE_NO_PAD);
+    let task_id_encoded = base64::encode_config(&task_id.get_encoded(), URL_SAFE_NO_PAD);
     let verify_key_encoded = base64::encode_config(verify_key, URL_SAFE_NO_PAD);
 
     // Endpoints, from the POV of this test (i.e. the Docker host).
@@ -333,7 +333,7 @@ async fn run(
     // determine what batch time to start the aggregation at.
     let start_timestamp = RealClock::default().now();
     let batch_interval_start = start_timestamp
-        .to_batch_unit_interval_start(&Duration::from_seconds(TIME_PRECISION))
+        .to_batch_interval_start(&Duration::from_seconds(TIME_PRECISION))
         .unwrap()
         .as_seconds_since_epoch();
     // Span the aggregation over two time precisions, just in case our measurements spilled over a

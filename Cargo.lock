@@ -1446,6 +1446,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "async-trait",
  "atty",
  "backoff",
  "base64",
