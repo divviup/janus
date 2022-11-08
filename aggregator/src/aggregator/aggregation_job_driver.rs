@@ -3,8 +3,8 @@ use crate::{
     datastore::{
         self,
         models::{
-            AcquiredAggregationJob, AggregationJob, AggregationJobState, Lease, ReportAggregation,
-            ReportAggregationState,
+            AcquiredAggregationJob, AggregationJob, AggregationJobState, LeaderStoredReport, Lease,
+            ReportAggregation, ReportAggregationState,
         },
         Datastore,
     },
@@ -13,16 +13,12 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use derivative::Derivative;
 use futures::future::{try_join_all, BoxFuture, FutureExt};
-use janus_core::{
-    hpke::{self, associated_data_for_report_share, HpkeApplicationInfo, Label},
-    task::VdafInstance,
-    time::Clock,
-};
+use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
-    Duration, PartialBatchSelector, PrepareStep, PrepareStepResult, Report, ReportShare,
-    ReportShareError, Role,
+    Duration, PartialBatchSelector, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
+    Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -167,6 +163,8 @@ impl AggregationJobDriver {
         for<'a> A::PrepareState:
             PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
+        A::InputShare: PartialEq + Send + Sync,
+        A::PublicShare: PartialEq + Send + Sync,
     {
         // Read all information about the aggregation job.
         let (task, aggregation_job, report_aggregations, client_reports, verify_key) = datastore
@@ -220,6 +218,7 @@ impl AggregationJobDriver {
                             if report_aggregation.state() == &ReportAggregationState::Start {
                                 Some(
                                     tx.get_client_report(
+                                        vdaf.as_ref(),
                                         lease.leased().task_id(),
                                         report_aggregation.report_id(),
                                     )
@@ -297,7 +296,7 @@ impl AggregationJobDriver {
         task: Arc<Task>,
         aggregation_job: AggregationJob<L, Q, A>,
         report_aggregations: Vec<ReportAggregation<L, A>>,
-        client_reports: Vec<Report>,
+        client_reports: Vec<LeaderStoredReport<L, A>>,
         verify_key: VerifyKey<L>,
     ) -> Result<()>
     where
@@ -310,6 +309,8 @@ impl AggregationJobDriver {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
+        A::InputShare: PartialEq + Send + Sync,
+        A::PublicShare: PartialEq + Send + Sync,
     {
         // Zip the report aggregations at start with the client reports, verifying that their IDs
         // match. We use asserts here as the conditions we are checking should be guaranteed by the
@@ -339,135 +340,14 @@ impl AggregationJobDriver {
         let mut report_shares = Vec::new();
         let mut stepped_aggregations = Vec::new();
         for (report_aggregation, report) in reports {
-            // Retrieve input shares.
-            let leader_encrypted_input_share = match report
-                .encrypted_input_shares()
-                .get(Role::Leader.index().unwrap())
-            {
-                Some(leader_encrypted_input_share) => leader_encrypted_input_share,
-                None => {
-                    info!(report_id = %report_aggregation.report_id(), "Client report missing leader encrypted input share");
-                    self.aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "missing_leader_input_share")],
-                    );
-                    report_aggregations_to_write
-                        .push(report_aggregation.with_state(ReportAggregationState::Invalid));
-                    continue;
-                }
-            };
-
-            let helper_encrypted_input_share = match report
-                .encrypted_input_shares()
-                .get(Role::Helper.index().unwrap())
-            {
-                Some(helper_encrypted_input_share) => helper_encrypted_input_share,
-                None => {
-                    info!(report_id = %report_aggregation.report_id(), "Client report missing helper encrypted input share");
-                    self.aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "missing_helper_input_share")],
-                    );
-                    report_aggregations_to_write
-                        .push(report_aggregation.with_state(ReportAggregationState::Invalid));
-                    continue;
-                }
-            };
-
-            // Decrypt leader input share & transform into our first transition.
-            let (hpke_config, hpke_private_key) = match task
-                .hpke_keys()
-                .get(leader_encrypted_input_share.config_id())
-            {
-                Some((hpke_config, hpke_private_key)) => (hpke_config, hpke_private_key),
-                None => {
-                    info!(report_id = %report_aggregation.report_id(), hpke_config_id = %leader_encrypted_input_share.config_id(), "Leader encrypted input share references unknown HPKE config ID");
-                    self.aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "unknown_hpke_config_id")],
-                    );
-                    report_aggregations_to_write.push(report_aggregation.with_state(
-                        ReportAggregationState::Failed(ReportShareError::HpkeUnknownConfigId),
-                    ));
-                    continue;
-                }
-            };
-            let hpke_application_info =
-                HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
-            let associated_data = associated_data_for_report_share(
-                task.id(),
-                report.metadata(),
-                report.public_share(),
-            );
-            let leader_input_share_bytes = match hpke::open(
-                hpke_config,
-                hpke_private_key,
-                &hpke_application_info,
-                leader_encrypted_input_share,
-                &associated_data,
-            ) {
-                Ok(leader_input_share_bytes) => leader_input_share_bytes,
-                Err(error) => {
-                    info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't decrypt leader's encrypted input share");
-                    self.aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "decrypt_failure")],
-                    );
-                    report_aggregations_to_write.push(report_aggregation.with_state(
-                        ReportAggregationState::Failed(ReportShareError::HpkeDecryptError),
-                    ));
-                    continue;
-                }
-            };
-            let leader_input_share = match A::InputShare::get_decoded_with_param(
-                &(vdaf, Role::Leader.index().unwrap()),
-                &leader_input_share_bytes,
-            ) {
-                Ok(leader_input_share) => leader_input_share,
-                Err(error) => {
-                    // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): is moving to Invalid on a decoding error appropriate?
-                    info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't decode leader's input share");
-                    self.aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "input_share_decode_failure")],
-                    );
-                    report_aggregations_to_write
-                        .push(report_aggregation.with_state(ReportAggregationState::Invalid));
-                    continue;
-                }
-            };
-
-            let public_share = match A::PublicShare::get_decoded_with_param(
-                &vdaf,
-                report.public_share(),
-            ) {
-                Ok(public_share) => public_share,
-                Err(error) => {
-                    info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't decode public share");
-                    self.aggregate_step_failure_counter.add(
-                        &Context::current(),
-                        1,
-                        &[KeyValue::new("type", "public_share_decode_failure")],
-                    );
-                    report_aggregations_to_write
-                        .push(report_aggregation.with_state(ReportAggregationState::Invalid));
-                    continue;
-                }
-            };
-
             // Initialize the leader's preparation state from the input share.
             let (prep_state, prep_share) = match vdaf.prepare_init(
                 verify_key.as_bytes(),
                 Role::Leader.index().unwrap(),
                 aggregation_job.aggregation_parameter(),
                 &report.metadata().id().get_encoded(),
-                &public_share,
-                &leader_input_share,
+                report.public_share(),
+                report.leader_input_share(),
             ) {
                 Ok(prep_state_and_share) => prep_state_and_share,
                 Err(error) => {
@@ -486,8 +366,8 @@ impl AggregationJobDriver {
 
             report_shares.push(ReportShare::new(
                 report.metadata().clone(),
-                report.public_share().to_vec(),
-                helper_encrypted_input_share.clone(),
+                report.public_share().get_encoded(),
+                report.helper_encrypted_input_share().clone(),
             ));
             stepped_aggregations.push(SteppedAggregation {
                 report_aggregation,
@@ -983,8 +863,8 @@ mod tests {
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, BatchAggregation, ReportAggregation,
-                ReportAggregationState,
+                AggregationJob, AggregationJobState, BatchAggregation, LeaderStoredReport,
+                ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
@@ -1007,13 +887,14 @@ mod tests {
         query_type::{FixedSize, TimeInterval},
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, Duration, HpkeConfig, Interval, PartialBatchSelector, PrepareStep,
-        PrepareStepResult, Report, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId,
+        PrepareStepResult, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
     use prio::{
         codec::Encode,
         vdaf::{
+            self,
             prio3::{Prio3, Prio3Aes128Count},
             Aggregator, PrepareTransition,
         },
@@ -1068,15 +949,15 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token().clone();
-        let (leader_hpke_config, _) = task.hpke_keys().iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report = generate_report(
-            task.id(),
-            &report_metadata,
-            &[leader_hpke_config, &helper_hpke_config],
-            &transcript.public_share,
-            &transcript.input_shares,
-        );
+        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
+            generate_report(
+                task.id(),
+                &report_metadata,
+                &helper_hpke_config,
+                &transcript.public_share,
+                &transcript.input_shares,
+            );
 
         let aggregation_job_id = random();
 
@@ -1179,6 +1060,7 @@ mod tests {
             async move { aggregation_job_driver.run().await }
         });
 
+        tracing::info!("awaiting stepper tasks");
         // Wait for all of the aggregate job stepper tasks to complete.
         runtime_manager.wait_for_completed_tasks("stepper", 2).await;
         // Stop the aggregate job driver task.
@@ -1282,15 +1164,15 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let (leader_hpke_config, _) = task.hpke_keys().iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report = generate_report(
-            task.id(),
-            &report_metadata,
-            &[leader_hpke_config, &helper_hpke_config],
-            &transcript.public_share,
-            &transcript.input_shares,
-        );
+        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
+            generate_report(
+                task.id(),
+                &report_metadata,
+                &helper_hpke_config,
+                &transcript.public_share,
+                &transcript.input_shares,
+            );
         let aggregation_job_id = random();
 
         let lease = ds
@@ -1347,12 +1229,8 @@ mod tests {
             PartialBatchSelector::new_time_interval(),
             Vec::from([ReportShare::new(
                 report.metadata().clone(),
-                report.public_share().to_vec(),
-                report
-                    .encrypted_input_shares()
-                    .get(Role::Helper.index().unwrap())
-                    .unwrap()
-                    .clone(),
+                report.public_share().get_encoded(),
+                report.helper_encrypted_input_share().clone(),
             )]),
         );
         let helper_vdaf_msg = assert_matches!(
@@ -1500,15 +1378,15 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let (leader_hpke_config, _) = task.hpke_keys().iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report = generate_report(
-            task.id(),
-            &report_metadata,
-            &[leader_hpke_config, &helper_hpke_config],
-            &transcript.public_share,
-            &transcript.input_shares,
-        );
+        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
+            generate_report(
+                task.id(),
+                &report_metadata,
+                &helper_hpke_config,
+                &transcript.public_share,
+                &transcript.input_shares,
+            );
         let batch_id = random();
         let aggregation_job_id = random();
 
@@ -1566,12 +1444,8 @@ mod tests {
             PartialBatchSelector::new_fixed_size(batch_id),
             Vec::from([ReportShare::new(
                 report.metadata().clone(),
-                report.public_share().to_vec(),
-                report
-                    .encrypted_input_shares()
-                    .get(Role::Helper.index().unwrap())
-                    .unwrap()
-                    .clone(),
+                report.public_share().get_encoded(),
+                report.helper_encrypted_input_share().clone(),
             )]),
         );
         let helper_vdaf_msg = assert_matches!(
@@ -1719,15 +1593,15 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let (leader_hpke_config, _) = task.hpke_keys().iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report = generate_report(
-            task.id(),
-            &report_metadata,
-            &[leader_hpke_config, &helper_hpke_config],
-            &transcript.public_share,
-            &transcript.input_shares,
-        );
+        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
+            generate_report(
+                task.id(),
+                &report_metadata,
+                &helper_hpke_config,
+                &transcript.public_share,
+                &transcript.input_shares,
+            );
         let aggregation_job_id = random();
 
         let leader_prep_state = assert_matches!(
@@ -1962,15 +1836,15 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let (leader_hpke_config, _) = task.hpke_keys().iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report = generate_report(
-            task.id(),
-            &report_metadata,
-            &[leader_hpke_config, &helper_hpke_config],
-            &transcript.public_share,
-            &transcript.input_shares,
-        );
+        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
+            generate_report(
+                task.id(),
+                &report_metadata,
+                &helper_hpke_config,
+                &transcript.public_share,
+                &transcript.input_shares,
+            );
         let batch_id = random();
         let aggregation_job_id = random();
 
@@ -2197,15 +2071,15 @@ mod tests {
             &0,
         );
 
-        let (leader_hpke_config, _) = task.hpke_keys().iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report = generate_report(
-            task.id(),
-            &report_metadata,
-            &[leader_hpke_config, &helper_hpke_config],
-            &transcript.public_share,
-            &transcript.input_shares,
-        );
+        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
+            generate_report(
+                task.id(),
+                &report_metadata,
+                &helper_hpke_config,
+                &transcript.public_share,
+                &transcript.input_shares,
+            );
         let aggregation_job_id = random();
 
         let aggregation_job =
@@ -2301,41 +2175,47 @@ mod tests {
         assert!(got_leases.is_empty());
     }
 
-    /// Returns a report with the given task ID & metadata values and encrypted input shares
-    /// corresponding to the given HPKE configs & input shares.
-    fn generate_report<P: Encode, I: Encode>(
+    /// Returns a [`LeaderStoredReport`] with the given task ID & metadata values and encrypted
+    /// input shares corresponding to the given HPKE configs & input shares.
+    fn generate_report<const L: usize, A>(
         task_id: &TaskId,
         report_metadata: &ReportMetadata,
-        hpke_configs: &[&HpkeConfig],
-        public_share: &P,
-        input_shares: &[I],
-    ) -> Report {
-        assert_eq!(hpke_configs.len(), 2);
+        helper_hpke_config: &HpkeConfig,
+        public_share: &A::PublicShare,
+        input_shares: &[A::InputShare],
+    ) -> LeaderStoredReport<L, A>
+    where
+        A: vdaf::Aggregator<L>,
+        A::InputShare: PartialEq,
+        A::PublicShare: PartialEq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
         assert_eq!(input_shares.len(), 2);
 
-        let public_share = public_share.get_encoded();
+        let encrypted_helper_input_share = hpke::seal(
+            helper_hpke_config,
+            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
+            &input_shares
+                .get(Role::Helper.index().unwrap())
+                .unwrap()
+                .get_encoded(),
+            &associated_data_for_report_share(
+                task_id,
+                report_metadata,
+                &public_share.get_encoded(),
+            ),
+        )
+        .unwrap();
 
-        let encrypted_input_shares: Vec<_> = [Role::Leader, Role::Helper]
-            .into_iter()
-            .map(|role| {
-                hpke::seal(
-                    hpke_configs.get(role.index().unwrap()).unwrap(),
-                    &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &role),
-                    &input_shares
-                        .get(role.index().unwrap())
-                        .unwrap()
-                        .get_encoded(),
-                    &associated_data_for_report_share(task_id, report_metadata, &public_share),
-                )
-            })
-            .collect::<Result<_, _>>()
-            .unwrap();
-
-        Report::new(
+        LeaderStoredReport::new(
             *task_id,
             report_metadata.clone(),
-            public_share,
-            encrypted_input_shares,
+            public_share.clone(),
+            input_shares
+                .get(Role::Leader.index().unwrap())
+                .unwrap()
+                .clone(),
+            encrypted_helper_input_share,
         )
     }
 
@@ -2362,7 +2242,6 @@ mod tests {
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
-        let (leader_hpke_config, _) = task.hpke_keys().iter().next().unwrap().1;
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
@@ -2375,13 +2254,14 @@ mod tests {
             Vec::new(),
         );
         let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
-        let report = generate_report(
-            task.id(),
-            &report_metadata,
-            &[leader_hpke_config, &helper_hpke_config],
-            &transcript.public_share,
-            &transcript.input_shares,
-        );
+        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
+            generate_report(
+                task.id(),
+                &report_metadata,
+                &helper_hpke_config,
+                &transcript.public_share,
+                &transcript.input_shares,
+            );
 
         // Set up fixtures in the database.
         ds.run_tx(|tx| {

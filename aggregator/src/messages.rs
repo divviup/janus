@@ -125,7 +125,7 @@ impl IntervalExt for Interval {
 
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use janus_messages::{Report, ReportMetadata, TaskId, Time};
+    use janus_messages::{HpkeCiphertext, HpkeConfigId, Report, ReportMetadata, TaskId, Time};
     use rand::random;
 
     pub fn new_dummy_report(task_id: TaskId, when: Time) -> Report {
@@ -133,7 +133,18 @@ pub mod test_util {
             task_id,
             ReportMetadata::new(random(), when, Vec::new()),
             Vec::new(),
-            Vec::new(),
+            vec![
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(13),
+                    Vec::from("encapsulated_context_0"),
+                    Vec::from("payload_0"),
+                ),
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(13),
+                    Vec::from("encapsulated_context_1"),
+                    Vec::from("payload_1"),
+                ),
+            ],
         )
     }
 }

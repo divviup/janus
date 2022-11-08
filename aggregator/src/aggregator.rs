@@ -16,7 +16,7 @@ use crate::{
         self,
         models::{
             AggregateShareJob, AggregationJob, AggregationJobState, CollectJob, CollectJobState,
-            ReportAggregation, ReportAggregationState,
+            LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
         Datastore,
     },
@@ -292,6 +292,8 @@ pub struct Aggregator<C: Clock> {
     // Metrics.
     /// Counter tracking the number of failed decryptions while handling the /upload endpoint.
     upload_decrypt_failure_counter: Counter<u64>,
+    /// Counter tracking the number of failed message decodes while handling the /upload endpoint.
+    upload_decode_failure_counter: Counter<u64>,
     /// Counters tracking the number of failures to step client reports through the aggregation
     /// process.
     aggregate_step_failure_counter: Counter<u64>,
@@ -305,13 +307,21 @@ impl<C: Clock> Aggregator<C> {
             .init();
         upload_decrypt_failure_counter.add(&Context::current(), 0, &[]);
 
+        let upload_decode_failure_counter = meter
+            .u64_counter("janus_upload_decode_failures")
+            .with_description("Number of message decode failures in the /upload endpoint.")
+            .init();
+        upload_decode_failure_counter.add(&Context::current(), 0, &[]);
+
         let aggregate_step_failure_counter = aggregate_step_failure_counter(&meter);
+        aggregate_step_failure_counter.add(&Context::current(), 0, &[]);
 
         Self {
             datastore,
             clock,
             task_aggregators: Mutex::new(HashMap::new()),
             upload_decrypt_failure_counter,
+            upload_decode_failure_counter,
             aggregate_step_failure_counter,
         }
     }
@@ -341,6 +351,7 @@ impl<C: Clock> Aggregator<C> {
                 &self.datastore,
                 &self.clock,
                 &self.upload_decrypt_failure_counter,
+                &self.upload_decode_failure_counter,
                 report,
             )
             .await
@@ -671,6 +682,7 @@ impl TaskAggregator {
         datastore: &Datastore<C>,
         clock: &C,
         upload_decrypt_failure_counter: &Counter<u64>,
+        upload_decode_failure_counter: &Counter<u64>,
         report: Report,
     ) -> Result<(), Error> {
         self.vdaf_ops
@@ -678,6 +690,7 @@ impl TaskAggregator {
                 datastore,
                 clock,
                 upload_decrypt_failure_counter,
+                upload_decode_failure_counter,
                 &self.task,
                 report,
             )
@@ -806,66 +819,74 @@ impl VdafOps {
         datastore: &Datastore<C>,
         clock: &C,
         upload_decrypt_failure_counter: &Counter<u64>,
+        upload_decode_failure_counter: &Counter<u64>,
         task: &Task,
         report: Report,
     ) -> Result<(), Error> {
         match self {
-            VdafOps::Prio3Aes128Count(_, _) => {
+            VdafOps::Prio3Aes128Count(vdaf, _) => {
                 Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
                     datastore,
+                    vdaf,
                     clock,
                     upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
                     task,
                     report,
                 )
                 .await
             }
-
-            VdafOps::Prio3Aes128CountVec(_, _) => {
+            VdafOps::Prio3Aes128CountVec(vdaf, _) => {
                 Self::handle_upload_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     Prio3Aes128CountVecMultithreaded,
                     _,
                 >(
                     datastore,
+                    vdaf,
                     clock,
                     upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
                     task,
                     report,
                 )
                 .await
             }
-
-            VdafOps::Prio3Aes128Sum(_, _) => {
+            VdafOps::Prio3Aes128Sum(vdaf, _) => {
                 Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum, _>(
                     datastore,
+                    vdaf,
                     clock,
                     upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
                     task,
                     report,
                 )
                 .await
             }
-
-            VdafOps::Prio3Aes128Histogram(_, _) => Self::handle_upload_generic::<
+            VdafOps::Prio3Aes128Histogram(vdaf, _) => Self::handle_upload_generic::<
                 PRIO3_AES128_VERIFY_KEY_LENGTH,
                 Prio3Aes128Histogram,
                 _,
             >(
                 datastore,
+                vdaf,
                 clock,
                 upload_decrypt_failure_counter,
+                upload_decode_failure_counter,
                 task,
                 report,
             )
             .await,
 
             #[cfg(feature = "test-util")]
-            VdafOps::Fake(_) => {
+            VdafOps::Fake(vdaf) => {
                 Self::handle_upload_generic::<0, dummy_vdaf::Vdaf, _>(
                     datastore,
+                    vdaf,
                     clock,
                     upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
                     task,
                     report,
                 )
@@ -1145,18 +1166,24 @@ impl VdafOps {
         }
     }
 
-    async fn handle_upload_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+    async fn handle_upload_generic<const L: usize, A, C>(
         datastore: &Datastore<C>,
+        vdaf: &A,
         clock: &C,
         upload_decrypt_failure_counter: &Counter<u64>,
+        upload_decode_failure_counter: &Counter<u64>,
         task: &Task,
         report: Report,
     ) -> Result<(), Error>
     where
+        A: vdaf::Aggregator<L> + Send + Sync + 'static,
+        A::InputShare: PartialEq + Send + Sync,
+        A::PublicShare: PartialEq + Send + Sync,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        C: Clock,
     {
         // The leader's report is the first one.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
@@ -1166,15 +1193,19 @@ impl VdafOps {
                 "unexpected number of encrypted shares in report",
             ));
         }
-        let leader_report = &report.encrypted_input_shares()[0];
+        let leader_encrypted_input_share =
+            &report.encrypted_input_shares()[Role::Leader.index().unwrap()];
 
         // Verify that the report's HPKE config ID is known.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         let (hpke_config, hpke_private_key) = task
             .hpke_keys()
-            .get(leader_report.config_id())
+            .get(leader_encrypted_input_share.config_id())
             .ok_or_else(|| {
-                Error::OutdatedHpkeConfig(*report.task_id(), *leader_report.config_id())
+                Error::OutdatedHpkeConfig(
+                    *report.task_id(),
+                    *leader_encrypted_input_share.config_id(),
+                )
             })?;
 
         let report_deadline = clock.now().add(task.tolerable_clock_skew())?;
@@ -1199,35 +1230,91 @@ impl VdafOps {
             ));
         }
 
-        // Check that we can decrypt the report. This isn't required by the spec
-        // but this exercises HPKE decryption and saves us the trouble of
-        // storing reports we can't use. We don't inform the client if this
-        // fails.
-        if let Err(error) = hpke::open(
+        // Decode (and in the case of the leader input share, decrypt) the remaining fields of the
+        // report before storing them in the datastore. The spec does not require the /upload
+        // handler to do this, but it exercises HPKE decryption, saves us the trouble of storing
+        // reports we can't use, and lets the aggregation job handler assume the values it reads
+        // from the datastore are valid. We don't inform the client if this fails.
+        let public_share =
+            match A::PublicShare::get_decoded_with_param(&vdaf, report.public_share()) {
+                Ok(public_share) => public_share,
+                Err(err) => {
+                    warn!(
+                        report.task_id = %report.task_id(),
+                        report.metadata = ?report.metadata(),
+                        ?err,
+                        "public share decoding failed",
+                    );
+                    upload_decode_failure_counter.add(&Context::current(), 1, &[]);
+                    return Ok(());
+                }
+            };
+
+        let leader_decrypted_input_share = match hpke::open(
             hpke_config,
             hpke_private_key,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
-            leader_report,
+            leader_encrypted_input_share,
             &associated_data_for_report_share(
                 report.task_id(),
                 report.metadata(),
                 report.public_share(),
             ),
         ) {
-            info!(report.task_id = %report.task_id(), report.metadata = ?report.metadata(), ?error, "Report decryption failed");
-            upload_decrypt_failure_counter.add(&Context::current(), 1, &[]);
-            return Ok(());
-        }
+            Ok(leader_decrypted_input_share) => leader_decrypted_input_share,
+            Err(error) => {
+                info!(
+                    report.task_id = %report.task_id(),
+                    report.metadata = ?report.metadata(),
+                    ?error,
+                    "Report decryption failed",
+                );
+                upload_decrypt_failure_counter.add(&Context::current(), 1, &[]);
+                return Ok(());
+            }
+        };
+
+        let leader_input_share = match A::InputShare::get_decoded_with_param(
+            &(vdaf, Role::Leader.index().unwrap()),
+            &leader_decrypted_input_share,
+        ) {
+            Ok(leader_input_share) => leader_input_share,
+            Err(err) => {
+                warn!(
+                    report.task_id = %report.task_id(),
+                    report.metadata = ?report.metadata(),
+                    ?err,
+                    "Leader input share decoding failed",
+                );
+                upload_decode_failure_counter.add(&Context::current(), 1, &[]);
+                return Ok(());
+            }
+        };
+
+        let helper_encrypted_input_share =
+            &report.encrypted_input_shares()[Role::Helper.index().unwrap()];
+
+        let stored_report = LeaderStoredReport::new(
+            *report.task_id(),
+            report.metadata().clone(),
+            public_share,
+            leader_input_share,
+            helper_encrypted_input_share.clone(),
+        );
 
         datastore
             .run_tx(|tx| {
-                let report = report.clone();
+                let (vdaf, stored_report) = (vdaf.clone(), stored_report.clone());
                 Box::pin(async move {
                     let (existing_client_report, conflicting_collect_jobs) = try_join!(
-                        tx.get_client_report(report.task_id(), report.metadata().id()),
+                        tx.get_client_report(
+                            &vdaf,
+                            stored_report.task_id(),
+                            stored_report.metadata().id()
+                        ),
                         tx.get_collect_jobs_including_time::<L, A>(
-                            report.task_id(),
-                            report.metadata().time()
+                            stored_report.task_id(),
+                            stored_report.metadata().time()
                         ),
                     )?;
 
@@ -1236,9 +1323,9 @@ impl VdafOps {
                         // TODO(#34): change this error type.
                         return Err(datastore::Error::User(
                             Error::ReportTooLate(
-                                *report.task_id(),
-                                *report.metadata().id(),
-                                *report.metadata().time(),
+                                *stored_report.task_id(),
+                                *stored_report.metadata().id(),
+                                *stored_report.metadata().time(),
                             )
                             .into(),
                         ));
@@ -1250,16 +1337,16 @@ impl VdafOps {
                     if !conflicting_collect_jobs.is_empty() {
                         return Err(datastore::Error::User(
                             Error::ReportTooLate(
-                                *report.task_id(),
-                                *report.metadata().id(),
-                                *report.metadata().time(),
+                                *stored_report.task_id(),
+                                *stored_report.metadata().id(),
+                                *stored_report.metadata().time(),
                             )
                             .into(),
                         ));
                     }
 
                     // Store the report.
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report::<L, A>(&stored_report).await?;
                     Ok(())
                 })
             })
@@ -2994,7 +3081,7 @@ mod tests {
         vdaf::{
             self,
             prio3::{Prio3, Prio3Aes128Count},
-            AggregateShare, Aggregator as _, PrepareTransition,
+            AggregateShare, Aggregator as _, Client as VdafClient, PrepareTransition,
         },
     };
     use rand::random;
@@ -3181,32 +3268,34 @@ mod tests {
     async fn setup_report(
         task: &Task,
         datastore: &Datastore<MockClock>,
-        clock: &MockClock,
+        report_timestamp: Time,
     ) -> Report {
+        assert_eq!(task.vdaf(), &VdafInstance::Prio3Aes128Count);
         datastore.put_task(task).await.unwrap();
 
+        let vdaf = Prio3Aes128Count::new_aes128_count(2).unwrap();
         let hpke_key = current_hpke_key(task.hpke_keys());
-        let report_metadata = ReportMetadata::new(
-            random(),
-            clock.now().sub(task.tolerable_clock_skew()).unwrap(),
-            Vec::new(),
+        let report_metadata = ReportMetadata::new(random(), report_timestamp, Vec::new());
+
+        let (public_share, measurements) = vdaf.shard(&1).unwrap();
+
+        let associated_data = associated_data_for_report_share(
+            task.id(),
+            &report_metadata,
+            &public_share.get_encoded(),
         );
-        let public_share = b"public share".to_vec();
-        let message = b"this is a message";
-        let associated_data =
-            associated_data_for_report_share(task.id(), &report_metadata, &public_share);
 
         let leader_ciphertext = hpke::seal(
             &hpke_key.0,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
-            message,
+            &measurements[0].get_encoded(),
             &associated_data,
         )
         .unwrap();
         let helper_ciphertext = hpke::seal(
             &hpke_key.0,
-            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
-            message,
+            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
+            &measurements[1].get_encoded(),
             &associated_data,
         )
         .unwrap();
@@ -3214,7 +3303,7 @@ mod tests {
         Report::new(
             *task.id(),
             report_metadata,
-            public_share,
+            public_share.get_encoded(),
             Vec::from([leader_ciphertext, helper_ciphertext]),
         )
     }
@@ -3250,7 +3339,7 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
-        let report = setup_report(&task, &datastore, &clock).await;
+        let report = setup_report(&task, &datastore, clock.now()).await;
         let filter = aggregator_filter(Arc::clone(&datastore), clock.clone()).unwrap();
 
         let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
@@ -3396,14 +3485,7 @@ mod tests {
         let report_2 = setup_report(
             &task_expire_soon,
             &datastore,
-            &MockClock::new(
-                clock
-                    .now()
-                    .add(task.tolerable_clock_skew())
-                    .unwrap()
-                    .add(&Duration::from_seconds(120))
-                    .unwrap(),
-            ),
+            clock.now().add(&Duration::from_seconds(120)).unwrap(),
         )
         .await;
         let mut response = drive_filter(Method::POST, "/upload", &report_2.get_encoded(), &filter)
@@ -3498,7 +3580,7 @@ mod tests {
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
-        let report = setup_report(&task, &datastore, &clock).await;
+        let report = setup_report(&task, &datastore, clock.now()).await;
 
         let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
 
@@ -3539,34 +3621,63 @@ mod tests {
         );
     }
 
-    async fn setup_upload_test() -> (
+    enum UploadTestCaseReportTimestamp {
+        OnClockSkewBoundary,
+        WithinTolerableClockSkew,
+        PastTolerableClockSkew,
+    }
+
+    async fn setup_upload_test(
+        report_timestamp_duration: UploadTestCaseReportTimestamp,
+    ) -> (
+        Prio3Aes128Count,
         Aggregator<MockClock>,
         Task,
         Report,
         Arc<Datastore<MockClock>>,
         DbHandle,
     ) {
+        let clock = MockClock::default();
+        let vdaf = Prio3Aes128Count::new_aes128_count(2).unwrap();
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
-        let clock = MockClock::default();
+
         let (datastore, db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
-        let report = setup_report(&task, &datastore, &clock).await;
 
-        let aggregator = Aggregator::new(Arc::clone(&datastore), clock, meter("janus_aggregator"));
+        let report_timestamp = match report_timestamp_duration {
+            UploadTestCaseReportTimestamp::OnClockSkewBoundary => {
+                clock.now().add(task.tolerable_clock_skew()).unwrap()
+            }
+            UploadTestCaseReportTimestamp::WithinTolerableClockSkew => clock.now(),
+            UploadTestCaseReportTimestamp::PastTolerableClockSkew => clock
+                .now()
+                .add(task.tolerable_clock_skew())
+                .unwrap()
+                .add(&Duration::from_seconds(1))
+                .unwrap(),
+        };
+        let report = setup_report(&task, &datastore, report_timestamp).await;
 
-        (aggregator, task, report, datastore, db_handle)
+        let aggregator = Aggregator::new(
+            Arc::clone(&datastore),
+            clock.clone(),
+            meter("janus_aggregator"),
+        );
+
+        (vdaf, aggregator, task, report, datastore, db_handle)
     }
 
     #[tokio::test]
     async fn upload() {
         install_test_trace_subscriber();
 
-        let (aggregator, _, report, datastore, _db_handle) = setup_upload_test().await;
+        let (vdaf, aggregator, _, report, datastore, _db_handle) =
+            setup_upload_test(UploadTestCaseReportTimestamp::WithinTolerableClockSkew).await;
 
         aggregator
             .handle_upload(&report.get_encoded())
@@ -3575,12 +3686,15 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                let (task_id, report_id) = (*report.task_id(), *report.metadata().id());
-                Box::pin(async move { tx.get_client_report(&task_id, &report_id).await })
+                let (vdaf, task_id, report_id) =
+                    (vdaf.clone(), *report.task_id(), *report.metadata().id());
+                Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
             })
             .await
+            .unwrap()
             .unwrap();
-        assert_eq!(Some(&report), got_report.as_ref());
+        assert_eq!(report.task_id(), got_report.task_id());
+        assert_eq!(report.metadata(), got_report.metadata());
 
         // should reject duplicate reports.
         // TODO(#34): change this error type.
@@ -3595,7 +3709,8 @@ mod tests {
     async fn upload_wrong_number_of_encrypted_shares() {
         install_test_trace_subscriber();
 
-        let (aggregator, _, report, _, _db_handle) = setup_upload_test().await;
+        let (_, aggregator, _, report, _, _db_handle) =
+            setup_upload_test(UploadTestCaseReportTimestamp::WithinTolerableClockSkew).await;
 
         let report = Report::new(
             *report.task_id(),
@@ -3614,7 +3729,8 @@ mod tests {
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
-        let (aggregator, task, report, _, _db_handle) = setup_upload_test().await;
+        let (_, aggregator, task, report, _, _db_handle) =
+            setup_upload_test(UploadTestCaseReportTimestamp::WithinTolerableClockSkew).await;
 
         let unused_hpke_config_id = (0..)
             .map(HpkeConfigId::from)
@@ -3643,62 +3759,13 @@ mod tests {
         });
     }
 
-    fn reencrypt_report(report: Report, hpke_config: &HpkeConfig) -> Report {
-        let message = b"this is a message";
-        let associated_data = associated_data_for_report_share(
-            report.task_id(),
-            report.metadata(),
-            report.public_share(),
-        );
-
-        let leader_ciphertext = hpke::seal(
-            hpke_config,
-            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
-            message,
-            &associated_data,
-        )
-        .unwrap();
-
-        let helper_ciphertext = hpke::seal(
-            hpke_config,
-            &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
-            message,
-            &associated_data,
-        )
-        .unwrap();
-
-        Report::new(
-            *report.task_id(),
-            report.metadata().clone(),
-            report.public_share().to_vec(),
-            Vec::from([leader_ciphertext, helper_ciphertext]),
-        )
-    }
-
     #[tokio::test]
-    async fn upload_report_in_the_future() {
+    async fn upload_report_in_the_future_boundary_condition() {
         install_test_trace_subscriber();
 
-        let (aggregator, task, report, datastore, _db_handle) = setup_upload_test().await;
+        let (vdaf, aggregator, _, report, datastore, _db_handle) =
+            setup_upload_test(UploadTestCaseReportTimestamp::OnClockSkewBoundary).await;
 
-        // Boundary condition
-        let report = reencrypt_report(
-            Report::new(
-                *report.task_id(),
-                ReportMetadata::new(
-                    *report.metadata().id(),
-                    aggregator
-                        .clock
-                        .now()
-                        .add(task.tolerable_clock_skew())
-                        .unwrap(),
-                    report.metadata().extensions().to_vec(),
-                ),
-                report.public_share().to_vec(),
-                report.encrypted_input_shares().to_vec(),
-            ),
-            &task.hpke_keys().values().next().unwrap().0,
-        );
         aggregator
             .handle_upload(&report.get_encoded())
             .await
@@ -3706,34 +3773,30 @@ mod tests {
 
         let got_report = datastore
             .run_tx(|tx| {
-                let (task_id, report_id) = (*report.task_id(), *report.metadata().id());
-                Box::pin(async move { tx.get_client_report(&task_id, &report_id).await })
+                let (vdaf, task_id, report_id) =
+                    (vdaf.clone(), *report.task_id(), *report.metadata().id());
+                Box::pin(async move { tx.get_client_report(&vdaf, &task_id, &report_id).await })
             })
             .await
+            .unwrap()
             .unwrap();
-        assert_eq!(Some(&report), got_report.as_ref());
+        assert_eq!(report.task_id(), got_report.task_id());
+        assert_eq!(report.metadata(), got_report.metadata());
+    }
 
-        // Just past the clock skew
-        let report = reencrypt_report(
-            Report::new(
-                *report.task_id(),
-                ReportMetadata::new(
-                    *report.metadata().id(),
-                    aggregator
-                        .clock
-                        .now()
-                        .add(task.tolerable_clock_skew())
-                        .unwrap()
-                        .add(&Duration::from_seconds(1))
-                        .unwrap(),
-                    report.metadata().extensions().to_vec(),
-                ),
-                report.public_share().to_vec(),
-                report.encrypted_input_shares().to_vec(),
-            ),
-            &task.hpke_keys().values().next().unwrap().0,
-        );
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooEarly(task_id, report_id, time)) => {
+    #[tokio::test]
+    async fn upload_report_in_the_future_past_clock_skew() {
+        install_test_trace_subscriber();
+
+        let (_, aggregator, _, report, _, _db_handle) =
+            setup_upload_test(UploadTestCaseReportTimestamp::PastTolerableClockSkew).await;
+
+        let upload_error = aggregator
+            .handle_upload(&report.get_encoded())
+            .await
+            .unwrap_err();
+
+        assert_matches!(upload_error, Error::ReportTooEarly(task_id, report_id, time) => {
             assert_eq!(&task_id, report.task_id());
             assert_eq!(report.metadata().id(), &report_id);
             assert_eq!(report.metadata().time(), &time);
@@ -3744,7 +3807,8 @@ mod tests {
     async fn upload_report_for_collected_batch() {
         install_test_trace_subscriber();
 
-        let (aggregator, task, report, datastore, _db_handle) = setup_upload_test().await;
+        let (_, aggregator, task, report, datastore, _db_handle) =
+            setup_upload_test(UploadTestCaseReportTimestamp::WithinTolerableClockSkew).await;
 
         // Insert a collect job for the batch interval including our report.
         let batch_interval = Interval::new(
