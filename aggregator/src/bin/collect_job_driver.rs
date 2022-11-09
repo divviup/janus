@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::aggregate_share::CollectJobDriver,
+    aggregator::collect_job_driver::CollectJobDriver,
     binary_utils::{
         janus_main, job_driver::JobDriver, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },

@@ -1210,7 +1210,7 @@ pub mod query_type {
 
     /// QueryType represents a DAP query type. This is a task-level configuration setting which
     /// determines how individual client reports are grouped together into batches for collection.
-    pub trait QueryType: Clone + Debug + PartialEq + Eq + 'static {
+    pub trait QueryType: Clone + Debug + PartialEq + Eq + Send + Sync + 'static {
         /// The [`Code`] associated with this query type.
         const CODE: Code;
 

@@ -1,15 +1,15 @@
 //! Common functionality for DAP aggregators.
 
 pub mod accumulator;
-pub mod aggregate_share;
 pub mod aggregation_job_creator;
 pub mod aggregation_job_driver;
+pub mod collect_job_driver;
 pub mod query_type;
 
 use crate::{
     aggregator::{
         accumulator::Accumulator,
-        aggregate_share::{compute_aggregate_share, validate_batch_query_count_for_collect},
+        collect_job_driver::{compute_aggregate_share, validate_batch_query_count_for_collect},
         query_type::CollectableQueryType,
     },
     datastore::{
@@ -1916,7 +1916,7 @@ impl VdafOps {
                     }
 
                     let collect_job_id = Uuid::new_v4();
-                    tx.put_collect_job(&CollectJob::new(
+                    tx.put_collect_job(&CollectJob::<L, TimeInterval, A>::new(
                         *req.task_id(),
                         collect_job_id,
                         *req.query().batch_interval(),
@@ -2002,7 +2002,7 @@ impl VdafOps {
             .run_tx(|tx| {
                 let collect_job_id = Arc::clone(&collect_job_id);
                 Box::pin(async move {
-                    tx.get_collect_job::<L, A>(&collect_job_id)
+                    tx.get_collect_job::<L, TimeInterval, A>(&collect_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -2145,7 +2145,7 @@ impl VdafOps {
             .run_tx(move |tx| {
                 Box::pin(async move {
                     let collect_job = tx
-                        .get_collect_job::<L, A>(&collect_job_id)
+                        .get_collect_job::<L, TimeInterval, A>(&collect_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -2154,7 +2154,7 @@ impl VdafOps {
                         })?;
 
                     if collect_job.state() != &CollectJobState::Deleted {
-                        tx.update_collect_job::<L, A>(
+                        tx.update_collect_job::<L, TimeInterval, A>(
                             &collect_job.with_state(CollectJobState::Deleted),
                         )
                         .await?;
@@ -2242,11 +2242,14 @@ impl VdafOps {
                 Box::pin(async move {
                     // Check if we have already serviced an aggregate share request with these
                     // parameters and serve the cached results if so.
+                    let aggregation_param = A::AggregationParam::get_decoded(
+                        aggregate_share_req.aggregation_parameter(),
+                    )?;
                     let aggregate_share_job = match tx
                         .get_aggregate_share_job(
                             aggregate_share_req.task_id(),
                             aggregate_share_req.batch_selector().batch_interval(),
-                            aggregate_share_req.aggregation_parameter(),
+                            &aggregation_param,
                         )
                         .await?
                     {
@@ -3824,12 +3827,16 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.put_collect_job(&CollectJob::new(
+                    tx.put_collect_job(&CollectJob::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Aes128Count,
+                    >::new(
                         *task.id(),
                         Uuid::new_v4(),
                         batch_interval,
                         (),
-                        CollectJobState::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::Start,
+                        CollectJobState::Start,
                     ))
                     .await
                 })
@@ -6696,7 +6703,7 @@ mod tests {
                     .unwrap();
 
                     let collect_job = tx
-                        .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                             &collect_job_id,
                         )
                         .await
@@ -6708,7 +6715,7 @@ mod tests {
                             leader_aggregate_share,
                         });
 
-                    tx.update_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    tx.update_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         &collect_job,
                     )
                     .await

@@ -62,6 +62,11 @@ pub trait CollectableQueryType: QueryType {
         collect_identifier: &Self::BatchIdentifier,
     ) -> Self::Iter;
 
+    /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
+    /// interval. This method extracts the interval from such identifiers, or returns `None` if the
+    /// query type does not represent batch identifiers as an interval.
+    fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval>;
+
     /// Retrieves batch aggregations corresponding to all batches identified by the given collect
     /// identifier.
     async fn get_batch_aggregations_for_collect_identifier<
@@ -104,6 +109,10 @@ impl CollectableQueryType for TimeInterval {
         batch_interval: &Self::BatchIdentifier,
     ) -> Self::Iter {
         TimeIntervalBatchIdentifierIter::new(task, batch_interval)
+    }
+
+    fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
+        Some(collect_identifier)
     }
 }
 
@@ -170,5 +179,9 @@ impl CollectableQueryType for FixedSize {
         batch_id: &Self::BatchIdentifier,
     ) -> Self::Iter {
         iter::once(*batch_id)
+    }
+
+    fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {
+        None
     }
 }
