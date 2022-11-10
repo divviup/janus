@@ -2,11 +2,11 @@ use crate::{
     datastore::models::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
-    datastore::{self, models::OutstandingBatch, Datastore},
+    datastore::{self, gather_errors, models::OutstandingBatch, Datastore},
     task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use anyhow::Result;
-use futures::future::try_join_all;
+use futures::{future::join_all, FutureExt};
 use itertools::Itertools;
 use janus_core::{
     task::VdafInstance,
@@ -367,18 +367,22 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     }
 
                     // Write the aggregation jobs & report aggregations we created.
-                    try_join_all(
-                        agg_jobs
-                            .iter()
-                            .map(|agg_job| tx.put_aggregation_job(agg_job)),
-                    )
-                    .await?;
-                    try_join_all(
-                        report_aggs
-                            .iter()
-                            .map(|report_agg| tx.put_report_aggregation(report_agg)),
-                    )
-                    .await?;
+                    gather_errors(
+                        join_all(
+                            agg_jobs
+                                .iter()
+                                .map(|agg_job| tx.put_aggregation_job(agg_job)),
+                        )
+                        .await,
+                    )?;
+                    gather_errors(
+                        join_all(
+                            report_aggs
+                                .iter()
+                                .map(|report_agg| tx.put_report_aggregation(report_agg)),
+                        )
+                        .await,
+                    )?;
 
                     Ok(())
                 })
@@ -528,24 +532,28 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Write the outstanding batches, aggregation jobs, & report aggregations we
                     // created.
                     try_join!(
-                        try_join_all(
+                        join_all(
                             aggregation_jobs
                                 .iter()
                                 .map(|agg_job| tx.put_aggregation_job(agg_job)),
-                        ),
-                        try_join_all(
+                        )
+                        .map(gather_errors),
+                        join_all(
                             new_batches
                                 .iter()
                                 .map(|batch_id| tx.put_outstanding_batch(task.id(), batch_id)),
                         )
+                        .map(gather_errors)
                     )?;
 
-                    try_join_all(
-                        report_aggregations
-                            .iter()
-                            .map(|report_agg| tx.put_report_aggregation(report_agg)),
-                    )
-                    .await?;
+                    gather_errors(
+                        join_all(
+                            report_aggregations
+                                .iter()
+                                .map(|report_agg| tx.put_report_aggregation(report_agg)),
+                        )
+                        .await,
+                    )?;
 
                     Ok(())
                 })
@@ -631,18 +639,22 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     }
 
                     // Write the aggregation jobs & report aggregations we created.
-                    try_join_all(
-                        agg_jobs
-                            .iter()
-                            .map(|agg_job| tx.put_aggregation_job(agg_job)),
-                    )
-                    .await?;
-                    try_join_all(
-                        report_aggs
-                            .iter()
-                            .map(|report_agg| tx.put_report_aggregation(report_agg)),
-                    )
-                    .await?;
+                    gather_errors(
+                        join_all(
+                            agg_jobs
+                                .iter()
+                                .map(|agg_job| tx.put_aggregation_job(agg_job)),
+                        )
+                        .await,
+                    )?;
+                    gather_errors(
+                        join_all(
+                            report_aggs
+                                .iter()
+                                .map(|report_agg| tx.put_report_aggregation(report_agg)),
+                        )
+                        .await,
+                    )?;
 
                     Ok(())
                 })
@@ -658,6 +670,7 @@ mod tests {
     use super::AggregationJobCreator;
     use crate::{
         datastore::{
+            gather_errors,
             models::{AggregationJob, CollectJob, CollectJobState},
             test_util::ephemeral_datastore,
             Transaction,
@@ -668,7 +681,7 @@ mod tests {
             test_util::TaskBuilder, QueryType as TaskQueryType, PRIO3_AES128_VERIFY_KEY_LENGTH,
         },
     };
-    use futures::{future::try_join_all, TryFutureExt};
+    use futures::{future::join_all, TryFutureExt};
     use janus_core::{
         task::VdafInstance,
         test_util::{
@@ -1454,32 +1467,34 @@ mod tests {
         <A as Aggregator<L>>::PrepareState: for<'a> ParameterizedDecode<(&'a A, usize)>,
         for<'a> <A as Vdaf>::OutputShare: TryFrom<&'a [u8]>,
     {
-        try_join_all(
-            tx.get_aggregation_jobs_for_task_id::<L, Q, A>(task_id)
-                .await
-                .unwrap()
-                .into_iter()
-                .map(|agg_job| async {
-                    let agg_job_id = *agg_job.id();
-                    tx.get_report_aggregations_for_aggregation_job(
-                        vdaf,
-                        &Role::Leader,
-                        task_id,
-                        &agg_job_id,
-                    )
-                    .map_ok(move |report_aggs| {
-                        (
-                            agg_job,
-                            report_aggs
-                                .into_iter()
-                                .map(|ra| (*ra.time(), *ra.report_id()))
-                                .collect::<T>(),
-                        )
-                    })
+        gather_errors(
+            join_all(
+                tx.get_aggregation_jobs_for_task_id::<L, Q, A>(task_id)
                     .await
-                }),
+                    .unwrap()
+                    .into_iter()
+                    .map(|agg_job| async {
+                        let agg_job_id = *agg_job.id();
+                        tx.get_report_aggregations_for_aggregation_job(
+                            vdaf,
+                            &Role::Leader,
+                            task_id,
+                            &agg_job_id,
+                        )
+                        .map_ok(move |report_aggs| {
+                            (
+                                agg_job,
+                                report_aggs
+                                    .into_iter()
+                                    .map(|ra| (*ra.time(), *ra.report_id()))
+                                    .collect::<T>(),
+                            )
+                        })
+                        .await
+                    }),
+            )
+            .await,
         )
-        .await
         .unwrap()
         .into_iter()
     }

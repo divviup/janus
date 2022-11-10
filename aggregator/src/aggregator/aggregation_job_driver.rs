@@ -1,7 +1,7 @@
 use crate::{
     aggregator::{accumulator::Accumulator, aggregate_step_failure_counter, post_to_helper},
     datastore::{
-        self,
+        self, gather_errors,
         models::{
             AcquiredAggregationJob, AggregationJob, AggregationJobState, LeaderStoredReport, Lease,
             ReportAggregation, ReportAggregationState,
@@ -12,7 +12,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use derivative::Derivative;
-use futures::future::{try_join_all, BoxFuture, FutureExt};
+use futures::future::{join_all, BoxFuture, FutureExt};
 use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
@@ -213,8 +213,8 @@ impl AggregationJobDriver {
                     // Read client reports, but only for report aggregations in state START.
                     // TODO(#224): create "get_client_reports_for_aggregation_job" datastore
                     // operation to avoid needing to join many futures?
-                    let client_reports =
-                        try_join_all(report_aggregations.iter().filter_map(|report_aggregation| {
+                    let client_reports = gather_errors(
+                        join_all(report_aggregations.iter().filter_map(|report_aggregation| {
                             if report_aggregation.state() == &ReportAggregationState::Start {
                                 Some(
                                     tx.get_client_report(
@@ -228,25 +228,24 @@ impl AggregationJobDriver {
                                             *report_aggregation.report_id(),
                                             lease.leased().task_id(),
                                         ))
-                                        .and_then(
-                                            |maybe_report| {
-                                                maybe_report.ok_or_else(|| {
-                                                    anyhow!(
-                                                        "couldn't find report {} for task {}",
-                                                        report_aggregation.report_id(),
-                                                        lease.leased().task_id(),
-                                                    )
-                                                })
-                                            },
-                                        )
+                                        .and_then(|maybe_report| {
+                                            maybe_report.ok_or_else(|| {
+                                                anyhow!(
+                                                    "couldn't find report {} for task {}",
+                                                    report_aggregation.report_id(),
+                                                    lease.leased().task_id(),
+                                                )
+                                            })
+                                        })
+                                        .map_err(|err| datastore::Error::User(err.into()))
                                     }),
                                 )
                             } else {
                                 None
                             }
                         }))
-                        .await
-                        .map_err(|err| datastore::Error::User(err.into()))?;
+                        .await,
+                    )?;
 
                     Ok((
                         Arc::new(task),
@@ -668,15 +667,20 @@ impl AggregationJobDriver {
                     Arc::clone(&lease),
                 );
                 Box::pin(async move {
-                    let report_aggregations_future =
-                        try_join_all(report_aggregations_to_write.iter().map(
-                            |report_aggregation| tx.update_report_aggregation(report_aggregation),
-                        ));
-                    let aggregation_job_future = try_join_all(
+                    let report_aggregations_future = join_all(
+                        report_aggregations_to_write
+                            .iter()
+                            .map(|report_aggregation| {
+                                tx.update_report_aggregation(report_aggregation)
+                            }),
+                    )
+                    .map(gather_errors);
+                    let aggregation_job_future = join_all(
                         aggregation_job_to_write
                             .iter()
                             .map(|aggregation_job| tx.update_aggregation_job(aggregation_job)),
-                    );
+                    )
+                    .map(gather_errors);
                     let batch_aggregations_future = accumulator.flush_to_datastore(tx);
 
                     try_join!(
