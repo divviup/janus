@@ -333,39 +333,40 @@ impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
 
 impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
     fn drop(&mut self) {
-        if panicking() {
-            if let Some(base_dir) = log_export_path() {
-                create_dir_all(&base_dir).expect("could not create log output directory");
+        if !panicking() {
+            return;
+        }
+        if let Some(base_dir) = log_export_path() {
+            create_dir_all(&base_dir).expect("could not create log output directory");
 
-                let id = self.container.id();
+            let id = self.container.id();
 
-                let inspect_output = Command::new("docker")
-                    .args(["container", "inspect", id])
-                    .output()
-                    .expect("running `docker container inspect` failed");
-                stderr().write_all(&inspect_output.stderr).unwrap();
-                assert!(inspect_output.status.success());
-                let inspect_array: Vec<ContainerInspectEntry> =
-                    serde_json::from_slice(&inspect_output.stdout).unwrap();
-                let inspect_entry = inspect_array
-                    .first()
-                    .expect("`docker container inspect` returned no results");
-                let name = &inspect_entry.name[inspect_entry
-                    .name
-                    .find('/')
-                    .map(|index| index + 1)
-                    .unwrap_or_default()..];
+            let inspect_output = Command::new("docker")
+                .args(["container", "inspect", id])
+                .output()
+                .expect("running `docker container inspect` failed");
+            stderr().write_all(&inspect_output.stderr).unwrap();
+            assert!(inspect_output.status.success());
+            let inspect_array: Vec<ContainerInspectEntry> =
+                serde_json::from_slice(&inspect_output.stdout).unwrap();
+            let inspect_entry = inspect_array
+                .first()
+                .expect("`docker container inspect` returned no results");
+            let name = &inspect_entry.name[inspect_entry
+                .name
+                .find('/')
+                .map(|index| index + 1)
+                .unwrap_or_default()..];
 
-                let destination = base_dir.join(name);
+            let destination = base_dir.join(name);
 
-                let copy_status = Command::new("docker")
-                    .arg("cp")
-                    .arg(format!("{}:/logs", id))
-                    .arg(destination)
-                    .status()
-                    .expect("running `docker cp` failed");
-                assert!(copy_status.success());
-            }
+            let copy_status = Command::new("docker")
+                .arg("cp")
+                .arg(format!("{}:/logs", id))
+                .arg(destination)
+                .status()
+                .expect("running `docker cp` failed");
+            assert!(copy_status.success());
         }
     }
 }

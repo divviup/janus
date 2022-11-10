@@ -194,25 +194,26 @@ impl<'a> Drop for Janus<'a> {
         // gather up logfiles with `kind export logs`)
 
         if let Janus::Container { role, container } = self {
-            if panicking() {
-                if let Some(mut destination_path) = log_export_path() {
-                    destination_path.push(format!("{}-{}", role, container.id()));
-                    let docker_cp_status = Command::new("docker")
-                        .args([
-                            "cp",
-                            &format!("{}:logs/", container.id()),
-                            destination_path.as_os_str().to_str().unwrap(),
-                        ])
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .status()
-                        .expect("Failed to execute `docker cp`");
-                    assert!(
-                        docker_cp_status.success(),
-                        "`docker cp` failed with status {docker_cp_status:?}"
-                    );
-                }
+            if !panicking() {
+                return;
+            }
+            if let Some(mut destination_path) = log_export_path() {
+                destination_path.push(format!("{}-{}", role, container.id()));
+                let docker_cp_status = Command::new("docker")
+                    .args([
+                        "cp",
+                        &format!("{}:logs/", container.id()),
+                        destination_path.as_os_str().to_str().unwrap(),
+                    ])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .expect("Failed to execute `docker cp`");
+                assert!(
+                    docker_cp_status.success(),
+                    "`docker cp` failed with status {docker_cp_status:?}"
+                );
             }
         }
     }
