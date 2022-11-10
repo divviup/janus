@@ -4,6 +4,7 @@ use crate::{
     },
     datastore::{self, gather_errors, models::OutstandingBatch, Datastore},
     task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    try_join,
 };
 use anyhow::Result;
 use futures::{future::join_all, FutureExt};
@@ -36,7 +37,6 @@ use tokio::{
     select,
     sync::oneshot::{self, Receiver, Sender},
     time::{self, Instant, MissedTickBehavior},
-    try_join,
 };
 use tracing::{debug, error, info};
 

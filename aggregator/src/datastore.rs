@@ -39,10 +39,86 @@ use std::{
     collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
     ops::RangeInclusive, pin::Pin,
 };
-use tokio::try_join;
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
 use uuid::Uuid;
+
+/// A replacement for [`tokio::try_join!`] that is safe to use on datastore errors.
+///
+/// This macro concurrently awaits on multiple fallible futures, and returns a `Result` holding
+/// either a tuple of the future's unwrapped outputs, or a single error. If any future yields an
+/// error, the remaining futures will _not_ be cancelled. Once all futures have resolved, the error
+/// to be returned will be chosen using [`Error::combine`]. This will ensure that any transaction
+/// serialization failure is propagated out, no matter the order that the futures are polled in.
+#[macro_export]
+macro_rules! try_join {
+    // External-facing syntax: take a comma-separated list of arguments, where each is a future.
+    ( $a:expr, $b:expr $(,)? ) => {{
+        let (a, b) = ::tokio::join!($a, $b);
+        $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from)
+        )
+    }};
+    ( $a:expr, $b:expr, $c:expr $(,)? ) => {{
+        let (a, b, c) = ::tokio::join!($a, $b, $c);
+        match $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from),
+            c.map_err($crate::datastore::Error::from)
+        ) {
+            Ok((a, (b, c))) => Ok((a, b, c)),
+            Err(err) => Err(err),
+        }
+    }};
+    ( $a:expr, $b:expr, $c:expr, $d:expr $(,)? ) => {{
+        let (a, b, c, d) = ::tokio::join!($a, $b, $c, $d);
+        match $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from),
+            c.map_err($crate::datastore::Error::from),
+            d.map_err($crate::datastore::Error::from)
+        ) {
+            Ok((a, (b, (c, d)))) => Ok((a, b, c, d)),
+            Err(err) => Err(err),
+        }
+    }};
+    ( $a:expr, $b:expr, $c:expr, $d:expr, $e:expr $(,)? ) => {{
+        let (a, b, c, d, e) = ::tokio::join!($a, $b, $c, $d, $e);
+        match $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from),
+            c.map_err($crate::datastore::Error::from),
+            d.map_err($crate::datastore::Error::from),
+            e.map_err($crate::datastore::Error::from)
+        ) {
+            Ok((a, (b, (c, (d, e))))) => Ok((a, b, c, d, e)),
+            Err(err) => Err(err),
+        }
+    }};
+
+    // Internal syntax, base case: fold two results together.
+    ( : fold $a:expr, $b:expr ) => {
+        match ($a, $b) {
+            (Ok(a_out), Ok(b_out)) => Ok((a_out, b_out)),
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => Err(e),
+            (Err(a_err), Err(b_err)) => Err($crate::datastore::Error::combine(a_err, b_err)),
+        }
+    };
+
+    // Internal syntax, induction step: fold n results into n - 1 results.
+    ( : fold $a:expr, $b:expr, $($rest:expr),+ ) => {
+        $crate::try_join!(
+            :fold
+            $a,
+            $crate::try_join!(:fold $b, $($rest),+)
+        )
+    }
+}
 
 // TODO(#196): retry network-related & other transient failures once we know what they look like
 
