@@ -288,22 +288,23 @@ impl<'a> Drop for Daphne<'a> {
 
         // We assume that if a Daphne value is dropped during a panic, we are in the middle of
         // test failure. In this case, export logs if logs_path() suggests doing so.
-        if panicking() {
-            if let Some(mut destination_path) = log_export_path() {
-                destination_path.push(format!("{}-{}", self.role, self.daphne_container.id()));
-                create_dir_all(&destination_path).unwrap();
-                let docker_logs_status = Command::new("docker")
-                    .args(["logs", "--timestamps", self.daphne_container.id()])
-                    .stdin(Stdio::null())
-                    .stdout(File::create(destination_path.join("stdout.log")).unwrap())
-                    .stderr(File::create(destination_path.join("stderr.log")).unwrap())
-                    .status()
-                    .expect("Failed to execute `docker logs`");
-                assert!(
-                    docker_logs_status.success(),
-                    "`docker logs` failed with status {docker_logs_status:?}"
-                );
-            }
+        if !panicking() {
+            return;
+        }
+        if let Some(mut destination_path) = log_export_path() {
+            destination_path.push(format!("{}-{}", self.role, self.daphne_container.id()));
+            create_dir_all(&destination_path).unwrap();
+            let docker_logs_status = Command::new("docker")
+                .args(["logs", "--timestamps", self.daphne_container.id()])
+                .stdin(Stdio::null())
+                .stdout(File::create(destination_path.join("stdout.log")).unwrap())
+                .stderr(File::create(destination_path.join("stderr.log")).unwrap())
+                .status()
+                .expect("Failed to execute `docker logs`");
+            assert!(
+                docker_logs_status.success(),
+                "`docker logs` failed with status {docker_logs_status:?}"
+            );
         }
     }
 }

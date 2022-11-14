@@ -671,11 +671,10 @@ mod tests {
     use crate::{
         datastore::{
             gather_errors,
-            models::{AggregationJob, CollectJob, CollectJobState},
+            models::{AggregationJob, CollectJob, CollectJobState, LeaderStoredReport},
             test_util::ephemeral_datastore,
             Transaction,
         },
-        messages::test_util::new_dummy_report,
         messages::TimeExt,
         task::{
             test_util::TaskBuilder, QueryType as TaskQueryType, PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -692,7 +691,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        AggregationJobId, Interval, Report, ReportId, Role, TaskId, Time,
+        AggregationJobId, Interval, ReportId, Role, TaskId, Time,
     };
     use prio::{
         codec::ParameterizedDecode,
@@ -734,7 +733,7 @@ mod tests {
             Role::Leader,
         )
         .build();
-        let leader_report = new_dummy_report(*leader_task.id(), report_time);
+        let leader_report = LeaderStoredReport::new_dummy(leader_task.id(), report_time);
 
         let helper_task = TaskBuilder::new(
             TaskQueryType::TimeInterval,
@@ -742,7 +741,7 @@ mod tests {
             Role::Helper,
         )
         .build();
-        let helper_report = new_dummy_report(*helper_task.id(), report_time);
+        let helper_report = LeaderStoredReport::new_dummy(helper_task.id(), report_time);
 
         ds.run_tx(|tx| {
             let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
@@ -751,8 +750,8 @@ mod tests {
                 tx.put_task(&leader_task).await?;
                 tx.put_task(&helper_task).await?;
 
-                tx.put_client_report_message(&leader_report).await?;
-                tx.put_client_report_message(&helper_report).await
+                tx.put_client_report(&leader_report).await?;
+                tx.put_client_report(&helper_report).await
             })
         })
         .await
@@ -845,8 +844,8 @@ mod tests {
         // In the current batch, create MIN_AGGREGATION_JOB_SIZE reports. We expect an aggregation
         // job to be created containing these reports.
         let report_time = clock.now();
-        let cur_batch_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
+        let cur_batch_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE)
                 .collect();
 
@@ -854,16 +853,16 @@ mod tests {
         // the minimum aggregation job size applies only to the current batch window, we expect an
         // aggregation job to be created for these reports.
         let report_time = report_time.sub(task.time_precision()).unwrap();
-        let small_batch_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
+        let small_batch_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE - 1)
                 .collect();
 
         // In a (separate) previous "big" batch, create more than MAX_AGGREGATION_JOB_SIZE reports.
         // We expect these reports will be split into more than one aggregation job.
         let report_time = report_time.sub(task.time_precision()).unwrap();
-        let big_batch_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
+        let big_batch_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
@@ -888,7 +887,7 @@ mod tests {
                     .chain(&small_batch_reports)
                     .chain(&big_batch_reports)
                 {
-                    tx.put_client_report_message(report).await?;
+                    tx.put_client_report(report).await?;
                 }
                 Ok(())
             })
@@ -969,14 +968,14 @@ mod tests {
             )
             .build(),
         );
-        let first_report = new_dummy_report(*task.id(), clock.now());
-        let second_report = new_dummy_report(*task.id(), clock.now());
+        let first_report = LeaderStoredReport::new_dummy(task.id(), clock.now());
+        let second_report = LeaderStoredReport::new_dummy(task.id(), clock.now());
 
         ds.run_tx(|tx| {
             let (task, first_report) = (Arc::clone(&task), first_report.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                tx.put_client_report_message(&first_report).await
+                tx.put_client_report(&first_report).await
             })
         })
         .await
@@ -1020,7 +1019,7 @@ mod tests {
             .datastore
             .run_tx(|tx| {
                 let second_report = second_report.clone();
-                Box::pin(async move { tx.put_client_report_message(&second_report).await })
+                Box::pin(async move { tx.put_client_report(&second_report).await })
             })
             .await
             .unwrap();
@@ -1104,9 +1103,10 @@ mod tests {
 
         // Create MIN_BATCH_SIZE + MAX_BATCH_SIZE reports. We expect aggregation jobs to be created
         // containing these reports.
-        let reports: Vec<Report> = iter::repeat_with(|| new_dummy_report(*task.id(), clock.now()))
-            .take(MIN_BATCH_SIZE + MAX_BATCH_SIZE)
-            .collect();
+        let reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), clock.now()))
+                .take(MIN_BATCH_SIZE + MAX_BATCH_SIZE)
+                .collect();
 
         let report_ids: HashSet<ReportId> = reports
             .iter()
@@ -1118,7 +1118,7 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 for report in &reports {
-                    tx.put_client_report_message(report).await?;
+                    tx.put_client_report(report).await?;
                 }
                 Ok(())
             })
@@ -1221,16 +1221,16 @@ mod tests {
         // aggregation job per overlapping collect job for these reports. (and there is one such
         // collect job)
         let report_time = clock.now().sub(task.time_precision()).unwrap();
-        let batch_1_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
+        let batch_1_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE)
                 .collect();
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
         // two aggregation jobs per overlapping collect job. (and there are two such collect jobs)
         let report_time = report_time.sub(task.time_precision()).unwrap();
-        let batch_2_reports: Vec<Report> =
-            iter::repeat_with(|| new_dummy_report(*task.id(), report_time))
+        let batch_2_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
@@ -1243,10 +1243,10 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 for report in batch_1_reports {
-                    tx.put_client_report_message(&report).await?;
+                    tx.put_client_report(&report).await?;
                 }
                 for report in batch_2_reports {
-                    tx.put_client_report_message(&report).await?;
+                    tx.put_client_report(&report).await?;
                 }
                 Ok(())
             })

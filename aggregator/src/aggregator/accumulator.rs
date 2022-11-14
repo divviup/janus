@@ -133,7 +133,6 @@ impl<const L: usize, A: vdaf::Aggregator<L>> Accumulation<L, A>
 where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
-    #[allow(clippy::result_large_err)]
     fn update(&mut self, report_id: &ReportId, output_share: &A::OutputShare) -> Result<(), Error> {
         self.aggregate_share.accumulate(output_share)?;
         self.report_count += 1;

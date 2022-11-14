@@ -87,7 +87,7 @@ pub enum Error {
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
     #[error("HTTP response status {0}")]
-    Http(HttpApiProblem),
+    Http(Box<HttpApiProblem>),
     #[error("URL parse: {0}")]
     Url(#[from] url::ParseError),
     #[error("missing Location header in See Other response")]
@@ -355,14 +355,18 @@ where
                 if status == StatusCode::SEE_OTHER {
                     response
                 } else if status.is_client_error() || status.is_server_error() {
-                    return Err(Error::Http(response_to_problem_details(response).await));
+                    return Err(Error::Http(Box::new(
+                        response_to_problem_details(response).await,
+                    )));
                 } else {
-                    return Err(Error::Http(HttpApiProblem::new(status)));
+                    return Err(Error::Http(Box::new(HttpApiProblem::new(status))));
                 }
             }
             // Retryable error status code, but ran out of retries:
             Err(Ok(response)) => {
-                return Err(Error::Http(response_to_problem_details(response).await))
+                return Err(Error::Http(Box::new(
+                    response_to_problem_details(response).await,
+                )))
             }
             // Lower level errors, either unretryable or ran out of retries:
             Err(Err(error)) => return Err(Error::HttpClient(error)),
@@ -418,14 +422,18 @@ where
                         return Ok(PollResult::NextAttempt(retry_after_opt));
                     }
                     _ if status.is_client_error() || status.is_server_error() => {
-                        return Err(Error::Http(response_to_problem_details(response).await));
+                        return Err(Error::Http(Box::new(
+                            response_to_problem_details(response).await,
+                        )));
                     }
-                    _ => return Err(Error::Http(HttpApiProblem::new(status))),
+                    _ => return Err(Error::Http(Box::new(HttpApiProblem::new(status)))),
                 }
             }
             // Retryable error status code, but ran out of retries:
             Err(Ok(response)) => {
-                return Err(Error::Http(response_to_problem_details(response).await))
+                return Err(Error::Http(Box::new(
+                    response_to_problem_details(response).await,
+                )))
             }
             // Lower level errors, either unretryable or ran out of retries:
             Err(Err(error)) => return Err(Error::HttpClient(error)),
