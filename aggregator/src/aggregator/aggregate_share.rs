@@ -9,6 +9,7 @@ use crate::{
         Datastore, Transaction,
     },
     task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    try_join,
 };
 use derivative::Derivative;
 use futures::future::BoxFuture;
@@ -36,7 +37,6 @@ use prio::{
     },
 };
 use std::sync::Arc;
-use tokio::try_join;
 use tracing::{debug, error, info, warn};
 
 use super::query_type::CollectableQueryType;

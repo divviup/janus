@@ -1,10 +1,10 @@
 use crate::{
-    datastore::{self, models::BatchAggregation, Transaction},
+    datastore::{self, gather_errors, models::BatchAggregation, Transaction},
     messages::TimeExt as _,
     task::Task,
 };
 use async_trait::async_trait;
-use futures::future::try_join_all;
+use futures::future::join_all;
 use janus_core::time::{Clock, TimeExt as _};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
@@ -80,18 +80,24 @@ pub trait CollectableQueryType: QueryType {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
-        let batch_aggregations = try_join_all(
-            Self::batch_identifiers_for_collect_identifier(task, collect_identifier).map(
-                |batch_identifier| {
-                    let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
-                    async move {
-                        tx.get_batch_aggregation(&task_id, &batch_identifier, &aggregation_param)
+        let batch_aggregations = gather_errors(
+            join_all(
+                Self::batch_identifiers_for_collect_identifier(task, collect_identifier).map(
+                    |batch_identifier| {
+                        let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
+                        async move {
+                            tx.get_batch_aggregation(
+                                &task_id,
+                                &batch_identifier,
+                                &aggregation_param,
+                            )
                             .await
-                    }
-                },
-            ),
-        )
-        .await?;
+                        }
+                    },
+                ),
+            )
+            .await,
+        )?;
         Ok(batch_aggregations.into_iter().flatten().collect::<Vec<_>>())
     }
 }

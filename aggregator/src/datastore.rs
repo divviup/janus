@@ -14,7 +14,7 @@ use crate::{
     SecretBytes,
 };
 use anyhow::anyhow;
-use futures::future::try_join_all;
+use futures::future::join_all;
 use janus_core::{
     hpke::HpkePrivateKey,
     task::{AuthenticationToken, VdafInstance},
@@ -37,10 +37,86 @@ use std::{
     collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
     ops::RangeInclusive, pin::Pin,
 };
-use tokio::try_join;
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
 use uuid::Uuid;
+
+/// A replacement for [`tokio::try_join!`] that is safe to use on datastore errors.
+///
+/// This macro concurrently awaits on multiple fallible futures, and returns a `Result` holding
+/// either a tuple of the future's unwrapped outputs, or a single error. If any future yields an
+/// error, the remaining futures will _not_ be cancelled. Once all futures have resolved, the error
+/// to be returned will be chosen using [`Error::combine`]. This will ensure that any transaction
+/// serialization failure is propagated out, no matter the order that the futures are polled in.
+#[macro_export]
+macro_rules! try_join {
+    // External-facing syntax: take a comma-separated list of arguments, where each is a future.
+    ( $a:expr, $b:expr $(,)? ) => {{
+        let (a, b) = ::tokio::join!($a, $b);
+        $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from)
+        )
+    }};
+    ( $a:expr, $b:expr, $c:expr $(,)? ) => {{
+        let (a, b, c) = ::tokio::join!($a, $b, $c);
+        match $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from),
+            c.map_err($crate::datastore::Error::from)
+        ) {
+            Ok((a, (b, c))) => Ok((a, b, c)),
+            Err(err) => Err(err),
+        }
+    }};
+    ( $a:expr, $b:expr, $c:expr, $d:expr $(,)? ) => {{
+        let (a, b, c, d) = ::tokio::join!($a, $b, $c, $d);
+        match $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from),
+            c.map_err($crate::datastore::Error::from),
+            d.map_err($crate::datastore::Error::from)
+        ) {
+            Ok((a, (b, (c, d)))) => Ok((a, b, c, d)),
+            Err(err) => Err(err),
+        }
+    }};
+    ( $a:expr, $b:expr, $c:expr, $d:expr, $e:expr $(,)? ) => {{
+        let (a, b, c, d, e) = ::tokio::join!($a, $b, $c, $d, $e);
+        match $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from),
+            c.map_err($crate::datastore::Error::from),
+            d.map_err($crate::datastore::Error::from),
+            e.map_err($crate::datastore::Error::from)
+        ) {
+            Ok((a, (b, (c, (d, e))))) => Ok((a, b, c, d, e)),
+            Err(err) => Err(err),
+        }
+    }};
+
+    // Internal syntax, base case: fold two results together.
+    ( : fold $a:expr, $b:expr ) => {
+        match ($a, $b) {
+            (Ok(a_out), Ok(b_out)) => Ok((a_out, b_out)),
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => Err(e),
+            (Err(a_err), Err(b_err)) => Err($crate::datastore::Error::combine(a_err, b_err)),
+        }
+    };
+
+    // Internal syntax, induction step: fold n results into n - 1 results.
+    ( : fold $a:expr, $b:expr, $($rest:expr),+ ) => {
+        $crate::try_join!(
+            :fold
+            $a,
+            $crate::try_join!(:fold $b, $($rest),+)
+        )
+    }
+}
 
 // TODO(#196): retry network-related & other transient failures once we know what they look like
 
@@ -2442,18 +2518,20 @@ ORDER BY id DESC
             )
             .await?;
 
-        try_join_all(
-            self.tx
-                .query(&stmt, &[/* task_id */ task_id.as_ref()])
-                .await?
-                .into_iter()
-                .map(|row| async move {
-                    let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
-                    let size = self.read_batch_size(task_id, &batch_id).await?;
-                    Ok(OutstandingBatch::new(*task_id, batch_id, size))
-                }),
+        gather_errors(
+            join_all(
+                self.tx
+                    .query(&stmt, &[/* task_id */ task_id.as_ref()])
+                    .await?
+                    .into_iter()
+                    .map(|row| async move {
+                        let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
+                        let size = self.read_batch_size(task_id, &batch_id).await?;
+                        Ok(OutstandingBatch::new(*task_id, batch_id, size))
+                    }),
+            )
+            .await,
         )
-        .await
     }
 
     // Return value is an inclusive range [min_size, max_size], where:
@@ -2740,9 +2818,9 @@ pub enum Error {
 }
 
 impl Error {
-    // is_serialization_failure determines if a given error corresponds to a Postgres
-    // "serialization" failure, which requires the entire transaction to be aborted & retried from
-    // the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
+    /// is_serialization_failure determines if a given error corresponds to a Postgres
+    /// "serialization" failure, which requires the entire transaction to be aborted & retried from
+    /// the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
     fn is_serialization_failure(&self) -> bool {
         match self {
             // T_R_SERIALIZATION_FAILURE (40001) is documented as the error code which is always used
@@ -2753,11 +2831,61 @@ impl Error {
             _ => false,
         }
     }
+
+    /// Check if this error is due to the current SQL transaction being in a failed state, because
+    /// of an error in a preceding statement. The corresponding Postgres error message is "current
+    /// transaction is aborted, commands ignored until end of transaction block".
+    fn is_in_failed_transaction(&self) -> bool {
+        match self {
+            Error::Db(err) => err
+                .code()
+                .map_or(false, |c| c == &SqlState::IN_FAILED_SQL_TRANSACTION),
+            _ => false,
+        }
+    }
+
+    /// Select one error out of a pair to propagate. If one error is due to a serialization
+    /// failure, that error will be returned, as it indicates the transaction should be retried.
+    /// If one error is due to the transaction already being in a failed state, the opposite error
+    /// will be returned, to provide more useful diagnostic information. If neither of these cases
+    /// applies, `self` will be returned.
+    pub fn combine(self, other: Error) -> Error {
+        if self.is_serialization_failure() {
+            self
+        } else if other.is_serialization_failure() || self.is_in_failed_transaction() {
+            other
+        } else {
+            self
+        }
+    }
 }
 
 impl From<ring::error::Unspecified> for Error {
     fn from(_: ring::error::Unspecified) -> Self {
         Error::Crypt
+    }
+}
+
+/// Transform a vector of results into a result holding a vector, while following the error
+/// precedence order of [`Error::combine`].
+pub fn gather_errors<T>(results: Vec<Result<T, Error>>) -> Result<Vec<T>, Error> {
+    let mut error_opt = None;
+    let mut outputs = Vec::with_capacity(results.len());
+    for result in results {
+        match (result, error_opt) {
+            (Ok(output), previous_error_opt) => {
+                outputs.push(output);
+                error_opt = previous_error_opt;
+            }
+            (Err(new_error), None) => error_opt = Some(new_error),
+            (Err(new_error), Some(previous_error)) => {
+                error_opt = Some(previous_error.combine(new_error))
+            }
+        }
+    }
+    match error_opt {
+        Some(error) => Err(error),
+        None => Ok(outputs),
     }
 }
 
@@ -4286,6 +4414,7 @@ mod tests {
     use crate::{
         aggregator::query_type::CollectableQueryType,
         datastore::{
+            gather_errors,
             models::{
                 AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregationJobState,
                 BatchAggregation, CollectJob, CollectJobState, LeaderStoredReport, Lease,
@@ -4299,7 +4428,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use chrono::NaiveDate;
-    use futures::future::try_join_all;
+    use futures::future::join_all;
     use janus_core::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
         task::VdafInstance,
@@ -5253,21 +5382,23 @@ mod tests {
             assert!(MAXIMUM_ACQUIRE_COUNT.checked_mul(TX_COUNT).unwrap() >= AGGREGATION_JOB_COUNT);
         }
 
-        let results = try_join_all(
-            iter::repeat_with(|| {
-                ds.run_tx(|tx| {
-                    Box::pin(async move {
-                        tx.acquire_incomplete_aggregation_jobs(
-                            &LEASE_DURATION,
-                            MAXIMUM_ACQUIRE_COUNT,
-                        )
-                        .await
+        let results = gather_errors(
+            join_all(
+                iter::repeat_with(|| {
+                    ds.run_tx(|tx| {
+                        Box::pin(async move {
+                            tx.acquire_incomplete_aggregation_jobs(
+                                &LEASE_DURATION,
+                                MAXIMUM_ACQUIRE_COUNT,
+                            )
+                            .await
+                        })
                     })
                 })
-            })
-            .take(TX_COUNT),
+                .take(TX_COUNT),
+            )
+            .await,
         )
-        .await
         .unwrap();
 
         // Verify: check that we got all of the desired aggregation jobs, with no duplication, and
