@@ -170,7 +170,8 @@ CREATE TABLE collect_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     collect_job_id          UUID NOT NULL,               -- UUID used by collector to refer to this job
     task_id                 BIGINT NOT NULL,             -- the task ID being collected
-    batch_interval          TSRANGE NOT NULL,            -- the batch interval, as a range of timestamps
+    batch_identifier        BYTEA NOT NULL,              -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_interval          TSRANGE,                     -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
     aggregation_param       BYTEA NOT NULL,              -- the aggregation parameter (opaque VDAF message)
     state                   COLLECT_JOB_STATE NOT NULL,  -- the current state of this collect job
     report_count            BIGINT,                      -- the number of reports included in this collect job (only if in state FINISHED)
@@ -181,7 +182,7 @@ CREATE TABLE collect_jobs(
     lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts          BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
-    CONSTRAINT unique_collect_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval, aggregation_param),
+    CONSTRAINT unique_collect_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 -- TODO(#224): verify that this index is optimal for purposes of acquiring collect jobs.

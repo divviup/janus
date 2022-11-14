@@ -1,5 +1,6 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
+use super::query_type::CollectableQueryType;
 use crate::{
     aggregator::{post_to_helper, Error},
     datastore::{
@@ -8,7 +9,7 @@ use crate::{
         models::{BatchAggregation, CollectJobState, Lease},
         Datastore, Transaction,
     },
-    task::{Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     try_join,
 };
 use derivative::Derivative;
@@ -17,7 +18,7 @@ use futures::future::BoxFuture;
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance, time::Clock};
 use janus_messages::{
-    query_type::{QueryType, TimeInterval},
+    query_type::{FixedSize, QueryType, TimeInterval},
     AggregateShareReq, AggregateShareResp, BatchSelector, Duration, Interval, ReportIdChecksum,
     Role,
 };
@@ -38,73 +39,6 @@ use prio::{
 };
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-
-use super::query_type::CollectableQueryType;
-
-/// Holds various metrics instruments for a collect job driver.
-#[derive(Clone)]
-struct CollectJobDriverMetrics {
-    jobs_finished_counter: Counter<u64>,
-    http_request_duration_histogram: Histogram<f64>,
-    jobs_abandoned_counter: Counter<u64>,
-    jobs_already_finished_counter: Counter<u64>,
-    deleted_jobs_encountered_counter: Counter<u64>,
-    unexpected_job_state_counter: Counter<u64>,
-}
-
-impl CollectJobDriverMetrics {
-    fn new(meter: &Meter) -> Self {
-        let jobs_finished_counter = meter
-            .u64_counter("janus_collect_jobs_finished")
-            .with_description("Count of finished collect jobs.")
-            .init();
-        jobs_finished_counter.add(&Context::current(), 0, &[]);
-
-        let http_request_duration_histogram = meter
-            .f64_histogram("janus_http_request_duration_seconds")
-            .with_description(
-                "The amount of time elapsed while making an HTTP request to a helper.",
-            )
-            .with_unit(Unit::new("seconds"))
-            .init();
-
-        let jobs_abandoned_counter = meter
-            .u64_counter("janus_collect_jobs_abandoned")
-            .with_description("Count of abandoned collect jobs.")
-            .init();
-        jobs_abandoned_counter.add(&Context::current(), 0, &[]);
-
-        let jobs_already_finished_counter = meter
-            .u64_counter("janus_collect_jobs_already_finished")
-            .with_description(
-                "Count of collect jobs for which a lease was acquired but were already finished.",
-            )
-            .init();
-        jobs_already_finished_counter.add(&Context::current(), 0, &[]);
-
-        let deleted_jobs_encountered_counter = meter
-            .u64_counter("janus_collect_deleted_jobs_encountered")
-            .with_description(
-                "Count of collect jobs that were run to completion but found to have been deleted.",
-            )
-            .init();
-        deleted_jobs_encountered_counter.add(&Context::current(), 0, &[]);
-
-        let unexpected_job_state_counter = meter
-            .u64_counter("janus_collect_unexpected_job_state")
-            .with_description("Count of collect jobs that were run to completion but found in an unexpected state.").init();
-        unexpected_job_state_counter.add(&Context::current(), 0, &[]);
-
-        Self {
-            jobs_finished_counter,
-            http_request_duration_histogram,
-            jobs_abandoned_counter,
-            jobs_already_finished_counter,
-            deleted_jobs_encountered_counter,
-            unexpected_job_state_counter,
-        }
-    }
-}
 
 /// Drives a collect job.
 #[derive(Derivative)]
@@ -141,33 +75,33 @@ impl CollectJobDriver {
         datastore: Arc<Datastore<C>>,
         lease: Arc<Lease<AcquiredCollectJob>>,
     ) -> Result<(), Error> {
-        match lease.leased().vdaf() {
-            VdafInstance::Prio3Aes128Count => {
-                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(
+        match (lease.leased().query_type(), lease.leased().vdaf()) {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Count) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Count>(
                     datastore,
                     lease
                 )
                 .await
             }
 
-            VdafInstance::Prio3Aes128CountVec { .. } => {
-                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128CountVecMultithreaded>(
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128CountVec { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128CountVecMultithreaded>(
                     datastore,
                     lease
                 )
                 .await
             }
 
-            VdafInstance::Prio3Aes128Sum { .. } => {
-                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Sum>(
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Sum { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Sum>(
                     datastore,
                     lease
                 )
                 .await
             }
 
-            VdafInstance::Prio3Aes128Histogram { .. } => {
-                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Histogram>(
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Histogram { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Histogram>(
                     datastore,
                     lease,
                 )
@@ -175,20 +109,67 @@ impl CollectJobDriver {
             }
 
             #[cfg(feature = "test-util")]
-            VdafInstance::Fake => {
-                self.step_collect_job_generic::<0, C, dummy_vdaf::Vdaf>(
+            (task::QueryType::TimeInterval, VdafInstance::Fake) => {
+                self.step_collect_job_generic::<0, C, TimeInterval, dummy_vdaf::Vdaf>(
                     datastore,
                     lease,
                 )
                 .await
             }
 
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128Count) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Count>(
+                    datastore,
+                    lease
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128CountVec { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128CountVecMultithreaded>(
+                    datastore,
+                    lease
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128Sum { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Sum>(
+                    datastore,
+                    lease
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128Histogram { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Histogram>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+            #[cfg(feature = "test-util")]
+            (task::QueryType::FixedSize{..}, VdafInstance::Fake) => {
+                self.step_collect_job_generic::<0, C, FixedSize, dummy_vdaf::Vdaf>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+
             _ => panic!("VDAF {:?} is not yet supported", lease.leased().vdaf()),
         }
     }
 
     #[tracing::instrument(skip(self, datastore), err)]
-    async fn step_collect_job_generic<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+    async fn step_collect_job_generic<
+        const L: usize,
+        C: Clock,
+        Q: CollectableQueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         datastore: Arc<Datastore<C>>,
         lease: Arc<Lease<AcquiredCollectJob>>,
@@ -219,7 +200,7 @@ impl CollectJobDriver {
                         })?;
 
                     let collect_job = tx
-                        .get_collect_job::<L, A>(lease.leased().collect_job_id())
+                        .get_collect_job::<L, Q, A>(lease.leased().collect_job_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -228,14 +209,13 @@ impl CollectJobDriver {
                             )
                         })?;
 
-                    let batch_aggregations =
-                        TimeInterval::get_batch_aggregations_for_collect_identifier(
-                            tx,
-                            &task,
-                            collect_job.batch_interval(),
-                            collect_job.aggregation_parameter(),
-                        )
-                        .await?;
+                    let batch_aggregations = Q::get_batch_aggregations_for_collect_identifier(
+                        tx,
+                        &task,
+                        collect_job.batch_identifier(),
+                        collect_job.aggregation_parameter(),
+                    )
+                    .await?;
 
                     Ok((task, collect_job, batch_aggregations))
                 })
@@ -251,14 +231,14 @@ impl CollectJobDriver {
         }
 
         let (leader_aggregate_share, report_count, checksum) =
-            compute_aggregate_share::<L, TimeInterval, A>(&task, &batch_aggregations)
+            compute_aggregate_share::<L, Q, A>(&task, &batch_aggregations)
                 .await
                 .map_err(|e| datastore::Error::User(e.into()))?;
 
         // Send an aggregate share request to the helper.
-        let req = AggregateShareReq::new(
+        let req = AggregateShareReq::<Q>::new(
             *task.id(),
-            BatchSelector::new_time_interval(*collect_job.batch_interval()),
+            BatchSelector::new(collect_job.batch_identifier().clone()),
             collect_job.aggregation_parameter().get_encoded(),
             report_count,
             checksum,
@@ -293,7 +273,7 @@ impl CollectJobDriver {
 
                 Box::pin(async move {
                     let maybe_updated_collect_job = tx
-                        .get_collect_job::<L, A>(collect_job.collect_job_id())
+                        .get_collect_job::<L, Q, A>(collect_job.collect_job_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -303,7 +283,7 @@ impl CollectJobDriver {
 
                     match maybe_updated_collect_job.state() {
                         CollectJobState::Start => {
-                            tx.update_collect_job::<L, A>(&collect_job).await?;
+                            tx.update_collect_job::<L, Q, A>(&collect_job).await?;
                             tx.release_collect_job(&lease).await?;
                             metrics.jobs_finished_counter.add(&Context::current(), 1, &[]);
                         }
@@ -345,33 +325,33 @@ impl CollectJobDriver {
         datastore: Arc<Datastore<C>>,
         lease: Lease<AcquiredCollectJob>,
     ) -> Result<(), Error> {
-        match lease.leased().vdaf() {
-            VdafInstance::Prio3Aes128Count => {
-                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Count>(
+        match (lease.leased().query_type(), lease.leased().vdaf()) {
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Count) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Count>(
                     datastore,
                     lease
                 )
                 .await
             }
 
-            VdafInstance::Prio3Aes128CountVec { .. } => {
-                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128CountVecMultithreaded>(
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128CountVec{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128CountVecMultithreaded>(
                     datastore,
                     lease
                 )
                 .await
             }
 
-            VdafInstance::Prio3Aes128Sum { .. } => {
-                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Sum>(
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Sum{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Sum>(
                     datastore,
                     lease
                 )
                 .await
             }
 
-            VdafInstance::Prio3Aes128Histogram { .. } => {
-                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, Prio3Aes128Histogram>(
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Histogram{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128Histogram>(
                     datastore,
                     lease,
                 )
@@ -379,26 +359,71 @@ impl CollectJobDriver {
             }
 
             #[cfg(feature = "test-util")]
-            VdafInstance::Fake => {
-                self.abandon_collect_job_generic::<0, C, dummy_vdaf::Vdaf>(
+            (task::QueryType::TimeInterval, VdafInstance::Fake) => {
+                self.abandon_collect_job_generic::<0, C, TimeInterval, dummy_vdaf::Vdaf>(
                     datastore,
                     lease,
                 )
                 .await
             }
 
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128Count) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Count>(
+                    datastore,
+                    lease
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128CountVec{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128CountVecMultithreaded>(
+                    datastore,
+                    lease
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128Sum{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Sum>(
+                    datastore,
+                    lease
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128Histogram{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Histogram>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+            #[cfg(feature = "test-util")]
+            (task::QueryType::FixedSize{..}, VdafInstance::Fake) => {
+                self.abandon_collect_job_generic::<0, C, FixedSize, dummy_vdaf::Vdaf>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+
             _ => panic!("VDAF {:?} is not yet supported", lease.leased().vdaf()),
         }
     }
 
-    async fn abandon_collect_job_generic<const L: usize, C, A>(
+    async fn abandon_collect_job_generic<
+        const L: usize,
+        C: Clock,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         datastore: Arc<Datastore<C>>,
         lease: Lease<AcquiredCollectJob>,
     ) -> Result<(), Error>
     where
-        C: Clock,
-        A: vdaf::Aggregator<L> + 'static,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -410,7 +435,7 @@ impl CollectJobDriver {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let collect_job = tx
-                        .get_collect_job::<L, A>(lease.leased().collect_job_id())
+                        .get_collect_job::<L, Q, A>(lease.leased().collect_job_id())
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::DbState(format!(
@@ -478,6 +503,71 @@ impl CollectJobDriver {
                 this.step_collect_job(datastore, Arc::new(collect_job_lease))
                     .await
             })
+        }
+    }
+}
+
+/// Holds various metrics instruments for a collect job driver.
+#[derive(Clone)]
+struct CollectJobDriverMetrics {
+    jobs_finished_counter: Counter<u64>,
+    http_request_duration_histogram: Histogram<f64>,
+    jobs_abandoned_counter: Counter<u64>,
+    jobs_already_finished_counter: Counter<u64>,
+    deleted_jobs_encountered_counter: Counter<u64>,
+    unexpected_job_state_counter: Counter<u64>,
+}
+
+impl CollectJobDriverMetrics {
+    fn new(meter: &Meter) -> Self {
+        let jobs_finished_counter = meter
+            .u64_counter("janus_collect_jobs_finished")
+            .with_description("Count of finished collect jobs.")
+            .init();
+        jobs_finished_counter.add(&Context::current(), 0, &[]);
+
+        let http_request_duration_histogram = meter
+            .f64_histogram("janus_http_request_duration_seconds")
+            .with_description(
+                "The amount of time elapsed while making an HTTP request to a helper.",
+            )
+            .with_unit(Unit::new("seconds"))
+            .init();
+
+        let jobs_abandoned_counter = meter
+            .u64_counter("janus_collect_jobs_abandoned")
+            .with_description("Count of abandoned collect jobs.")
+            .init();
+        jobs_abandoned_counter.add(&Context::current(), 0, &[]);
+
+        let jobs_already_finished_counter = meter
+            .u64_counter("janus_collect_jobs_already_finished")
+            .with_description(
+                "Count of collect jobs for which a lease was acquired but were already finished.",
+            )
+            .init();
+        jobs_already_finished_counter.add(&Context::current(), 0, &[]);
+
+        let deleted_jobs_encountered_counter = meter
+            .u64_counter("janus_collect_deleted_jobs_encountered")
+            .with_description(
+                "Count of collect jobs that were run to completion but found to have been deleted.",
+            )
+            .init();
+        deleted_jobs_encountered_counter.add(&Context::current(), 0, &[]);
+
+        let unexpected_job_state_counter = meter
+            .u64_counter("janus_collect_unexpected_job_state")
+            .with_description("Count of collect jobs that were run to completion but found in an unexpected state.").init();
+        unexpected_job_state_counter.add(&Context::current(), 0, &[]);
+
+        Self {
+            jobs_finished_counter,
+            http_request_duration_histogram,
+            jobs_abandoned_counter,
+            jobs_already_finished_counter,
+            deleted_jobs_encountered_counter,
+            unexpected_job_state_counter,
         }
     }
 }
@@ -628,7 +718,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        aggregator::{aggregate_share::CollectJobDriver, DapProblemType, Error},
+        aggregator::{collect_job_driver::CollectJobDriver, DapProblemType, Error},
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
@@ -672,7 +762,7 @@ mod tests {
         acquire_lease: bool,
     ) -> (
         Option<Lease<AcquiredCollectJob>>,
-        CollectJob<0, dummy_vdaf::Vdaf>,
+        CollectJob<0, TimeInterval, dummy_vdaf::Vdaf>,
     ) {
         let time_precision = Duration::from_seconds(500);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
@@ -686,7 +776,7 @@ mod tests {
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = AggregationParam(0);
 
-        let collect_job = CollectJob::new(
+        let collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
             *task.id(),
             Uuid::new_v4(),
             batch_interval,
@@ -700,7 +790,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    tx.put_collect_job::<0, dummy_vdaf::Vdaf>(&collect_job)
+                    tx.put_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collect_job)
                         .await?;
 
                     let aggregation_job_id = random();
@@ -811,12 +901,12 @@ mod tests {
                     tx.put_task(&task).await?;
 
                     let collect_job_id = Uuid::new_v4();
-                    tx.put_collect_job(&CollectJob::new(
+                    tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         collect_job_id,
                         batch_interval,
                         aggregation_param,
-                        CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
+                        CollectJobState::Start,
                     ))
                     .await?;
 
@@ -962,7 +1052,7 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<0, dummy_vdaf::Vdaf>(&collect_job_id)
+                    .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -1007,7 +1097,7 @@ mod tests {
             let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<0, dummy_vdaf::Vdaf>(&collect_job_id)
+                    .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collect_job_id)
                     .await
                     .unwrap()
                     .unwrap();
@@ -1056,7 +1146,9 @@ mod tests {
                 let collect_job = collect_job.clone();
                 Box::pin(async move {
                     let abandoned_collect_job = tx
-                        .get_collect_job::<0, dummy_vdaf::Vdaf>(collect_job.collect_job_id())
+                        .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            collect_job.collect_job_id(),
+                        )
                         .await?
                         .unwrap();
 
@@ -1146,8 +1238,10 @@ mod tests {
             .run_tx(|tx| {
                 let collect_job = collect_job.clone();
                 Box::pin(async move {
-                    tx.get_collect_job::<0, dummy_vdaf::Vdaf>(collect_job.collect_job_id())
-                        .await
+                    tx.get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        collect_job.collect_job_id(),
+                    )
+                    .await
                 })
             })
             .await
@@ -1175,7 +1269,7 @@ mod tests {
         ds.run_tx(|tx| {
             let collect_job = collect_job.clone();
             Box::pin(async move {
-                tx.update_collect_job::<0, dummy_vdaf::Vdaf>(&collect_job)
+                tx.update_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collect_job)
                     .await
             })
         })
@@ -1214,7 +1308,9 @@ mod tests {
             let collect_job = collect_job.clone();
             Box::pin(async move {
                 let collect_job = tx
-                    .get_collect_job::<0, dummy_vdaf::Vdaf>(collect_job.collect_job_id())
+                    .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        collect_job.collect_job_id(),
+                    )
                     .await
                     .unwrap()
                     .unwrap();

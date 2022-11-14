@@ -1294,7 +1294,7 @@ mod tests {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // This will encompass the members of batch_2_reports.
-                    tx.put_collect_job::<0, dummy_vdaf::Vdaf>(&CollectJob::new(
+                    tx.put_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&CollectJob::new(
                         *task.id(),
                         Uuid::new_v4(),
                         Interval::new(report_time, *task.time_precision()).unwrap(),
@@ -1303,7 +1303,7 @@ mod tests {
                     ))
                     .await?;
                     // This will encompass the members of both batch_1_reports and batch_2_reports.
-                    tx.put_collect_job::<0, dummy_vdaf::Vdaf>(&CollectJob::new(
+                    tx.put_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&CollectJob::new(
                         *task.id(),
                         Uuid::new_v4(),
                         Interval::new(
