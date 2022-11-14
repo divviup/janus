@@ -22,6 +22,7 @@ use crate::{
     },
     messages::TimeExt,
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    try_join,
 };
 use bytes::Bytes;
 use http::{
@@ -66,7 +67,7 @@ use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     convert::Infallible,
-    fmt,
+    fmt::{self, Display, Formatter},
     future::Future,
     io::Cursor,
     net::SocketAddr,
@@ -74,7 +75,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tokio::{sync::Mutex, try_join};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use url::Url;
 use uuid::Uuid;
@@ -153,17 +154,8 @@ pub enum Error {
     Url(#[from] url::ParseError),
     /// The checksum or report count in one aggregator's aggregate share does not match the other
     /// aggregator's aggregate share, suggesting different sets of reports were aggregated.
-    #[error(
-        "task {task_id}: batch misalignment (own checksum = {own_checksum:?}, own report count = \
-{own_report_count}, peer checksum = {peer_checksum:?}, peer report count = {peer_report_count})"
-    )]
-    BatchMismatch {
-        task_id: TaskId,
-        own_checksum: ReportIdChecksum,
-        own_report_count: u64,
-        peer_checksum: ReportIdChecksum,
-        peer_report_count: u64,
-    },
+    #[error("{0}")]
+    BatchMismatch(Box<BatchMismatch>),
     /// A collect or aggregate share request was rejected because the queries against a single batch
     /// exceed the task's `max_batch_query_count` (§4.5.6).
     #[error("task {0}: batch queried too many times ({1})")]
@@ -185,7 +177,7 @@ pub enum Error {
     /// HTTP server returned an error status code.
     #[error("HTTP response status {problem_details}")]
     Http {
-        problem_details: HttpApiProblem,
+        problem_details: Box<HttpApiProblem>,
         dap_problem_type: Option<DapProblemType>,
     },
     /// An error representing a generic internal aggregation error; intended for "impossible"
@@ -241,6 +233,31 @@ impl From<datastore::Error> for Error {
             },
             _ => Error::Datastore(err),
         }
+    }
+}
+
+/// Details of a [`Error::BatchMismatch`] error.
+#[derive(Debug)]
+pub struct BatchMismatch {
+    task_id: TaskId,
+    own_checksum: ReportIdChecksum,
+    own_report_count: u64,
+    peer_checksum: ReportIdChecksum,
+    peer_report_count: u64,
+}
+
+impl Display for BatchMismatch {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "task {0}: batch misalignment (own checksum = {1:?}, own report count = \
+{2}, peer checksum = {3:?}, peer report count = {4})",
+            self.task_id,
+            self.own_checksum,
+            self.own_report_count,
+            self.peer_checksum,
+            self.peer_report_count
+        )
     }
 }
 
@@ -604,7 +621,6 @@ pub struct TaskAggregator {
 impl TaskAggregator {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
-    #[allow(clippy::result_large_err)]
     fn new(task: Task) -> Result<Self, Error> {
         let vdaf_ops = match task.vdaf() {
             VdafInstance::Prio3Aes128Count => {
@@ -2312,13 +2328,13 @@ impl VdafOps {
                         || aggregate_share_job.checksum() != aggregate_share_req.checksum()
                     {
                         return Err(datastore::Error::User(
-                            Error::BatchMismatch {
+                            Error::BatchMismatch(Box::new(BatchMismatch {
                                 task_id: *aggregate_share_req.task_id(),
                                 own_checksum: *aggregate_share_job.checksum(),
                                 own_report_count: aggregate_share_job.report_count(),
                                 peer_checksum: *aggregate_share_req.checksum(),
                                 peer_report_count: aggregate_share_req.report_count(),
-                            }
+                            }))
                             .into(),
                         ));
                     }
@@ -2610,9 +2626,10 @@ where
                     Err(Error::BatchOverlap(task_id, _)) => {
                         build_problem_details_response(DapProblemType::BatchOverlap, Some(task_id))
                     }
-                    Err(Error::BatchMismatch { task_id, .. }) => {
-                        build_problem_details_response(DapProblemType::BatchMismatch, Some(task_id))
-                    }
+                    Err(Error::BatchMismatch(inner)) => build_problem_details_response(
+                        DapProblemType::BatchMismatch,
+                        Some(inner.task_id),
+                    ),
                     Err(Error::BatchQueriedTooManyTimes(task_id, ..)) => {
                         build_problem_details_response(
                             DapProblemType::BatchQueriedTooManyTimes,
@@ -2688,7 +2705,6 @@ where
 const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
-#[allow(clippy::result_large_err)]
 pub fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
@@ -2913,7 +2929,6 @@ pub fn aggregator_filter<C: Clock>(
 /// If the `SocketAddr`'s `port` is 0, an ephemeral port is used. Returns a
 /// `SocketAddr` representing the address and port the server are listening on
 /// and a future that can be `await`ed to begin serving requests.
-#[allow(clippy::result_large_err)]
 pub fn aggregator_server<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
@@ -2997,7 +3012,7 @@ async fn post_to_helper<T: Encode>(
             .as_ref()
             .and_then(|str| str.parse::<DapProblemType>().ok());
         return Err(Error::Http {
-            problem_details,
+            problem_details: Box::new(problem_details),
             dap_problem_type,
         });
     }
@@ -3034,8 +3049,8 @@ async fn post_to_helper<T: Encode>(
 mod tests {
     use crate::{
         aggregator::{
-            aggregator_filter, error_handler, post_to_helper, Aggregator, CollectableQueryType,
-            DapProblemType, DapProblemTypeParseError, Error,
+            aggregator_filter, error_handler, post_to_helper, Aggregator, BatchMismatch,
+            CollectableQueryType, DapProblemType, DapProblemTypeParseError, Error,
         },
         datastore::{
             models::{
@@ -7842,12 +7857,14 @@ mod tests {
                 Some(DapProblemType::BatchOverlap),
             ),
             TestCase::new(
-                Box::new(|| Error::BatchMismatch {
-                    task_id: random(),
-                    own_checksum: ReportIdChecksum::from([0; 32]),
-                    own_report_count: 100,
-                    peer_checksum: ReportIdChecksum::from([1; 32]),
-                    peer_report_count: 99,
+                Box::new(|| {
+                    Error::BatchMismatch(Box::new(BatchMismatch {
+                        task_id: random(),
+                        own_checksum: ReportIdChecksum::from([0; 32]),
+                        own_report_count: 100,
+                        peer_checksum: ReportIdChecksum::from([1; 32]),
+                        peer_report_count: 99,
+                    }))
                 }),
                 Some(DapProblemType::BatchMismatch),
             ),

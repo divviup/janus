@@ -22,6 +22,7 @@ use std::{
     path::PathBuf,
     process::Command,
     str::FromStr,
+    thread::panicking,
 };
 use testcontainers::{Container, Image};
 use tracing_log::LogTracer;
@@ -332,6 +333,9 @@ impl<'d, I: Image> ContainerLogsDropGuard<'d, I> {
 
 impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
     fn drop(&mut self) {
+        if !panicking() {
+            return;
+        }
         if let Some(base_dir) = log_export_path() {
             create_dir_all(&base_dir).expect("could not create log output directory");
 

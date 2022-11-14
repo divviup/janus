@@ -10,6 +10,7 @@ use crate::{
         Datastore, Transaction,
     },
     task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    try_join,
 };
 use derivative::Derivative;
 use futures::future::BoxFuture;
@@ -37,7 +38,6 @@ use prio::{
     },
 };
 use std::sync::Arc;
-use tokio::try_join;
 use tracing::{debug, error, info, warn};
 
 /// Drives a collect job.
@@ -723,7 +723,8 @@ mod tests {
         datastore::{
             models::{
                 AcquiredCollectJob, AggregationJob, AggregationJobState, BatchAggregation,
-                CollectJob, CollectJobState, Lease, ReportAggregation, ReportAggregationState,
+                CollectJob, CollectJobState, LeaderStoredReport, Lease, ReportAggregation,
+                ReportAggregationState,
             },
             test_util::ephemeral_datastore,
             Datastore,
@@ -745,7 +746,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
-        HpkeCiphertext, HpkeConfigId, Interval, Report, ReportIdChecksum, ReportMetadata, Role,
+        HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -804,38 +805,21 @@ mod tests {
                     )
                     .await?;
 
-                    let report_metadata = ReportMetadata::new(
-                        random(),
+                    let report = LeaderStoredReport::new_dummy(
+                        task.id(),
                         clock
                             .now()
                             .to_batch_interval_start(task.time_precision())
                             .unwrap(),
-                        Vec::new(),
                     );
-                    tx.put_client_report_message(&Report::new(
-                        *task.id(),
-                        report_metadata.clone(),
-                        Vec::new(),
-                        vec![
-                            HpkeCiphertext::new(
-                                HpkeConfigId::from(13),
-                                Vec::from("encapsulated_context_0"),
-                                Vec::from("payload_0"),
-                            ),
-                            HpkeCiphertext::new(
-                                HpkeConfigId::from(13),
-                                Vec::from("encapsulated_context_1"),
-                                Vec::from("payload_1"),
-                            ),
-                        ],
-                    ))
-                    .await?;
+
+                    tx.put_client_report(&report).await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
-                        *report_metadata.id(),
-                        *report_metadata.time(),
+                        *report.metadata().id(),
+                        *report.metadata().time(),
                         0,
                         ReportAggregationState::Finished(OutputShare()),
                     ))
@@ -938,38 +922,21 @@ mod tests {
                     )
                     .await?;
 
-                    let report_metadata = ReportMetadata::new(
-                        random(),
+                    let report = LeaderStoredReport::new_dummy(
+                        task.id(),
                         clock
                             .now()
                             .to_batch_interval_start(task.time_precision())
                             .unwrap(),
-                        Vec::new(),
                     );
-                    tx.put_client_report_message(&Report::new(
-                        *task.id(),
-                        report_metadata.clone(),
-                        Vec::new(),
-                        vec![
-                            HpkeCiphertext::new(
-                                HpkeConfigId::from(13),
-                                Vec::from("encapsulated_context_0"),
-                                Vec::from("payload_0"),
-                            ),
-                            HpkeCiphertext::new(
-                                HpkeConfigId::from(13),
-                                Vec::from("encapsulated_context_1"),
-                                Vec::from("payload_1"),
-                            ),
-                        ],
-                    ))
-                    .await?;
+
+                    tx.put_client_report(&report).await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         aggregation_job_id,
-                        *report_metadata.id(),
-                        *report_metadata.time(),
+                        *report.metadata().id(),
+                        *report.metadata().time(),
                         0,
                         ReportAggregationState::Finished(OutputShare()),
                     ))

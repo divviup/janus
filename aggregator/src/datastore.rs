@@ -15,14 +15,12 @@ use crate::{
     SecretBytes,
 };
 use anyhow::anyhow;
-use futures::future::try_join_all;
+use futures::future::join_all;
 use janus_core::{
     hpke::HpkePrivateKey,
     task::{AuthenticationToken, VdafInstance},
     time::Clock,
 };
-#[cfg(test)]
-use janus_messages::Report;
 use janus_messages::{
     query_type::{QueryType, TimeInterval},
     AggregationJobId, BatchId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, ReportId,
@@ -40,10 +38,86 @@ use std::{
     collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
     ops::RangeInclusive, pin::Pin,
 };
-use tokio::try_join;
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
 use uuid::Uuid;
+
+/// A replacement for [`tokio::try_join!`] that is safe to use on datastore errors.
+///
+/// This macro concurrently awaits on multiple fallible futures, and returns a `Result` holding
+/// either a tuple of the future's unwrapped outputs, or a single error. If any future yields an
+/// error, the remaining futures will _not_ be cancelled. Once all futures have resolved, the error
+/// to be returned will be chosen using [`Error::combine`]. This will ensure that any transaction
+/// serialization failure is propagated out, no matter the order that the futures are polled in.
+#[macro_export]
+macro_rules! try_join {
+    // External-facing syntax: take a comma-separated list of arguments, where each is a future.
+    ( $a:expr, $b:expr $(,)? ) => {{
+        let (a, b) = ::tokio::join!($a, $b);
+        $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from)
+        )
+    }};
+    ( $a:expr, $b:expr, $c:expr $(,)? ) => {{
+        let (a, b, c) = ::tokio::join!($a, $b, $c);
+        match $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from),
+            c.map_err($crate::datastore::Error::from)
+        ) {
+            Ok((a, (b, c))) => Ok((a, b, c)),
+            Err(err) => Err(err),
+        }
+    }};
+    ( $a:expr, $b:expr, $c:expr, $d:expr $(,)? ) => {{
+        let (a, b, c, d) = ::tokio::join!($a, $b, $c, $d);
+        match $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from),
+            c.map_err($crate::datastore::Error::from),
+            d.map_err($crate::datastore::Error::from)
+        ) {
+            Ok((a, (b, (c, d)))) => Ok((a, b, c, d)),
+            Err(err) => Err(err),
+        }
+    }};
+    ( $a:expr, $b:expr, $c:expr, $d:expr, $e:expr $(,)? ) => {{
+        let (a, b, c, d, e) = ::tokio::join!($a, $b, $c, $d, $e);
+        match $crate::try_join!(
+            :fold
+            a.map_err($crate::datastore::Error::from),
+            b.map_err($crate::datastore::Error::from),
+            c.map_err($crate::datastore::Error::from),
+            d.map_err($crate::datastore::Error::from),
+            e.map_err($crate::datastore::Error::from)
+        ) {
+            Ok((a, (b, (c, (d, e))))) => Ok((a, b, c, d, e)),
+            Err(err) => Err(err),
+        }
+    }};
+
+    // Internal syntax, base case: fold two results together.
+    ( : fold $a:expr, $b:expr ) => {
+        match ($a, $b) {
+            (Ok(a_out), Ok(b_out)) => Ok((a_out, b_out)),
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => Err(e),
+            (Err(a_err), Err(b_err)) => Err($crate::datastore::Error::combine(a_err, b_err)),
+        }
+    };
+
+    // Internal syntax, induction step: fold n results into n - 1 results.
+    ( : fold $a:expr, $b:expr, $($rest:expr),+ ) => {
+        $crate::try_join!(
+            :fold
+            $a,
+            $crate::try_join!(:fold $b, $($rest),+)
+        )
+    }
+}
 
 // TODO(#196): retry network-related & other transient failures once we know what they look like
 
@@ -920,7 +994,8 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT COUNT(1) AS count FROM client_reports
                 WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND client_reports.client_timestamp <@ $2::TSRANGE",
+                AND client_reports.client_timestamp >= lower($2::TSRANGE)
+                AND client_reports.client_timestamp < upper($2::TSRANGE)",
             )
             .await?;
         let row = self
@@ -956,52 +1031,21 @@ impl<C: Clock> Transaction<'_, C> {
         let encoded_public_share = report.public_share().get_encoded();
         let encoded_leader_share = report.leader_input_share().get_encoded();
         let encoded_helper_share = report.helper_encrypted_input_share().get_encoded();
-
-        self.put_client_report_raw(
-            report.task_id(),
-            report.metadata(),
-            &encoded_public_share,
-            &encoded_leader_share,
-            &encoded_helper_share,
-        )
-        .await
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn put_client_report_message(&self, report: &Report) -> Result<(), Error> {
-        let leader_input_share =
-            report.encrypted_input_shares()[Role::Leader.index().unwrap()].get_encoded();
-        let helper_input_share =
-            report.encrypted_input_shares()[Role::Helper.index().unwrap()].get_encoded();
-
-        self.put_client_report_raw(
-            report.task_id(),
-            report.metadata(),
-            report.public_share(),
-            &leader_input_share,
-            &helper_input_share,
-        )
-        .await
-    }
-
-    /// `put_client_report_raw` stores reports with arbitrary byte vectors as their leader and
-    /// helper input shares. This is exposed to the crate for use in tests.
-    pub(crate) async fn put_client_report_raw(
-        &self,
-        task_id: &TaskId,
-        report_metadata: &ReportMetadata,
-        public_share: &[u8],
-        leader_input_share: &[u8],
-        helper_input_share: &[u8],
-    ) -> Result<(), Error> {
         let mut encoded_extensions = Vec::new();
-        encode_u16_items(&mut encoded_extensions, &(), report_metadata.extensions());
+        encode_u16_items(&mut encoded_extensions, &(), report.metadata().extensions());
 
         let stmt = self
             .tx
             .prepare_cached(
-                "INSERT INTO client_reports
-                (task_id, report_id, client_timestamp, extensions, public_share, leader_input_share, helper_encrypted_input_share)
+                "INSERT INTO client_reports (
+                    task_id,
+                    report_id,
+                    client_timestamp,
+                    extensions,
+                    public_share,
+                    leader_input_share,
+                    helper_encrypted_input_share
+                )
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
             )
             .await?;
@@ -1009,13 +1053,13 @@ impl<C: Clock> Transaction<'_, C> {
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &task_id.get_encoded(),
-                    /* report_id */ &report_metadata.id().as_ref(),
-                    /* client_timestamp */ &report_metadata.time().as_naive_date_time(),
+                    /* task_id */ &report.task_id().get_encoded(),
+                    /* report_id */ &report.metadata().id().get_encoded(),
+                    /* client_timestamp */ &report.metadata().time().as_naive_date_time(),
                     /* extensions */ &encoded_extensions,
-                    /* public_share */ &public_share,
-                    /* leader_input_share */ &leader_input_share,
-                    /* helper_encrypted_input_share */ &helper_input_share,
+                    /* public_share */ &encoded_public_share,
+                    /* leader_input_share */ &encoded_leader_share,
+                    /* helper_encrypted_input_share */ &encoded_helper_share,
                 ],
             )
             .await?;
@@ -2482,18 +2526,20 @@ ORDER BY id DESC
             )
             .await?;
 
-        try_join_all(
-            self.tx
-                .query(&stmt, &[/* task_id */ task_id.as_ref()])
-                .await?
-                .into_iter()
-                .map(|row| async move {
-                    let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
-                    let size = self.read_batch_size(task_id, &batch_id).await?;
-                    Ok(OutstandingBatch::new(*task_id, batch_id, size))
-                }),
+        gather_errors(
+            join_all(
+                self.tx
+                    .query(&stmt, &[/* task_id */ task_id.as_ref()])
+                    .await?
+                    .into_iter()
+                    .map(|row| async move {
+                        let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
+                        let size = self.read_batch_size(task_id, &batch_id).await?;
+                        Ok(OutstandingBatch::new(*task_id, batch_id, size))
+                    }),
+            )
+            .await,
         )
-        .await
     }
 
     // Return value is an inclusive range [min_size, max_size], where:
@@ -2780,9 +2826,9 @@ pub enum Error {
 }
 
 impl Error {
-    // is_serialization_failure determines if a given error corresponds to a Postgres
-    // "serialization" failure, which requires the entire transaction to be aborted & retried from
-    // the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
+    /// is_serialization_failure determines if a given error corresponds to a Postgres
+    /// "serialization" failure, which requires the entire transaction to be aborted & retried from
+    /// the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
     fn is_serialization_failure(&self) -> bool {
         match self {
             // T_R_SERIALIZATION_FAILURE (40001) is documented as the error code which is always used
@@ -2793,11 +2839,61 @@ impl Error {
             _ => false,
         }
     }
+
+    /// Check if this error is due to the current SQL transaction being in a failed state, because
+    /// of an error in a preceding statement. The corresponding Postgres error message is "current
+    /// transaction is aborted, commands ignored until end of transaction block".
+    fn is_in_failed_transaction(&self) -> bool {
+        match self {
+            Error::Db(err) => err
+                .code()
+                .map_or(false, |c| c == &SqlState::IN_FAILED_SQL_TRANSACTION),
+            _ => false,
+        }
+    }
+
+    /// Select one error out of a pair to propagate. If one error is due to a serialization
+    /// failure, that error will be returned, as it indicates the transaction should be retried.
+    /// If one error is due to the transaction already being in a failed state, the opposite error
+    /// will be returned, to provide more useful diagnostic information. If neither of these cases
+    /// applies, `self` will be returned.
+    pub fn combine(self, other: Error) -> Error {
+        if self.is_serialization_failure() {
+            self
+        } else if other.is_serialization_failure() || self.is_in_failed_transaction() {
+            other
+        } else {
+            self
+        }
+    }
 }
 
 impl From<ring::error::Unspecified> for Error {
     fn from(_: ring::error::Unspecified) -> Self {
         Error::Crypt
+    }
+}
+
+/// Transform a vector of results into a result holding a vector, while following the error
+/// precedence order of [`Error::combine`].
+pub fn gather_errors<T>(results: Vec<Result<T, Error>>) -> Result<Vec<T>, Error> {
+    let mut error_opt = None;
+    let mut outputs = Vec::with_capacity(results.len());
+    for result in results {
+        match (result, error_opt) {
+            (Ok(output), previous_error_opt) => {
+                outputs.push(output);
+                error_opt = previous_error_opt;
+            }
+            (Err(new_error), None) => error_opt = Some(new_error),
+            (Err(new_error), Some(previous_error)) => {
+                error_opt = Some(previous_error.combine(new_error))
+            }
+        }
+    }
+    match error_opt {
+        Some(error) => Err(error),
+        None => Ok(outputs),
     }
 }
 
@@ -2920,6 +3016,26 @@ pub mod models {
         A::PublicShare: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+    }
+
+    #[cfg(test)]
+    impl LeaderStoredReport<0, janus_core::test_util::dummy_vdaf::Vdaf> {
+        pub(crate) fn new_dummy(task_id: &TaskId, when: Time) -> Self {
+            use janus_messages::HpkeConfigId;
+            use rand::random;
+
+            Self::new(
+                *task_id,
+                ReportMetadata::new(random(), when, Vec::new()),
+                (),
+                (),
+                HpkeCiphertext::new(
+                    HpkeConfigId::from(13),
+                    Vec::from("encapsulated_context_0"),
+                    Vec::from("payload_0"),
+                ),
+            )
+        }
     }
 
     /// AggregatorRole corresponds to the `AGGREGATOR_ROLE` enum in the schema.
@@ -4342,6 +4458,7 @@ mod tests {
     use crate::{
         aggregator::query_type::CollectableQueryType,
         datastore::{
+            gather_errors,
             models::{
                 AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregationJobState,
                 BatchAggregation, CollectJob, CollectJobState, LeaderStoredReport, Lease,
@@ -4350,12 +4467,12 @@ mod tests {
             test_util::{ephemeral_datastore, generate_aead_key},
             Crypter, Error,
         },
-        messages::{test_util::new_dummy_report, DurationExt, TimeExt},
+        messages::{DurationExt, TimeExt},
         task::{self, test_util::TaskBuilder, QueryType, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
     use chrono::NaiveDate;
-    use futures::future::try_join_all;
+    use futures::future::join_all;
     use janus_core::{
         hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
         task::VdafInstance,
@@ -4367,9 +4484,8 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, Report,
-        ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
-        Time,
+        Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, ReportId,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use prio::{
         codec::Decode,
@@ -4610,43 +4726,10 @@ mod tests {
         )
         .build();
 
-        let dummy_input_share_ciphertexts = vec![
-            HpkeCiphertext::new(
-                HpkeConfigId::from(13),
-                Vec::from("encapsulated_context_0"),
-                Vec::from("payload_0"),
-            ),
-            HpkeCiphertext::new(
-                HpkeConfigId::from(13),
-                Vec::from("encapsulated_context_1"),
-                Vec::from("payload_1"),
-            ),
-        ];
-
-        let first_unaggregated_report = Report::new(
-            *task.id(),
-            ReportMetadata::new(random(), when, Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts.clone(),
-        );
-        let second_unaggregated_report = Report::new(
-            *task.id(),
-            ReportMetadata::new(random(), when, Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts.clone(),
-        );
-        let aggregated_report = Report::new(
-            *task.id(),
-            ReportMetadata::new(random(), when, Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts.clone(),
-        );
-        let unrelated_report = Report::new(
-            *unrelated_task.id(),
-            ReportMetadata::new(random(), when, Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts,
-        );
+        let first_unaggregated_report = LeaderStoredReport::new_dummy(task.id(), when);
+        let second_unaggregated_report = LeaderStoredReport::new_dummy(task.id(), when);
+        let aggregated_report = LeaderStoredReport::new_dummy(task.id(), when);
+        let unrelated_report = LeaderStoredReport::new_dummy(unrelated_task.id(), when);
 
         // Set up state.
         ds.run_tx(|tx| {
@@ -4670,12 +4753,10 @@ mod tests {
                 tx.put_task(&task).await?;
                 tx.put_task(&unrelated_task).await?;
 
-                tx.put_client_report_message(&first_unaggregated_report)
-                    .await?;
-                tx.put_client_report_message(&second_unaggregated_report)
-                    .await?;
-                tx.put_client_report_message(&aggregated_report).await?;
-                tx.put_client_report_message(&unrelated_report).await?;
+                tx.put_client_report(&first_unaggregated_report).await?;
+                tx.put_client_report(&second_unaggregated_report).await?;
+                tx.put_client_report(&aggregated_report).await?;
+                tx.put_client_report(&unrelated_report).await?;
 
                 let aggregation_job_id = random();
                 tx.put_aggregation_job(&AggregationJob::<
@@ -4748,42 +4829,15 @@ mod tests {
         let unrelated_task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
 
-        let dummy_input_share_ciphertexts = vec![
-            HpkeCiphertext::new(
-                HpkeConfigId::from(13),
-                Vec::from("encapsulated_context_0"),
-                Vec::from("payload_0"),
-            ),
-            HpkeCiphertext::new(
-                HpkeConfigId::from(13),
-                Vec::from("encapsulated_context_1"),
-                Vec::from("payload_1"),
-            ),
-        ];
-
-        let first_unaggregated_report = Report::new(
-            *task.id(),
-            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12345), Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts.clone(),
-        );
-        let second_unaggregated_report = Report::new(
-            *task.id(),
-            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12346), Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts.clone(),
-        );
-        let aggregated_report = Report::new(
-            *task.id(),
-            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12347), Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts.clone(),
-        );
-        let unrelated_report = Report::new(
-            *unrelated_task.id(),
-            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12348), Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts,
+        let first_unaggregated_report =
+            LeaderStoredReport::new_dummy(task.id(), Time::from_seconds_since_epoch(12345));
+        let second_unaggregated_report =
+            LeaderStoredReport::new_dummy(task.id(), Time::from_seconds_since_epoch(12346));
+        let aggregated_report =
+            LeaderStoredReport::new_dummy(task.id(), Time::from_seconds_since_epoch(12347));
+        let unrelated_report = LeaderStoredReport::new_dummy(
+            unrelated_task.id(),
+            Time::from_seconds_since_epoch(12348),
         );
 
         // Set up state.
@@ -4808,12 +4862,10 @@ mod tests {
                 tx.put_task(&task).await?;
                 tx.put_task(&unrelated_task).await?;
 
-                tx.put_client_report_message(&first_unaggregated_report)
-                    .await?;
-                tx.put_client_report_message(&second_unaggregated_report)
-                    .await?;
-                tx.put_client_report_message(&aggregated_report).await?;
-                tx.put_client_report_message(&unrelated_report).await?;
+                tx.put_client_report(&first_unaggregated_report).await?;
+                tx.put_client_report(&second_unaggregated_report).await?;
+                tx.put_client_report(&aggregated_report).await?;
+                tx.put_client_report(&unrelated_report).await?;
 
                 // There are no client reports submitted under this task, so we shouldn't see
                 // this aggregation parameter at all.
@@ -5025,42 +5077,15 @@ mod tests {
         let no_reports_task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
 
-        let dummy_input_share_ciphertexts = vec![
-            HpkeCiphertext::new(
-                HpkeConfigId::from(13),
-                Vec::from("encapsulated_context_0"),
-                Vec::from("payload_0"),
-            ),
-            HpkeCiphertext::new(
-                HpkeConfigId::from(13),
-                Vec::from("encapsulated_context_1"),
-                Vec::from("payload_1"),
-            ),
-        ];
-
-        let first_report_in_interval = Report::new(
-            *task.id(),
-            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12340), Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts.clone(),
-        );
-        let second_report_in_interval = Report::new(
-            *task.id(),
-            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12341), Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts.clone(),
-        );
-        let report_outside_interval = Report::new(
-            *task.id(),
-            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12350), Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts.clone(),
-        );
-        let report_for_other_task = Report::new(
-            *unrelated_task.id(),
-            ReportMetadata::new(random(), Time::from_seconds_since_epoch(12341), Vec::new()),
-            Vec::new(),
-            dummy_input_share_ciphertexts,
+        let first_report_in_interval =
+            LeaderStoredReport::new_dummy(task.id(), Time::from_seconds_since_epoch(12340));
+        let second_report_in_interval =
+            LeaderStoredReport::new_dummy(task.id(), Time::from_seconds_since_epoch(12341));
+        let report_outside_interval =
+            LeaderStoredReport::new_dummy(task.id(), Time::from_seconds_since_epoch(12350));
+        let report_for_other_task = LeaderStoredReport::new_dummy(
+            unrelated_task.id(),
+            Time::from_seconds_since_epoch(12341),
         );
 
         // Set up state.
@@ -5088,13 +5113,10 @@ mod tests {
                 tx.put_task(&unrelated_task).await?;
                 tx.put_task(&no_reports_task).await?;
 
-                tx.put_client_report_message(&first_report_in_interval)
-                    .await?;
-                tx.put_client_report_message(&second_report_in_interval)
-                    .await?;
-                tx.put_client_report_message(&report_outside_interval)
-                    .await?;
-                tx.put_client_report_message(&report_for_other_task).await?;
+                tx.put_client_report(&first_report_in_interval).await?;
+                tx.put_client_report(&second_report_in_interval).await?;
+                tx.put_client_report(&report_outside_interval).await?;
+                tx.put_client_report(&report_for_other_task).await?;
 
                 Ok(())
             })
@@ -5403,21 +5425,23 @@ mod tests {
             assert!(MAXIMUM_ACQUIRE_COUNT.checked_mul(TX_COUNT).unwrap() >= AGGREGATION_JOB_COUNT);
         }
 
-        let results = try_join_all(
-            iter::repeat_with(|| {
-                ds.run_tx(|tx| {
-                    Box::pin(async move {
-                        tx.acquire_incomplete_aggregation_jobs(
-                            &LEASE_DURATION,
-                            MAXIMUM_ACQUIRE_COUNT,
-                        )
-                        .await
+        let results = gather_errors(
+            join_all(
+                iter::repeat_with(|| {
+                    ds.run_tx(|tx| {
+                        Box::pin(async move {
+                            tx.acquire_incomplete_aggregation_jobs(
+                                &LEASE_DURATION,
+                                MAXIMUM_ACQUIRE_COUNT,
+                            )
+                            .await
+                        })
                     })
                 })
-            })
-            .take(TX_COUNT),
+                .take(TX_COUNT),
+            )
+            .await,
         )
-        .await
         .unwrap();
 
         // Verify: check that we got all of the desired aggregation jobs, with no duplication, and
@@ -6524,7 +6548,7 @@ mod tests {
     #[derive(Clone)]
     struct CollectJobAcquireTestCase {
         task_ids: Vec<TaskId>,
-        reports: Vec<Report>,
+        reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>>,
         aggregation_jobs: Vec<AggregationJob<0, TimeInterval, dummy_vdaf::Vdaf>>,
         report_aggregations: Vec<ReportAggregation<0, dummy_vdaf::Vdaf>>,
         collect_job_test_cases: Vec<CollectJobTestCase>,
@@ -6551,14 +6575,7 @@ mod tests {
                 }
 
                 for report in &test_case.reports {
-                    tx.put_client_report_raw(
-                        report.task_id(),
-                        report.metadata(),
-                        report.public_share(),
-                        &[],
-                        &[],
-                    )
-                    .await?;
+                    tx.put_client_report(report).await?;
                 }
 
                 for aggregation_job in &test_case.aggregation_jobs {
@@ -6656,7 +6673,10 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let task_id = random();
-        let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
+        let reports = Vec::from([LeaderStoredReport::new_dummy(
+            &task_id,
+            Time::from_seconds_since_epoch(0),
+        )]);
         let aggregation_job_id = random();
         let aggregation_jobs =
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -6822,7 +6842,10 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let task_id = random();
-        let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
+        let reports = Vec::from([LeaderStoredReport::new_dummy(
+            &task_id,
+            Time::from_seconds_since_epoch(0),
+        )]);
 
         let aggregation_jobs =
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -6867,8 +6890,8 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let task_id = random();
-        let reports = Vec::from([new_dummy_report(
-            task_id,
+        let reports = Vec::from([LeaderStoredReport::new_dummy(
+            &task_id,
             // Report associated with the aggregation job is outside the collect job's batch
             // interval
             Time::from_seconds_since_epoch(200),
@@ -6924,7 +6947,10 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let task_id = random();
-        let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
+        let reports = Vec::from([LeaderStoredReport::new_dummy(
+            &task_id,
+            Time::from_seconds_since_epoch(0),
+        )]);
         let aggregation_job_id = random();
         let aggregation_jobs =
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -6979,8 +7005,8 @@ mod tests {
 
         let task_id = random();
         let reports = Vec::from([
-            new_dummy_report(task_id, Time::from_seconds_since_epoch(0)),
-            new_dummy_report(task_id, Time::from_seconds_since_epoch(50)),
+            LeaderStoredReport::new_dummy(&task_id, Time::from_seconds_since_epoch(0)),
+            LeaderStoredReport::new_dummy(&task_id, Time::from_seconds_since_epoch(50)),
         ]);
 
         let aggregation_job_ids: [_; 2] = random();
@@ -7054,7 +7080,10 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let task_id = random();
-        let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
+        let reports = Vec::from([LeaderStoredReport::new_dummy(
+            &task_id,
+            Time::from_seconds_since_epoch(0),
+        )]);
         let aggregation_job_ids: [_; 2] = random();
         let aggregation_jobs = Vec::from([
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -7188,7 +7217,10 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let task_id = random();
-        let reports = Vec::from([new_dummy_report(task_id, Time::from_seconds_since_epoch(0))]);
+        let reports = Vec::from([LeaderStoredReport::new_dummy(
+            &task_id,
+            Time::from_seconds_since_epoch(0),
+        )]);
         let aggregation_job_ids: [_; 3] = random();
         let aggregation_jobs = Vec::from([
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -7797,27 +7829,21 @@ mod tests {
                         report_aggregation_1_2,
                         report_aggregation_1_3,
                     ] {
-                        tx.put_client_report_message(&Report::new(
+                        tx.put_client_report::<0, dummy_vdaf::Vdaf>(&LeaderStoredReport::new(
                             *report_aggregation.task_id(),
                             ReportMetadata::new(
                                 *report_aggregation.report_id(),
                                 *report_aggregation.time(),
                                 Vec::new(),
                             ),
-                            Vec::new(),
-                            // Dummy HpkeCiphertexts for the input shares
-                            vec![
-                                HpkeCiphertext::new(
-                                    HpkeConfigId::from(13),
-                                    Vec::from("encapsulated_context_0"),
-                                    Vec::from("payload_0"),
-                                ),
-                                HpkeCiphertext::new(
-                                    HpkeConfigId::from(13),
-                                    Vec::from("encapsulated_context_1"),
-                                    Vec::from("payload_1"),
-                                ),
-                            ],
+                            (), // Dummy public share
+                            (), // Dummy leader input share
+                            // Dummy helper encrypted input share
+                            HpkeCiphertext::new(
+                                HpkeConfigId::from(13),
+                                Vec::from("encapsulated_context_0"),
+                                Vec::from("payload_0"),
+                            ),
                         ))
                         .await?;
                         tx.put_report_aggregation(report_aggregation).await?;
