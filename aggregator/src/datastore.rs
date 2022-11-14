@@ -220,11 +220,17 @@ impl<C: Clock> Datastore<C> {
         };
 
         // Run user-provided function with the transaction.
-        let rslt = f(&tx).await?;
-
-        // Commit.
-        tx.tx.commit().await?;
-        Ok(rslt)
+        match f(&tx).await {
+            Ok(rslt) => {
+                // Commit.
+                tx.tx.commit().await?;
+                Ok(rslt)
+            }
+            Err(error) => match tx.tx.rollback().await {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(error.combine(rollback_error.into())),
+            },
+        }
     }
 
     /// Write a task into the datastore.
