@@ -3259,7 +3259,7 @@ pub mod models {
             &self.collect_job_id
         }
 
-        /// Returns the query type associated with this acquired aggregation job.
+        /// Returns the query type associated with this acquired collect job.
         pub fn query_type(&self) -> &task::QueryType {
             &self.query_type
         }
