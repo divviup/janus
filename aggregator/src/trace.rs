@@ -52,8 +52,8 @@ pub struct TraceConfiguration {
     /// [`tracing_subscriber::fmt::format::Pretty`].
     #[serde(default)]
     pub force_json_output: bool,
-    /// If true, trace events are output in Google's Cloud Logging JSON format by
-    /// [`tracing_stackdriver::Stackdriver`].
+    /// If true, trace events are output in Google's Cloud Logging JSON format with
+    /// [`tracing_stackdriver`].
     #[serde(default)]
     pub stackdriver_json_output: bool,
     /// Configuration for tokio-console monitoring and debugging support.
@@ -145,7 +145,7 @@ pub fn install_trace_subscriber(config: &TraceConfiguration) -> Result<(), Error
                 .boxed(),
         ),
         (_, _, true) => layers.push(
-            tracing_stackdriver::Stackdriver::layer()
+            tracing_stackdriver::layer()
                 .with_filter(stdout_filter)
                 .boxed(),
         ),
