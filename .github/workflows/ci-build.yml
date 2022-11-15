@@ -32,7 +32,7 @@ jobs:
     # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry
     - id: "gcp-auth"
       name: "Authenticate to GCP"
-      uses: "google-github-actions/auth@v0"
+      uses: "google-github-actions/auth@v1"
       with:
         workload_identity_provider: ${{ secrets.GCP_ARTIFACT_READER_WORKFLOW_IDENTITY_PROVIDER }}
         service_account: ${{ secrets.GCP_ARTIFACT_READER_SERVICE_ACCOUNT }}
