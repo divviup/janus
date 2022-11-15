@@ -150,6 +150,7 @@ pub mod test_util {
         TraceConfiguration {
             use_test_writer: true,
             force_json_output: false,
+            stackdriver_json_output: false,
             tokio_console_config: TokioConsoleConfiguration {
                 enabled: true,
                 listen_address: Some("127.0.0.1:6667".parse().unwrap()),
