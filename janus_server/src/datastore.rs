@@ -475,7 +475,7 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, vdaf,
                 max_batch_lifetime, min_batch_size, min_batch_duration,
-                tolerable_clock_skew, collector_hpke_config 
+                tolerable_clock_skew, collector_hpke_config
                 FROM tasks",
             )
             .await?;
@@ -728,7 +728,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    /* nonce_time */ &nonce.time().as_naive_date_time(),
+                    /* nonce_time */ &nonce.time().as_naive_date_time()?,
                     /* nonce_rand */ &&nonce.rand()[..],
                 ],
             )
@@ -857,7 +857,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// put_client_report stores a client report.
     #[tracing::instrument(skip(self), err)]
     pub async fn put_client_report(&self, report: &Report) -> Result<(), Error> {
-        let nonce_time = report.nonce().time().as_naive_date_time();
+        let nonce_time = report.nonce().time().as_naive_date_time()?;
         let nonce_rand = report.nonce().rand();
 
         let mut encoded_extensions = Vec::new();
@@ -914,7 +914,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    /* nonce_time */ &nonce.time().as_naive_date_time(),
+                    /* nonce_time */ &nonce.time().as_naive_date_time()?,
                     /* nonce_rand */ &&nonce.rand()[..],
                 ],
             )
@@ -934,7 +934,7 @@ impl<C: Clock> Transaction<'_, C> {
         task_id: TaskId,
         report_share: &ReportShare,
     ) -> Result<(), Error> {
-        let nonce_time = report_share.nonce.time().as_naive_date_time();
+        let nonce_time = report_share.nonce.time().as_naive_date_time()?;
         let nonce_rand = report_share.nonce.rand();
 
         let stmt = self
@@ -1075,8 +1075,8 @@ impl<C: Clock> Transaction<'_, C> {
             .query(
                 &stmt,
                 &[
-                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time(),
-                    /* now */ &now.as_naive_date_time(),
+                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time()?,
+                    /* now */ &now.as_naive_date_time()?,
                     /* limit */ &maximum_acquire_count,
                 ],
             )
@@ -1133,7 +1133,7 @@ impl<C: Clock> Transaction<'_, C> {
                         /* task_id */ &lease.leased().task_id.as_bytes(),
                         /* aggregation_job_id */
                         &lease.leased().aggregation_job_id.as_bytes(),
-                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time(),
+                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time()?,
                         /* lease_token */ &lease.lease_token.as_bytes(),
                     ],
                 )
@@ -1216,7 +1216,7 @@ impl<C: Clock> Transaction<'_, C> {
         A::OutputShare: for<'a> TryFrom<&'a [u8]>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let nonce_time = nonce.time().as_naive_date_time();
+        let nonce_time = nonce.time().as_naive_date_time()?;
         let nonce_rand = &nonce.rand()[..];
 
         let stmt = self
@@ -1304,7 +1304,7 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let nonce_time = report_aggregation.nonce.time().as_naive_date_time();
+        let nonce_time = report_aggregation.nonce.time().as_naive_date_time()?;
         let nonce_rand = &report_aggregation.nonce.rand()[..];
         let state_code = report_aggregation.state.state_code();
         let encoded_state_values = report_aggregation.state.encoded_values_from_state();
@@ -1349,7 +1349,7 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let nonce_time = report_aggregation.nonce.time().as_naive_date_time();
+        let nonce_time = report_aggregation.nonce.time().as_naive_date_time()?;
         let nonce_rand = &report_aggregation.nonce.rand()[..];
         let state_code = report_aggregation.state.state_code();
         let encoded_state_values = report_aggregation.state.encoded_values_from_state();
@@ -1504,7 +1504,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    /* timestamp */ &timestamp.as_naive_date_time(),
+                    /* timestamp */ &timestamp.as_naive_date_time()?,
                 ],
             )
             .await?
@@ -1718,8 +1718,8 @@ ORDER BY id DESC
             .query(
                 &stmt,
                 &[
-                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time(),
-                    /* now */ &now.as_naive_date_time(),
+                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time()?,
+                    /* now */ &now.as_naive_date_time()?,
                     /* limit */ &maximum_acquire_count,
                 ],
             )
@@ -1774,7 +1774,7 @@ ORDER BY id DESC
                     &[
                         /* task_id */ &lease.leased().task_id.as_bytes(),
                         /* collect_job_id */ &lease.leased().collect_job_id,
-                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time(),
+                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time()?,
                         /* lease_token */ &lease.lease_token.as_bytes(),
                     ],
                 )
@@ -1854,7 +1854,7 @@ ORDER BY id DESC
     {
         let unit_interval_start = batch_unit_aggregation
             .unit_interval_start
-            .as_naive_date_time();
+            .as_naive_date_time()?;
         let encoded_aggregation_param = batch_unit_aggregation.aggregation_param.get_encoded();
         let encoded_aggregate_share: Vec<u8> = (&batch_unit_aggregation.aggregate_share).into();
         let report_count = i64::try_from(batch_unit_aggregation.report_count)?;
@@ -1901,7 +1901,7 @@ ORDER BY id DESC
         let encoded_checksum = batch_unit_aggregation.checksum.get_encoded();
         let unit_interval_start = batch_unit_aggregation
             .unit_interval_start
-            .as_naive_date_time();
+            .as_naive_date_time()?;
         let encoded_aggregation_param = batch_unit_aggregation.aggregation_param.get_encoded();
 
         let stmt = self
@@ -1951,8 +1951,8 @@ ORDER BY id DESC
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Display,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let unit_interval_start = interval.start().as_naive_date_time();
-        let unit_interval_end = interval.end().as_naive_date_time();
+        let unit_interval_start = interval.start().as_naive_date_time()?;
+        let unit_interval_end = interval.end().as_naive_date_time()?;
         let encoded_aggregation_param = aggregation_param.get_encoded();
 
         let stmt = self
@@ -2078,7 +2078,7 @@ ORDER BY id DESC
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_bytes(),
-                    /* timestamp */ &timestamp.as_naive_date_time(),
+                    /* timestamp */ &timestamp.as_naive_date_time()?,
                 ],
             )
             .await?
@@ -4064,7 +4064,7 @@ mod tests {
                 Box::pin(async move {
                     let report_share_exists = tx.check_report_share_exists(task_id, report_share.nonce).await?;
 
-                    let nonce_time = report_share.nonce.time().as_naive_date_time();
+                    let nonce_time = report_share.nonce.time().as_naive_date_time()?;
                     let nonce_rand = report_share.nonce.rand();
                     let row = tx
                         .tx
@@ -6297,7 +6297,10 @@ mod tests {
                         .get::<_, SqlInterval>("interval");
                     let ref_interval = Interval::new(
                         Time::from_naive_date_time(
-                            NaiveDate::from_ymd(2020, 1, 1).and_hms(10, 0, 0),
+                            NaiveDate::from_ymd_opt(2020, 1, 1)
+                                .unwrap()
+                                .and_hms_opt(10, 0, 0)
+                                .unwrap(),
                         ),
                         Duration::from_minutes(30).unwrap(),
                     )
@@ -6314,7 +6317,10 @@ mod tests {
                         .get::<_, SqlInterval>("interval");
                     let ref_interval = Interval::new(
                         Time::from_naive_date_time(
-                            NaiveDate::from_ymd(1970, 2, 3).and_hms(23, 0, 0),
+                            NaiveDate::from_ymd_opt(1970, 2, 3)
+                                .unwrap()
+                                .and_hms_opt(23, 0, 0)
+                                .unwrap(),
                         ),
                         Duration::from_hours(1).unwrap(),
                     )?;
@@ -6341,7 +6347,10 @@ mod tests {
                             &[&SqlInterval::from(
                                 Interval::new(
                                     Time::from_naive_date_time(
-                                        NaiveDate::from_ymd(1972, 7, 21).and_hms(5, 30, 0),
+                                        NaiveDate::from_ymd_opt(1972, 7, 21)
+                                            .unwrap()
+                                            .and_hms_opt(5, 30, 0)
+                                            .unwrap(),
                                     ),
                                     Duration::from_minutes(30).unwrap(),
                                 )
@@ -6363,7 +6372,10 @@ mod tests {
                             &[&SqlInterval::from(
                                 Interval::new(
                                     Time::from_naive_date_time(
-                                        NaiveDate::from_ymd(2021, 10, 5).and_hms(0, 0, 0),
+                                        NaiveDate::from_ymd_opt(2021, 10, 5)
+                                            .unwrap()
+                                            .and_hms_opt(0, 0, 0)
+                                            .unwrap(),
                                     ),
                                     Duration::from_hours(24).unwrap(),
                                 )
