@@ -15,7 +15,7 @@ COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release -p janus_aggregator --bin $BINARY --features=prometheus && cp /src/target/release/$BINARY /$BINARY
 
-FROM alpine:3.16.2
+FROM alpine:3.16.3
 ARG BINARY=aggregator
 COPY --from=builder /src/db/schema.sql /db/schema.sql
 COPY --from=builder /$BINARY /$BINARY
