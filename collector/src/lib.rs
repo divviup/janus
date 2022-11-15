@@ -1282,7 +1282,7 @@ mod tests {
             .with_header("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")
             .expect(1)
             .create();
-        let ref_date_time = Utc.ymd(2015, 10, 21).and_hms(7, 28, 0);
+        let ref_date_time = Utc.with_ymd_and_hms(2015, 10, 21, 7, 28, 0).unwrap();
         assert_matches!(
             collector.poll_once(&job).await.unwrap(),
             PollResult::NextAttempt(Some(RetryAfter::DateTime(system_time))) => assert_eq!(system_time, ref_date_time.into())
