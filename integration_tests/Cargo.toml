@@ -1,6 +1,6 @@
 [package]
 name = "integration_tests"
-version = "0.1.22"
+version = "0.1.24"
 edition = "2021"
 license = "MPL-2.0"
 rust-version = "1.63"
