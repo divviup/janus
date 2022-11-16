@@ -95,22 +95,22 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 
 -- An aggregation job, representing the aggregation of a number of client reports.
 CREATE TABLE aggregation_jobs(
-    id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id            BIGINT NOT NULL,                 -- ID of related task
-    aggregation_job_id BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
-    batch_identifier   BYTEA NOT NULL,                  -- encoded query-type-specific batch identifier (corresponds to identifier in PartialBatchSelector)
-    aggregation_param  BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
-    state              AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
+    id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
+    task_id                  BIGINT NOT NULL,                 -- ID of related task
+    aggregation_job_id       BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
+    partial_batch_identifier BYTEA NOT NULL,                  -- encoded query-type-specific batch identifier (corresponds to identifier in PartialBatchSelector)
+    aggregation_param        BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
+    state                    AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
 
-    lease_expiry       TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
-    lease_token        BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
-    lease_attempts     BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
+    lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
+    lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
+    lease_attempts           BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
     CONSTRAINT unique_aggregation_job_id UNIQUE(aggregation_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
-CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, batch_identifier);
+CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, partial_batch_identifier);
 
 -- Specifies the possible state of aggregating a single report.
 CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
