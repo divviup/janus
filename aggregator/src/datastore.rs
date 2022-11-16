@@ -128,6 +128,7 @@ pub struct Datastore<C: Clock> {
     crypter: Crypter,
     clock: C,
     transaction_status_counter: Counter<u64>,
+    rollback_error_counter: Counter<u64>,
 }
 
 impl<C: Clock> Datastore<C> {
@@ -138,6 +139,13 @@ impl<C: Clock> Datastore<C> {
         let transaction_status_counter = meter
             .u64_counter("janus_database_transactions_total")
             .with_description("Count of database transactions run, with their status.")
+            .init();
+        let rollback_error_counter = meter
+            .u64_counter("janus_database_rollback_errors_total")
+            .with_description(concat!(
+                "Count of errors received when rolling back a database transaction, ",
+                "with their PostgreSQL error code.",
+            ))
             .init();
 
         // Initialize counters with desired status labels. This causes Prometheus to see the first
@@ -155,6 +163,7 @@ impl<C: Clock> Datastore<C> {
             crypter,
             clock,
             transaction_status_counter,
+            rollback_error_counter,
         }
     }
 
@@ -221,11 +230,31 @@ impl<C: Clock> Datastore<C> {
         };
 
         // Run user-provided function with the transaction.
-        let rslt = f(&tx).await?;
-
-        // Commit.
-        tx.tx.commit().await?;
-        Ok(rslt)
+        match f(&tx).await {
+            Ok(rslt) => {
+                // Commit.
+                tx.tx.commit().await?;
+                Ok(rslt)
+            }
+            Err(error) => match tx.tx.rollback().await {
+                Ok(()) => Err(error),
+                Err(rollback_error) => {
+                    self.rollback_error_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new(
+                            "code",
+                            rollback_error
+                                .code()
+                                .map(SqlState::code)
+                                .unwrap_or("N/A")
+                                .to_string(),
+                        )],
+                    );
+                    Err(error.combine(rollback_error.into()))
+                }
+            },
+        }
     }
 
     /// Write a task into the datastore.
