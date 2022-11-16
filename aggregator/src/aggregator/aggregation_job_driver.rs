@@ -381,7 +381,7 @@ impl AggregationJobDriver {
             *task.id(),
             *aggregation_job.id(),
             aggregation_job.aggregation_parameter().get_encoded(),
-            PartialBatchSelector::new(aggregation_job.batch_identifier().clone()),
+            PartialBatchSelector::new(aggregation_job.partial_batch_identifier().clone()),
             report_shares,
         );
 
@@ -602,7 +602,7 @@ impl AggregationJobDriver {
                     // If the leader didn't finish too, we transition to INVALID.
                     if let PrepareTransition::Finish(out_share) = leader_transition {
                         match accumulator.update(
-                            aggregation_job.batch_identifier(),
+                            aggregation_job.partial_batch_identifier(),
                             report_aggregation.report_id(),
                             report_aggregation.time(),
                             out_share,

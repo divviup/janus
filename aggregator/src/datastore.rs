@@ -1373,7 +1373,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* task_id */ &aggregation_job.task_id().as_ref(),
                     /* aggregation_job_id */ &aggregation_job.id().as_ref(),
                     /* partial_batch_identifier */
-                    &aggregation_job.batch_identifier().get_encoded(),
+                    &aggregation_job.partial_batch_identifier().get_encoded(),
                     /* aggregation_param */
                     &aggregation_job.aggregation_parameter().get_encoded(),
                     /* state */ &aggregation_job.state(),
@@ -1408,7 +1408,7 @@ impl<C: Clock> Transaction<'_, C> {
                     &stmt,
                     &[
                         /* partial_batch_identifier */
-                        &aggregation_job.batch_identifier().get_encoded(),
+                        &aggregation_job.partial_batch_identifier().get_encoded(),
                         /* aggregation_param */
                         &aggregation_job.aggregation_parameter().get_encoded(),
                         /* state */ &aggregation_job.state(),
@@ -3109,7 +3109,7 @@ pub mod models {
     {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
-        batch_identifier: Q::PartialBatchIdentifier,
+        partial_batch_identifier: Q::PartialBatchIdentifier,
         #[derivative(Debug = "ignore")]
         aggregation_parameter: A::AggregationParam,
         state: AggregationJobState,
@@ -3123,14 +3123,14 @@ pub mod models {
         pub fn new(
             task_id: TaskId,
             aggregation_job_id: AggregationJobId,
-            batch_identifier: Q::PartialBatchIdentifier,
+            partial_batch_identifier: Q::PartialBatchIdentifier,
             aggregation_parameter: A::AggregationParam,
             state: AggregationJobState,
         ) -> Self {
             Self {
                 task_id,
                 aggregation_job_id,
-                batch_identifier,
+                partial_batch_identifier,
                 aggregation_parameter,
                 state,
             }
@@ -3150,8 +3150,8 @@ pub mod models {
         ///
         /// This method would typically be used for code which is generic over the query type.
         /// Query-type specific code will typically call [`Self::batch_id`].
-        pub fn batch_identifier(&self) -> &Q::PartialBatchIdentifier {
-            &self.batch_identifier
+        pub fn partial_batch_identifier(&self) -> &Q::PartialBatchIdentifier {
+            &self.partial_batch_identifier
         }
 
         /// Returns the aggregation parameter associated with this aggregation job.
@@ -3177,7 +3177,7 @@ pub mod models {
     {
         /// Gets the batch ID associated with this aggregation job.
         pub fn batch_id(&self) -> &BatchId {
-            self.batch_identifier()
+            self.partial_batch_identifier()
         }
     }
 
@@ -3189,7 +3189,7 @@ pub mod models {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
                 && self.aggregation_job_id == other.aggregation_job_id
-                && self.batch_identifier == other.batch_identifier
+                && self.partial_batch_identifier == other.partial_batch_identifier
                 && self.aggregation_parameter == other.aggregation_parameter
                 && self.state == other.state
         }
