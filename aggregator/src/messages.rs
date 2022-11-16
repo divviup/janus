@@ -51,7 +51,7 @@ impl DurationExt for Duration {
 /// Extension methods on [`Time`].
 pub trait TimeExt: Sized {
     /// Convert this [`Time`] into a [`NaiveDateTime`], representing an instant in the UTC timezone.
-    fn as_naive_date_time(&self) -> NaiveDateTime;
+    fn as_naive_date_time(&self) -> Result<NaiveDateTime, Error>;
 
     /// Convert a [`NaiveDateTime`] representing an instant in the UTC timezone into a [`Time`].
     fn from_naive_date_time(time: &NaiveDateTime) -> Self;
@@ -70,8 +70,16 @@ pub trait TimeExt: Sized {
 }
 
 impl TimeExt for Time {
-    fn as_naive_date_time(&self) -> NaiveDateTime {
-        NaiveDateTime::from_timestamp(self.as_seconds_since_epoch() as i64, 0)
+    fn as_naive_date_time(&self) -> Result<NaiveDateTime, Error> {
+        NaiveDateTime::from_timestamp_opt(
+            self.as_seconds_since_epoch()
+                .try_into()
+                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+            0,
+        )
+        .ok_or(Error::IllegalTimeArithmetic(
+            "number of seconds is out of range",
+        ))
     }
 
     /// Convert a [`NaiveDateTime`] representing an instant in the UTC timezone into a [`Time`].

@@ -277,7 +277,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* vdaf */ &Json(task.vdaf()),
                     /* max_batch_query_count */
                     &i64::try_from(task.max_batch_query_count())?,
-                    /* task_expiration */ &task.task_expiration().as_naive_date_time(),
+                    /* task_expiration */ &task.task_expiration().as_naive_date_time()?,
                     /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
                     /* time_precision */
                     &i64::try_from(task.time_precision().as_seconds())?,
@@ -1055,7 +1055,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ &report.task_id().get_encoded(),
                     /* report_id */ &report.metadata().id().get_encoded(),
-                    /* client_timestamp */ &report.metadata().time().as_naive_date_time(),
+                    /* client_timestamp */ &report.metadata().time().as_naive_date_time()?,
                     /* extensions */ &encoded_extensions,
                     /* public_share */ &encoded_public_share,
                     /* leader_input_share */ &encoded_leader_share,
@@ -1123,7 +1123,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* task_id */ &task_id.get_encoded(),
                     /* report_id */ &report_share.metadata().id().as_ref(),
                     /* client_timestamp */
-                    &report_share.metadata().time().as_naive_date_time(),
+                    &report_share.metadata().time().as_naive_date_time()?,
                 ],
             )
             .await?;
@@ -1257,8 +1257,8 @@ impl<C: Clock> Transaction<'_, C> {
             .query(
                 &stmt,
                 &[
-                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time(),
-                    /* now */ &now.as_naive_date_time(),
+                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time()?,
+                    /* now */ &now.as_naive_date_time()?,
                     /* limit */ &maximum_acquire_count,
                 ],
             )
@@ -1312,7 +1312,7 @@ impl<C: Clock> Transaction<'_, C> {
                         /* task_id */ &lease.leased().task_id().as_ref(),
                         /* aggregation_job_id */
                         &lease.leased().aggregation_job_id().as_ref(),
-                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time(),
+                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time()?,
                         /* lease_token */ &lease.lease_token().as_ref(),
                     ],
                 )
@@ -1797,7 +1797,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ task_id.as_ref(),
-                    /* timestamp */ &timestamp.as_naive_date_time(),
+                    /* timestamp */ &timestamp.as_naive_date_time()?,
                 ],
             )
             .await?
@@ -2028,8 +2028,8 @@ ORDER BY id DESC
             .query(
                 &stmt,
                 &[
-                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time(),
-                    /* now */ &now.as_naive_date_time(),
+                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time()?,
+                    /* now */ &now.as_naive_date_time()?,
                     /* limit */ &maximum_acquire_count,
                 ],
             )
@@ -2081,7 +2081,7 @@ ORDER BY id DESC
                     &[
                         /* task_id */ &lease.leased().task_id().as_ref(),
                         /* collect_job_id */ &lease.leased().collect_job_id(),
-                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time(),
+                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time()?,
                         /* lease_token */ &lease.lease_token().as_ref(),
                     ],
                 )
@@ -2357,7 +2357,7 @@ ORDER BY id DESC
                 &stmt,
                 &[
                     /* task_id */ &task_id.as_ref(),
-                    /* timestamp */ &timestamp.as_naive_date_time(),
+                    /* timestamp */ &timestamp.as_naive_date_time()?,
                 ],
             )
             .await?
@@ -5231,7 +5231,7 @@ mod tests {
                             &[
                                 /* report_id */ &report_share_metadata.id().as_ref(),
                                 /* client_timestamp */
-                                &report_share_metadata.time().as_naive_date_time(),
+                                &report_share_metadata.time().as_naive_date_time()?,
                             ],
                         )
                         .await?;
@@ -7936,7 +7936,10 @@ mod tests {
                         .get::<_, SqlInterval>("interval");
                     let ref_interval = Interval::new(
                         Time::from_naive_date_time(
-                            &NaiveDate::from_ymd(2020, 1, 1).and_hms(10, 0, 0),
+                            &NaiveDate::from_ymd_opt(2020, 1, 1)
+                                .unwrap()
+                                .and_hms_opt(10, 0, 0)
+                                .unwrap(),
                         ),
                         Duration::from_minutes(30).unwrap(),
                     )
@@ -7953,7 +7956,10 @@ mod tests {
                         .get::<_, SqlInterval>("interval");
                     let ref_interval = Interval::new(
                         Time::from_naive_date_time(
-                            &NaiveDate::from_ymd(1970, 2, 3).and_hms(23, 0, 0),
+                            &NaiveDate::from_ymd_opt(1970, 2, 3)
+                                .unwrap()
+                                .and_hms_opt(23, 0, 0)
+                                .unwrap(),
                         ),
                         Duration::from_hours(1).unwrap(),
                     )?;
@@ -7980,7 +7986,10 @@ mod tests {
                             &[&SqlInterval::from(
                                 Interval::new(
                                     Time::from_naive_date_time(
-                                        &NaiveDate::from_ymd(1972, 7, 21).and_hms(5, 30, 0),
+                                        &NaiveDate::from_ymd_opt(1972, 7, 21)
+                                            .unwrap()
+                                            .and_hms_opt(5, 30, 0)
+                                            .unwrap(),
                                     ),
                                     Duration::from_minutes(30).unwrap(),
                                 )
@@ -8002,7 +8011,10 @@ mod tests {
                             &[&SqlInterval::from(
                                 Interval::new(
                                     Time::from_naive_date_time(
-                                        &NaiveDate::from_ymd(2021, 10, 5).and_hms(0, 0, 0),
+                                        &NaiveDate::from_ymd_opt(2021, 10, 5)
+                                            .unwrap()
+                                            .and_hms_opt(0, 0, 0)
+                                            .unwrap(),
                                     ),
                                     Duration::from_hours(24).unwrap(),
                                 )
