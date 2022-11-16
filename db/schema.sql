@@ -1,7 +1,5 @@
 -- Load pgcrypto for gen_random_bytes.
 CREATE EXTENSION pgcrypto;
--- Load an extension to allow indexing over both BIGINT and TSRANGE in a multicolumn GiST index.
-CREATE EXTENSION btree_gist;
 
 -- Identifies which aggregator role is being played for this task.
 CREATE TYPE AGGREGATOR_ROLE AS ENUM(
@@ -187,7 +185,7 @@ CREATE TABLE collect_jobs(
 );
 -- TODO(#224): verify that this index is optimal for purposes of acquiring collect jobs.
 CREATE INDEX collect_jobs_lease_expiry ON collect_jobs(lease_expiry);
-CREATE INDEX collect_jobs_interval_containment_index ON collect_jobs USING gist (task_id, batch_interval);
+CREATE INDEX collect_jobs_interval_containment_index ON collect_jobs USING gist (batch_interval);
 
 -- The helper's view of aggregate share jobs.
 CREATE TABLE aggregate_share_jobs(
@@ -202,7 +200,7 @@ CREATE TABLE aggregate_share_jobs(
     CONSTRAINT unique_aggregate_share_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
-CREATE INDEX aggregate_share_jobs_interval_containment_index ON aggregate_share_jobs USING gist (task_id, batch_interval);
+CREATE INDEX aggregate_share_jobs_interval_containment_index ON aggregate_share_jobs USING gist (batch_interval);
 
 -- The leader's view of outstanding batches, which are batches which have not yet started
 -- collection. Used for fixed-size tasks only.
