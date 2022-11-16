@@ -13,7 +13,7 @@ use janus_interop_binaries::{
 };
 use janus_messages::{
     query_type::{QueryType, TimeInterval},
-    Duration, TaskId,
+    Duration, TaskId, Time,
 };
 use prio::codec::Encode;
 use rand::random;
@@ -257,7 +257,7 @@ async fn run(
             "min_batch_size": 1,
             "time_precision": TIME_PRECISION,
             "collector_hpke_config": collector_hpke_config_encoded,
-            "task_expiration": u64::MAX,
+            "task_expiration": Time::distant_future().as_seconds_since_epoch(),
         }))
         .send()
         .await
@@ -303,7 +303,7 @@ async fn run(
             "min_batch_size": 1,
             "time_precision": TIME_PRECISION,
             "collector_hpke_config": collector_hpke_config_encoded,
-            "task_expiration": u64::MAX,
+            "task_expiration": Time::distant_future().as_seconds_since_epoch(),
         }))
         .send()
         .await

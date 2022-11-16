@@ -81,6 +81,13 @@ impl Time {
     pub fn as_seconds_since_epoch(&self) -> u64 {
         self.0
     }
+
+    /// Construct a [`Time`] representing an instant in the distant future.
+    pub fn distant_future() -> Self {
+        // Wednesday, March 14, 2255 4 PM GMT. This is well past the time used by MockClock, and
+        // past any date at which Janus is likely to be run.
+        Self::from_seconds_since_epoch(9000000000)
+    }
 }
 
 impl Display for Time {

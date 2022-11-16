@@ -635,7 +635,7 @@ pub mod test_util {
                     role,
                     Vec::from([vdaf_verify_key]),
                     1,
-                    Time::from_seconds_since_epoch(u64::MAX),
+                    Time::distant_future(),
                     0,
                     Duration::from_hours(8).unwrap(),
                     Duration::from_minutes(10).unwrap(),
