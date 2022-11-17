@@ -2132,18 +2132,13 @@ WITH updated as (
     FROM tasks
     WHERE collect_jobs.id IN (
         SELECT collect_jobs.id FROM collect_jobs
-        -- Join on aggregation jobs with matching task ID and aggregation parameter
+        -- Join on aggregation jobs with matching task ID, matching aggregation parameter, and
+        -- subsets of the batch interval
         INNER JOIN aggregation_jobs
             ON collect_jobs.aggregation_param = aggregation_jobs.aggregation_param
             AND collect_jobs.task_id = aggregation_jobs.task_id
-        -- Join on report aggregations with matching aggregation job ID
-        INNER JOIN report_aggregations
-            ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-        -- Join on reports whose ID falls within the collect job batch interval and which are
-        -- included in an aggregation job
-        INNER JOIN client_reports
-            ON client_reports.id = report_aggregations.client_report_id
-            AND client_reports.client_timestamp <@ collect_jobs.batch_interval
+            AND collect_jobs.batch_interval @> aggregation_jobs.batch_interval
+            AND aggregation_jobs.batch_interval IS NOT NULL
         WHERE
             -- Constraint for tasks table in FROM position
             tasks.id = collect_jobs.task_id
