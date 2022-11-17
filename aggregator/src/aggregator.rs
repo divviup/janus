@@ -1585,6 +1585,7 @@ impl VdafOps {
             *task.id(),
             *req.job_id(),
             req.batch_selector().batch_identifier().clone(),
+            None,
             agg_param,
             if saw_continue {
                 AggregationJobState::InProgress
@@ -5028,6 +5029,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         (),
+                        None,
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -5169,6 +5171,7 @@ mod tests {
                 *task.id(),
                 aggregation_job_id,
                 (),
+                None,
                 (),
                 AggregationJobState::Finished,
             ))
@@ -5347,6 +5350,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id_0,
                         (),
+                        None,
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -5632,6 +5636,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id_1,
                         (),
+                        None,
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -5856,6 +5861,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         (),
+                        None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))
@@ -5971,6 +5977,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         (),
+                        None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))
@@ -6067,6 +6074,7 @@ mod tests {
                 *task.id(),
                 aggregation_job_id,
                 (),
+                None,
                 dummy_vdaf::AggregationParam(0),
                 AggregationJobState::Finished,
             ))
@@ -6129,6 +6137,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         (),
+                        None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))
@@ -6266,6 +6275,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         (),
+                        None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))
@@ -6396,6 +6406,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         (),
+                        None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
                     ))

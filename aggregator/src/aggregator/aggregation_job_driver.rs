@@ -933,14 +933,11 @@ mod tests {
         ]))
         .build();
 
-        let report_metadata = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
+        let time = clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -964,6 +961,7 @@ mod tests {
             );
 
         let aggregation_job_id = random();
+        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         ds.run_tx(|tx| {
             let (task, report) = (task.clone(), report.clone());
@@ -979,6 +977,7 @@ mod tests {
                     *task.id(),
                     aggregation_job_id,
                     (),
+                    Some(batch_interval),
                     (),
                     AggregationJobState::InProgress,
                 ))
@@ -1080,6 +1079,7 @@ mod tests {
                 *task.id(),
                 aggregation_job_id,
                 (),
+                Some(batch_interval),
                 (),
                 AggregationJobState::Finished,
             );
@@ -1148,14 +1148,11 @@ mod tests {
         ]))
         .build();
 
-        let report_metadata = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
+        let time = clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -1178,6 +1175,7 @@ mod tests {
                 &transcript.input_shares,
             );
         let aggregation_job_id = random();
+        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         let lease = ds
             .run_tx(|tx| {
@@ -1194,6 +1192,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         (),
+                        Some(batch_interval),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -1293,6 +1292,7 @@ mod tests {
                 *task.id(),
                 aggregation_job_id,
                 (),
+                Some(batch_interval),
                 (),
                 AggregationJobState::InProgress,
             );
@@ -1409,6 +1409,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         batch_id,
+                        Some(batch_id),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -1508,6 +1509,7 @@ mod tests {
                 *task.id(),
                 aggregation_job_id,
                 batch_id,
+                Some(batch_id),
                 (),
                 AggregationJobState::InProgress,
             );
@@ -1577,14 +1579,11 @@ mod tests {
             Url::parse(&mockito::server_url()).unwrap(),
         ]))
         .build();
-        let report_metadata = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
+        let time = clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -1607,6 +1606,7 @@ mod tests {
                 &transcript.input_shares,
             );
         let aggregation_job_id = random();
+        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         let leader_prep_state = assert_matches!(
             &transcript.prepare_transitions[Role::Leader.index().unwrap()][0],
@@ -1637,6 +1637,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         (),
+                        Some(batch_interval),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -1727,6 +1728,7 @@ mod tests {
                 *task.id(),
                 aggregation_job_id,
                 (),
+                Some(batch_interval),
                 (),
                 AggregationJobState::Finished,
             );
@@ -1881,6 +1883,7 @@ mod tests {
                         *task.id(),
                         aggregation_job_id,
                         batch_id,
+                        Some(batch_id),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -1971,6 +1974,7 @@ mod tests {
                 *task.id(),
                 aggregation_job_id,
                 batch_id,
+                Some(batch_id),
                 (),
                 AggregationJobState::Finished,
             );
@@ -2056,14 +2060,11 @@ mod tests {
             Url::parse(&mockito::server_url()).unwrap(),
         ]))
         .build();
-        let report_metadata = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
+        let time = clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -2085,12 +2086,14 @@ mod tests {
                 &transcript.input_shares,
             );
         let aggregation_job_id = random();
+        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         let aggregation_job =
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
                 (),
+                Some(batch_interval),
                 (),
                 AggregationJobState::InProgress,
             );
@@ -2249,14 +2252,11 @@ mod tests {
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let report_metadata = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-            Vec::new(),
-        );
+        let time = clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
         let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
         let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
             generate_report(
@@ -2266,6 +2266,7 @@ mod tests {
                 &transcript.public_share,
                 &transcript.input_shares,
             );
+        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         // Set up fixtures in the database.
         ds.run_tx(|tx| {
@@ -2286,6 +2287,7 @@ mod tests {
                     *task.id(),
                     aggregation_job_id,
                     (),
+                    Some(batch_interval),
                     (),
                     AggregationJobState::InProgress,
                 ))
@@ -2401,6 +2403,7 @@ mod tests {
                 *task.id(),
                 aggregation_job_id,
                 (),
+                Some(batch_interval),
                 (),
                 AggregationJobState::Abandoned,
             ),

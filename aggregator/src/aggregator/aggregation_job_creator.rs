@@ -15,7 +15,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    Role, TaskId,
+    Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Unit},
@@ -329,6 +329,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::new();
                     for (batch_start, report_times_and_ids) in report_ids_by_batch {
+                        let batch_interval = Interval::new(batch_start, *task.time_precision())?;
                         for agg_job_reports in
                             report_times_and_ids.chunks(this.max_aggregation_job_size)
                         {
@@ -349,6 +350,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 *task.id(),
                                 aggregation_job_id,
                                 (),
+                                Some(batch_interval),
                                 (),
                                 AggregationJobState::InProgress,
                             ));
@@ -503,6 +505,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             *task.id(),
                             aggregation_job_id,
                             *batch.id(),
+                            Some(*batch.id()),
                             (),
                             AggregationJobState::InProgress,
                         ));
@@ -607,7 +610,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Generate aggregation jobs and report aggregations.
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::with_capacity(report_count);
-                    for ((_, aggregation_param), report_ids_and_times) in result_map {
+                    for ((batch_start, aggregation_param), report_ids_and_times) in result_map {
+                        let batch_interval = Interval::new(batch_start, *task.time_precision())?;
                         for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
                         {
                             let aggregation_job_id = random();
@@ -621,6 +625,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 *task.id(),
                                 aggregation_job_id,
                                 (),
+                                Some(batch_interval),
                                 aggregation_param.clone(),
                                 AggregationJobState::InProgress,
                             ));

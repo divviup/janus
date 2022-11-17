@@ -98,7 +98,8 @@ CREATE TABLE aggregation_jobs(
     id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                  BIGINT NOT NULL,                 -- ID of related task
     aggregation_job_id       BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
-    partial_batch_identifier BYTEA NOT NULL,                  -- encoded query-type-specific batch identifier (corresponds to identifier in PartialBatchSelector)
+    partial_batch_identifier BYTEA NOT NULL,                  -- encoded query-type-specific partial batch identifier (corresponds to identifier in PartialBatchSelector)
+    batch_identifier         BYTEA,                           -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector; present for leader tasks, NULL for helper tasks)
     aggregation_param        BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     state                    AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
 
