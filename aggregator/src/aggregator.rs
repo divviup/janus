@@ -1609,7 +1609,7 @@ impl VdafOps {
                             share_data.agg_state
                         {
                             accumulator.update(
-                                aggregation_job.batch_identifier(),
+                                aggregation_job.partial_batch_identifier(),
                                 share_data.report_share.metadata().id(),
                                 share_data.report_share.metadata().time(),
                                 output_share,
@@ -1760,7 +1760,12 @@ impl VdafOps {
 
                             Ok(PrepareTransition::Finish(output_share)) => {
                                 saw_finish = true;
-                                accumulator.update(aggregation_job.batch_identifier(), prep_step.report_id(), report_aggregation.time(), &output_share)?;
+                                accumulator.update(
+                                    aggregation_job.partial_batch_identifier(),
+                                    prep_step.report_id(),
+                                    report_aggregation.time(),
+                                    &output_share,
+                                )?;
                                 response_prep_steps.push(PrepareStep::new(
                                     *prep_step.report_id(),
                                     PrepareStepResult::Finished,

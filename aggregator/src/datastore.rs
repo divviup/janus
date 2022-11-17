@@ -1172,7 +1172,7 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT batch_identifier, aggregation_param, state
+                "SELECT partial_batch_identifier, aggregation_param, state
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1 AND aggregation_jobs.aggregation_job_id = $2",
             )
@@ -1207,7 +1207,7 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT aggregation_job_id, batch_identifier, aggregation_param, state
+                "SELECT aggregation_job_id, partial_batch_identifier, aggregation_param, state
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1",
             )
@@ -1237,7 +1237,7 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(AggregationJob::new(
             *task_id,
             *aggregation_job_id,
-            Q::PartialBatchIdentifier::get_decoded(row.get("batch_identifier"))?,
+            Q::PartialBatchIdentifier::get_decoded(row.get("partial_batch_identifier"))?,
             A::AggregationParam::get_decoded(row.get("aggregation_param"))?,
             row.get("state"),
         ))
@@ -1362,7 +1362,7 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "INSERT INTO aggregation_jobs
-                (task_id, aggregation_job_id, batch_identifier, aggregation_param, state)
+                (task_id, aggregation_job_id, partial_batch_identifier, aggregation_param, state)
             VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5)",
             )
             .await?;
@@ -1372,7 +1372,8 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ &aggregation_job.task_id().as_ref(),
                     /* aggregation_job_id */ &aggregation_job.id().as_ref(),
-                    /* batch_identifier */ &aggregation_job.batch_identifier().get_encoded(),
+                    /* partial_batch_identifier */
+                    &aggregation_job.partial_batch_identifier().get_encoded(),
                     /* aggregation_param */
                     &aggregation_job.aggregation_parameter().get_encoded(),
                     /* state */ &aggregation_job.state(),
@@ -1395,7 +1396,7 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "UPDATE aggregation_jobs SET
-                    batch_identifier = $1,
+                    partial_batch_identifier = $1,
                     aggregation_param = $2,
                     state = $3
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $4) AND aggregation_job_id = $5",
@@ -1406,8 +1407,8 @@ impl<C: Clock> Transaction<'_, C> {
                 .execute(
                     &stmt,
                     &[
-                        /* batch_identifier */
-                        &aggregation_job.batch_identifier().get_encoded(),
+                        /* partial_batch_identifier */
+                        &aggregation_job.partial_batch_identifier().get_encoded(),
                         /* aggregation_param */
                         &aggregation_job.aggregation_parameter().get_encoded(),
                         /* state */ &aggregation_job.state(),
@@ -2588,7 +2589,7 @@ ORDER BY id DESC
                     (SELECT report_aggregations.state, COUNT(*) AS count FROM report_aggregations
                      JOIN aggregation_jobs ON report_aggregations.aggregation_job_id = aggregation_jobs.id
                      WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                     AND aggregation_jobs.batch_identifier = $2
+                     AND aggregation_jobs.partial_batch_identifier = $2
                      GROUP BY report_aggregations.state)
                 SELECT
                     (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
@@ -3108,7 +3109,7 @@ pub mod models {
     {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
-        batch_identifier: Q::PartialBatchIdentifier,
+        partial_batch_identifier: Q::PartialBatchIdentifier,
         #[derivative(Debug = "ignore")]
         aggregation_parameter: A::AggregationParam,
         state: AggregationJobState,
@@ -3122,14 +3123,14 @@ pub mod models {
         pub fn new(
             task_id: TaskId,
             aggregation_job_id: AggregationJobId,
-            batch_identifier: Q::PartialBatchIdentifier,
+            partial_batch_identifier: Q::PartialBatchIdentifier,
             aggregation_parameter: A::AggregationParam,
             state: AggregationJobState,
         ) -> Self {
             Self {
                 task_id,
                 aggregation_job_id,
-                batch_identifier,
+                partial_batch_identifier,
                 aggregation_parameter,
                 state,
             }
@@ -3149,8 +3150,8 @@ pub mod models {
         ///
         /// This method would typically be used for code which is generic over the query type.
         /// Query-type specific code will typically call [`Self::batch_id`].
-        pub fn batch_identifier(&self) -> &Q::PartialBatchIdentifier {
-            &self.batch_identifier
+        pub fn partial_batch_identifier(&self) -> &Q::PartialBatchIdentifier {
+            &self.partial_batch_identifier
         }
 
         /// Returns the aggregation parameter associated with this aggregation job.
@@ -3176,7 +3177,7 @@ pub mod models {
     {
         /// Gets the batch ID associated with this aggregation job.
         pub fn batch_id(&self) -> &BatchId {
-            self.batch_identifier()
+            self.partial_batch_identifier()
         }
     }
 
@@ -3188,7 +3189,7 @@ pub mod models {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
                 && self.aggregation_job_id == other.aggregation_job_id
-                && self.batch_identifier == other.batch_identifier
+                && self.partial_batch_identifier == other.partial_batch_identifier
                 && self.aggregation_parameter == other.aggregation_parameter
                 && self.state == other.state
         }
