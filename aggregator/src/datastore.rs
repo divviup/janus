@@ -1387,19 +1387,37 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// put_aggregation_job stores an aggregation job.
     #[tracing::instrument(skip(self), err)]
-    pub async fn put_aggregation_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn put_aggregation_job<
+        const L: usize,
+        Q: CollectableQueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         aggregation_job: &AggregationJob<L, Q, A>,
     ) -> Result<(), Error>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+        let batch_interval = aggregation_job
+            .batch_identifier()
+            .as_ref()
+            .and_then(Q::to_batch_interval)
+            .map(SqlInterval::from);
+
         let stmt = self
             .tx
             .prepare_cached(
                 "INSERT INTO aggregation_jobs
-                (task_id, aggregation_job_id, partial_batch_identifier, batch_identifier, aggregation_param, state)
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)",
+                (
+                    task_id,
+                    aggregation_job_id,
+                    partial_batch_identifier,
+                    batch_identifier,
+                    batch_interval,
+                    aggregation_param,
+                    state
+                )
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
             )
             .await?;
         self.tx
@@ -1415,6 +1433,7 @@ impl<C: Clock> Transaction<'_, C> {
                         .batch_identifier()
                         .as_ref()
                         .map(Encode::get_encoded),
+                    /* batch_interval */ &batch_interval,
                     /* aggregation_param */
                     &aggregation_job.aggregation_parameter().get_encoded(),
                     /* state */ &aggregation_job.state(),

@@ -100,6 +100,7 @@ CREATE TABLE aggregation_jobs(
     aggregation_job_id       BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
     partial_batch_identifier BYTEA NOT NULL,                  -- encoded query-type-specific partial batch identifier (corresponds to identifier in PartialBatchSelector)
     batch_identifier         BYTEA,                           -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector; present for leader tasks, NULL for helper tasks)
+    batch_interval           TSRANGE,                         -- batch interval, as a TSRANGE, populated only for leader time-interval tasks. (will match batch_identifier when present)
     aggregation_param        BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     state                    AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
 
@@ -112,6 +113,7 @@ CREATE TABLE aggregation_jobs(
 );
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
 CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, partial_batch_identifier);
+CREATE INDEX aggregation_jobs_batch_interval ON aggregation_jobs USING gist (batch_interval) WHERE batch_interval IS NOT NULL;
 
 -- Specifies the possible state of aggregating a single report.
 CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
