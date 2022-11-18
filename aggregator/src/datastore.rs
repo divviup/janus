@@ -1054,7 +1054,8 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT COUNT(1) AS count FROM report_aggregations
+                "SELECT COUNT(DISTINCT report_aggregations.client_report_id) AS count
+                FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                   AND aggregation_jobs.partial_batch_identifier = $2",
@@ -5379,47 +5380,83 @@ mod tests {
                     tx.put_task(&task).await?;
                     tx.put_task(&unrelated_task).await?;
 
-                    // Create a batch for the first task containing two reports.
+                    // Create a batch for the first task containing two reports, which has started
+                    // aggregation twice with two different aggregation parameters.
                     let batch_id = random();
-                    let first_report = LeaderStoredReport::new_dummy(
+                    let report_0 = LeaderStoredReport::new_dummy(
                         *task.id(),
                         Time::from_seconds_since_epoch(12340),
                     );
-                    let second_report = LeaderStoredReport::new_dummy(
+                    let report_1 = LeaderStoredReport::new_dummy(
                         *task.id(),
                         Time::from_seconds_since_epoch(12345),
                     );
 
-                    let aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
                         batch_id,
                         AggregationParam(22),
                         AggregationJobState::InProgress,
                     );
+                    let aggregation_job_0_report_aggregation_0 =
+                        ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            *aggregation_job_0.id(),
+                            *report_0.metadata().id(),
+                            *report_0.metadata().time(),
+                            0,
+                            ReportAggregationState::Start,
+                        );
+                    let aggregation_job_0_report_aggregation_1 =
+                        ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            *aggregation_job_0.id(),
+                            *report_1.metadata().id(),
+                            *report_1.metadata().time(),
+                            1,
+                            ReportAggregationState::Start,
+                        );
 
-                    let first_report_aggregation = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                    let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        *aggregation_job.id(),
-                        *first_report.metadata().id(),
-                        *first_report.metadata().time(),
-                        0,
-                        ReportAggregationState::Start,
+                        random(),
+                        batch_id,
+                        AggregationParam(23),
+                        AggregationJobState::InProgress,
                     );
-                    let second_report_aggregation = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        *aggregation_job.id(),
-                        *first_report.metadata().id(),
-                        *first_report.metadata().time(),
-                        1,
-                        ReportAggregationState::Start,
-                    );
+                    let aggregation_job_1_report_aggregation_0 =
+                        ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            *aggregation_job_1.id(),
+                            *report_0.metadata().id(),
+                            *report_0.metadata().time(),
+                            0,
+                            ReportAggregationState::Start,
+                        );
+                    let aggregation_job_1_report_aggregation_1 =
+                        ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                            *task.id(),
+                            *aggregation_job_1.id(),
+                            *report_1.metadata().id(),
+                            *report_1.metadata().time(),
+                            1,
+                            ReportAggregationState::Start,
+                        );
 
-                    tx.put_client_report(&first_report).await?;
-                    tx.put_client_report(&second_report).await?;
-                    tx.put_aggregation_job(&aggregation_job).await?;
-                    tx.put_report_aggregation(&first_report_aggregation).await?;
-                    tx.put_report_aggregation(&second_report_aggregation)
+                    tx.put_client_report(&report_0).await?;
+                    tx.put_client_report(&report_1).await?;
+
+                    tx.put_aggregation_job(&aggregation_job_0).await?;
+                    tx.put_report_aggregation(&aggregation_job_0_report_aggregation_0)
+                        .await?;
+                    tx.put_report_aggregation(&aggregation_job_0_report_aggregation_1)
+                        .await?;
+
+                    tx.put_aggregation_job(&aggregation_job_1).await?;
+                    tx.put_report_aggregation(&aggregation_job_1_report_aggregation_0)
+                        .await?;
+                    tx.put_report_aggregation(&aggregation_job_1_report_aggregation_1)
                         .await?;
 
                     Ok(batch_id)
