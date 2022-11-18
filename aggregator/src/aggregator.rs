@@ -1,6 +1,7 @@
 //! Common functionality for DAP aggregators.
 
 pub mod accumulator;
+pub mod aggregate_share;
 pub mod aggregation_job_creator;
 pub mod aggregation_job_driver;
 pub mod collect_job_driver;
@@ -8,8 +9,7 @@ pub mod query_type;
 
 use crate::{
     aggregator::{
-        accumulator::Accumulator,
-        collect_job_driver::{compute_aggregate_share, validate_batch_query_count_for_collect},
+        accumulator::Accumulator, aggregate_share::compute_aggregate_share,
         query_type::CollectableQueryType,
     },
     datastore::{
@@ -40,7 +40,7 @@ use janus_core::{
     time::Clock,
 };
 use janus_messages::{
-    query_type::{FixedSize, TimeInterval},
+    query_type::{FixedSize, QueryType, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
     AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq, CollectResp,
     HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector, PrepareStep,
@@ -144,9 +144,8 @@ pub enum Error {
     Vdaf(#[from] vdaf::VdafError),
     /// A collect or aggregate share request was rejected because the interval failed boundary
     /// checks (§4.5.6).
-    // TODO(#468): Augment this error so it can represent invalid fixed-size queries, too.
     #[error("task {0}: invalid batch interval: {1}")]
-    BatchInvalid(TaskId, Interval),
+    BatchInvalid(TaskId, String),
     /// The number of reports in the batch is invalid for the task's parameters.
     #[error("task {0}: invalid number of reports ({1})")]
     InvalidBatchSize(TaskId, u64),
@@ -162,7 +161,6 @@ pub enum Error {
     BatchQueriedTooManyTimes(TaskId, u64),
     /// A collect or aggregate share request was rejected because the batch overlaps with a
     /// previously collected one.
-    // TODO(#468): Augment this error so it can represent invalid fixed-size queries, too.
     #[error("task {0}: queried batch {1} overlaps with previously collected batch(es)")]
     BatchOverlap(TaskId, Interval),
     /// HPKE failure.
@@ -465,11 +463,8 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(task_id));
         }
 
-        let collect_req = CollectReq::get_decoded(req_bytes)?;
-        assert_eq!(collect_req.task_id(), &task_id);
-
         task_aggregator
-            .handle_collect(&self.datastore, collect_req)
+            .handle_collect(&self.datastore, req_bytes)
             .await
     }
 
@@ -503,10 +498,9 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(task_id));
         }
 
-        Ok(task_aggregator
+        task_aggregator
             .handle_get_collect_job(&self.datastore, collect_job_id)
-            .await?
-            .map(|resp| resp.get_encoded()))
+            .await
     }
 
     /// Handle a DELETE request for a collect job.
@@ -569,11 +563,8 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(task_id));
         }
 
-        let req = AggregateShareReq::get_decoded(req_bytes)?;
-        assert_eq!(req.task_id(), &task_id);
-
         let resp = task_aggregator
-            .handle_aggregate_share(&self.datastore, req)
+            .handle_aggregate_share(&self.datastore, req_bytes)
             .await?;
         Ok(resp.get_encoded())
     }
@@ -748,11 +739,11 @@ impl TaskAggregator {
     async fn handle_collect<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        req: CollectReq<TimeInterval>,
+        req_bytes: &[u8],
     ) -> Result<Url, Error> {
         let collect_job_id = self
             .vdaf_ops
-            .handle_collect(datastore, Arc::clone(&self.task), Arc::new(req))
+            .handle_collect(datastore, Arc::clone(&self.task), req_bytes)
             .await?;
 
         Ok(self
@@ -766,7 +757,7 @@ impl TaskAggregator {
         &self,
         datastore: &Datastore<C>,
         collect_job_id: Uuid,
-    ) -> Result<Option<CollectResp<TimeInterval>>, Error> {
+    ) -> Result<Option<Vec<u8>>, Error> {
         self.vdaf_ops
             .handle_get_collect_job(datastore, &self.task, Arc::new(collect_job_id))
             .await
@@ -778,28 +769,17 @@ impl TaskAggregator {
         collect_job_id: Uuid,
     ) -> Result<(), Error> {
         self.vdaf_ops
-            .handle_delete_collect_job(datastore, collect_job_id)
+            .handle_delete_collect_job(datastore, &self.task, collect_job_id)
             .await
     }
 
     async fn handle_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        req: AggregateShareReq<TimeInterval>,
+        req_bytes: &[u8],
     ) -> Result<AggregateShareResp, Error> {
-        // §4.4.4.3: check that the batch interval meets the requirements from §4.6
-        if !self
-            .task
-            .validate_batch_interval(req.batch_selector().batch_interval())
-        {
-            return Err(Error::BatchInvalid(
-                *self.task.id(),
-                *req.batch_selector().batch_interval(),
-            ));
-        }
-
         self.vdaf_ops
-            .handle_aggregate_share(datastore, Arc::clone(&self.task), Arc::new(req))
+            .handle_aggregate_share(datastore, Arc::clone(&self.task), req_bytes)
             .await
     }
 }
@@ -920,7 +900,6 @@ impl VdafOps {
         task: Arc<Task>,
         req_bytes: &[u8],
     ) -> Result<AggregateInitializeResp, Error> {
-        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
         match (task.query_type(), self) {
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(vdaf, verify_key)) => {
                 Self::handle_aggregate_init_generic::<
@@ -1096,9 +1075,8 @@ impl VdafOps {
         task: Arc<Task>,
         req: Arc<AggregateContinueReq>,
     ) -> Result<AggregateContinueResp, Error> {
-        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
-        match self {
-            VdafOps::Prio3Aes128Count(vdaf, _) => {
+        match (task.query_type(), self) {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(vdaf, _)) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
@@ -1114,7 +1092,7 @@ impl VdafOps {
                 .await
             }
 
-            VdafOps::Prio3Aes128CountVec(vdaf, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(vdaf, _)) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
@@ -1130,7 +1108,7 @@ impl VdafOps {
                 .await
             }
 
-            VdafOps::Prio3Aes128Sum(vdaf, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(vdaf, _)) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
@@ -1146,7 +1124,7 @@ impl VdafOps {
                 .await
             }
 
-            VdafOps::Prio3Aes128Histogram(vdaf, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(vdaf, _)) => {
                 Self::handle_aggregate_continue_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
@@ -1163,14 +1141,84 @@ impl VdafOps {
             }
 
             #[cfg(feature = "test-util")]
-            VdafOps::Fake(vdaf) => {
-                const VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
+            (task::QueryType::TimeInterval, VdafOps::Fake(vdaf)) => {
+                Self::handle_aggregate_continue_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counter,
+                    task,
+                    req,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(vdaf, _)) => {
                 Self::handle_aggregate_continue_generic::<
-                    VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    dummy_vdaf::Vdaf,
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Count,
                     _,
                 >(
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counter,
+                    task,
+                    req,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(vdaf, _)) => {
+                Self::handle_aggregate_continue_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counter,
+                    task,
+                    req,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(vdaf, _)) => {
+                Self::handle_aggregate_continue_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Sum,
+                    _,
+                >(
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counter,
+                    task,
+                    req,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(vdaf, _)) => {
+                Self::handle_aggregate_continue_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Histogram,
+                    _,
+                >(
+                    datastore,
+                    Arc::clone(vdaf),
+                    aggregate_step_failure_counter,
+                    task,
+                    req,
+                )
+                .await
+            }
+
+            #[cfg(feature = "test-util")]
+            (task::QueryType::FixedSize { .. }, VdafOps::Fake(vdaf)) => {
+                Self::handle_aggregate_continue_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
                     datastore,
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
@@ -1822,59 +1870,121 @@ impl VdafOps {
         &self,
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        collect_req: Arc<CollectReq<TimeInterval>>,
+        collect_req_bytes: &[u8],
     ) -> Result<Uuid, Error> {
-        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
-        match self {
-            VdafOps::Prio3Aes128Count(_, _) => {
-                Self::handle_collect_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
-                    datastore,
-                    task,
-                    collect_req,
-                )
+        match (task.query_type(), self) {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
+                Self::handle_collect_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Aes128Count,
+                    _,
+                >(datastore, task, collect_req_bytes)
                 .await
             }
 
-            VdafOps::Prio3Aes128CountVec(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
                 Self::handle_collect_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, collect_req)
+                >(datastore, task, collect_req_bytes)
                 .await
             }
 
-            VdafOps::Prio3Aes128Sum(_, _) => {
-                Self::handle_collect_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum, _>(
-                    datastore,
-                    task,
-                    collect_req,
-                )
-                .await
-            }
-
-            VdafOps::Prio3Aes128Histogram(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
                 Self::handle_collect_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Aes128Sum,
+                    _,
+                >(datastore, task, collect_req_bytes)
+                .await
+            }
+
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
+                Self::handle_collect_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, collect_req)
+                >(datastore, task, collect_req_bytes)
                 .await
             }
 
             #[cfg(feature = "test-util")]
-            VdafOps::Fake(_) => {
-                Self::handle_collect_generic::<0, dummy_vdaf::Vdaf, _>(datastore, task, collect_req)
-                    .await
+            (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
+                Self::handle_collect_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                    datastore,
+                    task,
+                    collect_req_bytes,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
+                Self::handle_collect_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Count,
+                    _,
+                >(datastore, task, collect_req_bytes)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
+                Self::handle_collect_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(datastore, task, collect_req_bytes)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
+                Self::handle_collect_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Sum,
+                    _,
+                >(datastore, task, collect_req_bytes)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
+                Self::handle_collect_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Histogram,
+                    _,
+                >(datastore, task, collect_req_bytes)
+                .await
+            }
+
+            #[cfg(feature = "test-util")]
+            (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
+                Self::handle_collect_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
+                    datastore,
+                    task,
+                    collect_req_bytes,
+                )
+                .await
             }
         }
     }
 
     #[tracing::instrument(skip(datastore), err)]
-    async fn handle_collect_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+    async fn handle_collect_generic<
+        const L: usize,
+        Q: CollectableQueryType,
+        A: vdaf::Aggregator<L>,
+        C: Clock,
+    >(
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        req: Arc<CollectReq<TimeInterval>>,
+        req_bytes: &[u8],
     ) -> Result<Uuid, Error>
     where
         A::AggregationParam: Send + Sync + 'static,
@@ -1882,15 +1992,20 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
+        // Decode request, and verify that it is for the current task. We use an assert to check
+        // that the task IDs match as this should be guaranteed by the caller.
+        let req = Arc::new(CollectReq::<Q>::get_decoded(req_bytes)?);
+        assert_eq!(req.task_id(), task.id());
+
         let aggregation_param =
             A::AggregationParam::get_decoded(req.as_ref().aggregation_parameter())?;
 
         // Check that the batch interval is valid for the task
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-        if !task.validate_batch_interval(req.query().batch_interval()) {
+        if !Q::validate_collect_identifier(&task, req.query().batch_identifier()) {
             return Err(Error::BatchInvalid(
                 *task.id(),
-                *req.query().batch_interval(),
+                format!("{}", req.query().batch_identifier()),
             ));
         }
 
@@ -1901,9 +2016,9 @@ impl VdafOps {
                 let req = req.clone();
                 Box::pin(async move {
                     if let Some(collect_job_id) = tx
-                        .get_collect_job_id::<L, A>(
+                        .get_collect_job_id::<L, Q, A>(
                             task.id(),
-                            req.query().batch_interval(),
+                            req.query().batch_identifier(),
                             &aggregation_param,
                         )
                         .await?
@@ -1913,18 +2028,13 @@ impl VdafOps {
                     }
 
                     debug!(collect_request = ?req, "Cache miss, creating new collect job UUID");
-                    // TODO(#468): query count and client report count need to account for
-                    // fixed-size tasks
                     let (_, report_count) = try_join!(
-                        validate_batch_query_count_for_collect::<L, _, A>(
+                        Q::validate_query_count::<L, C, A>(
                             tx,
                             &task,
-                            *req.query().batch_interval(),
+                            req.query().batch_identifier(),
                         ),
-                        tx.count_client_reports_for_interval(
-                            task.id(),
-                            req.query().batch_interval()
-                        ),
+                        Q::count_client_reports(tx, &task, req.query().batch_identifier()),
                     )?;
 
                     // Batch size must be validated while handling CollectReq and hence before
@@ -1937,10 +2047,10 @@ impl VdafOps {
                     }
 
                     let collect_job_id = Uuid::new_v4();
-                    tx.put_collect_job(&CollectJob::<L, TimeInterval, A>::new(
+                    tx.put_collect_job(&CollectJob::<L, Q, A>::new(
                         *req.task_id(),
                         collect_job_id,
-                        *req.query().batch_interval(),
+                        req.query().batch_identifier().clone(),
                         aggregation_param,
                         CollectJobState::<L, A>::Start,
                     ))
@@ -1952,44 +2062,49 @@ impl VdafOps {
     }
 
     /// Handle GET requests to a collect job URI obtained from the leader's `/collect` endpoint.
+    /// The return value is an encoded `CollectResp<Q>`.
     /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.1
     async fn handle_get_collect_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         task: &Task,
         collect_job_id: Arc<Uuid>,
-    ) -> Result<Option<CollectResp<TimeInterval>>, Error> {
-        match self {
-            VdafOps::Prio3Aes128Count(_, _) => {
+    ) -> Result<Option<Vec<u8>>, Error> {
+        match (task.query_type(), self) {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
                 Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Count,
                     _,
                 >(datastore, task, collect_job_id)
                 .await
             }
 
-            VdafOps::Prio3Aes128CountVec(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
                 Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
                 >(datastore, task, collect_job_id)
                 .await
             }
 
-            VdafOps::Prio3Aes128Sum(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
                 Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Sum,
                     _,
                 >(datastore, task, collect_job_id)
                 .await
             }
 
-            VdafOps::Prio3Aes128Histogram(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
                 Self::handle_get_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Histogram,
                     _,
                 >(datastore, task, collect_job_id)
@@ -1997,8 +2112,58 @@ impl VdafOps {
             }
 
             #[cfg(feature = "test-util")]
-            VdafOps::Fake(_) => {
-                Self::handle_get_collect_job_generic::<0, dummy_vdaf::Vdaf, _>(
+            (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
+                Self::handle_get_collect_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                    datastore,
+                    task,
+                    collect_job_id,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
+                Self::handle_get_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Count,
+                    _,
+                >(datastore, task, collect_job_id)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
+                Self::handle_get_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(datastore, task, collect_job_id)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
+                Self::handle_get_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Sum,
+                    _,
+                >(datastore, task, collect_job_id)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
+                Self::handle_get_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Histogram,
+                    _,
+                >(datastore, task, collect_job_id)
+                .await
+            }
+
+            #[cfg(feature = "test-util")]
+            (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
+                Self::handle_get_collect_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
                     collect_job_id,
@@ -2008,11 +2173,17 @@ impl VdafOps {
         }
     }
 
-    async fn handle_get_collect_job_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+    // return value is an encoded CollectResp<Q>
+    async fn handle_get_collect_job_generic<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+        C: Clock,
+    >(
         datastore: &Datastore<C>,
         task: &Task,
         collect_job_id: Arc<Uuid>,
-    ) -> Result<Option<CollectResp<TimeInterval>>, Error>
+    ) -> Result<Option<Vec<u8>>, Error>
     where
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
@@ -2023,7 +2194,7 @@ impl VdafOps {
             .run_tx(|tx| {
                 let collect_job_id = Arc::clone(&collect_job_id);
                 Box::pin(async move {
-                    tx.get_collect_job::<L, TimeInterval, A>(&collect_job_id)
+                    tx.get_collect_job::<L, Q, A>(&collect_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -2060,9 +2231,9 @@ impl VdafOps {
                     task_id = %task.id(),
                     "Serving cached collect job response"
                 );
-                let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
+                let associated_data = associated_data_for_aggregate_share::<Q>(
                     collect_job.task_id(),
-                    collect_job.batch_interval(),
+                    collect_job.batch_identifier(),
                 );
                 let encrypted_leader_aggregate_share = hpke::seal(
                     task.collector_hpke_config(),
@@ -2075,14 +2246,19 @@ impl VdafOps {
                     &associated_data,
                 )?;
 
-                Ok(Some(CollectResp::new(
-                    PartialBatchSelector::new_time_interval(),
-                    *report_count,
-                    Vec::<HpkeCiphertext>::from([
-                        encrypted_leader_aggregate_share,
-                        encrypted_helper_aggregate_share.clone(),
-                    ]),
-                )))
+                Ok(Some(
+                    CollectResp::<Q>::new(
+                        PartialBatchSelector::new(
+                            Q::partial_batch_identifier(collect_job.batch_identifier()).clone(),
+                        ),
+                        *report_count,
+                        Vec::<HpkeCiphertext>::from([
+                            encrypted_leader_aggregate_share,
+                            encrypted_helper_aggregate_share.clone(),
+                        ]),
+                    )
+                    .get_encoded(),
+                ))
             }
 
             CollectJobState::Abandoned => {
@@ -2102,39 +2278,44 @@ impl VdafOps {
     async fn handle_delete_collect_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        task: &Task,
         collect_job_id: Uuid,
     ) -> Result<(), Error> {
-        match self {
-            VdafOps::Prio3Aes128Count(_, _) => {
+        match (task.query_type(), self) {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
                 Self::handle_delete_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Count,
                     _,
                 >(datastore, collect_job_id)
                 .await
             }
 
-            VdafOps::Prio3Aes128CountVec(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
                 Self::handle_delete_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
                 >(datastore, collect_job_id)
                 .await
             }
 
-            VdafOps::Prio3Aes128Sum(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
                 Self::handle_delete_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Sum,
                     _,
                 >(datastore, collect_job_id)
                 .await
             }
 
-            VdafOps::Prio3Aes128Histogram(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
                 Self::handle_delete_collect_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Histogram,
                     _,
                 >(datastore, collect_job_id)
@@ -2142,8 +2323,57 @@ impl VdafOps {
             }
 
             #[cfg(feature = "test-util")]
-            VdafOps::Fake(_) => {
-                Self::handle_delete_collect_job_generic::<0, dummy_vdaf::Vdaf, _>(
+            (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
+                Self::handle_delete_collect_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                    datastore,
+                    collect_job_id,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
+                Self::handle_delete_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Count,
+                    _,
+                >(datastore, collect_job_id)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
+                Self::handle_delete_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(datastore, collect_job_id)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
+                Self::handle_delete_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Sum,
+                    _,
+                >(datastore, collect_job_id)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
+                Self::handle_delete_collect_job_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Histogram,
+                    _,
+                >(datastore, collect_job_id)
+                .await
+            }
+
+            #[cfg(feature = "test-util")]
+            (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
+                Self::handle_delete_collect_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
                     datastore,
                     collect_job_id,
                 )
@@ -2152,7 +2382,12 @@ impl VdafOps {
         }
     }
 
-    async fn handle_delete_collect_job_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+    async fn handle_delete_collect_job_generic<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+        C: Clock,
+    >(
         datastore: &Datastore<C>,
         collect_job_id: Uuid,
     ) -> Result<(), Error>
@@ -2166,7 +2401,7 @@ impl VdafOps {
             .run_tx(move |tx| {
                 Box::pin(async move {
                     let collect_job = tx
-                        .get_collect_job::<L, TimeInterval, A>(&collect_job_id)
+                        .get_collect_job::<L, Q, A>(&collect_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
@@ -2175,7 +2410,7 @@ impl VdafOps {
                         })?;
 
                     if collect_job.state() != &CollectJobState::Deleted {
-                        tx.update_collect_job::<L, TimeInterval, A>(
+                        tx.update_collect_job::<L, Q, A>(
                             &collect_job.with_state(CollectJobState::Deleted),
                         )
                         .await?;
@@ -2184,7 +2419,6 @@ impl VdafOps {
                 })
             })
             .await?;
-
         Ok(())
     }
 
@@ -2193,62 +2427,116 @@ impl VdafOps {
         &self,
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        aggregate_share_req: Arc<AggregateShareReq<TimeInterval>>,
+        req_bytes: &[u8],
     ) -> Result<AggregateShareResp, Error> {
-        // TODO(#468): support both TimeInterval & FixedSize tasks (instead of assuming TimeInterval).
-        match self {
-            VdafOps::Prio3Aes128Count(_, _) => {
+        match (task.query_type(), self) {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
                 Self::handle_aggregate_share_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Count,
                     _,
-                >(datastore, task, aggregate_share_req)
+                >(datastore, task, req_bytes)
                 .await
             }
 
-            VdafOps::Prio3Aes128CountVec(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
                 Self::handle_aggregate_share_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, aggregate_share_req)
+                >(datastore, task, req_bytes)
                 .await
             }
 
-            VdafOps::Prio3Aes128Sum(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
                 Self::handle_aggregate_share_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, task, aggregate_share_req)
+                >(datastore, task, req_bytes)
                 .await
             }
 
-            VdafOps::Prio3Aes128Histogram(_, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
                 Self::handle_aggregate_share_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, aggregate_share_req)
+                >(datastore, task, req_bytes)
                 .await
             }
 
             #[cfg(feature = "test-util")]
-            VdafOps::Fake(_) => {
-                Self::handle_aggregate_share_generic::<0, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    task,
-                    aggregate_share_req,
+            (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
+                Self::handle_aggregate_share_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                    datastore, task, req_bytes,
+                )
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
+                Self::handle_aggregate_share_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Count,
+                    _,
+                >(datastore, task, req_bytes)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
+                Self::handle_aggregate_share_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(datastore, task, req_bytes)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
+                Self::handle_aggregate_share_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Sum,
+                    _,
+                >(datastore, task, req_bytes)
+                .await
+            }
+
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
+                Self::handle_aggregate_share_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Histogram,
+                    _,
+                >(datastore, task, req_bytes)
+                .await
+            }
+
+            #[cfg(feature = "test-util")]
+            (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
+                Self::handle_aggregate_share_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
+                    datastore, task, req_bytes,
                 )
                 .await
             }
         }
     }
 
-    async fn handle_aggregate_share_generic<const L: usize, A: vdaf::Aggregator<L>, C: Clock>(
+    async fn handle_aggregate_share_generic<
+        const L: usize,
+        Q: CollectableQueryType,
+        A: vdaf::Aggregator<L>,
+        C: Clock,
+    >(
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        aggregate_share_req: Arc<AggregateShareReq<TimeInterval>>,
+        req_bytes: &[u8],
     ) -> Result<AggregateShareResp, Error>
     where
         A::AggregationParam: Send + Sync,
@@ -2256,6 +2544,25 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
+        // Decode request, and verify that it is for the current task. We use an assert to check
+        // that the task IDs match as this should be guaranteed by the caller.
+        let aggregate_share_req = Arc::new(AggregateShareReq::<Q>::get_decoded(req_bytes)?);
+        assert_eq!(aggregate_share_req.task_id(), task.id());
+
+        // §4.4.4.3: check that the batch interval meets the requirements from §4.6
+        if !Q::validate_collect_identifier(
+            &task,
+            aggregate_share_req.batch_selector().batch_identifier(),
+        ) {
+            return Err(Error::BatchInvalid(
+                *task.id(),
+                format!(
+                    "{}",
+                    aggregate_share_req.batch_selector().batch_identifier()
+                ),
+            ));
+        }
+
         let aggregate_share_job = datastore
             .run_tx(|tx| {
                 let (task, aggregate_share_req) =
@@ -2269,7 +2576,7 @@ impl VdafOps {
                     let aggregate_share_job = match tx
                         .get_aggregate_share_job(
                             aggregate_share_req.task_id(),
-                            aggregate_share_req.batch_selector().batch_interval(),
+                            aggregate_share_req.batch_selector().batch_identifier(),
                             &aggregation_param,
                         )
                         .await?
@@ -2290,33 +2597,33 @@ impl VdafOps {
                                 aggregate_share_req.aggregation_parameter(),
                             )?;
                             let (batch_aggregations, _) = try_join!(
-                                TimeInterval::get_batch_aggregations_for_collect_identifier(
+                                Q::get_batch_aggregations_for_collect_identifier(
                                     tx,
                                     &task,
                                     aggregate_share_req.batch_selector().batch_identifier(),
                                     &aggregation_param
                                 ),
-                                validate_batch_query_count_for_collect::<L, _, A>(
+                                Q::validate_query_count::<L, C, A>(
                                     tx,
                                     &task,
-                                    *aggregate_share_req.batch_selector().batch_interval(),
+                                    aggregate_share_req.batch_selector().batch_identifier(),
                                 )
                             )?;
 
                             let (helper_aggregate_share, report_count, checksum) =
-                                compute_aggregate_share::<L, TimeInterval, A>(
-                                    &task,
-                                    &batch_aggregations,
-                                )
-                                .await
-                                .map_err(|e| datastore::Error::User(e.into()))?;
+                                compute_aggregate_share::<L, Q, A>(&task, &batch_aggregations)
+                                    .await
+                                    .map_err(|e| datastore::Error::User(e.into()))?;
 
                             // Now that we are satisfied that the request is serviceable, we consume
                             // a query by recording the aggregate share request parameters and the
                             // result.
-                            let aggregate_share_job = AggregateShareJob::<L, A>::new(
+                            let aggregate_share_job = AggregateShareJob::<L, Q, A>::new(
                                 *task.id(),
-                                *aggregate_share_req.batch_selector().batch_interval(),
+                                aggregate_share_req
+                                    .batch_selector()
+                                    .batch_identifier()
+                                    .clone(),
                                 aggregation_param,
                                 helper_aggregate_share,
                                 report_count,
@@ -2327,8 +2634,8 @@ impl VdafOps {
                         }
                     };
 
-                    // §4.4.4.3: verify total report count and the checksum we computed against those reported
-                    // by the leader.
+                    // §4.4.4.3: verify total report count and the checksum we computed against
+                    // those reported by the leader.
                     if aggregate_share_job.report_count() != aggregate_share_req.report_count()
                         || aggregate_share_job.checksum() != aggregate_share_req.checksum()
                     {
@@ -2357,7 +2664,7 @@ impl VdafOps {
             task.collector_hpke_config(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &<Vec<u8>>::from(aggregate_share_job.helper_aggregate_share()),
-            &associated_data_for_aggregate_share::<TimeInterval>(
+            &associated_data_for_aggregate_share::<Q>(
                 aggregate_share_req.task_id(),
                 aggregate_share_req.batch_selector().batch_identifier(),
             ),
@@ -4235,7 +4542,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_report_share(task.id(), &report_share_4).await?;
-                    tx.put_aggregate_share_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    tx.put_aggregate_share_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         &AggregateShareJob::new(
                             *task.id(),
                             Interval::new(
@@ -4760,7 +5067,7 @@ mod tests {
                     )
                     .await?;
 
-                    tx.put_aggregate_share_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                    tx.put_aggregate_share_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         &AggregateShareJob::new(
                             *task.id(),
                             Interval::new(
@@ -7845,8 +8152,11 @@ mod tests {
                 Box::new(|| {
                     Error::BatchInvalid(
                         random(),
-                        Interval::new(RealClock::default().now(), Duration::from_seconds(3600))
-                            .unwrap(),
+                        format!(
+                            "{}",
+                            Interval::new(RealClock::default().now(), Duration::from_seconds(3600))
+                                .unwrap()
+                        ),
                     )
                 }),
                 Some(DapProblemType::BatchInvalid),

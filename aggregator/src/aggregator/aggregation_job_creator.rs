@@ -733,7 +733,7 @@ mod tests {
             Role::Leader,
         )
         .build();
-        let leader_report = LeaderStoredReport::new_dummy(leader_task.id(), report_time);
+        let leader_report = LeaderStoredReport::new_dummy(*leader_task.id(), report_time);
 
         let helper_task = TaskBuilder::new(
             TaskQueryType::TimeInterval,
@@ -741,7 +741,7 @@ mod tests {
             Role::Helper,
         )
         .build();
-        let helper_report = LeaderStoredReport::new_dummy(helper_task.id(), report_time);
+        let helper_report = LeaderStoredReport::new_dummy(*helper_task.id(), report_time);
 
         ds.run_tx(|tx| {
             let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
@@ -845,7 +845,7 @@ mod tests {
         // job to be created containing these reports.
         let report_time = clock.now();
         let cur_batch_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE)
                 .collect();
 
@@ -854,7 +854,7 @@ mod tests {
         // aggregation job to be created for these reports.
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let small_batch_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(MIN_AGGREGATION_JOB_SIZE - 1)
                 .collect();
 
@@ -862,7 +862,7 @@ mod tests {
         // We expect these reports will be split into more than one aggregation job.
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let big_batch_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
@@ -968,8 +968,8 @@ mod tests {
             )
             .build(),
         );
-        let first_report = LeaderStoredReport::new_dummy(task.id(), clock.now());
-        let second_report = LeaderStoredReport::new_dummy(task.id(), clock.now());
+        let first_report = LeaderStoredReport::new_dummy(*task.id(), clock.now());
+        let second_report = LeaderStoredReport::new_dummy(*task.id(), clock.now());
 
         ds.run_tx(|tx| {
             let (task, first_report) = (Arc::clone(&task), first_report.clone());
@@ -1104,7 +1104,7 @@ mod tests {
         // Create MIN_BATCH_SIZE + MAX_BATCH_SIZE reports. We expect aggregation jobs to be created
         // containing these reports.
         let reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), clock.now()))
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), clock.now()))
                 .take(MIN_BATCH_SIZE + MAX_BATCH_SIZE)
                 .collect();
 
@@ -1222,7 +1222,7 @@ mod tests {
         // collect job)
         let report_time = clock.now().sub(task.time_precision()).unwrap();
         let batch_1_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE)
                 .collect();
 
@@ -1230,7 +1230,7 @@ mod tests {
         // two aggregation jobs per overlapping collect job. (and there are two such collect jobs)
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let batch_2_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(task.id(), report_time))
+            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 

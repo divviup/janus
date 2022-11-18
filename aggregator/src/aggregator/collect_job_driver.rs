@@ -1,26 +1,25 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
-use super::query_type::CollectableQueryType;
+use super::{aggregate_share::compute_aggregate_share, query_type::CollectableQueryType};
 use crate::{
     aggregator::{post_to_helper, Error},
     datastore::{
         self,
         models::AcquiredCollectJob,
-        models::{BatchAggregation, CollectJobState, Lease},
-        Datastore, Transaction,
+        models::{CollectJobState, Lease},
+        Datastore,
     },
-    task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{self, PRIO3_AES128_VERIFY_KEY_LENGTH},
     try_join,
 };
 use derivative::Derivative;
 use futures::future::BoxFuture;
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
-use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance, time::Clock};
+use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    AggregateShareReq, AggregateShareResp, BatchSelector, Duration, Interval, ReportIdChecksum,
-    Role,
+    AggregateShareReq, AggregateShareResp, BatchSelector, Duration, Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -34,11 +33,10 @@ use prio::{
             Prio3Aes128Count, Prio3Aes128CountVecMultithreaded, Prio3Aes128Histogram,
             Prio3Aes128Sum,
         },
-        Aggregatable,
     },
 };
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 /// Drives a collect job.
 #[derive(Derivative)]
@@ -572,149 +570,6 @@ impl CollectJobDriverMetrics {
     }
 }
 
-/// Computes the aggregate share over the provided batch aggregations.
-/// The assumption is that all aggregation jobs contributing to those batch aggregations have
-/// been driven to completion, and that the query count requirements have been validated for the
-/// included batches.
-#[tracing::instrument(err)]
-pub(crate) async fn compute_aggregate_share<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
-    task: &Task,
-    batch_aggregations: &[BatchAggregation<L, Q, A>],
-) -> Result<(A::AggregateShare, u64, ReportIdChecksum), Error>
-where
-    Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-{
-    // At the moment we construct an aggregate share (either handling AggregateShareReq in the
-    // helper or driving a collect job in the leader), there could be some incomplete aggregation
-    // jobs whose results not been accumulated into the batch aggregations we just queried from the
-    // datastore, meaning we will aggregate over an incomplete view of data, which:
-    //
-    //  * reduces fidelity of the resulting aggregates,
-    //  * could cause us to fail to meet the minimum batch size for the task,
-    //  * or for particularly pathological timing, could cause us to aggregate a different set of
-    //    reports than the leader did (though the checksum will detect this).
-    //
-    // There's not much the helper can do about this, because an aggregate job might be unfinished
-    // because it's waiting on an aggregate sub-protocol message that is never coming because the
-    // leader has abandoned that job. Thus the helper has no choice but to assume that any
-    // unfinished aggregation jobs were intentionally abandoned by the leader (see issue #104 for
-    // more discussion).
-    //
-    // On the leader side, we know/assume that we would not be stepping a collect job unless we had
-    // verified that the constituent aggregation jobs were finished.
-    //
-    // In either case, we go ahead and service the aggregate share request with whatever batch
-    // aggregations are available now.
-    let mut total_report_count = 0;
-    let mut total_checksum = ReportIdChecksum::default();
-    let mut total_aggregate_share: Option<A::AggregateShare> = None;
-
-    for batch_aggregation in batch_aggregations {
-        // XOR this batch interval's checksum into the overall checksum
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
-        total_checksum = total_checksum.combined_with(batch_aggregation.checksum());
-
-        // Sum all the report counts
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.2
-        total_report_count += batch_aggregation.report_count();
-
-        match &mut total_aggregate_share {
-            Some(share) => share.merge(batch_aggregation.aggregate_share())?,
-            None => total_aggregate_share = Some(batch_aggregation.aggregate_share().clone()),
-        }
-    }
-
-    // Only happens if there were no batch aggregations, which would get caught by the
-    // min_batch_size check below, but we have to unwrap the option.
-    let total_aggregate_share = total_aggregate_share
-        .ok_or_else(|| Error::InvalidBatchSize(*task.id(), total_report_count))?;
-
-    // Validate batch size per
-    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
-    if !task.validate_batch_size(total_report_count) {
-        return Err(Error::InvalidBatchSize(*task.id(), total_report_count));
-    }
-
-    Ok((total_aggregate_share, total_report_count, total_checksum))
-}
-
-/// Check whether this collect interval has been included in enough collect jobs (for `task.role` ==
-/// [`Role::Leader`]) or aggregate share jobs (for `task.role` == [`Role::Helper`]) to violate the
-/// task's maximum batch query count, and that this collect interval does not partially overlap with
-/// an already-observed collect interval.
-// TODO(#468): This only handles time-interval queries
-pub(crate) async fn validate_batch_query_count_for_collect<
-    const L: usize,
-    C: Clock,
-    A: vdaf::Aggregator<L>,
->(
-    tx: &Transaction<'_, C>,
-    task: &Task,
-    collect_interval: Interval,
-) -> Result<(), datastore::Error>
-where
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-{
-    // Check how many rows in the relevant table have an intersecting batch interval.
-    // Each such row consumes one unit of query count.
-    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
-    let intersecting_intervals: Vec<_> = match task.role() {
-        Role::Leader => tx
-            .get_collect_jobs_jobs_intersecting_interval::<L, A>(task.id(), &collect_interval)
-            .await?
-            .into_iter()
-            .map(|job| *job.batch_interval())
-            .collect(),
-
-        Role::Helper => tx
-            .get_aggregate_share_jobs_intersecting_interval::<L, A>(task.id(), &collect_interval)
-            .await?
-            .into_iter()
-            .map(|job| *job.batch_interval())
-            .collect(),
-
-        _ => panic!("Unexpected task role {:?}", task.role()),
-    };
-
-    // Check that all intersecting collect intervals are equal to this collect interval.
-    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6-5
-    if intersecting_intervals
-        .iter()
-        .any(|interval| interval != &collect_interval)
-    {
-        return Err(datastore::Error::User(
-            Error::BatchOverlap(*task.id(), collect_interval).into(),
-        ));
-    }
-
-    // Check that the batch query count is being consumed appropriately.
-    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
-    let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
-    if intersecting_intervals.len() == max_batch_query_count {
-        debug!(
-            task_id = %task.id(), %collect_interval,
-            "Refusing aggregate share request because query count has been consumed"
-        );
-        return Err(datastore::Error::User(
-            Error::BatchQueriedTooManyTimes(*task.id(), intersecting_intervals.len() as u64).into(),
-        ));
-    }
-    if intersecting_intervals.len() > max_batch_query_count {
-        error!(
-            task_id = %task.id(), %collect_interval,
-            "query count has been consumed more times than task allows"
-        );
-
-        // We return an internal error since this should be impossible.
-        return Err(datastore::Error::User(
-            Error::Internal("query count overconsumed".to_string()).into(),
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -806,7 +661,7 @@ mod tests {
                     .await?;
 
                     let report = LeaderStoredReport::new_dummy(
-                        task.id(),
+                        *task.id(),
                         clock
                             .now()
                             .to_batch_interval_start(task.time_precision())
@@ -923,7 +778,7 @@ mod tests {
                     .await?;
 
                     let report = LeaderStoredReport::new_dummy(
-                        task.id(),
+                        *task.id(),
                         clock
                             .now()
                             .to_batch_interval_start(task.time_precision())

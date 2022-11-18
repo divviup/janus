@@ -1,3 +1,4 @@
+use super::Error;
 use crate::{
     datastore::{self, gather_errors, models::BatchAggregation, Transaction},
     messages::TimeExt as _,
@@ -8,7 +9,7 @@ use futures::future::join_all;
 use janus_core::time::{Clock, TimeExt as _};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    Duration, Interval, Time,
+    Duration, Interval, Role, Time,
 };
 use prio::vdaf;
 use std::iter;
@@ -67,6 +68,30 @@ pub trait CollectableQueryType: QueryType {
     /// query type does not represent batch identifiers as an interval.
     fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval>;
 
+    /// Validates a collect identifier, per the boundary checks in
+    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
+    fn validate_collect_identifier(task: &Task, collect_identifier: &Self::BatchIdentifier)
+        -> bool;
+
+    /// Validates query count for a given batch, per the size checks in
+    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
+    async fn validate_query_count<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+        tx: &Transaction<'_, C>,
+        task: &Task,
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        Vec<u8>: for<'a> From<&'a A::AggregateShare>;
+
+    /// Returns the number of client reports included in the given collect identifier, whether they
+    /// have been aggregated or not.
+    async fn count_client_reports<C: Clock>(
+        tx: &Transaction<'_, C>,
+        task: &Task,
+        collect_identifier: &Self::BatchIdentifier,
+    ) -> Result<u64, datastore::Error>;
+
     /// Retrieves batch aggregations corresponding to all batches identified by the given collect
     /// identifier.
     async fn get_batch_aggregations_for_collect_identifier<
@@ -107,6 +132,7 @@ pub trait CollectableQueryType: QueryType {
     }
 }
 
+#[async_trait]
 impl CollectableQueryType for TimeInterval {
     type Iter = TimeIntervalBatchIdentifierIter;
 
@@ -119,6 +145,82 @@ impl CollectableQueryType for TimeInterval {
 
     fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
         Some(collect_identifier)
+    }
+
+    fn validate_collect_identifier(
+        task: &Task,
+        collect_identifier: &Self::BatchIdentifier,
+    ) -> bool {
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
+
+        // Batch interval should be greater than task's time precision
+        collect_identifier.duration().as_seconds() >= task.time_precision().as_seconds()
+                // Batch interval start must be a multiple of time precision
+                && collect_identifier.start().as_seconds_since_epoch() % task.time_precision().as_seconds() == 0
+                // Batch interval duration must be a multiple of time precision
+                && collect_identifier.duration().as_seconds() % task.time_precision().as_seconds() == 0
+    }
+
+    async fn validate_query_count<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+        tx: &Transaction<'_, C>,
+        task: &Task,
+        collect_interval: &Self::BatchIdentifier,
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+    {
+        // Check how many rows in the relevant table have an intersecting batch interval.
+        // Each such row consumes one unit of query count.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+        let intersecting_intervals: Vec<_> = match task.role() {
+            Role::Leader => tx
+                .get_collect_jobs_intersecting_interval::<L, A>(task.id(), collect_interval)
+                .await?
+                .into_iter()
+                .map(|job| *job.batch_interval())
+                .collect(),
+
+            Role::Helper => tx
+                .get_aggregate_share_jobs_intersecting_interval::<L, A>(task.id(), collect_interval)
+                .await?
+                .into_iter()
+                .map(|job| *job.batch_interval())
+                .collect(),
+
+            _ => panic!("Unexpected task role {:?}", task.role()),
+        };
+
+        // Check that all intersecting collect intervals are equal to this collect interval.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6-5
+        if intersecting_intervals
+            .iter()
+            .any(|interval| interval != collect_interval)
+        {
+            return Err(datastore::Error::User(
+                Error::BatchOverlap(*task.id(), *collect_interval).into(),
+            ));
+        }
+
+        // Check that the batch query count is being consumed appropriately.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+        let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
+        if intersecting_intervals.len() >= max_batch_query_count {
+            return Err(datastore::Error::User(
+                Error::BatchQueriedTooManyTimes(*task.id(), intersecting_intervals.len() as u64)
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn count_client_reports<C: Clock>(
+        tx: &Transaction<'_, C>,
+        task: &Task,
+        batch_interval: &Self::BatchIdentifier,
+    ) -> Result<u64, datastore::Error> {
+        tx.count_client_reports_for_interval(task.id(), batch_interval)
+            .await
     }
 }
 
@@ -177,6 +279,7 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
     }
 }
 
+#[async_trait]
 impl CollectableQueryType for FixedSize {
     type Iter = iter::Once<Self::BatchIdentifier>;
 
@@ -189,5 +292,134 @@ impl CollectableQueryType for FixedSize {
 
     fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {
         None
+    }
+
+    fn validate_collect_identifier(_: &Task, _: &Self::BatchIdentifier) -> bool {
+        true
+    }
+
+    async fn validate_query_count<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+        tx: &Transaction<'_, C>,
+        task: &Task,
+        batch_id: &Self::BatchIdentifier,
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+    {
+        let query_count = match task.role() {
+            Role::Leader => tx
+                .get_collect_jobs_by_batch_identifier::<L, FixedSize, A>(task.id(), batch_id)
+                .await?
+                .len(),
+
+            Role::Helper => tx
+                .get_aggregate_share_jobs_by_batch_identifier::<L, FixedSize, A>(
+                    task.id(),
+                    batch_id,
+                )
+                .await?
+                .len(),
+
+            _ => panic!("Unexpected task role {:?}", task.role()),
+        };
+
+        // Check that the batch query count is being consumed appropriately.
+        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+        let max_batch_query_count: usize = task.max_batch_query_count().try_into()?;
+        if query_count >= max_batch_query_count {
+            return Err(datastore::Error::User(
+                Error::BatchQueriedTooManyTimes(*task.id(), query_count as u64).into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn count_client_reports<C: Clock>(
+        tx: &Transaction<'_, C>,
+        task: &Task,
+        batch_id: &Self::BatchIdentifier,
+    ) -> Result<u64, datastore::Error> {
+        tx.count_client_reports_for_batch_id(task.id(), batch_id)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        aggregator::query_type::CollectableQueryType,
+        task::{test_util::TaskBuilder, QueryType},
+    };
+    use janus_core::task::VdafInstance;
+    use janus_messages::{query_type::TimeInterval, Duration, Interval, Role, Time};
+
+    #[test]
+    fn validate_collect_identifier() {
+        let time_precision_secs = 3600;
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
+            .with_time_precision(Duration::from_seconds(time_precision_secs))
+            .build();
+
+        struct TestCase {
+            name: &'static str,
+            input: Interval,
+            expected: bool,
+        }
+
+        for test_case in Vec::from([
+            TestCase {
+                name: "same duration as minimum",
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(time_precision_secs),
+                    Duration::from_seconds(time_precision_secs),
+                )
+                .unwrap(),
+                expected: true,
+            },
+            TestCase {
+                name: "interval too short",
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(time_precision_secs),
+                    Duration::from_seconds(time_precision_secs - 1),
+                )
+                .unwrap(),
+                expected: false,
+            },
+            TestCase {
+                name: "interval larger than minimum",
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(time_precision_secs),
+                    Duration::from_seconds(time_precision_secs * 2),
+                )
+                .unwrap(),
+                expected: true,
+            },
+            TestCase {
+                name: "interval duration not aligned with minimum",
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(time_precision_secs),
+                    Duration::from_seconds(time_precision_secs + 1800),
+                )
+                .unwrap(),
+                expected: false,
+            },
+            TestCase {
+                name: "interval start not aligned with minimum",
+                input: Interval::new(
+                    Time::from_seconds_since_epoch(1800),
+                    Duration::from_seconds(time_precision_secs),
+                )
+                .unwrap(),
+                expected: false,
+            },
+        ]) {
+            assert_eq!(
+                test_case.expected,
+                TimeInterval::validate_collect_identifier(&task, &test_case.input),
+                "test case: {}",
+                test_case.name
+            );
+        }
     }
 }

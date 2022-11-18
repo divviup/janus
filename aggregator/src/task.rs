@@ -8,8 +8,8 @@ use janus_core::{
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
 };
 use janus_messages::{
-    Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
-    Role, TaskId, Time,
+    Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
+    TaskId, Time,
 };
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -264,17 +264,6 @@ impl Task {
     /// Retrieves the HPKE keys in use associated with this task.
     pub fn hpke_keys(&self) -> &HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> {
         &self.hpke_keys
-    }
-
-    /// Returns true if `batch_interval` is valid, per
-    /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-    pub(crate) fn validate_batch_interval(&self, batch_interval: &Interval) -> bool {
-        // Batch interval should be greater than task's time precision
-        batch_interval.duration().as_seconds() >= self.time_precision.as_seconds()
-            // Batch interval start must be a multiple of time precision
-            && batch_interval.start().as_seconds_since_epoch() % self.time_precision.as_seconds() == 0
-            // Batch interval duration must be a multiple of time precision
-            && batch_interval.duration().as_seconds() % self.time_precision.as_seconds() == 0
     }
 
     /// Returns true if the `batch_size` is valid given this task's query type and batch size
@@ -770,77 +759,8 @@ mod tests {
         task::{test_util::TaskBuilder, QueryType, VdafInstance},
     };
     use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
-    use janus_messages::{Duration, Interval, Role, Time};
+    use janus_messages::{Duration, Role, Time};
     use rand::random;
-
-    #[test]
-    fn validate_batch_interval() {
-        let time_precision_secs = 3600;
-        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
-            .with_time_precision(Duration::from_seconds(time_precision_secs))
-            .build();
-
-        struct TestCase {
-            name: &'static str,
-            input: Interval,
-            expected: bool,
-        }
-
-        for test_case in Vec::from([
-            TestCase {
-                name: "same duration as minimum",
-                input: Interval::new(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs),
-                )
-                .unwrap(),
-                expected: true,
-            },
-            TestCase {
-                name: "interval too short",
-                input: Interval::new(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs - 1),
-                )
-                .unwrap(),
-                expected: false,
-            },
-            TestCase {
-                name: "interval larger than minimum",
-                input: Interval::new(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs * 2),
-                )
-                .unwrap(),
-                expected: true,
-            },
-            TestCase {
-                name: "interval duration not aligned with minimum",
-                input: Interval::new(
-                    Time::from_seconds_since_epoch(time_precision_secs),
-                    Duration::from_seconds(time_precision_secs + 1800),
-                )
-                .unwrap(),
-                expected: false,
-            },
-            TestCase {
-                name: "interval start not aligned with minimum",
-                input: Interval::new(
-                    Time::from_seconds_since_epoch(1800),
-                    Duration::from_seconds(time_precision_secs),
-                )
-                .unwrap(),
-                expected: false,
-            },
-        ]) {
-            assert_eq!(
-                test_case.expected,
-                task.validate_batch_interval(&test_case.input),
-                "test case: {}",
-                test_case.name
-            );
-        }
-    }
 
     #[test]
     fn task_serialization() {
