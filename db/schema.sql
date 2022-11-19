@@ -193,13 +193,14 @@ CREATE INDEX collect_jobs_interval_containment_index ON collect_jobs USING gist 
 CREATE TABLE aggregate_share_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                 BIGINT NOT NULL,    -- the task ID being collected
-    batch_interval          TSRANGE NOT NULL,   -- the batch interval, as a range of timestamps
+    batch_identifier        BYTEA NOT NULL,     -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_interval          TSRANGE,            -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
     aggregation_param       BYTEA NOT NULL,     -- the aggregation parameter (opaque VDAF message)
     helper_aggregate_share  BYTEA NOT NULL,     -- the helper's unencrypted aggregate share
     report_count            BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share
     checksum                BYTEA NOT NULL,     -- the checksum over the reports included in helper_aggregate_share
 
-    CONSTRAINT unique_aggregate_share_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_interval, aggregation_param),
+    CONSTRAINT unique_aggregate_share_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 CREATE INDEX aggregate_share_jobs_interval_containment_index ON aggregate_share_jobs USING gist (task_id, batch_interval);

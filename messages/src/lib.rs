@@ -1021,7 +1021,7 @@ impl<Q: QueryType> Decode for Query<Q> {
 }
 
 /// DAP protocol message representing a request from the collector to the leader to provide
-/// aggregate shares for a given batch interval.
+/// aggregate shares for a given batch.
 #[derive(Clone, Derivative, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct CollectReq<Q: QueryType> {
@@ -1213,7 +1213,11 @@ pub mod query_type {
     use num_enum::TryFromPrimitive;
     use prio::codec::{CodecError, Decode, Encode};
     use serde::{Deserialize, Serialize};
-    use std::{fmt::Debug, hash::Hash, io::Cursor};
+    use std::{
+        fmt::{Debug, Display},
+        hash::Hash,
+        io::Cursor,
+    };
 
     /// QueryType represents a DAP query type. This is a task-level configuration setting which
     /// determines how individual client reports are grouped together into batches for collection.
@@ -1222,7 +1226,16 @@ pub mod query_type {
         const CODE: Code;
 
         /// The type of a batch identifier.
-        type BatchIdentifier: Debug + Clone + Hash + PartialEq + Eq + Encode + Decode + Send + Sync;
+        type BatchIdentifier: Display
+            + Debug
+            + Clone
+            + Hash
+            + PartialEq
+            + Eq
+            + Encode
+            + Decode
+            + Send
+            + Sync;
 
         /// The type of a batch identifier as it appears in a `PartialBatchSelector`. Will be either
         /// the same type as `BatchIdentifier`, or `()`.
