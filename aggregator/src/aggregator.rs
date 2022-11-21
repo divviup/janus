@@ -1422,7 +1422,7 @@ impl VdafOps {
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
     async fn handle_aggregate_init_generic<
         const L: usize,
-        Q: AccumulableQueryType + CollectableQueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
         C: Clock,
     >(

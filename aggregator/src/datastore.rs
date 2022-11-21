@@ -9,7 +9,7 @@ use self::models::{
 #[cfg(test)]
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
 use crate::{
-    aggregator::query_type::CollectableQueryType,
+    aggregator::query_type::{AccumulableQueryType, CollectableQueryType},
     messages::TimeExt,
     task::{self, Task},
     SecretBytes,
@@ -1389,7 +1389,7 @@ impl<C: Clock> Transaction<'_, C> {
     #[tracing::instrument(skip(self), err)]
     pub async fn put_aggregation_job<
         const L: usize,
-        Q: CollectableQueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
     >(
         &self,

@@ -23,6 +23,11 @@ pub trait AccumulableQueryType: QueryType {
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error>;
+
+    /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
+    /// interval. This method extracts the interval from such identifiers, or returns `None` if the
+    /// query type does not represent batch identifiers as an interval.
+    fn to_batch_interval(batch_identifier: &Self::BatchIdentifier) -> Option<&Interval>;
 }
 
 impl AccumulableQueryType for TimeInterval {
@@ -37,6 +42,10 @@ impl AccumulableQueryType for TimeInterval {
         Interval::new(batch_interval_start, *task.time_precision())
             .map_err(|e| datastore::Error::User(e.into()))
     }
+
+    fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
+        Some(collect_identifier)
+    }
 }
 
 impl AccumulableQueryType for FixedSize {
@@ -47,12 +56,16 @@ impl AccumulableQueryType for FixedSize {
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
         Ok(*batch_id)
     }
+
+    fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {
+        None
+    }
 }
 
 /// CollectableQueryType represents a query type that can be collected by Janus. This trait extends
-/// [`QueryType`] with functionality required for collection.
+/// [`AccumulableQueryType`] with additional functionality required for collection.
 #[async_trait]
-pub trait CollectableQueryType: QueryType {
+pub trait CollectableQueryType: AccumulableQueryType {
     type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync;
 
     /// Some query types (e.g. [`TimeInterval`]) can receive a batch identifier in collect requests
@@ -62,11 +75,6 @@ pub trait CollectableQueryType: QueryType {
         _: &Task,
         collect_identifier: &Self::BatchIdentifier,
     ) -> Self::Iter;
-
-    /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
-    /// interval. This method extracts the interval from such identifiers, or returns `None` if the
-    /// query type does not represent batch identifiers as an interval.
-    fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval>;
 
     /// Validates a collect identifier, per the boundary checks in
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
@@ -141,10 +149,6 @@ impl CollectableQueryType for TimeInterval {
         batch_interval: &Self::BatchIdentifier,
     ) -> Self::Iter {
         TimeIntervalBatchIdentifierIter::new(task, batch_interval)
-    }
-
-    fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
-        Some(collect_identifier)
     }
 
     fn validate_collect_identifier(
@@ -288,10 +292,6 @@ impl CollectableQueryType for FixedSize {
         batch_id: &Self::BatchIdentifier,
     ) -> Self::Iter {
         iter::once(*batch_id)
-    }
-
-    fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {
-        None
     }
 
     fn validate_collect_identifier(_: &Task, _: &Self::BatchIdentifier) -> bool {
