@@ -113,7 +113,7 @@ CREATE TABLE aggregation_jobs(
 );
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
 CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, partial_batch_identifier);
-CREATE INDEX aggregation_jobs_batch_interval ON aggregation_jobs USING gist (batch_interval) WHERE batch_interval IS NOT NULL;
+CREATE INDEX aggregation_jobs_task_and_batch_interval ON aggregation_jobs USING gist (task_id, batch_interval) WHERE batch_interval IS NOT NULL;
 
 -- Specifies the possible state of aggregating a single report.
 CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
