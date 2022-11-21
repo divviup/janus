@@ -16,7 +16,7 @@ use derivative::Derivative;
 use futures::future::{join_all, BoxFuture, FutureExt};
 use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
-    query_type::{FixedSize, QueryType, TimeInterval},
+    query_type::{FixedSize, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
     Duration, PartialBatchSelector, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
     Role,
@@ -381,7 +381,7 @@ impl AggregationJobDriver {
             *task.id(),
             *aggregation_job.id(),
             aggregation_job.aggregation_parameter().get_encoded(),
-            PartialBatchSelector::new(aggregation_job.partial_batch_identifier().clone()),
+            PartialBatchSelector::new(aggregation_job.partial_batch_identifier()?.clone()),
             report_shares,
         );
 
@@ -602,7 +602,7 @@ impl AggregationJobDriver {
                     // If the leader didn't finish too, we transition to INVALID.
                     if let PrepareTransition::Finish(out_share) = leader_transition {
                         match accumulator.update(
-                            aggregation_job.partial_batch_identifier(),
+                            aggregation_job.partial_batch_identifier()?,
                             report_aggregation.report_id(),
                             report_aggregation.time(),
                             out_share,
@@ -749,7 +749,7 @@ impl AggregationJobDriver {
     async fn cancel_aggregation_job_generic<
         const L: usize,
         C: Clock,
-        Q: QueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
     >(
         &self,
@@ -976,7 +976,6 @@ mod tests {
                 >::new(
                     *task.id(),
                     aggregation_job_id,
-                    (),
                     Some(batch_interval),
                     (),
                     AggregationJobState::InProgress,
@@ -1078,7 +1077,6 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                (),
                 Some(batch_interval),
                 (),
                 AggregationJobState::Finished,
@@ -1191,7 +1189,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
                         Some(batch_interval),
                         (),
                         AggregationJobState::InProgress,
@@ -1291,7 +1288,6 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                (),
                 Some(batch_interval),
                 (),
                 AggregationJobState::InProgress,
@@ -1408,7 +1404,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        batch_id,
                         Some(batch_id),
                         (),
                         AggregationJobState::InProgress,
@@ -1508,7 +1503,6 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                batch_id,
                 Some(batch_id),
                 (),
                 AggregationJobState::InProgress,
@@ -1636,7 +1630,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
                         Some(batch_interval),
                         (),
                         AggregationJobState::InProgress,
@@ -1727,7 +1720,6 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                (),
                 Some(batch_interval),
                 (),
                 AggregationJobState::Finished,
@@ -1882,7 +1874,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        batch_id,
                         Some(batch_id),
                         (),
                         AggregationJobState::InProgress,
@@ -1973,7 +1964,6 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                batch_id,
                 Some(batch_id),
                 (),
                 AggregationJobState::Finished,
@@ -2092,7 +2082,6 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                (),
                 Some(batch_interval),
                 (),
                 AggregationJobState::InProgress,
@@ -2286,7 +2275,6 @@ mod tests {
                 >::new(
                     *task.id(),
                     aggregation_job_id,
-                    (),
                     Some(batch_interval),
                     (),
                     AggregationJobState::InProgress,
@@ -2402,7 +2390,6 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                (),
                 Some(batch_interval),
                 (),
                 AggregationJobState::Abandoned,

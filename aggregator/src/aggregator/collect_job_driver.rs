@@ -653,7 +653,6 @@ mod tests {
                         &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                             *task.id(),
                             aggregation_job_id,
-                            (),
                             Some(batch_interval),
                             aggregation_param,
                             AggregationJobState::Finished,
@@ -771,7 +770,6 @@ mod tests {
                         &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                             *task.id(),
                             aggregation_job_id,
-                            (),
                             Some(batch_interval),
                             aggregation_param,
                             AggregationJobState::Finished,

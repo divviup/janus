@@ -1580,12 +1580,13 @@ impl VdafOps {
         }
 
         // Store data to datastore.
+        let batch_identifier_opt =
+            Q::upgrade_partial_batch_identifier(req.batch_selector().batch_identifier()).cloned();
         let req = Arc::new(req);
         let aggregation_job = Arc::new(AggregationJob::<L, Q, A>::new(
             *task.id(),
             *req.job_id(),
-            req.batch_selector().batch_identifier().clone(),
-            None,
+            batch_identifier_opt,
             agg_param,
             if saw_continue {
                 AggregationJobState::InProgress
@@ -1658,7 +1659,7 @@ impl VdafOps {
                             share_data.agg_state
                         {
                             accumulator.update(
-                                aggregation_job.partial_batch_identifier(),
+                                aggregation_job.partial_batch_identifier()?,
                                 share_data.report_share.metadata().id(),
                                 share_data.report_share.metadata().time(),
                                 output_share,
@@ -1810,7 +1811,7 @@ impl VdafOps {
                             Ok(PrepareTransition::Finish(output_share)) => {
                                 saw_finish = true;
                                 accumulator.update(
-                                    aggregation_job.partial_batch_identifier(),
+                                    aggregation_job.partial_batch_identifier()?,
                                     prep_step.report_id(),
                                     report_aggregation.time(),
                                     &output_share,
@@ -5053,7 +5054,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
                         None,
                         (),
                         AggregationJobState::InProgress,
@@ -5195,7 +5195,6 @@ mod tests {
             Some(AggregationJob::new(
                 *task.id(),
                 aggregation_job_id,
-                (),
                 None,
                 (),
                 AggregationJobState::Finished,
@@ -5374,7 +5373,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
-                        (),
                         None,
                         (),
                         AggregationJobState::InProgress,
@@ -5660,7 +5658,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
-                        (),
                         None,
                         (),
                         AggregationJobState::InProgress,
@@ -5885,7 +5882,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
                         None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
@@ -6001,7 +5997,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
                         None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
@@ -6098,7 +6093,6 @@ mod tests {
             Some(AggregationJob::new(
                 *task.id(),
                 aggregation_job_id,
-                (),
                 None,
                 dummy_vdaf::AggregationParam(0),
                 AggregationJobState::Finished,
@@ -6161,7 +6155,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
                         None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
@@ -6299,7 +6292,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
                         None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,
@@ -6430,7 +6422,6 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
                         None,
                         dummy_vdaf::AggregationParam(0),
                         AggregationJobState::InProgress,

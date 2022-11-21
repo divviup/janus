@@ -28,6 +28,19 @@ pub trait AccumulableQueryType: QueryType {
     /// interval. This method extracts the interval from such identifiers, or returns `None` if the
     /// query type does not represent batch identifiers as an interval.
     fn to_batch_interval(batch_identifier: &Self::BatchIdentifier) -> Option<&Interval>;
+
+    /// Downgrade a batch identifier into a partial batch identifier.
+    fn downgrade_batch_identifier(
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> &Self::PartialBatchIdentifier;
+
+    /// Upgrade a partial batch identifier into a batch identifier, if possible.
+    fn upgrade_partial_batch_identifier(
+        partial_batch_identifier: &Self::PartialBatchIdentifier,
+    ) -> Option<&Self::BatchIdentifier>;
+
+    /// Get the default value of the partial batch identifier, if applicable.
+    fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier>;
 }
 
 impl AccumulableQueryType for TimeInterval {
@@ -46,6 +59,22 @@ impl AccumulableQueryType for TimeInterval {
     fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
         Some(collect_identifier)
     }
+
+    fn downgrade_batch_identifier(
+        _batch_identifier: &Self::BatchIdentifier,
+    ) -> &Self::PartialBatchIdentifier {
+        &()
+    }
+
+    fn upgrade_partial_batch_identifier(
+        _partial_batch_identifier: &Self::PartialBatchIdentifier,
+    ) -> Option<&Self::BatchIdentifier> {
+        None
+    }
+
+    fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier> {
+        Some(&())
+    }
 }
 
 impl AccumulableQueryType for FixedSize {
@@ -58,6 +87,22 @@ impl AccumulableQueryType for FixedSize {
     }
 
     fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {
+        None
+    }
+
+    fn downgrade_batch_identifier(
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> &Self::PartialBatchIdentifier {
+        batch_identifier
+    }
+
+    fn upgrade_partial_batch_identifier(
+        partial_batch_identifier: &Self::PartialBatchIdentifier,
+    ) -> Option<&Self::BatchIdentifier> {
+        Some(partial_batch_identifier)
+    }
+
+    fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier> {
         None
     }
 }
