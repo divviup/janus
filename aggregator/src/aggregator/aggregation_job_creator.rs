@@ -805,6 +805,14 @@ mod tests {
             .unwrap();
         assert!(helper_agg_jobs.is_empty());
         assert_eq!(leader_agg_jobs.len(), 1);
+        assert!(leader_agg_jobs
+            .iter()
+            .next()
+            .unwrap()
+            .1
+             .0
+            .batch_identifier()
+            .is_some());
         let report_times_and_ids = leader_agg_jobs.into_iter().next().unwrap().1 .1;
         assert_eq!(
             report_times_and_ids,

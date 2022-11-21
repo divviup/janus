@@ -4364,6 +4364,7 @@ mod tests {
         .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
@@ -4580,7 +4581,7 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -4653,6 +4654,30 @@ mod tests {
         assert_eq!(
             prepare_step_5.result(),
             &PrepareStepResult::Failed(ReportShareError::BatchCollected)
+        );
+
+        // Check aggregation job in datastore.
+        let aggregation_jobs = datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.get_aggregation_jobs_for_task_id::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Aes128Count,
+                    >(task.id())
+                        .await
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(aggregation_jobs.len(), 1);
+        assert_eq!(aggregation_jobs[0].task_id(), task.id());
+        assert_eq!(aggregation_jobs[0].id(), request.job_id());
+        assert!(aggregation_jobs[0].batch_identifier().is_none());
+        assert_eq!(
+            aggregation_jobs[0].state(),
+            &AggregationJobState::InProgress
         );
     }
 
