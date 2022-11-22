@@ -1620,9 +1620,11 @@ impl VdafOps {
                                 task.id(),
                                 share_data.report_share.metadata().id()
                             ),
-                            tx.get_aggregate_share_jobs_including_time::<L, A>(
+                            Q::get_conflicting_aggregate_share_jobs::<L, C, A>(
+                                tx,
                                 task.id(),
-                                share_data.report_share.metadata().time()
+                                req.batch_selector().batch_identifier(),
+                                share_data.report_share.metadata()
                             ),
                         )?;
                         if report_share_exists {
