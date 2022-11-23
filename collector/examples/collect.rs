@@ -294,10 +294,18 @@ struct Options {
     buckets: Option<Buckets>,
 
     /// Start of the collection batch interval, as the number of seconds since the Unix epoch
-    #[clap(long, help_heading = "Collect Request Parameters (Time Interval)")]
+    #[clap(
+        long,
+        requires = "batch_interval_duration",
+        help_heading = "Collect Request Parameters (Time Interval)"
+    )]
     batch_interval_start: Option<u64>,
     /// Duration of the collection batch interval, in seconds
-    #[clap(long, help_heading = "Collect Request Parameters (Time Interval)")]
+    #[clap(
+        long,
+        requires = "batch_interval_start",
+        help_heading = "Collect Request Parameters (Time Interval)"
+    )]
     batch_interval_duration: Option<u64>,
 
     /// Batch identifier, encoded with base64url
@@ -350,21 +358,7 @@ async fn run(options: Options) -> Result<(), Error> {
             let batch_id = *batch_id;
             run_with_query(options, Query::new_fixed_size(batch_id)).await
         }
-        (None, None, None) | (Some(_), None, None) | (None, Some(_), None) => {
-            Err(clap::Error::raw(
-                ErrorKind::MissingRequiredArgument,
-                "missing collect request parameters".to_string(),
-            )
-            .into())
-        }
-        (Some(_), Some(_), Some(_)) | (Some(_), None, Some(_)) | (None, Some(_), Some(_)) => {
-            Err(clap::Error::raw(
-                ErrorKind::ArgumentConflict,
-                "time interval and fixed size collect request parameters cannot be combined"
-                    .to_string(),
-            )
-            .into())
-        }
+        _ => unreachable!(),
     }
 }
 
@@ -686,5 +680,65 @@ mod tests {
             Ok(got) => assert_eq!(got, expected),
             Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
         }
+
+        // Check that clap enforces all the constraints we need on combinations of query arguments.
+        // This allows us to treat a default match branch as `unreachable!()` when unpacking the
+        // argument matches.
+        let base_arguments = Vec::from([
+            "collect".to_string(),
+            format!("--task-id={task_id_encoded}"),
+            "--leader".to_string(),
+            leader.to_string(),
+            "--auth-token".to_string(),
+            "collector-authentication-token".to_string(),
+            format!("--hpke-config={encoded_hpke_config}"),
+            format!("--hpke-private-key={encoded_private_key}"),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(base_arguments.clone())
+                .unwrap_err()
+                .kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.push("--batch-interval-start=1".to_string());
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.push("--batch-interval-duration=1".to_string());
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.extend([
+            "--batch-interval-start=1".to_string(),
+            "--batch-interval-duration=1".to_string(),
+            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ArgumentConflict
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.extend([
+            "--batch-interval-start=1".to_string(),
+            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ArgumentConflict
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.extend([
+            "--batch-interval-duration=1".to_string(),
+            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ArgumentConflict
+        );
     }
 }
