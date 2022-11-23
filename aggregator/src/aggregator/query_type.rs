@@ -1,6 +1,10 @@
 use super::Error;
 use crate::{
-    datastore::{self, gather_errors, models::BatchAggregation, Transaction},
+    datastore::{
+        self, gather_errors,
+        models::{AggregateShareJob, BatchAggregation},
+        Transaction,
+    },
     messages::TimeExt as _,
     task::Task,
 };
@@ -9,11 +13,12 @@ use futures::future::join_all;
 use janus_core::time::{Clock, TimeExt as _};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    Duration, Interval, Role, Time,
+    Duration, Interval, ReportMetadata, Role, TaskId, Time,
 };
 use prio::vdaf;
 use std::iter;
 
+#[async_trait]
 pub trait AccumulableQueryType: QueryType {
     /// This method converts various values related to a client report into a batch identifier. The
     /// arguments are somewhat arbitrary in the sense they are what "works out" to allow the
@@ -23,6 +28,20 @@ pub trait AccumulableQueryType: QueryType {
         _: &Self::PartialBatchIdentifier,
         client_timestamp: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error>;
+
+    async fn get_conflicting_aggregate_share_jobs<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L>,
+    >(
+        tx: &Transaction<'_, C>,
+        task_id: &TaskId,
+        partial_batch_identifier: &Self::PartialBatchIdentifier,
+        report_metadata: &ReportMetadata,
+    ) -> Result<Vec<AggregateShareJob<L, Self, A>>, datastore::Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>;
 
     /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
     /// interval. This method extracts the interval from such identifiers, or returns `None` if the
@@ -43,6 +62,7 @@ pub trait AccumulableQueryType: QueryType {
     fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier>;
 }
 
+#[async_trait]
 impl AccumulableQueryType for TimeInterval {
     fn to_batch_identifier(
         task: &Task,
@@ -54,6 +74,24 @@ impl AccumulableQueryType for TimeInterval {
             .map_err(|e| datastore::Error::User(e.into()))?;
         Interval::new(batch_interval_start, *task.time_precision())
             .map_err(|e| datastore::Error::User(e.into()))
+    }
+
+    async fn get_conflicting_aggregate_share_jobs<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L>,
+    >(
+        tx: &Transaction<'_, C>,
+        task_id: &TaskId,
+        _: &Self::PartialBatchIdentifier,
+        report_metadata: &ReportMetadata,
+    ) -> Result<Vec<AggregateShareJob<L, Self, A>>, datastore::Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        tx.get_aggregate_share_jobs_including_time::<L, A>(task_id, report_metadata.time())
+            .await
     }
 
     fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
@@ -77,6 +115,7 @@ impl AccumulableQueryType for TimeInterval {
     }
 }
 
+#[async_trait]
 impl AccumulableQueryType for FixedSize {
     fn to_batch_identifier(
         _: &Task,
@@ -84,6 +123,24 @@ impl AccumulableQueryType for FixedSize {
         _: &Time,
     ) -> Result<Self::BatchIdentifier, datastore::Error> {
         Ok(*batch_id)
+    }
+
+    async fn get_conflicting_aggregate_share_jobs<
+        const L: usize,
+        C: Clock,
+        A: vdaf::Aggregator<L>,
+    >(
+        tx: &Transaction<'_, C>,
+        task_id: &TaskId,
+        batch_id: &Self::PartialBatchIdentifier,
+        _: &ReportMetadata,
+    ) -> Result<Vec<AggregateShareJob<L, Self, A>>, datastore::Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        tx.get_aggregate_share_jobs_by_batch_identifier(task_id, batch_id)
+            .await
     }
 
     fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {
@@ -135,7 +192,7 @@ pub trait CollectableQueryType: AccumulableQueryType {
     ) -> Result<(), datastore::Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        Vec<u8>: for<'a> From<&'a A::AggregateShare>;
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>;
 
     /// Returns the number of client reports included in the given collect identifier, whether they
     /// have been aggregated or not.
@@ -217,7 +274,7 @@ impl CollectableQueryType for TimeInterval {
     ) -> Result<(), datastore::Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         // Check how many rows in the relevant table have an intersecting batch interval.
         // Each such row consumes one unit of query count.
@@ -350,7 +407,7 @@ impl CollectableQueryType for FixedSize {
     ) -> Result<(), datastore::Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let query_count = match task.role() {
             Role::Leader => tx
