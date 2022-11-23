@@ -9,7 +9,7 @@ use self::models::{
 #[cfg(test)]
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
 use crate::{
-    aggregator::query_type::CollectableQueryType,
+    aggregator::query_type::{AccumulableQueryType, CollectableQueryType},
     messages::TimeExt,
     task::{self, Task},
     SecretBytes,
@@ -1058,7 +1058,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM report_aggregations
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                  AND aggregation_jobs.partial_batch_identifier = $2",
+                  AND aggregation_jobs.batch_identifier = $2",
             )
             .await?;
         let row = self
@@ -1067,7 +1067,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &stmt,
                 &[
                     /* task_id */ task_id.as_ref(),
-                    /* partial_batch_identifier */ &batch_id.get_encoded(),
+                    /* batch_identifier */ &batch_id.get_encoded(),
                 ],
             )
             .await?;
@@ -1194,7 +1194,11 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// get_aggregation_job retrieves an aggregation job by ID.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_aggregation_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn get_aggregation_job<
+        const L: usize,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
@@ -1205,7 +1209,7 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT partial_batch_identifier, aggregation_param, state
+                "SELECT batch_identifier, aggregation_param, state
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1 AND aggregation_jobs.aggregation_job_id = $2",
             )
@@ -1228,7 +1232,7 @@ impl<C: Clock> Transaction<'_, C> {
     #[tracing::instrument(skip(self), err)]
     pub async fn get_aggregation_jobs_for_task_id<
         const L: usize,
-        Q: QueryType,
+        Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
     >(
         &self,
@@ -1240,7 +1244,7 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT aggregation_job_id, partial_batch_identifier, aggregation_param, state
+                "SELECT aggregation_job_id, batch_identifier, aggregation_param, state
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1",
             )
@@ -1259,7 +1263,7 @@ impl<C: Clock> Transaction<'_, C> {
             .collect()
     }
 
-    fn aggregation_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    fn aggregation_job_from_row<const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L>>(
         task_id: &TaskId,
         aggregation_job_id: &AggregationJobId,
         row: &Row,
@@ -1270,7 +1274,9 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(AggregationJob::new(
             *task_id,
             *aggregation_job_id,
-            Q::PartialBatchIdentifier::get_decoded(row.get("partial_batch_identifier"))?,
+            row.get::<_, Option<&[u8]>>("batch_identifier")
+                .map(Q::BatchIdentifier::get_decoded)
+                .transpose()?,
             A::AggregationParam::get_decoded(row.get("aggregation_param"))?,
             row.get("state"),
         ))
@@ -1384,19 +1390,36 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// put_aggregation_job stores an aggregation job.
     #[tracing::instrument(skip(self), err)]
-    pub async fn put_aggregation_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn put_aggregation_job<
+        const L: usize,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         aggregation_job: &AggregationJob<L, Q, A>,
     ) -> Result<(), Error>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+        let batch_interval = aggregation_job
+            .batch_identifier()
+            .as_ref()
+            .and_then(Q::to_batch_interval)
+            .map(SqlInterval::from);
+
         let stmt = self
             .tx
             .prepare_cached(
                 "INSERT INTO aggregation_jobs
-                (task_id, aggregation_job_id, partial_batch_identifier, aggregation_param, state)
-            VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5)",
+                (
+                    task_id,
+                    aggregation_job_id,
+                    batch_identifier,
+                    batch_interval,
+                    aggregation_param,
+                    state
+                )
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)",
             )
             .await?;
         self.tx
@@ -1405,8 +1428,12 @@ impl<C: Clock> Transaction<'_, C> {
                 &[
                     /* task_id */ &aggregation_job.task_id().as_ref(),
                     /* aggregation_job_id */ &aggregation_job.id().as_ref(),
-                    /* partial_batch_identifier */
-                    &aggregation_job.partial_batch_identifier().get_encoded(),
+                    /* batch_identifier */
+                    &aggregation_job
+                        .batch_identifier()
+                        .as_ref()
+                        .map(Encode::get_encoded),
+                    /* batch_interval */ &batch_interval,
                     /* aggregation_param */
                     &aggregation_job.aggregation_parameter().get_encoded(),
                     /* state */ &aggregation_job.state(),
@@ -1418,7 +1445,11 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// update_aggregation_job updates a stored aggregation job.
     #[tracing::instrument(skip(self), err)]
-    pub async fn update_aggregation_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn update_aggregation_job<
+        const L: usize,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         aggregation_job: &AggregationJob<L, Q, A>,
     ) -> Result<(), Error>
@@ -1429,7 +1460,7 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "UPDATE aggregation_jobs SET
-                    partial_batch_identifier = $1,
+                    batch_identifier = $1,
                     aggregation_param = $2,
                     state = $3
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $4) AND aggregation_job_id = $5",
@@ -1440,8 +1471,11 @@ impl<C: Clock> Transaction<'_, C> {
                 .execute(
                     &stmt,
                     &[
-                        /* partial_batch_identifier */
-                        &aggregation_job.partial_batch_identifier().get_encoded(),
+                        /* batch_identifier */
+                        &aggregation_job
+                            .batch_identifier()
+                            .as_ref()
+                            .map(Encode::get_encoded),
                         /* aggregation_param */
                         &aggregation_job.aggregation_parameter().get_encoded(),
                         /* state */ &aggregation_job.state(),
@@ -2105,18 +2139,13 @@ WITH updated as (
     FROM tasks
     WHERE collect_jobs.id IN (
         SELECT collect_jobs.id FROM collect_jobs
-        -- Join on aggregation jobs with matching task ID and aggregation parameter
+        -- Join on aggregation jobs with matching task ID, matching aggregation parameter, and
+        -- subsets of the batch interval
         INNER JOIN aggregation_jobs
             ON collect_jobs.aggregation_param = aggregation_jobs.aggregation_param
             AND collect_jobs.task_id = aggregation_jobs.task_id
-        -- Join on report aggregations with matching aggregation job ID
-        INNER JOIN report_aggregations
-            ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-        -- Join on reports whose ID falls within the collect job batch interval and which are
-        -- included in an aggregation job
-        INNER JOIN client_reports
-            ON client_reports.id = report_aggregations.client_report_id
-            AND client_reports.client_timestamp <@ collect_jobs.batch_interval
+            AND collect_jobs.batch_interval @> aggregation_jobs.batch_interval
+            AND aggregation_jobs.batch_interval IS NOT NULL
         WHERE
             -- Constraint for tasks table in FROM position
             tasks.id = collect_jobs.task_id
@@ -2732,7 +2761,7 @@ ORDER BY id DESC
                     (SELECT report_aggregations.state, COUNT(*) AS count FROM report_aggregations
                      JOIN aggregation_jobs ON report_aggregations.aggregation_job_id = aggregation_jobs.id
                      WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                     AND aggregation_jobs.partial_batch_identifier = $2
+                     AND aggregation_jobs.batch_identifier = $2
                      GROUP BY report_aggregations.state)
                 SELECT
                     (SELECT SUM(count)::BIGINT FROM batch_report_aggregation_statuses
@@ -3074,6 +3103,7 @@ pub fn gather_errors<T>(results: Vec<Result<T, Error>>) -> Result<Vec<T>, Error>
 pub mod models {
     use super::Error;
     use crate::{
+        aggregator::query_type::AccumulableQueryType,
         messages::{DurationExt, IntervalExt, TimeExt},
         task,
     };
@@ -3246,19 +3276,19 @@ pub mod models {
     /// AggregationJob represents an aggregation job from the DAP specification.
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub struct AggregationJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>
+    pub struct AggregationJob<const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L>>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         task_id: TaskId,
         aggregation_job_id: AggregationJobId,
-        partial_batch_identifier: Q::PartialBatchIdentifier,
+        batch_identifier: Option<Q::BatchIdentifier>,
         #[derivative(Debug = "ignore")]
         aggregation_parameter: A::AggregationParam,
         state: AggregationJobState,
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> AggregationJob<L, Q, A>
+    impl<const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L>> AggregationJob<L, Q, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
@@ -3266,14 +3296,14 @@ pub mod models {
         pub fn new(
             task_id: TaskId,
             aggregation_job_id: AggregationJobId,
-            partial_batch_identifier: Q::PartialBatchIdentifier,
+            batch_identifier: Option<Q::BatchIdentifier>,
             aggregation_parameter: A::AggregationParam,
             state: AggregationJobState,
         ) -> Self {
             Self {
                 task_id,
                 aggregation_job_id,
-                partial_batch_identifier,
+                batch_identifier,
                 aggregation_parameter,
                 state,
             }
@@ -3289,12 +3319,31 @@ pub mod models {
             &self.aggregation_job_id
         }
 
-        /// Gets the batch identifier associated with this aggregation job.
+        /// Gets the partial batch identifier associated with this aggregation job.
         ///
         /// This method would typically be used for code which is generic over the query type.
         /// Query-type specific code will typically call [`Self::batch_id`].
-        pub fn partial_batch_identifier(&self) -> &Q::PartialBatchIdentifier {
-            &self.partial_batch_identifier
+        pub fn partial_batch_identifier(&self) -> Result<&Q::PartialBatchIdentifier, super::Error> {
+            self.batch_identifier
+                .as_ref()
+                .map(|batch_id| Q::downgrade_batch_identifier(batch_id))
+                .or_else(|| Q::default_partial_batch_identifier())
+                .ok_or_else(|| {
+                    super::Error::DbState(
+                        "Aggregation job with fixed size query is missing batch identifier"
+                            .to_string(),
+                    )
+                })
+        }
+
+        /// Gets the batch identifier associated with this aggregation job. This will be `Some` for
+        /// leader tasks, where the batch identifier is directly known, and for fixed-size tasks,
+        /// where the batch identifier can be derived from the partial batch identifier.
+        ///
+        /// This method would typically be used for code which is generic over the query type.
+        /// Query-type specific code will typically call [`Self::batch_id`].
+        pub fn batch_identifier(&self) -> &Option<Q::BatchIdentifier> {
+            &self.batch_identifier
         }
 
         /// Returns the aggregation parameter associated with this aggregation job.
@@ -3319,12 +3368,13 @@ pub mod models {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         /// Gets the batch ID associated with this aggregation job.
-        pub fn batch_id(&self) -> &BatchId {
+        pub fn batch_id(&self) -> Result<&BatchId, super::Error> {
             self.partial_batch_identifier()
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> PartialEq for AggregationJob<L, Q, A>
+    impl<const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L>> PartialEq
+        for AggregationJob<L, Q, A>
     where
         A::AggregationParam: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -3332,13 +3382,13 @@ pub mod models {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
                 && self.aggregation_job_id == other.aggregation_job_id
-                && self.partial_batch_identifier == other.partial_batch_identifier
+                && self.batch_identifier == other.batch_identifier
                 && self.aggregation_parameter == other.aggregation_parameter
                 && self.state == other.state
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> Eq for AggregationJob<L, Q, A>
+    impl<const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L>> Eq for AggregationJob<L, Q, A>
     where
         A::AggregationParam: Eq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -4901,10 +4951,12 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
+        let time_precision = Duration::from_seconds(1000);
         let when = MockClock::default()
             .now()
-            .to_batch_interval_start(&Duration::from_seconds(1000))
+            .to_batch_interval_start(&time_precision)
             .unwrap();
+        let batch_interval = Interval::new(when, time_precision).unwrap();
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -4959,7 +5011,7 @@ mod tests {
                 >::new(
                     *task.id(),
                     aggregation_job_id,
-                    (),
+                    Some(batch_interval),
                     (),
                     AggregationJobState::InProgress,
                 ))
@@ -5141,10 +5193,17 @@ mod tests {
                 .await?;
 
                 let aggregation_job_id = random();
+                let batch_interval = Interval::new(
+                    aggregated_report_time
+                        .to_batch_interval_start(task.time_precision())
+                        .unwrap(),
+                    *task.time_precision(),
+                )
+                .unwrap();
                 tx.put_aggregation_job(&AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
                     aggregation_job_id,
-                    (),
+                    Some(batch_interval),
                     AggregationParam(0),
                     AggregationJobState::InProgress,
                 ))
@@ -5395,7 +5454,7 @@ mod tests {
                     let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
-                        batch_id,
+                        Some(batch_id),
                         AggregationParam(22),
                         AggregationJobState::InProgress,
                     );
@@ -5421,7 +5480,7 @@ mod tests {
                     let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
-                        batch_id,
+                        Some(batch_id),
                         AggregationParam(23),
                         AggregationJobState::InProgress,
                     );
@@ -5594,37 +5653,70 @@ mod tests {
             Role::Leader,
         )
         .build();
-        let aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+        let batch_id = random();
+        let leader_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
             *task.id(),
             random(),
+            Some(batch_id),
+            dummy_vdaf::AggregationParam(23),
+            AggregationJobState::InProgress,
+        );
+        let helper_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+            *task.id(),
             random(),
+            Some(random()),
             dummy_vdaf::AggregationParam(23),
             AggregationJobState::InProgress,
         );
 
         ds.run_tx(|tx| {
-            let (task, aggregation_job) = (task.clone(), aggregation_job.clone());
+            let (task, leader_aggregation_job, helper_aggregation_job) = (
+                task.clone(),
+                leader_aggregation_job.clone(),
+                helper_aggregation_job.clone(),
+            );
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                tx.put_aggregation_job(&aggregation_job).await
+                tx.put_aggregation_job(&leader_aggregation_job).await?;
+                tx.put_aggregation_job(&helper_aggregation_job).await
             })
         })
         .await
         .unwrap();
 
-        let got_aggregation_job = ds
+        let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
             .run_tx(|tx| {
-                let aggregation_job = aggregation_job.clone();
+                let (leader_aggregation_job, helper_aggregation_job) = (
+                    leader_aggregation_job.clone(),
+                    helper_aggregation_job.clone(),
+                );
                 Box::pin(async move {
-                    tx.get_aggregation_job(aggregation_job.task_id(), aggregation_job.id())
-                        .await
+                    Ok((
+                        tx.get_aggregation_job(
+                            leader_aggregation_job.task_id(),
+                            leader_aggregation_job.id(),
+                        )
+                        .await?,
+                        tx.get_aggregation_job(
+                            helper_aggregation_job.task_id(),
+                            helper_aggregation_job.id(),
+                        )
+                        .await?,
+                    ))
                 })
             })
             .await
             .unwrap();
-        assert_eq!(Some(&aggregation_job), got_aggregation_job.as_ref());
+        assert_eq!(
+            Some(&leader_aggregation_job),
+            got_leader_aggregation_job.as_ref()
+        );
+        assert_eq!(
+            Some(&helper_aggregation_job),
+            got_helper_aggregation_job.as_ref()
+        );
 
-        let new_aggregation_job = aggregation_job
+        let new_aggregation_job = leader_aggregation_job
             .clone()
             .with_state(AggregationJobState::Finished);
         ds.run_tx(|tx| {
@@ -5636,10 +5728,13 @@ mod tests {
 
         let got_aggregation_job = ds
             .run_tx(|tx| {
-                let aggregation_job = aggregation_job.clone();
+                let leader_aggregation_job = leader_aggregation_job.clone();
                 Box::pin(async move {
-                    tx.get_aggregation_job(aggregation_job.task_id(), aggregation_job.id())
-                        .await
+                    tx.get_aggregation_job(
+                        leader_aggregation_job.task_id(),
+                        leader_aggregation_job.id(),
+                    )
+                    .await
                 })
             })
             .await
@@ -5666,6 +5761,7 @@ mod tests {
             .take(AGGREGATION_JOB_COUNT)
             .collect();
         aggregation_job_ids.sort();
+        let interval = Interval::new(clock.now(), Duration::from_seconds(100)).unwrap();
 
         ds.run_tx(|tx| {
             let (task, aggregation_job_ids) = (task.clone(), aggregation_job_ids.clone());
@@ -5681,7 +5777,7 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
+                        Some(interval),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -5696,7 +5792,7 @@ mod tests {
                 >::new(
                     *task.id(),
                     random(),
-                    (),
+                    Some(interval),
                     (),
                     AggregationJobState::Finished,
                 ))
@@ -5718,7 +5814,7 @@ mod tests {
                 >::new(
                     *helper_task.id(),
                     random(),
-                    (),
+                    None,
                     (),
                     AggregationJobState::InProgress,
                 ))
@@ -5951,7 +6047,7 @@ mod tests {
                         &AggregationJob::new(
                             random(),
                             random(),
-                            (),
+                            None,
                             (),
                             AggregationJobState::InProgress,
                         ),
@@ -5980,14 +6076,14 @@ mod tests {
         let first_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
             *task.id(),
             random(),
-            random(),
+            Some(random()),
             dummy_vdaf::AggregationParam(23),
             AggregationJobState::InProgress,
         );
         let second_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
             *task.id(),
             random(),
-            random(),
+            Some(random()),
             dummy_vdaf::AggregationParam(42),
             AggregationJobState::InProgress,
         );
@@ -6015,7 +6111,7 @@ mod tests {
                 tx.put_aggregation_job(&AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                     *unrelated_task.id(),
                     random(),
-                    random(),
+                    Some(random()),
                     dummy_vdaf::AggregationParam(82),
                     AggregationJobState::InProgress,
                 ))
@@ -6069,6 +6165,11 @@ mod tests {
             let aggregation_job_id = random();
             let time = Time::from_seconds_since_epoch(12345);
             let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+            let interval = Interval::new(
+                time.to_batch_interval_start(task.time_precision()).unwrap(),
+                *task.time_precision(),
+            )
+            .unwrap();
 
             let report_aggregation = ds
                 .run_tx(|tx| {
@@ -6082,7 +6183,7 @@ mod tests {
                         >::new(
                             *task.id(),
                             aggregation_job_id,
-                            (),
+                            Some(interval),
                             (),
                             AggregationJobState::InProgress,
                         ))
@@ -6227,6 +6328,12 @@ mod tests {
         )
         .build();
         let aggregation_job_id = random();
+        let time = Time::from_seconds_since_epoch(12345);
+        let interval = Interval::new(
+            time.to_batch_interval_start(task.time_precision()).unwrap(),
+            *task.time_precision(),
+        )
+        .unwrap();
 
         let report_aggregations = ds
             .run_tx(|tx| {
@@ -6245,7 +6352,7 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        (),
+                        Some(interval),
                         (),
                         AggregationJobState::InProgress,
                     ))
@@ -6267,7 +6374,6 @@ mod tests {
                         .iter()
                         .enumerate()
                     {
-                        let time = Time::from_seconds_since_epoch(12345);
                         let report_id = ReportId::from((ord as u128).to_be_bytes());
                         tx.put_report_share(
                             task.id(),
@@ -7008,12 +7114,17 @@ mod tests {
             task_id,
             Time::from_seconds_since_epoch(0),
         )]);
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
         let aggregation_job_id = random();
         let aggregation_jobs =
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_id,
-                (),
+                Some(batch_interval),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             )]);
@@ -7029,11 +7140,7 @@ mod tests {
         let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: true,
             task_id,
-            batch_interval: Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(100),
-            )
-            .unwrap(),
+            batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             state: CollectJobTestCaseState::Start,
@@ -7130,12 +7237,17 @@ mod tests {
         let task_id = random();
         let other_task_id = random();
 
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
         let aggregation_jobs =
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 // Aggregation job task ID does not match collect job task ID
                 other_task_id,
                 random(),
-                (),
+                Some(batch_interval),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             )]);
@@ -7143,11 +7255,7 @@ mod tests {
         let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: false,
             task_id,
-            batch_interval: Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(100),
-            )
-            .unwrap(),
+            batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             state: CollectJobTestCaseState::Start,
@@ -7178,11 +7286,16 @@ mod tests {
             Time::from_seconds_since_epoch(0),
         )]);
 
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
         let aggregation_jobs =
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 random(),
-                (),
+                Some(batch_interval),
                 // Aggregation job agg param does not match collect job agg param
                 AggregationParam(1),
                 AggregationJobState::Finished,
@@ -7191,11 +7304,7 @@ mod tests {
         let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: false,
             task_id,
-            batch_interval: Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(100),
-            )
-            .unwrap(),
+            batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             state: CollectJobTestCaseState::Start,
@@ -7232,7 +7341,13 @@ mod tests {
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_id,
-                (),
+                Some(
+                    Interval::new(
+                        Time::from_seconds_since_epoch(200),
+                        Duration::from_seconds(100),
+                    )
+                    .unwrap(),
+                ),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             )]);
@@ -7283,11 +7398,16 @@ mod tests {
             Time::from_seconds_since_epoch(0),
         )]);
         let aggregation_job_id = random();
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
         let aggregation_jobs =
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_id,
-                (),
+                Some(batch_interval),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             )]);
@@ -7304,11 +7424,7 @@ mod tests {
         let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: false,
             task_id,
-            batch_interval: Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(100),
-            )
-            .unwrap(),
+            batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             // Collect job has already run to completion
@@ -7341,18 +7457,23 @@ mod tests {
         ]);
 
         let aggregation_job_ids: [_; 2] = random();
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
         let aggregation_jobs = Vec::from([
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
-                (),
+                Some(batch_interval),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
-                (),
+                Some(batch_interval),
                 AggregationParam(0),
                 // Aggregation job included in collect request is in progress
                 AggregationJobState::InProgress,
@@ -7381,11 +7502,7 @@ mod tests {
         let collect_job_test_cases = Vec::from([CollectJobTestCase {
             should_be_acquired: false,
             task_id,
-            batch_interval: Interval::new(
-                Time::from_seconds_since_epoch(0),
-                Duration::from_seconds(100),
-            )
-            .unwrap(),
+            batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             state: CollectJobTestCaseState::Start,
@@ -7416,18 +7533,23 @@ mod tests {
             Time::from_seconds_since_epoch(0),
         )]);
         let aggregation_job_ids: [_; 2] = random();
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
         let aggregation_jobs = Vec::from([
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
-                (),
+                Some(batch_interval),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
-                (),
+                Some(batch_interval),
                 AggregationParam(1),
                 AggregationJobState::Finished,
             ),
@@ -7455,11 +7577,7 @@ mod tests {
             CollectJobTestCase {
                 should_be_acquired: true,
                 task_id,
-                batch_interval: Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_seconds(100),
-                )
-                .unwrap(),
+                batch_interval,
                 agg_param: AggregationParam(0),
                 collect_job_id: None,
                 state: CollectJobTestCaseState::Start,
@@ -7553,25 +7671,30 @@ mod tests {
             Time::from_seconds_since_epoch(0),
         )]);
         let aggregation_job_ids: [_; 3] = random();
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            Duration::from_seconds(100),
+        )
+        .unwrap();
         let aggregation_jobs = Vec::from([
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[0],
-                (),
+                Some(batch_interval),
                 AggregationParam(0),
                 AggregationJobState::Finished,
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[1],
-                (),
+                Some(batch_interval),
                 AggregationParam(1),
                 AggregationJobState::Finished,
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 aggregation_job_ids[2],
-                (),
+                Some(batch_interval),
                 AggregationParam(2),
                 AggregationJobState::Finished,
             ),
@@ -7607,11 +7730,7 @@ mod tests {
             CollectJobTestCase {
                 should_be_acquired: true,
                 task_id,
-                batch_interval: Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_seconds(100),
-                )
-                .unwrap(),
+                batch_interval,
                 agg_param: AggregationParam(0),
                 collect_job_id: None,
                 state: CollectJobTestCaseState::Finished,
@@ -7619,11 +7738,7 @@ mod tests {
             CollectJobTestCase {
                 should_be_acquired: true,
                 task_id,
-                batch_interval: Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_seconds(100),
-                )
-                .unwrap(),
+                batch_interval,
                 agg_param: AggregationParam(1),
                 collect_job_id: None,
                 state: CollectJobTestCaseState::Abandoned,
@@ -7631,11 +7746,7 @@ mod tests {
             CollectJobTestCase {
                 should_be_acquired: true,
                 task_id,
-                batch_interval: Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    Duration::from_seconds(100),
-                )
-                .unwrap(),
+                batch_interval,
                 agg_param: AggregationParam(2),
                 collect_job_id: None,
                 state: CollectJobTestCaseState::Deleted,
@@ -8080,7 +8191,7 @@ mod tests {
                     let aggregation_job_0 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
-                        batch_id,
+                        Some(batch_id),
                         AggregationParam(0),
                         AggregationJobState::Finished,
                     );
@@ -8120,7 +8231,7 @@ mod tests {
                     let aggregation_job_1 = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
-                        batch_id,
+                        Some(batch_id),
                         AggregationParam(0),
                         AggregationJobState::Finished,
                     );

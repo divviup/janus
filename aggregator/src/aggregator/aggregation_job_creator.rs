@@ -15,7 +15,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    Role, TaskId,
+    Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Unit},
@@ -329,6 +329,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::new();
                     for (batch_start, report_times_and_ids) in report_ids_by_batch {
+                        let batch_interval = Interval::new(batch_start, *task.time_precision())?;
                         for agg_job_reports in
                             report_times_and_ids.chunks(this.max_aggregation_job_size)
                         {
@@ -348,7 +349,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
-                                (),
+                                Some(batch_interval),
                                 (),
                                 AggregationJobState::InProgress,
                             ));
@@ -502,7 +503,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         aggregation_jobs.push(AggregationJob::new(
                             *task.id(),
                             aggregation_job_id,
-                            *batch.id(),
+                            Some(*batch.id()),
                             (),
                             AggregationJobState::InProgress,
                         ));
@@ -607,7 +608,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // Generate aggregation jobs and report aggregations.
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::with_capacity(report_count);
-                    for ((_, aggregation_param), report_ids_and_times) in result_map {
+                    for ((batch_start, aggregation_param), report_ids_and_times) in result_map {
+                        let batch_interval = Interval::new(batch_start, *task.time_precision())?;
                         for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
                         {
                             let aggregation_job_id = random();
@@ -620,7 +622,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
-                                (),
+                                Some(batch_interval),
                                 aggregation_param.clone(),
                                 AggregationJobState::InProgress,
                             ));
@@ -669,6 +671,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 mod tests {
     use super::AggregationJobCreator;
     use crate::{
+        aggregator::query_type::AccumulableQueryType,
         datastore::{
             gather_errors,
             models::{AggregationJob, CollectJob, CollectJobState, LeaderStoredReport},
@@ -690,7 +693,7 @@ mod tests {
         time::{Clock, MockClock, TimeExt as CoreTimeExt},
     };
     use janus_messages::{
-        query_type::{FixedSize, QueryType, TimeInterval},
+        query_type::{FixedSize, TimeInterval},
         AggregationJobId, Interval, ReportId, Role, TaskId, Time,
     };
     use prio::{
@@ -800,6 +803,14 @@ mod tests {
             .unwrap();
         assert!(helper_agg_jobs.is_empty());
         assert_eq!(leader_agg_jobs.len(), 1);
+        assert!(leader_agg_jobs
+            .iter()
+            .next()
+            .unwrap()
+            .1
+             .0
+            .batch_identifier()
+            .is_some());
         let report_times_and_ids = leader_agg_jobs.into_iter().next().unwrap().1 .1;
         assert_eq!(
             report_times_and_ids,
@@ -1176,8 +1187,8 @@ mod tests {
             // At most one aggregation job per batch will be smaller than the normal minimum
             // aggregation job size.
             if times_and_ids.len() < MIN_AGGREGATION_JOB_SIZE {
-                assert!(!batches_with_small_agg_jobs.contains(agg_job.batch_id()));
-                batches_with_small_agg_jobs.insert(*agg_job.batch_id());
+                assert!(!batches_with_small_agg_jobs.contains(agg_job.batch_id().unwrap()));
+                batches_with_small_agg_jobs.insert(*agg_job.batch_id().unwrap());
             }
 
             // The aggregation job is at most MAX_AGGREGATION_JOB_SIZE in size.
@@ -1424,7 +1435,7 @@ mod tests {
     /// the aggregation job. The container used to store the report IDs is up to the caller; ordered
     /// containers will store report IDs in the order they are included in the aggregate job.
     async fn read_aggregate_jobs_for_task_prio3_count<
-        Q: QueryType,
+        Q: AccumulableQueryType,
         T: FromIterator<(Time, ReportId)>,
         C: Clock,
     >(
@@ -1455,7 +1466,13 @@ mod tests {
     /// aggregation job, and aggregation parameters. The container used to store the report IDs is
     /// up to the caller; ordered containers will store report IDs in the order they are included in
     /// the aggregate job.
-    async fn read_aggregate_jobs_for_task_generic<const L: usize, Q: QueryType, A, T, C: Clock>(
+    async fn read_aggregate_jobs_for_task_generic<
+        const L: usize,
+        Q: AccumulableQueryType,
+        A,
+        T,
+        C: Clock,
+    >(
         tx: &Transaction<'_, C>,
         task_id: &TaskId,
         vdaf: &A,

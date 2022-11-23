@@ -42,6 +42,24 @@ pub trait AccumulableQueryType: QueryType {
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>;
+
+    /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
+    /// interval. This method extracts the interval from such identifiers, or returns `None` if the
+    /// query type does not represent batch identifiers as an interval.
+    fn to_batch_interval(batch_identifier: &Self::BatchIdentifier) -> Option<&Interval>;
+
+    /// Downgrade a batch identifier into a partial batch identifier.
+    fn downgrade_batch_identifier(
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> &Self::PartialBatchIdentifier;
+
+    /// Upgrade a partial batch identifier into a batch identifier, if possible.
+    fn upgrade_partial_batch_identifier(
+        partial_batch_identifier: &Self::PartialBatchIdentifier,
+    ) -> Option<&Self::BatchIdentifier>;
+
+    /// Get the default value of the partial batch identifier, if applicable.
+    fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier>;
 }
 
 #[async_trait]
@@ -75,6 +93,26 @@ impl AccumulableQueryType for TimeInterval {
         tx.get_aggregate_share_jobs_including_time::<L, A>(task_id, report_metadata.time())
             .await
     }
+
+    fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
+        Some(collect_identifier)
+    }
+
+    fn downgrade_batch_identifier(
+        _batch_identifier: &Self::BatchIdentifier,
+    ) -> &Self::PartialBatchIdentifier {
+        &()
+    }
+
+    fn upgrade_partial_batch_identifier(
+        _partial_batch_identifier: &Self::PartialBatchIdentifier,
+    ) -> Option<&Self::BatchIdentifier> {
+        None
+    }
+
+    fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier> {
+        Some(&())
+    }
 }
 
 #[async_trait]
@@ -104,12 +142,32 @@ impl AccumulableQueryType for FixedSize {
         tx.get_aggregate_share_jobs_by_batch_identifier(task_id, batch_id)
             .await
     }
+
+    fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {
+        None
+    }
+
+    fn downgrade_batch_identifier(
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> &Self::PartialBatchIdentifier {
+        batch_identifier
+    }
+
+    fn upgrade_partial_batch_identifier(
+        partial_batch_identifier: &Self::PartialBatchIdentifier,
+    ) -> Option<&Self::BatchIdentifier> {
+        Some(partial_batch_identifier)
+    }
+
+    fn default_partial_batch_identifier() -> Option<&'static Self::PartialBatchIdentifier> {
+        None
+    }
 }
 
 /// CollectableQueryType represents a query type that can be collected by Janus. This trait extends
-/// [`QueryType`] with functionality required for collection.
+/// [`AccumulableQueryType`] with additional functionality required for collection.
 #[async_trait]
-pub trait CollectableQueryType: QueryType {
+pub trait CollectableQueryType: AccumulableQueryType {
     type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync;
 
     /// Some query types (e.g. [`TimeInterval`]) can receive a batch identifier in collect requests
@@ -119,11 +177,6 @@ pub trait CollectableQueryType: QueryType {
         _: &Task,
         collect_identifier: &Self::BatchIdentifier,
     ) -> Self::Iter;
-
-    /// Some query types (e.g. [`TimeInterval`]) can represent their batch identifiers as an
-    /// interval. This method extracts the interval from such identifiers, or returns `None` if the
-    /// query type does not represent batch identifiers as an interval.
-    fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval>;
 
     /// Validates a collect identifier, per the boundary checks in
     /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>.
@@ -198,10 +251,6 @@ impl CollectableQueryType for TimeInterval {
         batch_interval: &Self::BatchIdentifier,
     ) -> Self::Iter {
         TimeIntervalBatchIdentifierIter::new(task, batch_interval)
-    }
-
-    fn to_batch_interval(collect_identifier: &Self::BatchIdentifier) -> Option<&Interval> {
-        Some(collect_identifier)
     }
 
     fn validate_collect_identifier(
@@ -345,10 +394,6 @@ impl CollectableQueryType for FixedSize {
         batch_id: &Self::BatchIdentifier,
     ) -> Self::Iter {
         iter::once(*batch_id)
-    }
-
-    fn to_batch_interval(_: &Self::BatchIdentifier) -> Option<&Interval> {
-        None
     }
 
     fn validate_collect_identifier(_: &Task, _: &Self::BatchIdentifier) -> bool {
