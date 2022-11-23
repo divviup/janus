@@ -12,7 +12,7 @@ use janus_interop_binaries::{
     status::{COMPLETE, ERROR, IN_PROGRESS, SUCCESS},
     HpkeConfigRegistry, NumberAsString, VdafObject,
 };
-use janus_messages::{Duration, HpkeConfig, Interval, TaskId, Time};
+use janus_messages::{Duration, HpkeConfig, Interval, Query, TaskId, Time};
 use prio::{
     codec::{Decode, Encode},
     vdaf::{self, prio3::Prio3},
@@ -173,7 +173,9 @@ where
     let collector = Collector::new(collector_params, vdaf, http_client.clone());
     let agg_param = V::AggregationParam::get_decoded(agg_param_encoded)?;
     let handle = spawn(async move {
-        let collect_result = collector.collect(batch_interval, &agg_param).await?;
+        let collect_result = collector
+            .collect(Query::new_time_interval(batch_interval), &agg_param)
+            .await?;
         Ok(CollectResult {
             report_count: collect_result.report_count(),
             aggregation_result: convert_fn(collect_result.aggregate_result()),

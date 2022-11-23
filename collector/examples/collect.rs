@@ -7,7 +7,9 @@ use clap::{
 use derivative::Derivative;
 use janus_collector::{default_http_client, Collector, CollectorParameters};
 use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
-use janus_messages::{Duration, HpkeConfig, Interval, TaskId, Time};
+use janus_messages::{
+    query_type::QueryType, BatchId, Duration, HpkeConfig, Interval, Query, TaskId, Time,
+};
 use prio::{
     codec::Decode,
     vdaf::{self, prio3::Prio3},
@@ -83,6 +85,39 @@ impl TypedValueParser for TaskIdValueParser {
                 clap::Error::raw(ErrorKind::ValueValidation, "task ID length incorrect")
             })?;
         Ok(TaskId::from(task_id_bytes))
+    }
+}
+
+#[derive(Clone)]
+struct BatchIdValueParser {
+    inner: NonEmptyStringValueParser,
+}
+
+impl BatchIdValueParser {
+    fn new() -> BatchIdValueParser {
+        BatchIdValueParser {
+            inner: NonEmptyStringValueParser::new(),
+        }
+    }
+}
+
+impl TypedValueParser for BatchIdValueParser {
+    type Value = BatchId;
+
+    fn parse_ref(
+        &self,
+        cmd: &clap::Command,
+        arg: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error> {
+        let input = self.inner.parse_ref(cmd, arg, value)?;
+        let batch_id_bytes: [u8; BatchId::LEN] = base64::decode_config(input, URL_SAFE_NO_PAD)
+            .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
+            .try_into()
+            .map_err(|_| {
+                clap::Error::raw(ErrorKind::ValueValidation, "batch ID length incorrect")
+            })?;
+        Ok(BatchId::from(batch_id_bytes))
     }
 }
 
@@ -202,7 +237,7 @@ struct Options {
     )]
     task_id: TaskId,
     /// The leader aggregator's endpoint URL
-    #[clap(long, help_heading = "DAP TASK PARAMETERS", display_order = 1)]
+    #[clap(long, help_heading = "DAP Task Parameters", display_order = 1)]
     leader: Url,
     /// Authentication token for the DAP-Auth-Token HTTP header
     #[clap(
@@ -259,101 +294,28 @@ struct Options {
     buckets: Option<Buckets>,
 
     /// Start of the collection batch interval, as the number of seconds since the Unix epoch
-    #[clap(long, help_heading = "Collect Request Parameters")]
-    batch_interval_start: u64,
+    #[clap(
+        long,
+        requires = "batch_interval_duration",
+        help_heading = "Collect Request Parameters (Time Interval)"
+    )]
+    batch_interval_start: Option<u64>,
     /// Duration of the collection batch interval, in seconds
-    #[clap(long, help_heading = "Collect Request Parameters")]
-    batch_interval_duration: u64,
-}
+    #[clap(
+        long,
+        requires = "batch_interval_start",
+        help_heading = "Collect Request Parameters (Time Interval)"
+    )]
+    batch_interval_duration: Option<u64>,
 
-fn install_tracing_subscriber() -> anyhow::Result<()> {
-    let stdout_filter = EnvFilter::from_default_env();
-    let layer = tracing_subscriber::fmt::layer()
-        .with_level(true)
-        .with_target(true)
-        .pretty();
-    let subscriber = Registry::default().with(stdout_filter.and_then(layer));
-    tracing::subscriber::set_global_default(subscriber)?;
-
-    LogTracer::init()?;
-
-    Ok(())
-}
-
-async fn run_collection_generic<V: vdaf::Collector>(
-    parameters: CollectorParameters,
-    vdaf: V,
-    http_client: reqwest::Client,
-    interval: Interval,
-    agg_param: &V::AggregationParam,
-) -> Result<(), janus_collector::Error>
-where
-    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
-    V::AggregateResult: Debug,
-{
-    let collector = Collector::new(parameters, vdaf, http_client);
-    let collection = collector.collect(interval, agg_param).await?;
-    println!("Aggregation result: {:?}", collection.aggregate_result());
-    println!("Number of reports: {}", collection.report_count());
-    Ok(())
-}
-
-// This function is broken out from `main()` for the sake of testing its argument handling.
-async fn run(options: Options) -> Result<(), Error> {
-    let parameters = CollectorParameters::new(
-        options.task_id,
-        options.leader,
-        options.auth_token,
-        options.hpke_config,
-        options.hpke_private_key,
-    );
-    let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
-    let interval = Interval::new(
-        Time::from_seconds_since_epoch(options.batch_interval_start),
-        Duration::from_seconds(options.batch_interval_duration),
-    )
-    .map_err(|err| Error::Anyhow(err.into()))?;
-    match (options.vdaf, options.length, options.bits, options.buckets) {
-        (VdafType::Count, None, None, None) => {
-            let vdaf = Prio3::new_aes128_count(2).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, interval, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
-        }
-        (VdafType::CountVec, Some(length), None, None) => {
-            let vdaf =
-                Prio3::new_aes128_count_vec(2, length).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, interval, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
-        }
-        (VdafType::Sum, None, Some(bits), None) => {
-            let vdaf = Prio3::new_aes128_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, interval, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
-        }
-        (VdafType::Histogram, None, None, Some(ref buckets)) => {
-            let vdaf = Prio3::new_aes128_histogram(2, &buckets.0)
-                .map_err(|err| Error::Anyhow(err.into()))?;
-            run_collection_generic(parameters, vdaf, http_client, interval, &())
-                .await
-                .map_err(|err| Error::Anyhow(err.into()))
-        }
-        _ => Err(clap::Error::raw(
-            ErrorKind::ArgumentConflict,
-            format!(
-                "incorrect VDAF parameter arguments were supplied for {}",
-                options
-                    .vdaf
-                    .to_possible_value()
-                    .unwrap()
-                    .get_help()
-                    .unwrap(),
-            ),
-        )
-        .into()),
-    }
+    /// Batch identifier, encoded with base64url
+    #[clap(
+        long,
+        value_parser = BatchIdValueParser::new(),
+        conflicts_with_all = ["batch_interval_start", "batch_interval_duration"],
+        help_heading = "Collect Request Parameters (Fixed Size)",
+    )]
+    batch_id: Option<BatchId>,
 }
 
 #[tokio::main]
@@ -377,6 +339,113 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+// This function is broken out from `main()` for the sake of testing its argument handling.
+async fn run(options: Options) -> Result<(), Error> {
+    match (
+        &options.batch_interval_start,
+        &options.batch_interval_duration,
+        &options.batch_id,
+    ) {
+        (Some(batch_interval_start), Some(batch_interval_duration), None) => {
+            let batch_interval = Interval::new(
+                Time::from_seconds_since_epoch(*batch_interval_start),
+                Duration::from_seconds(*batch_interval_duration),
+            )
+            .map_err(|err| Error::Anyhow(err.into()))?;
+            run_with_query(options, Query::new_time_interval(batch_interval)).await
+        }
+        (None, None, Some(batch_id)) => {
+            let batch_id = *batch_id;
+            run_with_query(options, Query::new_fixed_size(batch_id)).await
+        }
+        _ => unreachable!(),
+    }
+}
+
+async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Result<(), Error> {
+    let parameters = CollectorParameters::new(
+        options.task_id,
+        options.leader,
+        options.auth_token,
+        options.hpke_config.clone(),
+        options.hpke_private_key.clone(),
+    );
+    let http_client = default_http_client().map_err(|err| Error::Anyhow(err.into()))?;
+    match (options.vdaf, options.length, options.bits, options.buckets) {
+        (VdafType::Count, None, None, None) => {
+            let vdaf = Prio3::new_aes128_count(2).map_err(|err| Error::Anyhow(err.into()))?;
+            run_collection_generic(parameters, vdaf, http_client, query, &())
+                .await
+                .map_err(|err| Error::Anyhow(err.into()))
+        }
+        (VdafType::CountVec, Some(length), None, None) => {
+            let vdaf =
+                Prio3::new_aes128_count_vec(2, length).map_err(|err| Error::Anyhow(err.into()))?;
+            run_collection_generic(parameters, vdaf, http_client, query, &())
+                .await
+                .map_err(|err| Error::Anyhow(err.into()))
+        }
+        (VdafType::Sum, None, Some(bits), None) => {
+            let vdaf = Prio3::new_aes128_sum(2, bits).map_err(|err| Error::Anyhow(err.into()))?;
+            run_collection_generic(parameters, vdaf, http_client, query, &())
+                .await
+                .map_err(|err| Error::Anyhow(err.into()))
+        }
+        (VdafType::Histogram, None, None, Some(ref buckets)) => {
+            let vdaf = Prio3::new_aes128_histogram(2, &buckets.0)
+                .map_err(|err| Error::Anyhow(err.into()))?;
+            run_collection_generic(parameters, vdaf, http_client, query, &())
+                .await
+                .map_err(|err| Error::Anyhow(err.into()))
+        }
+        _ => Err(clap::Error::raw(
+            ErrorKind::ArgumentConflict,
+            format!(
+                "incorrect VDAF parameter arguments were supplied for {}",
+                options
+                    .vdaf
+                    .to_possible_value()
+                    .unwrap()
+                    .get_help()
+                    .unwrap(),
+            ),
+        )
+        .into()),
+    }
+}
+
+async fn run_collection_generic<V: vdaf::Collector, Q: QueryType>(
+    parameters: CollectorParameters,
+    vdaf: V,
+    http_client: reqwest::Client,
+    query: Query<Q>,
+    agg_param: &V::AggregationParam,
+) -> Result<(), janus_collector::Error>
+where
+    for<'a> Vec<u8>: From<&'a V::AggregateShare>,
+    V::AggregateResult: Debug,
+{
+    let collector = Collector::new(parameters, vdaf, http_client);
+    let collection = collector.collect(query, agg_param).await?;
+    println!("Aggregation result: {:?}", collection.aggregate_result());
+    println!("Number of reports: {}", collection.report_count());
+    Ok(())
+}
+
+fn install_tracing_subscriber() -> anyhow::Result<()> {
+    let stdout_filter = EnvFilter::from_default_env();
+    let layer = tracing_subscriber::fmt::layer()
+        .with_level(true)
+        .with_target(true)
+        .pretty();
+    let subscriber = Registry::default().with(stdout_filter.and_then(layer));
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    LogTracer::init()?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{run, Error, Options, VdafType};
@@ -386,6 +455,7 @@ mod tests {
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key, task::AuthenticationToken,
     };
+    use janus_messages::BatchId;
     use prio::codec::Encode;
     use rand::random;
     use reqwest::Url;
@@ -408,15 +478,16 @@ mod tests {
         let expected = Options {
             task_id,
             leader: leader.clone(),
-            auth_token,
-            hpke_config,
-            hpke_private_key,
+            auth_token: auth_token.clone(),
+            hpke_config: hpke_config.clone(),
+            hpke_private_key: hpke_private_key.clone(),
             vdaf: VdafType::Count,
             length: None,
             bits: None,
             buckets: None,
-            batch_interval_start: 1_000_000,
-            batch_interval_duration: 1_000,
+            batch_interval_start: Some(1_000_000),
+            batch_interval_duration: Some(1_000),
+            batch_id: None,
         };
         let task_id_encoded = base64::encode_config(task_id.get_encoded(), URL_SAFE_NO_PAD);
         let correct_arguments = [
@@ -575,5 +646,99 @@ mod tests {
             "--buckets=1,2,3,4".to_string(),
         ]);
         Options::try_parse_from(good_arguments).unwrap();
+
+        let batch_id: BatchId = random();
+        let batch_id_encoded = base64::encode_config(batch_id.as_ref(), URL_SAFE_NO_PAD);
+        let expected = Options {
+            task_id,
+            leader: leader.clone(),
+            auth_token,
+            hpke_config,
+            hpke_private_key,
+            vdaf: VdafType::Count,
+            length: None,
+            bits: None,
+            buckets: None,
+            batch_interval_start: None,
+            batch_interval_duration: None,
+            batch_id: Some(batch_id),
+        };
+        let correct_arguments = [
+            "collect",
+            &format!("--task-id={task_id_encoded}"),
+            "--leader",
+            leader.as_str(),
+            "--auth-token",
+            "collector-authentication-token",
+            &format!("--hpke-config={encoded_hpke_config}"),
+            &format!("--hpke-private-key={encoded_private_key}"),
+            "--vdaf",
+            "count",
+            &format!("--batch-id={batch_id_encoded}"),
+        ];
+        match Options::try_parse_from(correct_arguments) {
+            Ok(got) => assert_eq!(got, expected),
+            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+        }
+
+        // Check that clap enforces all the constraints we need on combinations of query arguments.
+        // This allows us to treat a default match branch as `unreachable!()` when unpacking the
+        // argument matches.
+        let base_arguments = Vec::from([
+            "collect".to_string(),
+            format!("--task-id={task_id_encoded}"),
+            "--leader".to_string(),
+            leader.to_string(),
+            "--auth-token".to_string(),
+            "collector-authentication-token".to_string(),
+            format!("--hpke-config={encoded_hpke_config}"),
+            format!("--hpke-private-key={encoded_private_key}"),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(base_arguments.clone())
+                .unwrap_err()
+                .kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.push("--batch-interval-start=1".to_string());
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.push("--batch-interval-duration=1".to_string());
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.extend([
+            "--batch-interval-start=1".to_string(),
+            "--batch-interval-duration=1".to_string(),
+            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ArgumentConflict
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.extend([
+            "--batch-interval-start=1".to_string(),
+            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ArgumentConflict
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.extend([
+            "--batch-interval-duration=1".to_string(),
+            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ArgumentConflict
+        );
     }
 }

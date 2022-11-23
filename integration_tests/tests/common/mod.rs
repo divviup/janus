@@ -9,7 +9,7 @@ use janus_core::{
     time::{Clock, RealClock, TimeExt},
 };
 use janus_integration_tests::client::{ClientBackend, ClientImplementation, InteropClientEncoding};
-use janus_messages::{Duration, Interval, Role};
+use janus_messages::{Duration, Interval, Query, Role};
 use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
 use reqwest::Url;
@@ -105,7 +105,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
     );
     let collection = collect_with_rewritten_url(
         &collector,
-        batch_interval,
+        Query::new_time_interval(batch_interval),
         &test_case.aggregation_parameter,
         "127.0.0.1",
         aggregator_endpoints[Role::Leader.index().unwrap()]

@@ -11,7 +11,7 @@
 //! use janus_core::{hpke::generate_hpke_config_and_private_key, task::AuthenticationToken};
 //! use janus_messages::{
 //!     Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Interval, TaskId,
-//!     Time,
+//!     Time, Query,
 //! };
 //! use prio::vdaf::prio3::Prio3;
 //! use rand::random;
@@ -48,7 +48,7 @@
 //! )
 //! .unwrap();
 //! // Make the requests and retrieve the aggregated statistic.
-//! let aggregation_result = collector.collect(interval, &()).await.unwrap();
+//! let aggregation_result = collector.collect(Query::new_time_interval(interval), &()).await.unwrap();
 //! # }
 //! ```
 
@@ -62,7 +62,8 @@ use janus_core::{
     task::{url_ensure_trailing_slash, AuthenticationToken, DAP_AUTH_HEADER},
 };
 use janus_messages::{
-    query_type::TimeInterval, CollectReq, CollectResp, HpkeConfig, Interval, Query, Role, TaskId,
+    query_type::{QueryType, TimeInterval},
+    CollectReq, CollectResp, HpkeConfig, Query, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -211,26 +212,25 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
 /// Collector state related to a collect job that is in progress.
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct CollectJob<P> {
+struct CollectJob<P, Q>
+where
+    Q: QueryType,
+{
     /// The URL provided by the leader aggregator, where the collect response will be available
     /// upon completion.
     collect_job_url: Url,
-    /// The collect request's batch time interval.
-    batch_interval: Interval,
+    /// The collect request's query.
+    query: Query<Q>,
     /// The aggregation parameter used in this collect request.
     #[derivative(Debug = "ignore")]
     aggregation_parameter: P,
 }
 
-impl<P> CollectJob<P> {
-    fn new(
-        collect_job_url: Url,
-        batch_interval: Interval,
-        aggregation_parameter: P,
-    ) -> CollectJob<P> {
+impl<P, Q: QueryType> CollectJob<P, Q> {
+    fn new(collect_job_url: Url, query: Query<Q>, aggregation_parameter: P) -> CollectJob<P, Q> {
         CollectJob {
             collect_job_url,
-            batch_interval,
+            query,
             aggregation_parameter,
         }
     }
@@ -318,14 +318,14 @@ where
 
     /// Send a collect request to the leader aggregator.
     #[tracing::instrument(err)]
-    async fn start_collection(
+    async fn start_collection<Q: QueryType>(
         &self,
-        batch_interval: Interval,
+        query: Query<Q>,
         aggregation_parameter: &V::AggregationParam,
-    ) -> Result<CollectJob<V::AggregationParam>, Error> {
+    ) -> Result<CollectJob<V::AggregationParam, Q>, Error> {
         let collect_request = CollectReq::new(
             self.parameters.task_id,
-            Query::new_time_interval(batch_interval),
+            query.clone(),
             aggregation_parameter.get_encoded(),
         );
         let url = self.parameters.collect_endpoint()?;
@@ -381,7 +381,7 @@ where
 
         Ok(CollectJob::new(
             collect_job_url,
-            batch_interval,
+            query,
             aggregation_parameter.clone(),
         ))
     }
@@ -389,9 +389,9 @@ where
     /// Request the results of an in-progress collection from the leader aggregator. This may
     /// return `Ok(None)` if the aggregation is not done yet.
     #[tracing::instrument(err)]
-    async fn poll_once(
+    async fn poll_once<Q: QueryType>(
         &self,
-        job: &CollectJob<V::AggregationParam>,
+        job: &CollectJob<V::AggregationParam, Q>,
     ) -> Result<PollResult<V::AggregateResult>, Error> {
         let response_res = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
@@ -447,16 +447,16 @@ where
             return Err(Error::BadContentType(Some(content_type.clone())));
         }
 
-        let collect_response = CollectResp::<TimeInterval>::get_decoded(&response.bytes().await?)?;
+        let collect_response = CollectResp::<Q>::get_decoded(&response.bytes().await?)?;
         if collect_response.encrypted_aggregate_shares().len() != 2 {
             return Err(Error::AggregateShareCount(
                 collect_response.encrypted_aggregate_shares().len(),
             ));
         }
 
-        let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
+        let associated_data = associated_data_for_aggregate_share::<Q>(
             &self.parameters.task_id,
-            &job.batch_interval,
+            job.query.batch_identifier(),
         );
         let aggregate_shares_bytes = collect_response
             .encrypted_aggregate_shares()
@@ -495,9 +495,9 @@ where
 
     /// A convenience method to repeatedly request the result of an in-progress collection until it
     /// completes.
-    async fn poll_until_complete(
+    async fn poll_until_complete<Q: QueryType>(
         &self,
-        job: &CollectJob<V::AggregationParam>,
+        job: &CollectJob<V::AggregationParam, Q>,
     ) -> Result<Collection<V::AggregateResult>, Error> {
         let mut backoff = self.parameters.collect_poll_wait_parameters.clone();
         backoff.reset();
@@ -549,14 +549,12 @@ where
 
     /// Send a collect request to the leader aggregator, wait for it to complete, and return the
     /// result of the aggregation.
-    pub async fn collect(
+    pub async fn collect<Q: QueryType>(
         &self,
-        batch_interval: Interval,
+        query: Query<Q>,
         aggregation_parameter: &V::AggregationParam,
     ) -> Result<Collection<V::AggregateResult>, Error> {
-        let job = self
-            .start_collection(batch_interval, aggregation_parameter)
-            .await?;
+        let job = self.start_collection(query, aggregation_parameter).await?;
         self.poll_until_complete(&job).await
     }
 }
@@ -564,12 +562,12 @@ where
 #[cfg(feature = "test-util")]
 pub mod test_util {
     use crate::{Collection, Collector, Error};
-    use janus_messages::Interval;
+    use janus_messages::{query_type::QueryType, Query};
     use prio::vdaf;
 
-    pub async fn collect_with_rewritten_url<V: vdaf::Collector>(
+    pub async fn collect_with_rewritten_url<V: vdaf::Collector, Q: QueryType>(
         collector: &Collector<V>,
-        batch_interval: Interval,
+        query: Query<Q>,
         aggregation_parameter: &V::AggregationParam,
         host: &str,
         port: u16,
@@ -578,7 +576,7 @@ pub mod test_util {
         for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
     {
         let mut job = collector
-            .start_collection(batch_interval, aggregation_parameter)
+            .start_collection(query, aggregation_parameter)
             .await?;
         job.collect_job_url.set_host(Some(host))?;
         job.collect_job_url.set_port(Some(port)).unwrap();
@@ -604,8 +602,9 @@ mod tests {
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{
-        query_type::TimeInterval, CollectReq, CollectResp, Duration, HpkeCiphertext, Interval,
-        PartialBatchSelector, Role, Time,
+        query_type::{FixedSize, TimeInterval},
+        BatchId, CollectReq, CollectResp, Duration, HpkeCiphertext, Interval, PartialBatchSelector,
+        Query, Role, Time,
     };
     use mockito::mock;
     use prio::{
@@ -642,7 +641,7 @@ mod tests {
         random()
     }
 
-    fn build_collect_response<const L: usize, V: vdaf::Aggregator<L>>(
+    fn build_collect_response_time<const L: usize, V: vdaf::Aggregator<L>>(
         transcript: &VdafTranscript<L, V>,
         parameters: &CollectorParameters,
         batch_interval: Interval,
@@ -656,6 +655,46 @@ mod tests {
         );
         CollectResp::new(
             PartialBatchSelector::new_time_interval(),
+            1,
+            Vec::<HpkeCiphertext>::from([
+                hpke::seal(
+                    &parameters.hpke_config,
+                    &HpkeApplicationInfo::new(
+                        &Label::AggregateShare,
+                        &Role::Leader,
+                        &Role::Collector,
+                    ),
+                    &<Vec<u8>>::from(&transcript.aggregate_shares[0]),
+                    &associated_data,
+                )
+                .unwrap(),
+                hpke::seal(
+                    &parameters.hpke_config,
+                    &HpkeApplicationInfo::new(
+                        &Label::AggregateShare,
+                        &Role::Helper,
+                        &Role::Collector,
+                    ),
+                    &<Vec<u8>>::from(&transcript.aggregate_shares[1]),
+                    &associated_data,
+                )
+                .unwrap(),
+            ]),
+        )
+    }
+
+    fn build_collect_response_fixed<const L: usize, V: vdaf::Aggregator<L>>(
+        transcript: &VdafTranscript<L, V>,
+        parameters: &CollectorParameters,
+        batch_id: BatchId,
+    ) -> CollectResp<FixedSize>
+    where
+        for<'a> Vec<u8>: From<&'a V::AggregateShare>,
+    {
+        let associated_data =
+            associated_data_for_aggregate_share::<FixedSize>(&parameters.task_id, &batch_id);
+        CollectResp::new(
+            PartialBatchSelector::new_fixed_size(batch_id),
             1,
             Vec::<HpkeCiphertext>::from([
                 hpke::seal(
@@ -728,7 +767,7 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response(&transcript, &collector.parameters, batch_interval);
+            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
         let mocked_collect_start_error = mock("POST", "/collect")
@@ -767,11 +806,11 @@ mod tests {
             .create();
 
         let job = collector
-            .start_collection(batch_interval, &())
+            .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap();
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
-        assert_eq!(job.batch_interval, batch_interval);
+        assert_eq!(job.query.batch_identifier(), &batch_interval);
 
         let poll_result = collector.poll_once(&job).await.unwrap();
         assert_matches!(poll_result, PollResult::NextAttempt(None));
@@ -800,7 +839,7 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response(&transcript, &collector.parameters, batch_interval);
+            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
         let mocked_collect_start_success = mock("POST", "/collect")
@@ -823,11 +862,11 @@ mod tests {
             .create();
 
         let job = collector
-            .start_collection(batch_interval, &())
+            .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap();
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
-        assert_eq!(job.batch_interval, batch_interval);
+        assert_eq!(job.query.batch_identifier(), &batch_interval);
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(collection, Collection::new(1, 144));
@@ -850,7 +889,7 @@ mod tests {
         )
         .unwrap();
         let collect_resp =
-            build_collect_response(&transcript, &collector.parameters, batch_interval);
+            build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
         let mocked_collect_start_success = mock("POST", "/collect")
@@ -873,14 +912,54 @@ mod tests {
             .create();
 
         let job = collector
-            .start_collection(batch_interval, &())
+            .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap();
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
-        assert_eq!(job.batch_interval, batch_interval);
+        assert_eq!(job.query.batch_identifier(), &batch_interval);
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(collection, Collection::new(1, Vec::from([0, 0, 0, 1, 0])));
+
+        mocked_collect_start_success.assert();
+        mocked_collect_complete.assert();
+    }
+
+    #[tokio::test]
+    async fn successful_collect_fixed_size() {
+        install_test_trace_subscriber();
+
+        let vdaf = Prio3::new_aes128_count(2).unwrap();
+        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), &random(), &1);
+        let collector = setup_collector(vdaf);
+
+        let batch_id = random();
+        let collect_resp =
+            build_collect_response_fixed(&transcript, &collector.parameters, batch_id);
+
+        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
+        let mocked_collect_start_success = mock("POST", "/collect")
+            .match_header(CONTENT_TYPE.as_str(), CollectReq::<FixedSize>::MEDIA_TYPE)
+            .with_status(303)
+            .with_header(LOCATION.as_str(), &collect_job_url)
+            .expect(1)
+            .create();
+        let mocked_collect_complete = mock("GET", "/collect_job/1")
+            .with_status(200)
+            .with_header(CONTENT_TYPE.as_str(), CollectResp::<FixedSize>::MEDIA_TYPE)
+            .with_body(collect_resp.get_encoded())
+            .expect(1)
+            .create();
+
+        let job = collector
+            .start_collection(Query::new_fixed_size(batch_id), &())
+            .await
+            .unwrap();
+        assert_eq!(job.collect_job_url.as_str(), collect_job_url);
+        assert_eq!(job.query.batch_identifier(), &batch_id);
+
+        let collection = collector.poll_until_complete(&job).await.unwrap();
+        assert_eq!(collection, Collection::new(1, 1));
 
         mocked_collect_start_success.assert();
         mocked_collect_complete.assert();
@@ -908,7 +987,7 @@ mod tests {
         )
         .unwrap();
         let error = collector
-            .start_collection(batch_interval, &())
+            .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(problem) => {
@@ -929,7 +1008,7 @@ mod tests {
             .create();
 
         let error = collector
-            .start_collection(batch_interval, &())
+            .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(problem) => {
@@ -949,7 +1028,7 @@ mod tests {
             .create();
 
         let error = collector
-            .start_collection(batch_interval, &())
+            .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
         assert_matches!(error, Error::MissingLocationHeader);
@@ -973,7 +1052,7 @@ mod tests {
             .create();
 
         let error = collector
-            .start_collection(batch_interval, &())
+            .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
         assert_matches!(error, Error::Http(problem) => {
@@ -1013,7 +1092,7 @@ mod tests {
         )
         .unwrap();
         let job = collector
-            .start_collection(batch_interval, &())
+            .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap();
         let error = collector.poll_once(&job).await.unwrap_err();
@@ -1251,7 +1330,7 @@ mod tests {
         )
         .unwrap();
         let job = collector
-            .start_collection(batch_interval, &())
+            .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap();
         mock_collect_start.assert();
@@ -1310,7 +1389,11 @@ mod tests {
             Duration::from_seconds(3600),
         )
         .unwrap();
-        let job = CollectJob::new(collect_job_url.parse().unwrap(), batch_interval, ());
+        let job = CollectJob::new(
+            collect_job_url.parse().unwrap(),
+            Query::new_time_interval(batch_interval),
+            (),
+        );
 
         let mock_collect_poll_retry_after_1s = mock("GET", "/collect_job/1")
             .with_status(202)
