@@ -62,5 +62,5 @@ janus_core = { path = ".", features = ["test-util"] }
 # Kubernetes clusters.
 kube = { workspace = true, features = ["openssl-tls"] }
 mockito = "0.31.0"
-serde_test = "1.0.147"
+serde_test = "1.0.148"
 url = "2.3.1"
