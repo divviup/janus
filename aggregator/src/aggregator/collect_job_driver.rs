@@ -465,7 +465,7 @@ impl CollectJobDriver {
                 datastore
                     .run_tx(|tx| {
                         Box::pin(async move {
-                            let (mut time_interval_jobs, mut fixed_size_jobs) = try_join!(
+                            let (time_interval_jobs, fixed_size_jobs) = try_join!(
                                 tx.acquire_incomplete_time_interval_collect_jobs(
                                     &lease_duration,
                                     maximum_acquire_count_per_query_type,
@@ -475,8 +475,10 @@ impl CollectJobDriver {
                                     maximum_acquire_count_per_query_type
                                 ),
                             )?;
-                            time_interval_jobs.append(&mut fixed_size_jobs);
-                            Ok(time_interval_jobs)
+                            Ok(time_interval_jobs
+                                .into_iter()
+                                .chain(fixed_size_jobs.into_iter())
+                                .collect())
                         })
                     })
                     .await

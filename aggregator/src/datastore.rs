@@ -2149,7 +2149,7 @@ WITH updated as (
         WHERE
             -- Constraint for tasks table in FROM position
             tasks.id = collect_jobs.task_id
-            -- Only return
+            -- Only return time interval collect jobs.
             AND tasks.query_type ? 'TimeInterval'
             -- Only acquire collect jobs in a non-terminal state.
             AND collect_jobs.state = 'START'
@@ -2233,7 +2233,7 @@ WITH updated as (
         WHERE
             -- Constraint for tasks table in FROM position
             tasks.id = collect_jobs.task_id
-            -- Only return
+            -- Only return fixed-size collect jobs.
             AND tasks.query_type ? 'FixedSize'
             -- Only acquire collect jobs in a non-terminal state.
             AND collect_jobs.state = 'START'
