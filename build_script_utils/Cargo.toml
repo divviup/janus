@@ -7,4 +7,4 @@ rust-version = "1.63"
 publish = false
 
 [dependencies]
-zstd = { version = "0.11" }
+zstd = { version = "0.12" }
