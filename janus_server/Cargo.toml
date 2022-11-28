@@ -91,5 +91,5 @@ mockito = "0.31.0"
 serde_test = "1.0.148"
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
-trycmd = "0.14.4"
+trycmd = "0.14.5"
 wait-timeout = "0.2.0"
