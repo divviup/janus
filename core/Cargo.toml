@@ -31,7 +31,7 @@ derivative = "2.2.0"
 futures = "0.3.25"
 hex = "0.4"
 hpke-dispatch = "0.5.0"
-http-api-problem = "0.55.0"
+http-api-problem = "0.56.0"
 janus_messages = { version = "0.2", path = "../messages" }
 kube = { workspace = true, optional = true, features = ["rustls-tls"] }
 k8s-openapi = { workspace = true, optional = true }
