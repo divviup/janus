@@ -1242,9 +1242,9 @@ dependencies = [
 
 [[package]]
 name = "http-api-problem"
-version = "0.55.0"
+version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a4ac53ed8a1a36055d74e9edd37f5ee313d2f250ceb4203f1af68d1d04c4111"
+checksum = "e3d4a8157e3ede316100bc4134391c77ba303d020f4d8677c3f88cd00d0c1893"
 dependencies = [
  "http",
  "serde",
