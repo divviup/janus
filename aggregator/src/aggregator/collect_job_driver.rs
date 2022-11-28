@@ -459,17 +459,26 @@ impl CollectJobDriver {
         lease_duration: Duration,
     ) -> impl Fn(usize) -> BoxFuture<'static, Result<Vec<Lease<AcquiredCollectJob>>, datastore::Error>>
     {
-        move |maximum_acquire_count| {
+        move |maximum_acquire_count_per_query_type| {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
                 datastore
                     .run_tx(|tx| {
                         Box::pin(async move {
-                            tx.acquire_incomplete_collect_jobs(
-                                &lease_duration,
-                                maximum_acquire_count,
-                            )
-                            .await
+                            let (time_interval_jobs, fixed_size_jobs) = try_join!(
+                                tx.acquire_incomplete_time_interval_collect_jobs(
+                                    &lease_duration,
+                                    maximum_acquire_count_per_query_type,
+                                ),
+                                tx.acquire_incomplete_fixed_size_collect_jobs(
+                                    &lease_duration,
+                                    maximum_acquire_count_per_query_type
+                                ),
+                            )?;
+                            Ok(time_interval_jobs
+                                .into_iter()
+                                .chain(fixed_size_jobs.into_iter())
+                                .collect())
                         })
                     })
                     .await
@@ -709,7 +718,10 @@ mod tests {
 
                     if acquire_lease {
                         let lease = tx
-                            .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 1)
+                            .acquire_incomplete_time_interval_collect_jobs(
+                                &Duration::from_seconds(100),
+                                1,
+                            )
                             .await?
                             .remove(0);
                         assert_eq!(task.id(), lease.leased().task_id());
@@ -798,9 +810,12 @@ mod tests {
                     .await?;
 
                     let lease = Arc::new(
-                        tx.acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 1)
-                            .await?
-                            .remove(0),
+                        tx.acquire_incomplete_time_interval_collect_jobs(
+                            &Duration::from_seconds(100),
+                            1,
+                        )
+                        .await?
+                        .remove(0),
                     );
 
                     assert_eq!(task.id(), lease.leased().task_id());
@@ -1008,7 +1023,10 @@ mod tests {
                         .unwrap();
 
                     let leases = tx
-                        .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 1)
+                        .acquire_incomplete_time_interval_collect_jobs(
+                            &Duration::from_seconds(100),
+                            1,
+                        )
                         .await?;
 
                     Ok((abandoned_collect_job, leases))
@@ -1173,7 +1191,7 @@ mod tests {
                 assert_eq!(collect_job.state(), &CollectJobState::Deleted);
 
                 let leases = tx
-                    .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 1)
+                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 1)
                     .await
                     .unwrap();
 

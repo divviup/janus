@@ -2117,11 +2117,11 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    /// acquire_incomplete_collect_jobs retrieves & acquires the IDs of unclaimed incomplete collect
-    /// jobs. At most `maximum_acquire_count` jobs are acquired. The job is acquired with a "lease"
-    /// that will time out; the desired duration of the lease is a parameter, and the lease
-    /// expiration time is returned.
-    pub async fn acquire_incomplete_collect_jobs(
+    /// acquire_incomplete_time_interval_collect_jobs retrieves & acquires the IDs of unclaimed
+    /// incomplete collect jobs. At most `maximum_acquire_count` jobs are acquired. The job is
+    /// acquired with a "lease" that will time out; the desired duration of the lease is a
+    /// parameter, and the lease expiration time is returned. Applies only to time-interval tasks.
+    pub async fn acquire_incomplete_time_interval_collect_jobs(
         &self,
         lease_duration: &Duration,
         maximum_acquire_count: usize,
@@ -2149,6 +2149,92 @@ WITH updated as (
         WHERE
             -- Constraint for tasks table in FROM position
             tasks.id = collect_jobs.task_id
+            -- Only return time interval collect jobs.
+            AND tasks.query_type ? 'TimeInterval'
+            -- Only acquire collect jobs in a non-terminal state.
+            AND collect_jobs.state = 'START'
+            -- Do not acquire collect jobs with an unexpired lease
+            AND collect_jobs.lease_expiry <= $2
+        GROUP BY collect_jobs.id
+        -- Do not acquire collect jobs where any associated aggregation jobs are not finished
+        HAVING bool_and(aggregation_jobs.state != 'IN_PROGRESS')
+        -- Honor maximum_acquire_count *after* winnowing down to runnable collect jobs
+        LIMIT $3
+    )
+    RETURNING tasks.task_id, tasks.query_type, tasks.vdaf, collect_jobs.collect_job_id,
+              collect_jobs.id, collect_jobs.lease_token, collect_jobs.lease_attempts
+)
+SELECT task_id, query_type, vdaf, collect_job_id, lease_token, lease_attempts FROM updated
+-- TODO (#174): revisit collect job queueing behavior implied by this ORDER BY
+ORDER BY id DESC
+"#,
+            )
+            .await?;
+        self.tx
+            .query(
+                &stmt,
+                &[
+                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time()?,
+                    /* now */ &now.as_naive_date_time()?,
+                    /* limit */ &maximum_acquire_count,
+                ],
+            )
+            .await?
+            .into_iter()
+            .map(|row| {
+                let task_id = TaskId::get_decoded(row.get("task_id"))?;
+                let collect_job_id = row.get("collect_job_id");
+                let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
+                let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+                let lease_token_bytes: [u8; LeaseToken::LEN] = row
+                    .get::<_, Vec<u8>>("lease_token")
+                    .try_into()
+                    .map_err(|err| Error::DbState(format!("lease_token invalid: {:?}", err)))?;
+                let lease_token = LeaseToken::from(lease_token_bytes);
+                let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
+                Ok(Lease::new(
+                    AcquiredCollectJob::new(task_id, collect_job_id, query_type, vdaf),
+                    lease_expiry_time,
+                    lease_token,
+                    lease_attempts,
+                ))
+            })
+            .collect()
+    }
+
+    /// acquire_incomplete_fixed_size_collect_jobs retrieves & acquires the IDs of unclaimed
+    /// incomplete collect jobs. At most `maximum_acquire_count` jobs are acquired. The job is
+    /// acquired with a "lease" that will time out; the desired duration of the lease is a
+    /// parameter, and the lease expiration time is returned. Applies only to fixed-size tasks.
+    pub async fn acquire_incomplete_fixed_size_collect_jobs(
+        &self,
+        lease_duration: &Duration,
+        maximum_acquire_count: usize,
+    ) -> Result<Vec<Lease<AcquiredCollectJob>>, Error> {
+        let now = self.clock.now();
+        let lease_expiry_time = now.add(lease_duration)?;
+        let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
+
+        let stmt = self
+            .tx
+            .prepare_cached(
+                r#"
+WITH updated as (
+    UPDATE collect_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
+    FROM tasks
+    WHERE collect_jobs.id IN (
+        SELECT collect_jobs.id FROM collect_jobs
+        -- Join on aggregation jobs with matching task ID, matching aggregation parameter, and
+        -- matching batch identifier.
+        INNER JOIN aggregation_jobs
+            ON collect_jobs.aggregation_param = aggregation_jobs.aggregation_param
+            AND collect_jobs.task_id = aggregation_jobs.task_id
+            AND collect_jobs.batch_identifier = aggregation_jobs.batch_identifier
+        WHERE
+            -- Constraint for tasks table in FROM position
+            tasks.id = collect_jobs.task_id
+            -- Only return fixed-size collect jobs.
+            AND tasks.query_type ? 'FixedSize'
             -- Only acquire collect jobs in a non-terminal state.
             AND collect_jobs.state = 'START'
             -- Do not acquire collect jobs with an unexpired lease
@@ -4711,7 +4797,7 @@ mod tests {
             Crypter, Error,
         },
         messages::{DurationExt, TimeExt},
-        task::{self, test_util::TaskBuilder, QueryType, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{self, test_util::TaskBuilder, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
     use chrono::NaiveDate;
@@ -4726,7 +4812,7 @@ mod tests {
         time::{Clock, MockClock, TimeExt as CoreTimeExt},
     };
     use janus_messages::{
-        query_type::{FixedSize, TimeInterval},
+        query_type::{FixedSize, QueryType, TimeInterval},
         Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, ReportId,
         ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
@@ -4783,7 +4869,7 @@ mod tests {
             (VdafInstance::Poplar1 { bits: 8 }, Role::Helper),
             (VdafInstance::Poplar1 { bits: 64 }, Role::Helper),
         ] {
-            let task = TaskBuilder::new(QueryType::TimeInterval, vdaf, role).build();
+            let task = TaskBuilder::new(task::QueryType::TimeInterval, vdaf, role).build();
             want_tasks.insert(*task.id(), task.clone());
 
             let err = ds
@@ -4870,8 +4956,12 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
 
         let report: LeaderStoredReport<0, dummy_vdaf::Vdaf> = LeaderStoredReport::new(
             *task.id(),
@@ -4959,13 +5049,13 @@ mod tests {
         let batch_interval = Interval::new(when, time_precision).unwrap();
 
         let task = TaskBuilder::new(
-            QueryType::TimeInterval,
+            task::QueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
         .build();
         let unrelated_task = TaskBuilder::new(
-            QueryType::TimeInterval,
+            task::QueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
@@ -5069,10 +5159,18 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-        let unrelated_task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
+        let unrelated_task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
 
         let first_unaggregated_report =
             LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(12345));
@@ -5322,12 +5420,24 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-        let unrelated_task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-        let no_reports_task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
+        let unrelated_task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
+        let no_reports_task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
 
         let first_report_in_interval =
             LeaderStoredReport::new_dummy(*task.id(), Time::from_seconds_since_epoch(12340));
@@ -5418,13 +5528,13 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
-            QueryType::FixedSize { max_batch_size: 10 },
+            task::QueryType::FixedSize { max_batch_size: 10 },
             VdafInstance::Fake,
             Role::Leader,
         )
         .build();
         let unrelated_task = TaskBuilder::new(
-            QueryType::FixedSize { max_batch_size: 10 },
+            task::QueryType::FixedSize { max_batch_size: 10 },
             VdafInstance::Fake,
             Role::Leader,
         )
@@ -5543,7 +5653,7 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let task = TaskBuilder::new(
-            QueryType::TimeInterval,
+            task::QueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
@@ -5648,7 +5758,7 @@ mod tests {
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
         let task = TaskBuilder::new(
-            QueryType::FixedSize { max_batch_size: 10 },
+            task::QueryType::FixedSize { max_batch_size: 10 },
             VdafInstance::Fake,
             Role::Leader,
         )
@@ -5751,7 +5861,7 @@ mod tests {
 
         const AGGREGATION_JOB_COUNT: usize = 10;
         let task = TaskBuilder::new(
-            QueryType::TimeInterval,
+            task::QueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
@@ -5801,7 +5911,7 @@ mod tests {
                 // Write an aggregation job for a task that we are taking on the helper role for.
                 // We don't want to retrieve this one, either.
                 let helper_task = TaskBuilder::new(
-                    QueryType::TimeInterval,
+                    task::QueryType::TimeInterval,
                     VdafInstance::Prio3Aes128Count,
                     Role::Helper,
                 )
@@ -6068,7 +6178,7 @@ mod tests {
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
         let task = TaskBuilder::new(
-            QueryType::FixedSize { max_batch_size: 10 },
+            task::QueryType::FixedSize { max_batch_size: 10 },
             VdafInstance::Fake,
             Role::Leader,
         )
@@ -6102,7 +6212,7 @@ mod tests {
                 // Also write an unrelated aggregation job with a different task ID to check that it
                 // is not returned.
                 let unrelated_task = TaskBuilder::new(
-                    QueryType::FixedSize { max_batch_size: 10 },
+                    task::QueryType::FixedSize { max_batch_size: 10 },
                     VdafInstance::Fake,
                     Role::Leader,
                 )
@@ -6157,7 +6267,7 @@ mod tests {
         .enumerate()
         {
             let task = TaskBuilder::new(
-                QueryType::TimeInterval,
+                task::QueryType::TimeInterval,
                 VdafInstance::Prio3Aes128Count,
                 Role::Leader,
             )
@@ -6322,7 +6432,7 @@ mod tests {
         let (prep_state, prep_msg, output_share) = generate_vdaf_values(vdaf.as_ref(), (), 0);
 
         let task = TaskBuilder::new(
-            QueryType::TimeInterval,
+            task::QueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
@@ -6468,8 +6578,12 @@ mod tests {
     async fn lookup_collect_job() {
         install_test_trace_subscriber();
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(100),
             Duration::from_seconds(100),
@@ -6698,10 +6812,18 @@ mod tests {
     async fn get_collect_job_task_id() {
         install_test_trace_subscriber();
 
-        let first_task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-        let second_task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let first_task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
+        let second_task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(100),
             Duration::from_seconds(100),
@@ -6769,8 +6891,12 @@ mod tests {
     async fn get_collect_job() {
         install_test_trace_subscriber();
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
         let first_batch_interval = Interval::new(
             Time::from_seconds_since_epoch(100),
             Duration::from_seconds(100),
@@ -6874,8 +7000,12 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
+        let task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
         let abandoned_batch_interval = Interval::new(
             Time::from_seconds_since_epoch(100),
             Duration::from_seconds(100),
@@ -6973,40 +7103,37 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct CollectJobTestCase {
+    struct CollectJobTestCase<Q: QueryType> {
         should_be_acquired: bool,
         task_id: TaskId,
-        batch_interval: Interval,
+        batch_identifier: Q::BatchIdentifier,
         agg_param: AggregationParam,
         collect_job_id: Option<Uuid>,
         state: CollectJobTestCaseState,
     }
 
     #[derive(Clone)]
-    struct CollectJobAcquireTestCase {
+    struct CollectJobAcquireTestCase<Q: CollectableQueryType> {
         task_ids: Vec<TaskId>,
+        query_type: task::QueryType,
         reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>>,
-        aggregation_jobs: Vec<AggregationJob<0, TimeInterval, dummy_vdaf::Vdaf>>,
+        aggregation_jobs: Vec<AggregationJob<0, Q, dummy_vdaf::Vdaf>>,
         report_aggregations: Vec<ReportAggregation<0, dummy_vdaf::Vdaf>>,
-        collect_job_test_cases: Vec<CollectJobTestCase>,
+        collect_job_test_cases: Vec<CollectJobTestCase<Q>>,
     }
 
-    async fn setup_collect_job_acquire_test_case(
+    async fn setup_collect_job_acquire_test_case<Q: CollectableQueryType>(
         ds: &Datastore<MockClock>,
-        test_case: CollectJobAcquireTestCase,
-    ) -> CollectJobAcquireTestCase {
+        test_case: CollectJobAcquireTestCase<Q>,
+    ) -> CollectJobAcquireTestCase<Q> {
         ds.run_tx(|tx| {
             let mut test_case = test_case.clone();
             Box::pin(async move {
                 for task_id in &test_case.task_ids {
                     tx.put_task(
-                        &TaskBuilder::new(
-                            QueryType::TimeInterval,
-                            VdafInstance::Fake,
-                            Role::Leader,
-                        )
-                        .with_id(*task_id)
-                        .build(),
+                        &TaskBuilder::new(test_case.query_type, VdafInstance::Fake, Role::Leader)
+                            .with_id(*task_id)
+                            .build(),
                     )
                     .await?;
                 }
@@ -7024,10 +7151,10 @@ mod tests {
                 }
 
                 for test_case in test_case.collect_job_test_cases.iter_mut() {
-                    let collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                    let collect_job = CollectJob::<0, Q, dummy_vdaf::Vdaf>::new(
                         test_case.task_id,
                         Uuid::new_v4(),
-                        test_case.batch_interval,
+                        test_case.batch_identifier.clone(),
                         test_case.agg_param,
                         match test_case.state {
                             CollectJobTestCaseState::Start => CollectJobState::Start,
@@ -7055,9 +7182,9 @@ mod tests {
         .unwrap()
     }
 
-    async fn run_collect_job_acquire_test_case(
+    async fn run_collect_job_acquire_test_case<Q: CollectableQueryType>(
         ds: &Datastore<MockClock>,
-        test_case: CollectJobAcquireTestCase,
+        test_case: CollectJobAcquireTestCase<Q>,
     ) -> Vec<Lease<AcquiredCollectJob>> {
         let test_case = setup_collect_job_acquire_test_case(ds, test_case).await;
 
@@ -7066,12 +7193,16 @@ mod tests {
             let test_case = test_case.clone();
             let clock = clock.clone();
             Box::pin(async move {
-                let collect_job_leases = tx
-                    .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 10)
+                let time_interval_leases = tx
+                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 10)
+                    .await?;
+                let fixed_size_leases = tx
+                    .acquire_incomplete_fixed_size_collect_jobs(&Duration::from_seconds(100), 10)
                     .await?;
 
-                let mut leased_collect_jobs: Vec<_> = collect_job_leases
+                let mut leased_collect_jobs: Vec<_> = time_interval_leases
                     .iter()
+                    .chain(fixed_size_leases.iter())
                     .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
                     .collect();
                 leased_collect_jobs.sort();
@@ -7085,7 +7216,7 @@ mod tests {
                             AcquiredCollectJob::new(
                                 c.task_id,
                                 c.collect_job_id.unwrap(),
-                                task::QueryType::TimeInterval,
+                                test_case.query_type,
                                 VdafInstance::Fake,
                             ),
                             clock.now().add(&Duration::from_seconds(100)).unwrap(),
@@ -7096,7 +7227,10 @@ mod tests {
 
                 assert_eq!(leased_collect_jobs, expected_collect_jobs);
 
-                Ok(collect_job_leases)
+                Ok(time_interval_leases
+                    .into_iter()
+                    .chain(fixed_size_leases.into_iter())
+                    .collect())
             })
         })
         .await
@@ -7104,7 +7238,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_job_acquire_release_happy_path() {
+    async fn time_interval_collect_job_acquire_release_happy_path() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -7137,10 +7271,10 @@ mod tests {
             ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
         )]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
             should_be_acquired: true,
             task_id,
-            batch_interval,
+            batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             state: CollectJobTestCaseState::Start,
@@ -7150,6 +7284,7 @@ mod tests {
             &ds,
             CollectJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
+                query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
@@ -7165,7 +7300,10 @@ mod tests {
                     // Try to re-acquire collect jobs. Nothing should happen because the lease is still
                     // valid.
                     assert!(tx
-                        .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 10)
+                        .acquire_incomplete_time_interval_collect_jobs(
+                            &Duration::from_seconds(100),
+                            10
+                        )
                         .await
                         .unwrap()
                         .is_empty());
@@ -7176,7 +7314,10 @@ mod tests {
                         .unwrap();
 
                     let reacquired_leases = tx
-                        .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 10)
+                        .acquire_incomplete_time_interval_collect_jobs(
+                            &Duration::from_seconds(100),
+                            10,
+                        )
                         .await
                         .unwrap();
                     let reacquired_jobs: Vec<_> = reacquired_leases
@@ -7206,7 +7347,132 @@ mod tests {
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
                 let acquired_jobs = tx
-                    .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 10)
+                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 10)
+                    .await
+                    .unwrap();
+
+                for (acquired_job, reacquired_job) in acquired_jobs.iter().zip(reacquired_jobs) {
+                    assert_eq!(acquired_job.leased(), reacquired_job.leased());
+                    assert_eq!(
+                        acquired_job.lease_expiry_time(),
+                        &reacquired_job
+                            .lease_expiry_time()
+                            .add(&Duration::from_seconds(100))
+                            .unwrap(),
+                    );
+                }
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn fixed_size_collect_job_acquire_release_happy_path() {
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        let task_id = random();
+        let reports = Vec::from([LeaderStoredReport::new_dummy(
+            task_id,
+            Time::from_seconds_since_epoch(0),
+        )]);
+        let batch_id = random();
+        let aggregation_job_id = random();
+        let aggregation_jobs = Vec::from([AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+            task_id,
+            aggregation_job_id,
+            Some(batch_id),
+            AggregationParam(0),
+            AggregationJobState::Finished,
+        )]);
+        let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+            task_id,
+            aggregation_job_id,
+            *reports[0].metadata().id(),
+            *reports[0].metadata().time(),
+            0,
+            ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
+        )]);
+
+        let collect_job_leases = run_collect_job_acquire_test_case(
+            &ds,
+            CollectJobAcquireTestCase {
+                task_ids: Vec::from([task_id]),
+                query_type: task::QueryType::FixedSize { max_batch_size: 10 },
+                reports,
+                aggregation_jobs,
+                report_aggregations,
+                collect_job_test_cases: Vec::from([CollectJobTestCase::<FixedSize> {
+                    should_be_acquired: true,
+                    task_id,
+                    batch_identifier: batch_id,
+                    agg_param: AggregationParam(0),
+                    collect_job_id: None,
+                    state: CollectJobTestCaseState::Start,
+                }]),
+            },
+        )
+        .await;
+
+        let reacquired_jobs = ds
+            .run_tx(|tx| {
+                let collect_job_leases = collect_job_leases.clone();
+                Box::pin(async move {
+                    // Try to re-acquire collect jobs. Nothing should happen because the lease is still
+                    // valid.
+                    assert!(tx
+                        .acquire_incomplete_fixed_size_collect_jobs(
+                            &Duration::from_seconds(100),
+                            10
+                        )
+                        .await
+                        .unwrap()
+                        .is_empty());
+
+                    // Release the lease, then re-acquire it.
+                    tx.release_collect_job(&collect_job_leases[0])
+                        .await
+                        .unwrap();
+
+                    let reacquired_leases = tx
+                        .acquire_incomplete_fixed_size_collect_jobs(
+                            &Duration::from_seconds(100),
+                            10,
+                        )
+                        .await
+                        .unwrap();
+                    let reacquired_jobs: Vec<_> = reacquired_leases
+                        .iter()
+                        .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
+                        .collect();
+
+                    let collect_jobs: Vec<_> = collect_job_leases
+                        .iter()
+                        .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
+                        .collect();
+
+                    assert_eq!(reacquired_jobs.len(), 1);
+                    assert_eq!(reacquired_jobs, collect_jobs);
+
+                    Ok(reacquired_leases)
+                })
+            })
+            .await
+            .unwrap();
+
+        // Advance time by the lease duration
+        clock.advance(Duration::from_seconds(100));
+
+        ds.run_tx(|tx| {
+            let reacquired_jobs = reacquired_jobs.clone();
+            Box::pin(async move {
+                // Re-acquire the jobs whose lease should have lapsed.
+                let acquired_jobs = tx
+                    .acquire_incomplete_fixed_size_collect_jobs(&Duration::from_seconds(100), 10)
                     .await
                     .unwrap();
 
@@ -7252,10 +7518,10 @@ mod tests {
                 AggregationJobState::Finished,
             )]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
             should_be_acquired: false,
             task_id,
-            batch_interval,
+            batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             state: CollectJobTestCaseState::Start,
@@ -7265,6 +7531,7 @@ mod tests {
             &ds,
             CollectJobAcquireTestCase {
                 task_ids: Vec::from([task_id, other_task_id]),
+                query_type: task::QueryType::TimeInterval,
                 reports: Vec::new(),
                 aggregation_jobs,
                 report_aggregations: Vec::new(),
@@ -7301,10 +7568,10 @@ mod tests {
                 AggregationJobState::Finished,
             )]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
             should_be_acquired: false,
             task_id,
-            batch_interval,
+            batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             state: CollectJobTestCaseState::Start,
@@ -7314,6 +7581,7 @@ mod tests {
             &ds,
             CollectJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
+                query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations: Vec::new(),
@@ -7360,10 +7628,10 @@ mod tests {
             ReportAggregationState::Start, // Shouldn't matter what state the report aggregation is in
         )]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
             should_be_acquired: false,
             task_id,
-            batch_interval: Interval::new(
+            batch_identifier: Interval::new(
                 Time::from_seconds_since_epoch(0),
                 Duration::from_seconds(100),
             )
@@ -7375,8 +7643,9 @@ mod tests {
 
         run_collect_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase {
+            CollectJobAcquireTestCase::<TimeInterval> {
                 task_ids: Vec::from([task_id]),
+                query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
@@ -7421,10 +7690,10 @@ mod tests {
             ReportAggregationState::Start,
         )]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
             should_be_acquired: false,
             task_id,
-            batch_interval,
+            batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             // Collect job has already run to completion
@@ -7435,6 +7704,7 @@ mod tests {
             &ds,
             CollectJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
+                query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
@@ -7499,10 +7769,10 @@ mod tests {
             ),
         ]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase {
+        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
             should_be_acquired: false,
             task_id,
-            batch_interval,
+            batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
             collect_job_id: None,
             state: CollectJobTestCaseState::Start,
@@ -7512,6 +7782,7 @@ mod tests {
             &ds,
             CollectJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
+                query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
@@ -7574,18 +7845,18 @@ mod tests {
         ]);
 
         let collect_job_test_cases = Vec::from([
-            CollectJobTestCase {
+            CollectJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
-                batch_interval,
+                batch_identifier: batch_interval,
                 agg_param: AggregationParam(0),
                 collect_job_id: None,
                 state: CollectJobTestCaseState::Start,
             },
-            CollectJobTestCase {
+            CollectJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
-                batch_interval: Interval::new(
+                batch_identifier: Interval::new(
                     Time::from_seconds_since_epoch(0),
                     Duration::from_seconds(100),
                 )
@@ -7598,8 +7869,9 @@ mod tests {
 
         let test_case = setup_collect_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase {
+            CollectJobAcquireTestCase::<TimeInterval> {
                 task_ids: Vec::from([task_id]),
+                query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
@@ -7615,13 +7887,16 @@ mod tests {
                 // Acquire a single collect job, twice. Each call should yield one job. We don't
                 // care what order they are acquired in.
                 let mut acquired_collect_jobs = tx
-                    .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 1)
+                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 1)
                     .await?;
                 assert_eq!(acquired_collect_jobs.len(), 1);
 
                 acquired_collect_jobs.extend(
-                    tx.acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 1)
-                        .await?,
+                    tx.acquire_incomplete_time_interval_collect_jobs(
+                        &Duration::from_seconds(100),
+                        1,
+                    )
+                    .await?,
                 );
 
                 assert_eq!(acquired_collect_jobs.len(), 2);
@@ -7727,26 +8002,26 @@ mod tests {
         ]);
 
         let collect_job_test_cases = Vec::from([
-            CollectJobTestCase {
+            CollectJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
-                batch_interval,
+                batch_identifier: batch_interval,
                 agg_param: AggregationParam(0),
                 collect_job_id: None,
                 state: CollectJobTestCaseState::Finished,
             },
-            CollectJobTestCase {
+            CollectJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
-                batch_interval,
+                batch_identifier: batch_interval,
                 agg_param: AggregationParam(1),
                 collect_job_id: None,
                 state: CollectJobTestCaseState::Abandoned,
             },
-            CollectJobTestCase {
+            CollectJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
-                batch_interval,
+                batch_identifier: batch_interval,
                 agg_param: AggregationParam(2),
                 collect_job_id: None,
                 state: CollectJobTestCaseState::Deleted,
@@ -7757,6 +8032,7 @@ mod tests {
             &ds,
             CollectJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
+                query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
@@ -7769,7 +8045,7 @@ mod tests {
             Box::pin(async move {
                 // No collect jobs should be acquired because none of them are in the START state
                 let acquired_collect_jobs = tx
-                    .acquire_incomplete_collect_jobs(&Duration::from_seconds(100), 10)
+                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 10)
                     .await?;
                 assert!(acquired_collect_jobs.is_empty());
 
@@ -7789,13 +8065,19 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let time_precision = Duration::from_seconds(100);
-                let task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
-                        .with_time_precision(time_precision)
-                        .build();
-                let other_task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
-                        .build();
+                let task = TaskBuilder::new(
+                    task::QueryType::TimeInterval,
+                    VdafInstance::Fake,
+                    Role::Leader,
+                )
+                .with_time_precision(time_precision)
+                .build();
+                let other_task = TaskBuilder::new(
+                    task::QueryType::TimeInterval,
+                    VdafInstance::Fake,
+                    Role::Leader,
+                )
+                .build();
                 let aggregate_share = dummy_vdaf::AggregateShare(23);
                 let aggregation_param = AggregationParam(12);
 
@@ -7977,13 +8259,13 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let task = TaskBuilder::new(
-                    QueryType::FixedSize { max_batch_size: 10 },
+                    task::QueryType::FixedSize { max_batch_size: 10 },
                     VdafInstance::Fake,
                     Role::Leader,
                 )
                 .build();
                 let other_task = TaskBuilder::new(
-                    QueryType::FixedSize { max_batch_size: 10 },
+                    task::QueryType::FixedSize { max_batch_size: 10 },
                     VdafInstance::Fake,
                     Role::Leader,
                 )
@@ -8072,7 +8354,7 @@ mod tests {
         ds.run_tx(|tx| {
             Box::pin(async move {
                 let task =
-                    TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+                    TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
                         .build();
                 tx.put_task(&task).await?;
 
@@ -8177,7 +8459,7 @@ mod tests {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
-                        QueryType::FixedSize { max_batch_size: 10 },
+                        task::QueryType::FixedSize { max_batch_size: 10 },
                         VdafInstance::Fake,
                         Role::Leader,
                     )
