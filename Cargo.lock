@@ -497,13 +497,13 @@ dependencies = [
 
 [[package]]
 name = "concolor"
-version = "0.0.9"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90f9dcd9490a97db91a85ccd79e38a87e14323f0bb824659ee3274e9143ba37"
+checksum = "318d6c16e73b3a900eb212ad6a82fc7d298c5ab8184c7a9998646455bc474a16"
 dependencies = [
- "atty",
  "bitflags",
  "concolor-query",
+ "is-terminal",
 ]
 
 [[package]]
@@ -3435,9 +3435,9 @@ checksum = "2fd0db749597d91ff862fd1d55ea87f7855a744a8425a64695b6fca237d1dad1"
 
 [[package]]
 name = "snapbox"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "827c00e91b15e2674d8a5270bae91f898693cbf9561cbb58d8eaa31974597293"
+checksum = "efbd7b250c7243273b5aec4ca366fced84ad716d110bb7baae4814678952ebde"
 dependencies = [
  "concolor",
  "content_inspector",
@@ -3451,7 +3451,7 @@ dependencies = [
  "tempfile",
  "wait-timeout",
  "walkdir",
- "winapi",
+ "windows-sys 0.42.0",
  "yansi",
 ]
 
@@ -4104,9 +4104,9 @@ checksum = "59547bce71d9c38b83d9c0e92b6066c4253371f15005def0c30d9657f50c7642"
 
 [[package]]
 name = "trycmd"
-version = "0.14.4"
+version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e44a0ef010323b99f3b8fc13c6cac2e25df2e3bf5daacea5abef7bf5bd841bb8"
+checksum = "e381af441e13a3635303d26769620a9454aef05ec3303711efc3f1dd785a33af"
 dependencies = [
  "glob",
  "humantime",
