@@ -12,7 +12,7 @@ use janus_interop_binaries::{
     ContainerLogsDropGuard,
 };
 use janus_messages::{
-    query_type::{QueryType, TimeInterval},
+    query_type::{FixedSize, QueryType, TimeInterval},
     Duration, TaskId, Time,
 };
 use prio::codec::Encode;
@@ -21,20 +21,37 @@ use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
 use testcontainers::RunnableImage;
+use tokio::time::sleep;
 
 const JSON_MEDIA_TYPE: &str = "application/json";
 const TIME_PRECISION: u64 = 3600;
+
+enum QueryKind {
+    TimeInterval,
+    FixedSize,
+}
 
 /// Take a VDAF description and a list of measurements, perform an entire aggregation using
 /// interoperation test binaries, and return the aggregate result. This follows the outline of
 /// the "Test Runner Operation" section in draft-dcook-ppm-dap-interop-test-design.
 async fn run(
-    query_type: serde_json::Value,
+    query_kind: QueryKind,
     vdaf_object: serde_json::Value,
     measurements: &[serde_json::Value],
     aggregation_parameter: &[u8],
 ) -> serde_json::Value {
     install_test_trace_subscriber();
+
+    let (query_type_json, max_batch_size) = match query_kind {
+        QueryKind::TimeInterval => {
+            let query_type = json!(TimeInterval::CODE as u8);
+            (query_type, None)
+        }
+        QueryKind::FixedSize => {
+            let query_type = json!(FixedSize::CODE as u8);
+            (query_type, Some(json!(10)))
+        }
+    };
 
     // Create and start containers.
     let container_client = container_client();
@@ -204,7 +221,7 @@ async fn run(
             "leader": internal_leader_endpoint,
             "vdaf": vdaf_object,
             "collector_authentication_token": collector_auth_token,
-            "query_type": query_type,
+            "query_type": query_type_json,
         }))
         .send()
         .await
@@ -237,28 +254,35 @@ async fn run(
         .expect("\"collector_hpke_config\" value is not a string");
 
     // Send a /internal/test/add_task request to the leader.
+    let mut leader_add_task_request_body = json!({
+        "task_id": task_id_encoded,
+        "leader": internal_leader_endpoint,
+        "helper": internal_helper_endpoint,
+        "vdaf": vdaf_object,
+        "leader_authentication_token": aggregator_auth_token,
+        "collector_authentication_token": collector_auth_token,
+        "role": "leader",
+        "verify_key": verify_key_encoded,
+        "max_batch_query_count": 1,
+        "query_type": query_type_json,
+        "min_batch_size": 1,
+        "time_precision": TIME_PRECISION,
+        "collector_hpke_config": collector_hpke_config_encoded,
+        "task_expiration": Time::distant_future().as_seconds_since_epoch(),
+    });
+    if let Some(max_batch_size) = &max_batch_size {
+        leader_add_task_request_body
+            .as_object_mut()
+            .unwrap()
+            .insert("max_batch_size".to_string(), max_batch_size.clone());
+    }
     let leader_add_task_response = http_client
         .post(
             local_leader_endpoint
                 .join("/internal/test/add_task")
                 .unwrap(),
         )
-        .json(&json!({
-            "task_id": task_id_encoded,
-            "leader": internal_leader_endpoint,
-            "helper": internal_helper_endpoint,
-            "vdaf": vdaf_object,
-            "leader_authentication_token": aggregator_auth_token,
-            "collector_authentication_token": collector_auth_token,
-            "role": "leader",
-            "verify_key": verify_key_encoded,
-            "max_batch_query_count": 1,
-            "query_type": query_type,
-            "min_batch_size": 1,
-            "time_precision": TIME_PRECISION,
-            "collector_hpke_config": collector_hpke_config_encoded,
-            "task_expiration": Time::distant_future().as_seconds_since_epoch(),
-        }))
+        .json(&leader_add_task_request_body)
         .send()
         .await
         .unwrap();
@@ -284,27 +308,34 @@ async fn run(
     );
 
     // Send a /internal/test/add_task request to the helper.
+    let mut helper_add_task_request_body = json!({
+        "task_id": task_id_encoded,
+        "leader": internal_leader_endpoint,
+        "helper": internal_helper_endpoint,
+        "vdaf": vdaf_object,
+        "leader_authentication_token": aggregator_auth_token,
+        "role": "helper",
+        "verify_key": verify_key_encoded,
+        "max_batch_query_count": 1,
+        "query_type": query_type_json,
+        "min_batch_size": 1,
+        "time_precision": TIME_PRECISION,
+        "collector_hpke_config": collector_hpke_config_encoded,
+        "task_expiration": Time::distant_future().as_seconds_since_epoch(),
+    });
+    if let Some(max_batch_size) = &max_batch_size {
+        helper_add_task_request_body
+            .as_object_mut()
+            .unwrap()
+            .insert("max_batch_size".to_string(), max_batch_size.clone());
+    }
     let helper_add_task_response = http_client
         .post(
             local_helper_endpoint
                 .join("/internal/test/add_task")
                 .unwrap(),
         )
-        .json(&json!({
-            "task_id": task_id_encoded,
-            "leader": internal_leader_endpoint,
-            "helper": internal_helper_endpoint,
-            "vdaf": vdaf_object,
-            "leader_authentication_token": aggregator_auth_token,
-            "role": "helper",
-            "verify_key": verify_key_encoded,
-            "max_batch_query_count": 1,
-            "query_type": query_type,
-            "min_batch_size": 1,
-            "time_precision": TIME_PRECISION,
-            "collector_hpke_config": collector_hpke_config_encoded,
-            "task_expiration": Time::distant_future().as_seconds_since_epoch(),
-        }))
+        .json(&helper_add_task_request_body)
         .send()
         .await
         .unwrap();
@@ -329,16 +360,8 @@ async fn run(
         helper_add_task_response_object.get("error"),
     );
 
-    // Record the time before generating reports, and round it down to
-    // determine what batch time to start the aggregation at.
+    // Record the time before generating reports, for use in calculating time interval queries.
     let start_timestamp = RealClock::default().now();
-    let batch_interval_start = start_timestamp
-        .to_batch_interval_start(&Duration::from_seconds(TIME_PRECISION))
-        .unwrap()
-        .as_seconds_since_epoch();
-    // Span the aggregation over two time precisions, just in case our measurements spilled over a
-    // batch boundary.
-    let batch_interval_duration = TIME_PRECISION * 2;
 
     // Send one or more /internal/test/upload requests to the client.
     for measurement in measurements {
@@ -374,6 +397,86 @@ async fn run(
         );
     }
 
+    let query_json = match query_kind {
+        QueryKind::TimeInterval => {
+            let batch_interval_start = start_timestamp
+                .to_batch_interval_start(&Duration::from_seconds(TIME_PRECISION))
+                .unwrap()
+                .as_seconds_since_epoch();
+            // Span the aggregation over two time precisions, just in case our measurements spilled over a
+            // batch boundary.
+            let batch_interval_duration = TIME_PRECISION * 2;
+            json!({
+                "type": query_type_json,
+                "batch_interval_start": batch_interval_start,
+                "batch_interval_duration": batch_interval_duration,
+            })
+        }
+        QueryKind::FixedSize => {
+            // Make an additional request to the leader to fetch batch IDs.
+            let batch_id_encoded;
+            let mut requests = 0;
+            loop {
+                requests += 1;
+                let fetch_batch_ids_response = http_client
+                    .post(
+                        local_leader_endpoint
+                            .join("/internal/test/fetch_batch_ids")
+                            .unwrap(),
+                    )
+                    .json(&json!({
+                        "task_id": task_id_encoded,
+                    }))
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(fetch_batch_ids_response.status(), StatusCode::OK);
+                assert_eq!(
+                    fetch_batch_ids_response
+                        .headers()
+                        .get(CONTENT_TYPE)
+                        .unwrap(),
+                    JSON_MEDIA_TYPE,
+                );
+                let fetch_batch_ids_response_body =
+                    fetch_batch_ids_response.json::<Value>().await.unwrap();
+                let fetch_batch_ids_response_object = fetch_batch_ids_response_body
+                    .as_object()
+                    .expect("fetch_batch_ids response is not an object");
+                assert_eq!(
+                    fetch_batch_ids_response_object
+                        .get("status")
+                        .expect("fetch_batch_ids response is missing \"status\""),
+                    "success",
+                    "error: {:?}",
+                    fetch_batch_ids_response_object.get("error"),
+                );
+                let batch_id_list = fetch_batch_ids_response_object
+                    .get("batch_ids")
+                    .expect("fetch_batch_ids response is missing \"batch_ids\"")
+                    .as_array()
+                    .expect("\"batch_ids\" value is not an array");
+
+                if batch_id_list.is_empty() {
+                    if requests >= 30 {
+                        panic!("timed out polling for batch ID");
+                    }
+                    sleep(StdDuration::from_secs(1)).await
+                } else {
+                    assert_eq!(batch_id_list.len(), 1, "did not get exactly one batch ID");
+                    batch_id_encoded = batch_id_list[0].clone();
+                    assert!(batch_id_encoded.is_string());
+                    break;
+                }
+            }
+
+            json!({
+                "type": query_type_json,
+                "batch_id": batch_id_encoded,
+            })
+        }
+    };
+
     // Send a /internal/test/collect_start request to the collector.
     let collect_start_response = http_client
         .post(
@@ -384,11 +487,7 @@ async fn run(
         .json(&json!({
             "task_id": task_id_encoded,
             "agg_param": base64::encode_config(aggregation_parameter, URL_SAFE_NO_PAD),
-            "query": {
-                "type": TimeInterval::CODE as u8,
-                "batch_interval_start": batch_interval_start,
-                "batch_interval_duration": batch_interval_duration,
-            },
+            "query": query_json,
         }))
         .send()
         .await
@@ -479,7 +578,7 @@ async fn run(
 #[tokio::test]
 async fn e2e_prio3_count() {
     let result = run(
-        json!(TimeInterval::CODE as u8),
+        QueryKind::TimeInterval,
         json!({"type": "Prio3Aes128Count"}),
         &[
             json!("0"),
@@ -510,7 +609,7 @@ async fn e2e_prio3_count() {
 #[tokio::test]
 async fn e2e_prio3_sum() {
     let result = run(
-        json!(TimeInterval::CODE as u8),
+        QueryKind::TimeInterval,
         json!({"type": "Prio3Aes128Sum", "bits": "64"}),
         &[
             json!("0"),
@@ -530,7 +629,7 @@ async fn e2e_prio3_sum() {
 #[tokio::test]
 async fn e2e_prio3_histogram() {
     let result = run(
-        json!(TimeInterval::CODE as u8),
+        QueryKind::TimeInterval,
         json!({
             "type": "Prio3Aes128Histogram",
             "buckets": ["0", "1", "10", "100", "1000", "10000", "100000"],
@@ -561,7 +660,7 @@ async fn e2e_prio3_histogram() {
 #[tokio::test]
 async fn e2e_prio3_count_vec() {
     let result = run(
-        json!(TimeInterval::CODE as u8),
+        QueryKind::TimeInterval,
         json!({"type": "Prio3Aes128CountVec", "length": "4"}),
         &[
             json!(["0", "0", "0", "1"]),
@@ -578,4 +677,27 @@ async fn e2e_prio3_count_vec() {
     {
         assert!(element.is_string());
     }
+}
+
+#[tokio::test]
+async fn e2e_prio3_count_fixed_size() {
+    let result = run(
+        QueryKind::FixedSize,
+        json!({"type": "Prio3Aes128Count"}),
+        &[
+            json!("0"),
+            json!("1"),
+            json!("1"),
+            json!("1"),
+            json!("0"),
+            json!("1"),
+            json!("0"),
+            json!("1"),
+            json!("0"),
+            json!("0"),
+        ],
+        b"",
+    )
+    .await;
+    assert!(result.is_string());
 }
