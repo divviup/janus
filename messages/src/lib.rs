@@ -20,6 +20,8 @@ use std::{
     str::FromStr,
 };
 
+pub mod problem_type;
+
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -62,6 +62,7 @@ use janus_core::{
     task::{url_ensure_trailing_slash, AuthenticationToken, DAP_AUTH_HEADER},
 };
 use janus_messages::{
+    problem_type::DapProblemType,
     query_type::{QueryType, TimeInterval},
     CollectReq, CollectResp, HpkeConfig, Query, Role, TaskId,
 };
@@ -71,7 +72,7 @@ use prio::{
 };
 use reqwest::{
     header::{HeaderValue, ToStrError, CONTENT_TYPE, LOCATION, RETRY_AFTER},
-    StatusCode,
+    Response, StatusCode,
 };
 use retry_after::FromHeaderValueError;
 use retry_after::RetryAfter;
@@ -87,8 +88,11 @@ use url::Url;
 pub enum Error {
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
-    #[error("HTTP response status {0}")]
-    Http(Box<HttpApiProblem>),
+    #[error("HTTP response status {problem_details}")]
+    Http {
+        problem_details: Box<HttpApiProblem>,
+        dap_problem_type: Option<DapProblemType>,
+    },
     #[error("URL parse: {0}")]
     Url(#[from] url::ParseError),
     #[error("missing Location header in See Other response")]
@@ -113,6 +117,22 @@ pub enum Error {
     CollectPollTimeout,
     #[error("report count was too large")]
     ReportCountOverflow,
+}
+
+impl Error {
+    /// Construct an error from an HTTP response's status and problem details document, if present
+    /// in the body.
+    async fn from_http_response(response: Response) -> Error {
+        let problem_details = response_to_problem_details(response).await;
+        let dap_problem_type = problem_details
+            .type_url
+            .as_ref()
+            .and_then(|str| str.parse::<DapProblemType>().ok());
+        Error::Http {
+            problem_details: Box::new(problem_details),
+            dap_problem_type,
+        }
+    }
 }
 
 static COLLECTOR_USER_AGENT: &str = concat!(
@@ -355,19 +375,17 @@ where
                 if status == StatusCode::SEE_OTHER {
                     response
                 } else if status.is_client_error() || status.is_server_error() {
-                    return Err(Error::Http(Box::new(
-                        response_to_problem_details(response).await,
-                    )));
+                    return Err(Error::from_http_response(response).await);
                 } else {
-                    return Err(Error::Http(Box::new(HttpApiProblem::new(status))));
+                    // Incorrect success/redirect status code:
+                    return Err(Error::Http {
+                        problem_details: Box::new(HttpApiProblem::new(status)),
+                        dap_problem_type: None,
+                    });
                 }
             }
             // Retryable error status code, but ran out of retries:
-            Err(Ok(response)) => {
-                return Err(Error::Http(Box::new(
-                    response_to_problem_details(response).await,
-                )))
-            }
+            Err(Ok(response)) => return Err(Error::from_http_response(response).await),
             // Lower level errors, either unretryable or ran out of retries:
             Err(Err(error)) => return Err(Error::HttpClient(error)),
         };
@@ -422,19 +440,18 @@ where
                         return Ok(PollResult::NextAttempt(retry_after_opt));
                     }
                     _ if status.is_client_error() || status.is_server_error() => {
-                        return Err(Error::Http(Box::new(
-                            response_to_problem_details(response).await,
-                        )));
+                        return Err(Error::from_http_response(response).await);
                     }
-                    _ => return Err(Error::Http(Box::new(HttpApiProblem::new(status)))),
+                    _ => {
+                        return Err(Error::Http {
+                            problem_details: Box::new(HttpApiProblem::new(status)),
+                            dap_problem_type: None,
+                        })
+                    }
                 }
             }
             // Retryable error status code, but ran out of retries:
-            Err(Ok(response)) => {
-                return Err(Error::Http(Box::new(
-                    response_to_problem_details(response).await,
-                )))
-            }
+            Err(Ok(response)) => return Err(Error::from_http_response(response).await),
             // Lower level errors, either unretryable or ran out of retries:
             Err(Err(error)) => return Err(Error::HttpClient(error)),
         };
@@ -602,6 +619,7 @@ mod tests {
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{
+        problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
         BatchId, CollectReq, CollectResp, Duration, HpkeCiphertext, Interval, PartialBatchSelector,
         Query, Role, Time,
@@ -990,8 +1008,9 @@ mod tests {
             .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
-        assert_matches!(error, Error::Http(problem) => {
-            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
+            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(dap_problem_type, None);
         });
 
         mock_server_error.assert();
@@ -1011,9 +1030,10 @@ mod tests {
             .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
-        assert_matches!(error, Error::Http(problem) => {
-            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-            assert_eq!(problem.type_url.unwrap(), "http://example.com/test_server_error");
+        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
+            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(problem_details.type_url.unwrap(), "http://example.com/test_server_error");
+            assert_eq!(dap_problem_type, None);
         });
 
         mock_server_error_details.assert();
@@ -1055,10 +1075,11 @@ mod tests {
             .start_collection(Query::new_time_interval(batch_interval), &())
             .await
             .unwrap_err();
-        assert_matches!(error, Error::Http(problem) => {
-            assert_eq!(problem.status.unwrap(), StatusCode::BAD_REQUEST);
-            assert_eq!(problem.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:unrecognizedMessage");
-            assert_eq!(problem.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
+        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
+            assert_eq!(problem_details.status.unwrap(), StatusCode::BAD_REQUEST);
+            assert_eq!(problem_details.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:unrecognizedMessage");
+            assert_eq!(problem_details.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
+            assert_eq!(dap_problem_type, Some(DapProblemType::UnrecognizedMessage));
         });
 
         mock_bad_request.assert();
@@ -1096,8 +1117,9 @@ mod tests {
             .await
             .unwrap();
         let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http(problem) => {
-            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
+            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(dap_problem_type, None);
         });
 
         mock_collect_start.assert();
@@ -1111,9 +1133,10 @@ mod tests {
             .create();
 
         let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http(problem) => {
-            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
-            assert_eq!(problem.type_url.unwrap(), "http://example.com/test_server_error");
+        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
+            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(problem_details.type_url.unwrap(), "http://example.com/test_server_error");
+            assert_eq!(dap_problem_type, None);
         });
 
         mock_collect_job_server_error_details.assert();
@@ -1129,10 +1152,11 @@ mod tests {
             .create();
 
         let error = collector.poll_once(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http(problem) => {
-            assert_eq!(problem.status.unwrap(), StatusCode::BAD_REQUEST);
-            assert_eq!(problem.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:unrecognizedMessage");
-            assert_eq!(problem.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
+        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
+            assert_eq!(problem_details.status.unwrap(), StatusCode::BAD_REQUEST);
+            assert_eq!(problem_details.type_url.unwrap(), "urn:ietf:params:ppm:dap:error:unrecognizedMessage");
+            assert_eq!(problem_details.detail.unwrap(), "The message type for a response was incorrect or the payload was malformed.");
+            assert_eq!(dap_problem_type, Some(DapProblemType::UnrecognizedMessage));
         });
 
         mock_collect_job_bad_request.assert();
@@ -1301,8 +1325,9 @@ mod tests {
             .expect_at_least(3)
             .create();
         let error = collector.poll_until_complete(&job).await.unwrap_err();
-        assert_matches!(error, Error::Http(problem) => {
-            assert_eq!(problem.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_matches!(error, Error::Http { problem_details, dap_problem_type } => {
+            assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(dap_problem_type, None);
         });
         mock_collect_job_always_fail.assert();
     }
