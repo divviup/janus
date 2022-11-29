@@ -17,15 +17,14 @@ homepage = "https://divviup.org"
 license = "MPL-2.0"
 repository = "https://github.com/divviup/janus"
 rust-version = "1.65.0"
-version = "0.2.0"
+version = "0.3.0"
 
 [workspace.dependencies]
 k8s-openapi = { version = "0.16.0", features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.75.0", default-features = false, features = ["client"] }
 
 [profile.dev]
-# Disabling debug info improves build speeds & reduces
-# build artifact sizes (which helps CI caching).
+# Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.
 debug = 0
 
 [profile.small]
