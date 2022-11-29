@@ -62,8 +62,9 @@ use janus_core::{
     task::{url_ensure_trailing_slash, AuthenticationToken, DAP_AUTH_HEADER},
 };
 use janus_messages::{
+    problem_type::DapProblemType,
     query_type::{QueryType, TimeInterval},
-    CollectReq, CollectResp, DapProblemType, HpkeConfig, Query, Role, TaskId,
+    CollectReq, CollectResp, HpkeConfig, Query, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -618,9 +619,10 @@ mod tests {
         test_util::{install_test_trace_subscriber, run_vdaf, VdafTranscript},
     };
     use janus_messages::{
+        problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
-        BatchId, CollectReq, CollectResp, DapProblemType, Duration, HpkeCiphertext, Interval,
-        PartialBatchSelector, Query, Role, Time,
+        BatchId, CollectReq, CollectResp, Duration, HpkeCiphertext, Interval, PartialBatchSelector,
+        Query, Role, Time,
     };
     use mockito::mock;
     use prio::{

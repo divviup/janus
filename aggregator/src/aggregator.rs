@@ -40,12 +40,13 @@ use janus_core::{
     time::Clock,
 };
 use janus_messages::{
+    problem_type::DapProblemType,
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
     AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq, CollectResp,
-    DapProblemType, HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector,
-    PrepareStep, PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare,
-    ReportShareError, Role, TaskId, Time,
+    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector, PrepareStep,
+    PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare, ReportShareError, Role,
+    TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -3281,12 +3282,13 @@ mod tests {
         time::{Clock, MockClock, RealClock, TimeExt as _},
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp,
-        AggregateInitializeReq, AggregateInitializeResp, AggregateShareReq, AggregateShareResp,
-        BatchSelector, CollectReq, CollectResp, DapProblemType, DapProblemTypeParseError, Duration,
-        HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector, PrepareStep,
-        PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
-        ReportShareError, Role, TaskId, Time,
+        problem_type::{DapProblemType, DapProblemTypeParseError},
+        query_type::TimeInterval,
+        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
+        AggregateInitializeResp, AggregateShareReq, AggregateShareResp, BatchSelector, CollectReq,
+        CollectResp, Duration, HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval,
+        PartialBatchSelector, PrepareStep, PrepareStepResult, Query, Report, ReportId,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
