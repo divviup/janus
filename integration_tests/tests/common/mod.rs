@@ -1,23 +1,31 @@
-use backoff::ExponentialBackoffBuilder;
+use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
 use janus_aggregator::task::{test_util::TaskBuilder, QueryType, Task};
-use janus_collector::{test_util::collect_with_rewritten_url, Collector, CollectorParameters};
+use janus_collector::{
+    test_util::collect_with_rewritten_url, Collection, Collector, CollectorParameters,
+};
 use janus_core::{
     hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
     retries::test_http_request_exponential_backoff,
     task::VdafInstance,
     time::{Clock, RealClock, TimeExt},
 };
-use janus_integration_tests::client::{ClientBackend, ClientImplementation, InteropClientEncoding};
-use janus_messages::{Duration, Interval, Query, Role};
+use janus_integration_tests::{
+    client::{ClientBackend, ClientImplementation, InteropClientEncoding},
+    BatchDiscovery,
+};
+use janus_messages::{problem_type::DapProblemType, query_type, Duration, Interval, Query, Role};
 use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
 use reqwest::Url;
-use std::iter;
-use tokio::time;
+use std::{iter, sync::Arc, time::Duration as StdDuration};
+use tokio::time::{self, sleep};
 
 // Returns (collector_private_key, leader_task, helper_task).
-pub fn test_task_builders(vdaf: VdafInstance) -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
+pub fn test_task_builders(
+    vdaf: VdafInstance,
+    query_type: QueryType,
+) -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
     let (collector_hpke_config, collector_private_key) =
         generate_test_hpke_config_and_private_key();
@@ -26,6 +34,7 @@ pub fn test_task_builders(vdaf: VdafInstance) -> (HpkePrivateKey, TaskBuilder, T
             Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
             Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
         ]))
+        .with_query_type(query_type)
         .with_min_batch_size(46)
         .with_collector_hpke_config(collector_hpke_config);
     let helper_task = leader_task
@@ -54,35 +63,66 @@ where
     aggregate_result: V::AggregateResult,
 }
 
-pub async fn submit_measurements_and_verify_aggregate_generic<V>(
+pub async fn collect_generic<'a, V, Q>(
+    collector: &Collector<V>,
+    query: Query<Q>,
+    aggregation_parameter: &V::AggregationParam,
+    host: &str,
+    port: u16,
+) -> Result<Collection<V::AggregateResult>, janus_collector::Error>
+where
+    V: vdaf::Client + vdaf::Collector + InteropClientEncoding,
+    Vec<u8>: for<'b> From<&'b V::AggregateShare>,
+    Q: query_type::QueryType,
+{
+    // An extra retry loop is needed here because our collect request may race against the
+    // aggregation job creator, which is responsible for assigning reports to batches in fixed-
+    // size tasks.
+    let backoff = ExponentialBackoffBuilder::new()
+        .with_initial_interval(time::Duration::from_millis(500))
+        .with_max_interval(time::Duration::from_millis(500))
+        .with_max_elapsed_time(Some(time::Duration::from_secs(5)))
+        .build();
+    retry(backoff, || {
+        let query = query.clone();
+        async move {
+            match collect_with_rewritten_url(collector, query, aggregation_parameter, host, port)
+                .await
+            {
+                Ok(collection) => Ok(collection),
+                Err(
+                    error @ janus_collector::Error::Http {
+                        dap_problem_type: Some(DapProblemType::InvalidBatchSize),
+                        ..
+                    },
+                ) => Err(backoff::Error::transient(error)),
+                Err(error) => Err(backoff::Error::permanent(error)),
+            }
+        }
+    })
+    .await
+}
+
+pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
     vdaf: V,
     aggregator_endpoints: Vec<Url>,
-    leader_task: &Task,
-    collector_private_key: &HpkePrivateKey,
-    test_case: &AggregationTestCase<V>,
-    client_implementation: &ClientImplementation<'_, V>,
+    leader_task: &'a Task,
+    collector_private_key: &'a HpkePrivateKey,
+    test_case: &'a AggregationTestCase<V>,
+    client_implementation: &'a ClientImplementation<'a, V>,
+    batch_discovery: Arc<dyn BatchDiscovery>,
 ) where
     V: vdaf::Client + vdaf::Collector + InteropClientEncoding,
-    Vec<u8>: for<'a> From<&'a V::AggregateShare>,
+    Vec<u8>: for<'b> From<&'b V::AggregateShare>,
     V::AggregateResult: PartialEq,
 {
     // Submit some measurements, recording a timestamp before measurement upload to allow us to
-    // determine the correct collect interval.
+    // determine the correct collect interval. (for time interval tasks)
     let before_timestamp = RealClock::default().now();
     for measurement in test_case.measurements.iter() {
         client_implementation.upload(measurement).await.unwrap();
     }
 
-    // Send a collect request.
-    let batch_interval = Interval::new(
-        before_timestamp
-            .to_batch_interval_start(leader_task.time_precision())
-            .unwrap(),
-        // Use two time precisions as the interval duration in order to avoid a race condition if
-        // this test happens to run very close to the end of a batch window.
-        Duration::from_seconds(2 * leader_task.time_precision().as_seconds()),
-    )
-    .unwrap();
     let collector_params = CollectorParameters::new(
         *leader_task.id(),
         aggregator_endpoints[Role::Leader.index().unwrap()].clone(),
@@ -103,17 +143,64 @@ pub async fn submit_measurements_and_verify_aggregate_generic<V>(
         vdaf,
         janus_collector::default_http_client().unwrap(),
     );
-    let collection = collect_with_rewritten_url(
-        &collector,
-        Query::new_time_interval(batch_interval),
-        &test_case.aggregation_parameter,
-        "127.0.0.1",
-        aggregator_endpoints[Role::Leader.index().unwrap()]
-            .port()
-            .unwrap(),
-    )
-    .await
-    .unwrap();
+
+    let forwarded_port = aggregator_endpoints[Role::Leader.index().unwrap()]
+        .port()
+        .unwrap();
+
+    // Send a collect request.
+    let collection = match leader_task.query_type() {
+        QueryType::TimeInterval => {
+            let batch_interval = Interval::new(
+                before_timestamp
+                    .to_batch_interval_start(leader_task.time_precision())
+                    .unwrap(),
+                // Use two time precisions as the interval duration in order to avoid a race condition if
+                // this test happens to run very close to the end of a batch window.
+                Duration::from_seconds(2 * leader_task.time_precision().as_seconds()),
+            )
+            .unwrap();
+            collect_generic(
+                &collector,
+                Query::new_time_interval(batch_interval),
+                &test_case.aggregation_parameter,
+                "127.0.0.1",
+                forwarded_port,
+            )
+            .await
+            .unwrap()
+        }
+        QueryType::FixedSize { .. } => {
+            let mut requests = 0;
+            let mut batch_ids;
+            loop {
+                requests += 1;
+                batch_ids = batch_discovery
+                    .get_batch_ids(leader_task.id())
+                    .await
+                    .unwrap();
+                if batch_ids.is_empty() {
+                    if requests >= 15 {
+                        panic!("timed out waiting for a batch ID to be assigned");
+                    }
+                    sleep(StdDuration::from_secs(1)).await;
+                    continue;
+                }
+                assert_eq!(batch_ids.len(), 1, "too many batch IDs were assigned");
+                break;
+            }
+            let batch_id = batch_ids[0];
+            collect_generic(
+                &collector,
+                Query::new_fixed_size(batch_id),
+                &test_case.aggregation_parameter,
+                "127.0.0.1",
+                forwarded_port,
+            )
+            .await
+            .unwrap()
+        }
+    };
 
     // Verify that we got the correct result.
     assert_eq!(
@@ -128,6 +215,7 @@ pub async fn submit_measurements_and_verify_aggregate(
     leader_task: &Task,
     collector_private_key: &HpkePrivateKey,
     client_backend: &ClientBackend<'_>,
+    batch_discovery: Arc<dyn BatchDiscovery>,
 ) {
     // Translate aggregator endpoints for our perspective outside the container network.
     let aggregator_endpoints: Vec<_> = leader_task
@@ -170,6 +258,7 @@ pub async fn submit_measurements_and_verify_aggregate(
                 collector_private_key,
                 &test_case,
                 &client_implementation,
+                batch_discovery,
             )
             .await;
         }
@@ -198,6 +287,7 @@ pub async fn submit_measurements_and_verify_aggregate(
                 collector_private_key,
                 &test_case,
                 &client_implementation,
+                batch_discovery,
             )
             .await;
         }
@@ -237,6 +327,7 @@ pub async fn submit_measurements_and_verify_aggregate(
                 collector_private_key,
                 &test_case,
                 &client_implementation,
+                batch_discovery,
             )
             .await;
         }
@@ -277,6 +368,7 @@ pub async fn submit_measurements_and_verify_aggregate(
                 collector_private_key,
                 &test_case,
                 &client_implementation,
+                batch_discovery,
             )
             .await;
         }
