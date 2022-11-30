@@ -6,7 +6,7 @@ use janus_messages::{
     query_type::QueryType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId,
     HpkeKemId, HpkePublicKey, ReportMetadata, Role, TaskId,
 };
-use prio::codec::Encode;
+use prio::codec::{encode_u32_items, Encode};
 use std::{fmt::Debug, str::FromStr};
 
 #[derive(Debug, thiserror::Error)]
@@ -44,7 +44,7 @@ pub fn associated_data_for_report_share(
     let mut associated_data = Vec::new();
     task_id.encode(&mut associated_data);
     report_metadata.encode(&mut associated_data);
-    associated_data.extend(public_share);
+    encode_u32_items(&mut associated_data, &(), public_share);
     associated_data
 }
 
