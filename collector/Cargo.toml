@@ -16,8 +16,8 @@ test-util = []
 backoff = { version = "0.4.0", features = ["tokio"] }
 derivative = "2.2.0"
 http-api-problem = "0.56.0"
-janus_core = { version = "0.3", path = "../core" }
-janus_messages = { version = "0.3", path = "../messages" }
+janus_core.workspace = true
+janus_messages.workspace = true
 prio = "0.10.0"
 reqwest = { version = "0.11.13", default-features = false, features = ["rustls-tls", "json"] }
 retry-after = "0.3.1"
@@ -32,8 +32,8 @@ assert_matches = "1"
 base64 = "0.13.1"
 chrono = "0.4"
 clap = { version = "4.0.27", features = ["derive", "env"] }
-janus_collector = { path = ".", features = ["test-util"] }
-janus_core = { path = "../core", features = ["test-util"] }
+janus_collector = { workspace = true, features = ["test-util"] }
+janus_core = { workspace = true, features = ["test-util"] }
 mockito = "0.31.0"
 rand = "0.8"
 tracing-log = "0.1.3"
