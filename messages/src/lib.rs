@@ -1066,7 +1066,7 @@ impl<Q: QueryType> Encode for CollectReq<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.query.encode(bytes);
-        encode_u16_items(bytes, &(), &self.aggregation_parameter);
+        encode_u32_items(bytes, &(), &self.aggregation_parameter);
     }
 }
 
@@ -1074,7 +1074,7 @@ impl<Q: QueryType> Decode for CollectReq<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let query = Query::decode(bytes)?;
-        let aggregation_parameter = decode_u16_items(&(), bytes)?;
+        let aggregation_parameter = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             task_id,
@@ -1619,7 +1619,7 @@ impl<Q: QueryType> Encode for AggregateInitializeReq<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.job_id.encode(bytes);
-        encode_u16_items(bytes, &(), &self.aggregation_parameter);
+        encode_u32_items(bytes, &(), &self.aggregation_parameter);
         self.partial_batch_selector.encode(bytes);
         encode_u32_items(bytes, &(), &self.report_shares);
     }
@@ -1629,7 +1629,7 @@ impl<Q: QueryType> Decode for AggregateInitializeReq<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let job_id = AggregationJobId::decode(bytes)?;
-        let aggregation_parameter = decode_u16_items(&(), bytes)?;
+        let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let report_shares = decode_u32_items(&(), bytes)?;
 
@@ -1899,7 +1899,7 @@ impl<Q: QueryType> Encode for AggregateShareReq<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.task_id.encode(bytes);
         self.batch_selector.encode(bytes);
-        encode_u16_items(bytes, &(), &self.aggregation_parameter);
+        encode_u32_items(bytes, &(), &self.aggregation_parameter);
         self.report_count.encode(bytes);
         self.checksum.encode(bytes);
     }
@@ -1909,7 +1909,7 @@ impl<Q: QueryType> Decode for AggregateShareReq<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let task_id = TaskId::decode(bytes)?;
         let batch_selector = BatchSelector::decode(bytes)?;
-        let aggregation_parameter = decode_u16_items(&(), bytes)?;
+        let aggregation_parameter = decode_u32_items(&(), bytes)?;
         let report_count = u64::decode(bytes)?;
         let checksum = ReportIdChecksum::decode(bytes)?;
 
@@ -2564,8 +2564,8 @@ mod tests {
                     ),
                     concat!(
                         // aggregation_parameter
-                        "0000", // length
-                        "",     // opaque data
+                        "00000000", // length
+                        "",         // opaque data
                     ),
                 ),
             ),
@@ -2594,7 +2594,7 @@ mod tests {
                     ),
                     concat!(
                         // aggregation_parameter
-                        "0006",         // length
+                        "00000006",     // length
                         "303132333435", // opaque data
                     ),
                 ),
@@ -2620,8 +2620,8 @@ mod tests {
                     ),
                     concat!(
                         // aggregation_parameter
-                        "0000", // length
-                        "",     // opaque data
+                        "00000000", // length
+                        "",         // opaque data
                     ),
                 ),
             ),
@@ -2642,7 +2642,7 @@ mod tests {
                     ),
                     concat!(
                         // aggregation_parameter
-                        "0006",         // length
+                        "00000006",     // length
                         "303132333435", // opaque data
                     ),
                 ),
@@ -2973,7 +2973,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000000", // job_id
                 concat!(
                     // aggregation_parameter
-                    "0006",         // length
+                    "00000006",     // length
                     "303132333435", // opaque data
                 ),
                 concat!(
@@ -3105,7 +3105,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000000", // job_id
                 concat!(
                     // aggregation_parameter
-                    "0006",         // length
+                    "00000006",     // length
                     "303132333435", // opaque data
                 ),
                 concat!(
@@ -3437,8 +3437,8 @@ mod tests {
                     ),
                     concat!(
                         // aggregation_parameter
-                        "0000", // length
-                        "",     // opaque data
+                        "00000000", // length
+                        "",         // opaque data
                     ),
                     "00000000000001B7", // report_count
                     "0000000000000000000000000000000000000000000000000000000000000000", // checksum
@@ -3471,7 +3471,7 @@ mod tests {
                     ),
                     concat!(
                         // aggregation_parameter
-                        "0006",         // length
+                        "00000006",     // length
                         "303132333435", // opaque data
                     ),
                     "0000000000002215", // report_count
@@ -3501,8 +3501,8 @@ mod tests {
                     ),
                     concat!(
                         // aggregation_parameter
-                        "0000", // length
-                        "",     // opaque data
+                        "00000000", // length
+                        "",         // opaque data
                     ),
                     "00000000000001B7", // report_count
                     "0000000000000000000000000000000000000000000000000000000000000000", // checksum
@@ -3527,7 +3527,7 @@ mod tests {
                     ),
                     concat!(
                         // aggregation_parameter
-                        "0006",         // length
+                        "00000006",     // length
                         "303132333435", // opaque data
                     ),
                     "0000000000002215", // report_count
