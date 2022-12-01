@@ -831,17 +831,12 @@ impl Decode for HpkeConfig {
 pub struct ReportMetadata {
     report_id: ReportId,
     time: Time,
-    extensions: Vec<Extension>,
 }
 
 impl ReportMetadata {
     /// Construct a report's metadata from its components.
-    pub fn new(report_id: ReportId, time: Time, extensions: Vec<Extension>) -> Self {
-        Self {
-            report_id,
-            time,
-            extensions,
-        }
+    pub fn new(report_id: ReportId, time: Time) -> Self {
+        Self { report_id, time }
     }
 
     /// Retrieve the report ID from this report metadata.
@@ -853,18 +848,12 @@ impl ReportMetadata {
     pub fn time(&self) -> &Time {
         &self.time
     }
-
-    /// Retrieve the extensions from this report metadata.
-    pub fn extensions(&self) -> &[Extension] {
-        &self.extensions
-    }
 }
 
 impl Encode for ReportMetadata {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.report_id.encode(bytes);
         self.time.encode(bytes);
-        encode_u16_items(bytes, &(), &self.extensions);
     }
 }
 
@@ -872,12 +861,53 @@ impl Decode for ReportMetadata {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let report_id = ReportId::decode(bytes)?;
         let time = Time::decode(bytes)?;
+
+        Ok(Self { report_id, time })
+    }
+}
+
+// XXX: documentation
+// XXX: tests
+pub struct PlaintextInputShare {
+    extensions: Vec<Extension>,
+    payload: Vec<u8>,
+}
+
+impl PlaintextInputShare {
+    // XXX: documentation
+    pub fn new(extensions: Vec<Extension>, payload: Vec<u8>) -> Self {
+        Self {
+            extensions,
+            payload,
+        }
+    }
+
+    // XXX: documentation
+    pub fn extensions(&self) -> &[Extension] {
+        &self.extensions
+    }
+
+    // XXX: documentation
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+impl Encode for PlaintextInputShare {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        encode_u16_items(bytes, &(), &self.extensions);
+        encode_u32_items(bytes, &(), &self.payload);
+    }
+}
+
+impl Decode for PlaintextInputShare {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let extensions = decode_u16_items(&(), bytes)?;
+        let payload = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
-            report_id,
-            time,
             extensions,
+            payload,
         })
     }
 }
@@ -1331,6 +1361,7 @@ pub mod query_type {
 }
 
 /// DAP protocol message representing one aggregator's share of a single client report.
+// XXX: does this need to include extensions? (since they have been removed from ReportMetadata)
 #[derive(Derivative, Clone, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct ReportShare {
@@ -2319,38 +2350,20 @@ mod tests {
                 ReportMetadata::new(
                     ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                     Time::from_seconds_since_epoch(12345),
-                    Vec::new(),
                 ),
                 concat!(
                     "0102030405060708090A0B0C0D0E0F10", // report_id
                     "0000000000003039",                 // time
-                    concat!(
-                        // extensions
-                        "0000", // length
-                    ),
                 ),
             ),
             (
                 ReportMetadata::new(
                     ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                     Time::from_seconds_since_epoch(54321),
-                    Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                 ),
                 concat!(
                     "100F0E0D0C0B0A090807060504030201", // report_id
                     "000000000000D431",                 // time
-                    concat!(
-                        // extensions
-                        "0008", // length
-                        concat!(
-                            "0000", // extension_type
-                            concat!(
-                                // extension_data
-                                "0004",     // length
-                                "30313233", // opaque data
-                            ),
-                        )
-                    ),
                 ),
             ),
         ])
@@ -2365,7 +2378,6 @@ mod tests {
                     ReportMetadata::new(
                         ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                         Time::from_seconds_since_epoch(12345),
-                        Vec::new(),
                     ),
                     Vec::new(),
                     Vec::new(),
@@ -2376,10 +2388,6 @@ mod tests {
                         // metadata
                         "0102030405060708090A0B0C0D0E0F10", // report_id
                         "0000000000003039",                 // time
-                        concat!(
-                            // extensions
-                            "0000", // length
-                        ),
                     ),
                     concat!(
                         // public_share
@@ -2397,7 +2405,6 @@ mod tests {
                     ReportMetadata::new(
                         ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                         Time::from_seconds_since_epoch(54321),
-                        Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                     ),
                     Vec::from("3210"),
                     Vec::from([
@@ -2419,18 +2426,6 @@ mod tests {
                         // metadata
                         "100F0E0D0C0B0A090807060504030201", // report_id
                         "000000000000D431",                 // time
-                        concat!(
-                            // extensions
-                            "0008", // length
-                            concat!(
-                                "0000", // extension_type
-                                concat!(
-                                    // extension_data
-                                    "0004",     // length
-                                    "30313233", // opaque data
-                                ),
-                            )
-                        ),
                     ),
                     concat!(
                         // public_share
@@ -2944,7 +2939,6 @@ mod tests {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                             Time::from_seconds_since_epoch(54321),
-                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                         ),
                         public_share: Vec::new(),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -2957,7 +2951,6 @@ mod tests {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542),
-                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("3210"))]),
                         ),
                         public_share: Vec::from("0123"),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -2982,24 +2975,12 @@ mod tests {
                 ),
                 concat!(
                     // report_shares
-                    "00000072", // length
+                    "0000005E", // length
                     concat!(
                         concat!(
                             // metadata
                             "0102030405060708090A0B0C0D0E0F10", // report_id
                             "000000000000D431",                 // time
-                            concat!(
-                                // extensions
-                                "0008", // length
-                                concat!(
-                                    "0000", // extension_type
-                                    concat!(
-                                        // extension_data
-                                        "0004",     // length
-                                        "30313233", // opaque data
-                                    ),
-                                ),
-                            ),
                         ),
                         concat!(
                             // public_share
@@ -3026,18 +3007,6 @@ mod tests {
                             // metadata
                             "100F0E0D0C0B0A090807060504030201", // report_id
                             "0000000000011F46",                 // time
-                            concat!(
-                                // extensions
-                                "0008", // length
-                                concat!(
-                                    "0000", // extension_type
-                                    concat!(
-                                        // extension_data
-                                        "0004",     // length
-                                        "33323130", // opaque data
-                                    ),
-                                ),
-                            ),
                         ),
                         concat!(
                             "00000004", // payload
@@ -3076,7 +3045,6 @@ mod tests {
                         metadata: ReportMetadata::new(
                             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                             Time::from_seconds_since_epoch(54321),
-                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
                         ),
                         public_share: Vec::new(),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -3089,7 +3057,6 @@ mod tests {
                         metadata: ReportMetadata::new(
                             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
                             Time::from_seconds_since_epoch(73542),
-                            Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("3210"))]),
                         ),
                         public_share: Vec::from("0123"),
                         encrypted_input_share: HpkeCiphertext::new(
@@ -3115,24 +3082,12 @@ mod tests {
                 ),
                 concat!(
                     // report_shares
-                    "00000072", // length
+                    "0000005E", // length
                     concat!(
                         concat!(
                             // metadata
                             "0102030405060708090A0B0C0D0E0F10", // report_id
                             "000000000000D431",                 // time
-                            concat!(
-                                // extensions
-                                "0008", // length
-                                concat!(
-                                    "0000", // extension_type
-                                    concat!(
-                                        // extension_data
-                                        "0004",     // length
-                                        "30313233", // opaque data
-                                    ),
-                                ),
-                            ),
                         ),
                         concat!(
                             // public_share
@@ -3159,18 +3114,6 @@ mod tests {
                             // metadata
                             "100F0E0D0C0B0A090807060504030201", // report_id
                             "0000000000011F46",                 // time
-                            concat!(
-                                // extensions
-                                "0008", // length
-                                concat!(
-                                    "0000", // extension_type
-                                    concat!(
-                                        // extension_data
-                                        "0004",     // length
-                                        "33323130", // opaque data
-                                    ),
-                                ),
-                            ),
                         ),
                         concat!(
                             // public_share

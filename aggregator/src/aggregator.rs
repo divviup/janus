@@ -44,9 +44,9 @@ use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
     AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq, CollectResp,
-    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector, PrepareStep,
-    PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare, ReportShareError, Role,
-    TaskId, Time,
+    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector, PlaintextInputShare,
+    PrepareStep, PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare,
+    ReportShareError, Role, TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -1249,6 +1249,8 @@ impl VdafOps {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         C: Clock,
     {
+        // XXX: update
+
         // The leader's report is the first one.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if report.encrypted_input_shares().len() != 2 {
@@ -1314,7 +1316,7 @@ impl VdafOps {
                 }
             };
 
-        let leader_decrypted_input_share = match hpke::open(
+        let encoded_leader_plaintext_input_share = match hpke::open(
             hpke_config,
             hpke_private_key,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
@@ -1325,7 +1327,7 @@ impl VdafOps {
                 report.public_share(),
             ),
         ) {
-            Ok(leader_decrypted_input_share) => leader_decrypted_input_share,
+            Ok(encoded_leader_plaintext_input_share) => encoded_leader_plaintext_input_share,
             Err(error) => {
                 info!(
                     report.task_id = %report.task_id(),
@@ -1338,9 +1340,12 @@ impl VdafOps {
             }
         };
 
+        let leader_plaintext_input_share =
+            PlaintextInputShare::get_decoded(&encoded_leader_plaintext_input_share)?;
+
         let leader_input_share = match A::InputShare::get_decoded_with_param(
             &(vdaf, Role::Leader.index().unwrap()),
-            &leader_decrypted_input_share,
+            leader_plaintext_input_share.payload(),
         ) {
             Ok(leader_input_share) => leader_input_share,
             Err(err) => {
@@ -1362,6 +1367,7 @@ impl VdafOps {
             *report.task_id(),
             report.metadata().clone(),
             public_share,
+            Vec::from(leader_plaintext_input_share.extensions()),
             leader_input_share,
             helper_encrypted_input_share.clone(),
         );
@@ -3287,8 +3293,9 @@ mod tests {
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, AggregateShareReq, AggregateShareResp, BatchSelector, CollectReq,
         CollectResp, Duration, HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval,
-        PartialBatchSelector, PrepareStep, PrepareStepResult, Query, Report, ReportId,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+        PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report,
+        ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
+        Time,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -3492,7 +3499,7 @@ mod tests {
 
         let vdaf = Prio3Aes128Count::new_aes128_count(2).unwrap();
         let hpke_key = current_hpke_key(task.hpke_keys());
-        let report_metadata = ReportMetadata::new(random(), report_timestamp, Vec::new());
+        let report_metadata = ReportMetadata::new(random(), report_timestamp);
 
         let (public_share, measurements) = vdaf.shard(&1).unwrap();
 
@@ -3505,14 +3512,14 @@ mod tests {
         let leader_ciphertext = hpke::seal(
             &hpke_key.0,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
-            &measurements[0].get_encoded(),
+            &PlaintextInputShare::new(Vec::new(), measurements[0].get_encoded()).get_encoded(),
             &associated_data,
         )
         .unwrap();
         let helper_ciphertext = hpke::seal(
             &hpke_key.0,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
-            &measurements[1].get_encoded(),
+            &PlaintextInputShare::new(Vec::new(), measurements[1].get_encoded()).get_encoded(),
             &associated_data,
         )
         .unwrap();
@@ -3664,11 +3671,7 @@ mod tests {
             .unwrap();
         let bad_report = Report::new(
             *report.task_id(),
-            ReportMetadata::new(
-                *report.metadata().id(),
-                bad_report_time,
-                report.metadata().extensions().to_vec(),
-            ),
+            ReportMetadata::new(*report.metadata().id(), bad_report_time),
             report.public_share().to_vec(),
             report.encrypted_input_shares().to_vec(),
         );
@@ -3762,7 +3765,6 @@ mod tests {
                             .now()
                             .to_batch_interval_start(task.time_precision())
                             .unwrap(),
-                        Vec::new(),
                     ),
                     report.public_share().to_vec(),
                     report.encrypted_input_shares().to_vec(),
@@ -4264,7 +4266,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -4289,7 +4290,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let encrypted_input_share = report_share_0.encrypted_input_share();
         let mut corrupted_payload = encrypted_input_share.payload().to_vec();
@@ -4314,7 +4314,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
@@ -4335,7 +4334,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let wrong_hpke_config = loop {
             let hpke_config = generate_test_hpke_config_and_private_key().0;
@@ -4359,7 +4357,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -4387,7 +4384,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript = run_vdaf(
             &vdaf,
@@ -4413,7 +4409,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let aad = associated_data_for_report_share(task.id(), &report_metadata_6, &public_share_6);
         let report_share_6 = generate_helper_report_share_for_plaintext(
@@ -4592,7 +4587,6 @@ mod tests {
                     .now()
                     .to_batch_interval_start(task.time_precision())
                     .unwrap(),
-                Vec::new(),
             ),
             &hpke_key.0,
             &(),
@@ -4669,7 +4663,6 @@ mod tests {
                     .now()
                     .to_batch_interval_start(task.time_precision())
                     .unwrap(),
-                Vec::new(),
             ),
             &hpke_key.0,
             &(),
@@ -4740,7 +4733,6 @@ mod tests {
             ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 Time::from_seconds_since_epoch(54321),
-                Vec::new(),
             ),
             Vec::from("PUBLIC"),
             HpkeCiphertext::new(
@@ -4824,7 +4816,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript_0 = run_vdaf(
             vdaf.as_ref(),
@@ -4859,7 +4850,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript_1 = run_vdaf(
             vdaf.as_ref(),
@@ -4887,7 +4877,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript_2 = run_vdaf(
             vdaf.as_ref(),
@@ -5150,7 +5139,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript_0 = run_vdaf(
             &vdaf,
@@ -5178,7 +5166,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript_1 = run_vdaf(
             &vdaf,
@@ -5205,7 +5192,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript_2 = run_vdaf(
             &vdaf,
@@ -5438,7 +5424,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript_3 = run_vdaf(
             &vdaf,
@@ -5465,7 +5450,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript_4 = run_vdaf(
             &vdaf,
@@ -5492,7 +5476,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let transcript_5 = run_vdaf(
             &vdaf,
@@ -5734,7 +5717,6 @@ mod tests {
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
-            Vec::new(),
         );
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -5849,7 +5831,6 @@ mod tests {
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
-            Vec::new(),
         );
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -6008,7 +5989,6 @@ mod tests {
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
-            Vec::new(),
         );
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -6120,12 +6100,10 @@ mod tests {
         let report_metadata_0 = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
-            Vec::new(),
         );
         let report_metadata_1 = ReportMetadata::new(
             ReportId::from([16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]),
             Time::from_seconds_since_epoch(54321),
-            Vec::new(),
         );
 
         let clock = MockClock::default();
@@ -6275,7 +6253,6 @@ mod tests {
         let report_metadata = ReportMetadata::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             Time::from_seconds_since_epoch(54321),
-            Vec::new(),
         );
 
         let clock = MockClock::default();

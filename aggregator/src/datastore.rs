@@ -890,8 +890,9 @@ impl<C: Clock> Transaction<'_, C> {
 
                 Ok(LeaderStoredReport::new(
                     *task_id,
-                    ReportMetadata::new(*report_id, time, extensions),
+                    ReportMetadata::new(*report_id, time),
                     public_share,
+                    extensions,
                     leader_input_share,
                     helper_encrypted_input_share,
                 ))
@@ -1094,7 +1095,7 @@ impl<C: Clock> Transaction<'_, C> {
         let encoded_leader_share = report.leader_input_share().get_encoded();
         let encoded_helper_share = report.helper_encrypted_input_share().get_encoded();
         let mut encoded_extensions = Vec::new();
-        encode_u16_items(&mut encoded_extensions, &(), report.metadata().extensions());
+        encode_u16_items(&mut encoded_extensions, &(), report.leader_extensions());
 
         let stmt = self
             .tx
@@ -3198,8 +3199,8 @@ pub mod models {
     use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance};
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        AggregationJobId, BatchId, Duration, HpkeCiphertext, Interval, ReportId, ReportIdChecksum,
-        ReportMetadata, ReportShareError, Role, TaskId, Time,
+        AggregationJobId, BatchId, Duration, Extension, HpkeCiphertext, Interval, ReportId,
+        ReportIdChecksum, ReportMetadata, ReportShareError, Role, TaskId, Time,
     };
     use postgres_protocol::types::{
         range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -3223,7 +3224,7 @@ pub mod models {
     /// to be populated.
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub(crate) struct LeaderStoredReport<const L: usize, A>
+    pub struct LeaderStoredReport<const L: usize, A>
     where
         A: vdaf::Aggregator<L>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -3232,6 +3233,7 @@ pub mod models {
         metadata: ReportMetadata,
         #[derivative(Debug = "ignore")]
         public_share: A::PublicShare,
+        leader_extensions: Vec<Extension>,
         #[derivative(Debug = "ignore")]
         leader_input_share: A::InputShare,
         #[derivative(Debug = "ignore")]
@@ -3245,10 +3247,11 @@ pub mod models {
         A::PublicShare: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        pub(crate) fn new(
+        pub fn new(
             task_id: TaskId,
             metadata: ReportMetadata,
             public_share: A::PublicShare,
+            leader_extensions: Vec<Extension>,
             leader_input_share: A::InputShare,
             helper_encrypted_input_share: HpkeCiphertext,
         ) -> Self {
@@ -3256,28 +3259,33 @@ pub mod models {
                 task_id,
                 metadata,
                 public_share,
+                leader_extensions,
                 leader_input_share,
                 helper_encrypted_input_share,
             }
         }
 
-        pub(crate) fn task_id(&self) -> &TaskId {
+        pub fn task_id(&self) -> &TaskId {
             &self.task_id
         }
 
-        pub(crate) fn metadata(&self) -> &ReportMetadata {
+        pub fn metadata(&self) -> &ReportMetadata {
             &self.metadata
         }
 
-        pub(crate) fn public_share(&self) -> &A::PublicShare {
+        pub fn public_share(&self) -> &A::PublicShare {
             &self.public_share
         }
 
-        pub(crate) fn leader_input_share(&self) -> &A::InputShare {
+        pub fn leader_extensions(&self) -> &[Extension] {
+            &self.leader_extensions
+        }
+
+        pub fn leader_input_share(&self) -> &A::InputShare {
             &self.leader_input_share
         }
 
-        pub(crate) fn helper_encrypted_input_share(&self) -> &HpkeCiphertext {
+        pub fn helper_encrypted_input_share(&self) -> &HpkeCiphertext {
             &self.helper_encrypted_input_share
         }
     }
@@ -3293,6 +3301,7 @@ pub mod models {
             self.task_id == other.task_id
                 && self.metadata == other.metadata
                 && self.public_share == other.public_share
+                && self.leader_extensions == other.leader_extensions
                 && self.leader_input_share == other.leader_input_share
                 && self.helper_encrypted_input_share == other.helper_encrypted_input_share
         }
@@ -3309,14 +3318,15 @@ pub mod models {
 
     #[cfg(test)]
     impl LeaderStoredReport<0, janus_core::test_util::dummy_vdaf::Vdaf> {
-        pub(crate) fn new_dummy(task_id: TaskId, when: Time) -> Self {
+        pub fn new_dummy(task_id: TaskId, when: Time) -> Self {
             use janus_messages::HpkeConfigId;
             use rand::random;
 
             Self::new(
                 task_id,
-                ReportMetadata::new(random(), when, Vec::new()),
+                ReportMetadata::new(random(), when),
                 (),
+                Vec::new(),
                 (),
                 HpkeCiphertext::new(
                     HpkeConfigId::from(13),
@@ -4968,12 +4978,12 @@ mod tests {
             ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 Time::from_seconds_since_epoch(12345),
-                Vec::from([
-                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
-                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
-                ]),
             ),
             (), // public share
+            Vec::from([
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
+                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
+            ]),
             (), // leader input share
             /* Dummy ciphertext for the helper share */
             HpkeCiphertext::new(
@@ -5662,10 +5672,6 @@ mod tests {
             ReportMetadata::new(
                 ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
                 Time::from_seconds_since_epoch(12345),
-                Vec::from([
-                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
-                    Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
-                ]),
             ),
             Vec::from("public_share"),
             HpkeCiphertext::new(
@@ -6301,7 +6307,7 @@ mod tests {
                         tx.put_report_share(
                             task.id(),
                             &ReportShare::new(
-                                ReportMetadata::new(report_id, time, Vec::new()),
+                                ReportMetadata::new(report_id, time),
                                 Vec::from("public_share"),
                                 HpkeCiphertext::new(
                                     HpkeConfigId::from(12),
@@ -6488,7 +6494,7 @@ mod tests {
                         tx.put_report_share(
                             task.id(),
                             &ReportShare::new(
-                                ReportMetadata::new(report_id, time, Vec::new()),
+                                ReportMetadata::new(report_id, time),
                                 Vec::from("public_share"),
                                 HpkeCiphertext::new(
                                     HpkeConfigId::from(12),
@@ -8568,9 +8574,9 @@ mod tests {
                             ReportMetadata::new(
                                 *report_aggregation.report_id(),
                                 *report_aggregation.time(),
-                                Vec::new(),
                             ),
                             (), // Dummy public share
+                            Vec::new(),
                             (), // Dummy leader input share
                             // Dummy helper encrypted input share
                             HpkeCiphertext::new(
