@@ -10,19 +10,19 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-dap-decode-bin = ["dep:structopt"]
+dap-decode-bin = ["dep:clap"]
 test-util = []
 
 [dependencies]
 anyhow = "1"
 base64 = "0.13.1"
+clap = { version = "4.0.27", features = ["cargo", "derive"], optional = true }
 derivative = "2.2.0"
 hex = "0.4"
 num_enum = "0.5.6"
 prio = { version = "0.10.0", default-features = false } # important: do not enable prio/crypto-dependencies by default!
 rand = "0.8"
 serde = { version = "1.0.148", features = ["derive"] }
-structopt = { version = "0.3.26", optional = true }
 thiserror = "1.0"
 
 [dev-dependencies]

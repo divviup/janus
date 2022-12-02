@@ -1,4 +1,5 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+use clap::{Parser, ValueEnum};
 use janus_messages::{
     query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
     AggregateInitializeResp, AggregateShareReq, AggregateShareResp, CollectReq, CollectResp,
@@ -10,10 +11,9 @@ use std::{
     fs::File,
     io::{stdin, Cursor, Read},
 };
-use structopt::StructOpt;
 
 fn main() -> Result<()> {
-    let options = Options::from_args();
+    let options = Options::parse();
 
     let decoded = decode_dap_message(&options.message_file, &options.media_type)?;
     println!("{decoded:#?}");
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
 
 /// Decode the contents of `message_file` as a DAP message with `media_type`, returning the decoded
 /// object.
-fn decode_dap_message(message_file: &str, media_type: &str) -> Result<Box<dyn Debug>> {
+fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<dyn Debug>> {
     let mut reader = if message_file.eq("-") {
         Box::new(stdin()) as Box<dyn Read>
     } else {
@@ -36,61 +36,76 @@ fn decode_dap_message(message_file: &str, media_type: &str) -> Result<Box<dyn De
     let mut binary_message = Cursor::new(message_buf.as_slice());
 
     let decoded = match media_type {
-        "hpke-config" => Box::new(HpkeConfig::decode(&mut binary_message)?) as Box<dyn Debug>,
-        "report" => Box::new(Report::decode(&mut binary_message)?) as Box<dyn Debug>,
-        "aggregate-initialize-req" => Box::new(AggregateInitializeReq::<TimeInterval>::decode(
-            &mut binary_message,
-        )?) as Box<dyn Debug>,
-        "aggregate-initialize-resp" => {
+        MediaType::HpkeConfig => {
+            Box::new(HpkeConfig::decode(&mut binary_message)?) as Box<dyn Debug>
+        }
+        MediaType::Report => Box::new(Report::decode(&mut binary_message)?) as Box<dyn Debug>,
+        MediaType::AggregateInitializeReq => Box::new(
+            AggregateInitializeReq::<TimeInterval>::decode(&mut binary_message)?,
+        ) as Box<dyn Debug>,
+        MediaType::AggregateInitializeResp => {
             Box::new(AggregateInitializeResp::decode(&mut binary_message)?) as Box<dyn Debug>
         }
-        "aggregate-continue-req" => {
+        MediaType::AggregateContinueReq => {
             Box::new(AggregateContinueReq::decode(&mut binary_message)?) as Box<dyn Debug>
         }
-        "aggregate-continue-resp" => {
+        MediaType::AggregateContinueResp => {
             Box::new(AggregateContinueResp::decode(&mut binary_message)?) as Box<dyn Debug>
         }
-        "aggregate-share-req" => Box::new(AggregateShareReq::<TimeInterval>::decode(
+        MediaType::AggregateShareReq => Box::new(AggregateShareReq::<TimeInterval>::decode(
             &mut binary_message,
         )?) as Box<dyn Debug>,
-        "aggregate-share-resp" => {
+        MediaType::AggregateShareResp => {
             Box::new(AggregateShareResp::decode(&mut binary_message)?) as Box<dyn Debug>
         }
-        "collect-req" => {
+        MediaType::CollectReq => {
             Box::new(CollectReq::<TimeInterval>::decode(&mut binary_message)?) as Box<dyn Debug>
         }
-        "collect-resp" => {
+        MediaType::CollectResp => {
             Box::new(CollectResp::<TimeInterval>::decode(&mut binary_message)?) as Box<dyn Debug>
         }
-        _ => return Err(anyhow!("unknown media type")),
     };
 
     Ok(decoded)
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(
+#[derive(Debug, Clone, ValueEnum)]
+#[value()]
+enum MediaType {
+    #[value(name = "hpke-config")]
+    HpkeConfig,
+    #[value(name = "report")]
+    Report,
+    #[value(name = "aggregate-initialize-req")]
+    AggregateInitializeReq,
+    #[value(name = "aggregate-initialize-resp")]
+    AggregateInitializeResp,
+    #[value(name = "aggregate-continue-req")]
+    AggregateContinueReq,
+    #[value(name = "aggregate-continue-resp")]
+    AggregateContinueResp,
+    #[value(name = "aggregate-share-req")]
+    AggregateShareReq,
+    #[value(name = "aggregate-share-resp")]
+    AggregateShareResp,
+    #[value(name = "collect-req")]
+    CollectReq,
+    #[value(name = "collect-resp")]
+    CollectResp,
+}
+
+#[derive(Debug, Parser)]
+#[command(
     name = "dap-decode",
     about = "Distributed Aggregation Protocol message decoder",
-    rename_all = "kebab-case",
-    version = env!("CARGO_PKG_VERSION"),
+    version,
+    rename_all = "kebab-case"
 )]
 struct Options {
     /// Path to file containing message to decode. Pass "-" to read from stdin.
     message_file: String,
 
     /// Media type of the message to decode.
-    #[structopt(long, short = "t", required = true, possible_values(&[
-            "hpke-config",
-            "report",
-            "aggregate-initialize-req",
-            "aggregate-initialize-resp",
-            "aggregate-continue-req",
-            "aggregate-continue-resp",
-            "aggregate-share-req",
-            "aggregate-share-resp",
-            "collect-req",
-            "collect-resp",
-        ]))]
-    media_type: String,
+    #[arg(long, short = 't', required = true)]
+    media_type: MediaType,
 }
