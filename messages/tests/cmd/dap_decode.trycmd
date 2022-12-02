@@ -1,0 +1,22 @@
+```
+$ dap-decode --help
+dap-decode 0.3.0
+Distributed Aggregation Protocol message decoder
+
+USAGE:
+    dap-decode <message-file> --media-type <media-type>
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+OPTIONS:
+    -t, --media-type <media-type>    Media type of the message to decode [possible values: hpke-config, report,
+                                     aggregate-initialize-req, aggregate-initialize-resp, aggregate-continue-req,
+                                     aggregate-continue-resp, aggregate-share-req, aggregate-share-resp, collect-req,
+                                     collect-resp]
+
+ARGS:
+    <message-file>    Path to file containing message to decode. Pass "-" to read from stdin
+
+```
