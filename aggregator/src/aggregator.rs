@@ -1525,13 +1525,21 @@ impl VdafOps {
                 })
             });
 
+            let plaintext_input_share = plaintext.and_then(|plaintext| {
+                PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
+                    info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's plaintext input share");
+                    aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "plaintext_input_share_decode_failure")]);
+                    ReportShareError::VdafPrepError
+                })
+            });
+
             // `vdaf-prep-error` probably isn't the right code, but there is no better one & we
             // don't want to fail the entire aggregation job with an UnrecognizedMessage error
             // because a single client sent bad data.
             // TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/255): agree on/standardize
             // an error code for "client report data can't be decoded" & use it here.
-            let input_share = plaintext.and_then(|plaintext| {
-                A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), &plaintext)
+            let input_share = plaintext_input_share.and_then(|plaintext_input_share| {
+                A::InputShare::get_decoded_with_param(&(vdaf, Role::Helper.index().unwrap()), plaintext_input_share.payload())
                     .map_err(|error| {
                         info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's input share");
                         aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "input_share_decode_failure")]);
@@ -7923,7 +7931,7 @@ mod tests {
             report_metadata.clone(),
             cfg,
             encoded_public_share,
-            &input_share.get_encoded(),
+            &PlaintextInputShare::new(Vec::new(), input_share.get_encoded()).get_encoded(),
             &associated_data,
         )
     }

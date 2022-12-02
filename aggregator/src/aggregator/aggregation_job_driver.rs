@@ -890,8 +890,9 @@ mod tests {
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, Duration, HpkeConfig, Interval, PartialBatchSelector, PrepareStep,
-        PrepareStepResult, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId,
+        AggregateInitializeResp, Duration, HpkeConfig, Interval, PartialBatchSelector,
+        PlaintextInputShare, PrepareStep, PrepareStepResult, ReportIdChecksum, ReportMetadata,
+        ReportShare, Role, TaskId,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -2189,10 +2190,14 @@ mod tests {
         let encrypted_helper_input_share = hpke::seal(
             helper_hpke_config,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
-            &input_shares
-                .get(Role::Helper.index().unwrap())
-                .unwrap()
-                .get_encoded(),
+            &PlaintextInputShare::new(
+                Vec::new(),
+                input_shares
+                    .get(Role::Helper.index().unwrap())
+                    .unwrap()
+                    .get_encoded(),
+            )
+            .get_encoded(),
             &associated_data_for_report_share(
                 task_id,
                 report_metadata,
