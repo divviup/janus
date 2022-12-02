@@ -1,15 +1,15 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use janus_messages::{
-    query_type::TimeInterval, AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-    AggregateInitializeResp, AggregateShareReq, AggregateShareResp, CollectReq, CollectResp,
-    HpkeConfig, Report,
+    query_type::{FixedSize, TimeInterval},
+    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
+    AggregateShareReq, AggregateShareResp, CollectReq, CollectResp, HpkeConfig, Report,
 };
 use prio::codec::Decode;
 use std::{
     fmt::Debug,
     fs::File,
-    io::{stdin, Cursor, Read},
+    io::{stdin, Read},
 };
 
 fn main() -> Result<()> {
@@ -33,36 +33,51 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
     let mut message_buf = Vec::new();
     reader.read_to_end(&mut message_buf)?;
 
-    let mut binary_message = Cursor::new(message_buf.as_slice());
-
     let decoded = match media_type {
-        MediaType::HpkeConfig => {
-            Box::new(HpkeConfig::decode(&mut binary_message)?) as Box<dyn Debug>
+        MediaType::HpkeConfig => Box::new(HpkeConfig::get_decoded(&message_buf)?) as Box<dyn Debug>,
+        MediaType::Report => Box::new(Report::get_decoded(&message_buf)?) as Box<dyn Debug>,
+        MediaType::AggregateInitializeReq => {
+            if let Ok(decoded) = AggregateInitializeReq::<TimeInterval>::get_decoded(&message_buf) {
+                Box::new(decoded) as Box<dyn Debug>
+            } else {
+                Box::new(AggregateInitializeReq::<FixedSize>::get_decoded(
+                    &message_buf,
+                )?) as Box<dyn Debug>
+            }
         }
-        MediaType::Report => Box::new(Report::decode(&mut binary_message)?) as Box<dyn Debug>,
-        MediaType::AggregateInitializeReq => Box::new(
-            AggregateInitializeReq::<TimeInterval>::decode(&mut binary_message)?,
-        ) as Box<dyn Debug>,
         MediaType::AggregateInitializeResp => {
-            Box::new(AggregateInitializeResp::decode(&mut binary_message)?) as Box<dyn Debug>
+            Box::new(AggregateInitializeResp::get_decoded(&message_buf)?) as Box<dyn Debug>
         }
         MediaType::AggregateContinueReq => {
-            Box::new(AggregateContinueReq::decode(&mut binary_message)?) as Box<dyn Debug>
+            Box::new(AggregateContinueReq::get_decoded(&message_buf)?) as Box<dyn Debug>
         }
         MediaType::AggregateContinueResp => {
-            Box::new(AggregateContinueResp::decode(&mut binary_message)?) as Box<dyn Debug>
+            Box::new(AggregateContinueResp::get_decoded(&message_buf)?) as Box<dyn Debug>
         }
-        MediaType::AggregateShareReq => Box::new(AggregateShareReq::<TimeInterval>::decode(
-            &mut binary_message,
-        )?) as Box<dyn Debug>,
+        MediaType::AggregateShareReq => {
+            if let Ok(decoded) = AggregateShareReq::<TimeInterval>::get_decoded(&message_buf) {
+                Box::new(decoded) as Box<dyn Debug>
+            } else {
+                Box::new(AggregateShareReq::<FixedSize>::get_decoded(&message_buf))
+                    as Box<dyn Debug>
+            }
+        }
         MediaType::AggregateShareResp => {
-            Box::new(AggregateShareResp::decode(&mut binary_message)?) as Box<dyn Debug>
+            Box::new(AggregateShareResp::get_decoded(&message_buf)?) as Box<dyn Debug>
         }
         MediaType::CollectReq => {
-            Box::new(CollectReq::<TimeInterval>::decode(&mut binary_message)?) as Box<dyn Debug>
+            if let Ok(decoded) = CollectReq::<TimeInterval>::get_decoded(&message_buf) {
+                Box::new(decoded) as Box<dyn Debug>
+            } else {
+                Box::new(CollectReq::<FixedSize>::get_decoded(&message_buf)?) as Box<dyn Debug>
+            }
         }
         MediaType::CollectResp => {
-            Box::new(CollectResp::<TimeInterval>::decode(&mut binary_message)?) as Box<dyn Debug>
+            if let Ok(decoded) = CollectResp::<TimeInterval>::get_decoded(&message_buf) {
+                Box::new(decoded) as Box<dyn Debug>
+            } else {
+                Box::new(CollectResp::<FixedSize>::get_decoded(&message_buf)?) as Box<dyn Debug>
+            }
         }
     };
 
