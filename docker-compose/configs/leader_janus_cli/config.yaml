@@ -1,0 +1,4 @@
+database:
+  url: "postgres://postgres@leader_db:5432/postgres"
+logging_config:
+  force_json_output: true

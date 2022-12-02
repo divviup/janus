@@ -1,0 +1,207 @@
+version: "3.9"
+services:
+  leader_db:
+    image: postgres:14-alpine
+    environment:
+      POSTGRESQL_PORT_NUMBER: 5432
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - type: bind
+        source: ../db/
+        target: /docker-entrypoint-initdb.d/
+        read_only: true
+    expose:
+      - "5432"
+    networks:
+      - leader
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+  leader_aggregator:
+    build:
+      context: ..
+      args:
+        BINARY: aggregator
+    environment:
+      RUST_LOG: info
+      DATASTORE_KEYS: IAhEU6BsgqrvhWjlRPY9vA
+    command:
+      - "--config-file"
+      - "/janus-config/config.yaml"
+    volumes:
+      - type: bind
+        source: configs/leader_aggregator/
+        target: /janus-config/
+        read_only: true
+    expose:
+      - "80"
+    ports:
+      - "8080:80"
+    networks:
+      - leader
+      - common
+    depends_on:
+      - leader_db
+  leader_aggregation_job_creator:
+    build:
+      context: ..
+      args:
+        BINARY: aggregation_job_creator
+    environment:
+      RUST_LOG: info
+      DATASTORE_KEYS: IAhEU6BsgqrvhWjlRPY9vA
+    command:
+      - "--config-file"
+      - "/janus-config/config.yaml"
+    volumes:
+      - type: bind
+        source: configs/leader_aggregation_job_creator/
+        target: /janus-config/
+        read_only: true
+    networks:
+      - leader
+    depends_on:
+      - leader_db
+  leader_aggregation_job_driver:
+    build:
+      context: ..
+      args:
+        BINARY: aggregation_job_driver
+    environment:
+      RUST_LOG: info
+      DATASTORE_KEYS: IAhEU6BsgqrvhWjlRPY9vA
+    command:
+      - "--config-file"
+      - "/janus-config/config.yaml"
+    volumes:
+      - type: bind
+        source: configs/leader_aggregation_job_driver/
+        target: /janus-config/
+        read_only: true
+    networks:
+      - leader
+    depends_on:
+      - leader_db
+  leader_collect_job_driver:
+    build:
+      context: ..
+      args:
+        BINARY: collect_job_driver
+    environment:
+      RUST_LOG: info
+      DATASTORE_KEYS: IAhEU6BsgqrvhWjlRPY9vA
+    command:
+      - "--config-file"
+      - "/janus-config/config.yaml"
+    volumes:
+      - type: bind
+        source: configs/leader_collect_job_driver/
+        target: /janus-config/
+        read_only: true
+    networks:
+      - leader
+    depends_on:
+      - leader_db
+  leader_janus_cli:
+    build:
+      context: ..
+      args:
+        BINARY: janus_cli
+    environment:
+      RUST_LOG: info
+      DATASTORE_KEYS: IAhEU6BsgqrvhWjlRPY9vA
+    command:
+      - "provision-tasks"
+      - "--config-file"
+      - "/janus-config/config.yaml"
+      - "/janus-config/tasks.yaml"
+    volumes:
+      - type: bind
+        source: configs/leader_janus_cli/
+        target: /janus-config/
+        read_only: true
+    networks:
+      - leader
+    depends_on:
+      - leader_db
+
+  helper_db:
+    image: postgres:14-alpine
+    environment:
+      POSTGRESQL_PORT_NUMBER: 5432
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - type: bind
+        source: ../db/
+        target: /docker-entrypoint-initdb.d/
+        read_only: true
+    expose:
+      - "5432"
+    networks:
+      - helper
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+  helper_aggregator:
+    build:
+      context: ..
+      args:
+        BINARY: aggregator
+    environment:
+      RUST_LOG: info
+      DATASTORE_KEYS: 8B6FeUVozcdEURnkGGQUMA
+    command:
+      - "--config-file"
+      - "/janus-config/config.yaml"
+    volumes:
+      - type: bind
+        source: configs/helper_aggregator/
+        target: /janus-config/
+        read_only: true
+    expose:
+      - "80"
+    ports:
+      - "8081:80"
+    networks:
+      - helper
+      - common
+    depends_on:
+      - helper_db
+  helper_janus_cli:
+    build:
+      context: ..
+      args:
+        BINARY: janus_cli
+    environment:
+      RUST_LOG: info
+      DATASTORE_KEYS: 8B6FeUVozcdEURnkGGQUMA
+    command:
+      - "provision-tasks"
+      - "--config-file"
+      - "/janus-config/config.yaml"
+      - "/janus-config/tasks.yaml"
+    volumes:
+      - type: bind
+        source: configs/helper_janus_cli/
+        target: /janus-config/
+        read_only: true
+    networks:
+      - helper
+    depends_on:
+      - helper_db
+
+  # As an optimization, we don't run the other three components of the second
+  # Janus deployment, under the assumption it will only be used for helper
+  # tasks.
+
+networks:
+  leader:
+    driver: bridge
+  helper:
+    driver: bridge
+  common:
+    driver: bridge

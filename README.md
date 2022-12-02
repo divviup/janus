@@ -23,6 +23,10 @@ Tests require that [`docker`](https://www.docker.com) & [`kind`](https://kind.si
 
 To run Janus tests, execute `cargo test`.
 
+### inotify limits
+
+If you experience issues with tests using Kind on Linux, you may need to [adjust inotify sysctls](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files). Both systemd and Kubernetes inside each Kind node make use of inotify. When combined with other services and desktop applications, they may exhaust per-user limits.
+
 ## Running janus\_server
 
 The aggregator server requires a connection to a PostgreSQL 14 database. Prepare the database by executing the script at `db/schema.sql`. Most server configuration is done via a YAML file, following the structure documented on `aggregator::Config`. Record the database's connection URL, the address the aggregator server should listen on for incoming HTTP requests, and other settings in a YAML file, and pass the file's path on the command line as follows. (The database password can be passed through the command line or an environment variable rather than including it in the connection URL, see `aggregator --help`.)
@@ -48,16 +52,43 @@ aggregator --config-file <config-file> --role <role>
 * `test-util`: Enables miscellaneous test-only APIs. This should not be used outside of tests, and any such APIs do not carry any stability guarantees.
 * `tokio-console`: Enables a tracing subscriber and server to support [`tokio-console`](https://github.com/tokio-rs/console). [See below](#monitoring-with-tokio-console) for additional instructions.
 
-### inotify limits
-
-If you experience issues with tests using Kind on Linux, you may need to [adjust inotify sysctls](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files). Both systemd and Kubernetes inside each Kind node make use of inotify. When combined with other services and desktop applications, they may exhaust per-user limits.
-
 ## Container image
 
 To build a container image, run the following command.
 
 ```bash
 DOCKER_BUILDKIT=1 docker build --tag=janus_aggregator .
+```
+
+## Docker Compose
+
+A `docker-compose` configuration file is provided to run two Janus instances for
+development purposes, and to demonstrate how Janus may be deployed. Run the
+following commands to build and run it.
+
+```bash
+# Docker Compose v2
+cd docker-compose
+DOCKER_BUILDKIT=1 docker compose build
+docker compose up
+
+# Docker Compose v1
+cd docker-compose
+COMPOSE_DOCKER_CLI_BUILD=1 DOCKER_BUILDKIT=1 docker-compose build
+docker-compose up
+```
+
+Some sample tasks will be deployed to both instances upon startup. The two
+aggregator instances can be accessed from the host network at
+`http://localhost:8080` (for the leader) and `http://localhost:8081` (for the
+helper) or from within the `docker-compose_common` network at
+`http://leader_aggregator:80/` and `http://helper_aggregator:80/`. Upload some
+reports with a DAP client of your choice (i.e. `janus_client` from this
+repository or [divviup-ts](https://github.com/divviup/divviup-ts)), then results
+can be fetched as follows.
+
+```bash
+cargo run --example collect -- --leader http://localhost:8080/ ...
 ```
 
 ## Monitoring with `tokio-console`

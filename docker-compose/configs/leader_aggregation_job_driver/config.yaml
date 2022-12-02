@@ -1,0 +1,10 @@
+database:
+  url: "postgres://postgres@leader_db:5432/postgres"
+logging_config:
+  force_json_output: true
+min_job_discovery_delay_secs: 1
+max_job_discovery_delay_secs: 10
+worker_lease_duration_secs: 600
+worker_lease_clock_skew_allowance_secs: 60
+max_concurrent_job_workers: 10
+maximum_attempts_before_failure: 10

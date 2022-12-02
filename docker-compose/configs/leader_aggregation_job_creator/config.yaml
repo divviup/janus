@@ -1,0 +1,8 @@
+database:
+  url: "postgres://postgres@leader_db:5432/postgres"
+logging_config:
+  force_json_output: true
+tasks_update_frequency_secs: 30
+aggregation_job_creation_interval_secs: 5
+min_aggregation_job_size: 10
+max_aggregation_job_size: 100

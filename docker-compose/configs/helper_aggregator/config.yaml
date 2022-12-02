@@ -1,0 +1,5 @@
+database:
+  url: "postgres://postgres@helper_db:5432/postgres"
+listen_address: "0.0.0.0:80"
+logging_config:
+  force_json_output: true
