@@ -1249,8 +1249,6 @@ impl VdafOps {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         C: Clock,
     {
-        // XXX: update
-
         // The leader's report is the first one.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if report.encrypted_input_shares().len() != 2 {

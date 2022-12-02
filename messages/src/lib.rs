@@ -866,15 +866,15 @@ impl Decode for ReportMetadata {
     }
 }
 
-// XXX: documentation
-// XXX: tests
+/// DAP protocol message representing the plaintext of an input share.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaintextInputShare {
     extensions: Vec<Extension>,
     payload: Vec<u8>,
 }
 
 impl PlaintextInputShare {
-    // XXX: documentation
+    /// Construct a plaintext input share from its components.
     pub fn new(extensions: Vec<Extension>, payload: Vec<u8>) -> Self {
         Self {
             extensions,
@@ -882,12 +882,12 @@ impl PlaintextInputShare {
         }
     }
 
-    // XXX: documentation
+    /// Retrieve the extensions from this plaintext input share.
     pub fn extensions(&self) -> &[Extension] {
         &self.extensions
     }
 
-    // XXX: documentation
+    /// Retrieve the payload from this plaintext input share.
     pub fn payload(&self) -> &[u8] {
         &self.payload
     }
@@ -1361,7 +1361,6 @@ pub mod query_type {
 }
 
 /// DAP protocol message representing one aggregator's share of a single client report.
-// XXX: does this need to include extensions? (since they have been removed from ReportMetadata)
 #[derive(Derivative, Clone, PartialEq, Eq)]
 #[derivative(Debug)]
 pub struct ReportShare {
@@ -2002,8 +2001,9 @@ mod tests {
         AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId, BatchId,
         BatchSelector, CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeAeadId,
         HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
-        PartialBatchSelector, PrepareStep, PrepareStepResult, Query, Report, ReportId,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+        PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report,
+        ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
+        Time,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
@@ -2247,7 +2247,7 @@ mod tests {
                 concat!(
                     "0A", // config_id
                     concat!(
-                        // encapsulated_context
+                        // encapsulated_key
                         "0004",     // length
                         "30313233", // opaque data
                     ),
@@ -2263,7 +2263,7 @@ mod tests {
                 concat!(
                     "0C", // config_id
                     concat!(
-                        // encapsulated_context
+                        // encapsulated_key
                         "0005",       // length
                         "3031323334", // opaque data
                     ),
@@ -2364,6 +2364,51 @@ mod tests {
                 concat!(
                     "100F0E0D0C0B0A090807060504030201", // report_id
                     "000000000000D431",                 // time
+                ),
+            ),
+        ])
+    }
+
+    #[test]
+    fn roundtrip_plaintext_input_share() {
+        roundtrip_encoding(&[
+            (
+                PlaintextInputShare::new(Vec::new(), Vec::from("0123")),
+                concat!(
+                    concat!(
+                        // extensions
+                        "0000", // length
+                    ),
+                    concat!(
+                        // payload
+                        "00000004", // length
+                        "30313233", // opaque data
+                    )
+                ),
+            ),
+            (
+                PlaintextInputShare::new(
+                    Vec::from([Extension::new(ExtensionType::Tbd, Vec::from("0123"))]),
+                    Vec::from("4567"),
+                ),
+                concat!(
+                    concat!(
+                        // extensions
+                        "0008", // length
+                        concat!(
+                            "0000", // extension_type
+                            concat!(
+                                // extension_data
+                                "0004",     // length
+                                "30313233", // opaque data
+                            ),
+                        ),
+                    ),
+                    concat!(
+                        // payload
+                        "00000004", // length
+                        "34353637", // opaque data
+                    ),
                 ),
             ),
         ])
