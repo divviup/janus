@@ -974,7 +974,7 @@ mod tests {
             *task.id(),
             report_metadata,
             &helper_hpke_config,
-            transcript.public_share,
+            (),
             Vec::new(),
             transcript.input_shares,
         );
@@ -1187,7 +1187,7 @@ mod tests {
             *task.id(),
             report_metadata,
             &helper_hpke_config,
-            transcript.public_share,
+            (),
             Vec::new(),
             transcript.input_shares.clone(),
         );
@@ -1196,7 +1196,7 @@ mod tests {
                 *task.id(),
                 ReportMetadata::new(random(), time),
                 &helper_hpke_config,
-                transcript.public_share,
+                (),
                 Vec::from([
                     Extension::new(ExtensionType::Tbd, Vec::new()),
                     Extension::new(ExtensionType::Tbd, Vec::new()),
@@ -1444,7 +1444,7 @@ mod tests {
             *task.id(),
             report_metadata,
             &helper_hpke_config,
-            transcript.public_share,
+            (),
             Vec::new(),
             transcript.input_shares,
         );
@@ -1656,7 +1656,7 @@ mod tests {
             *task.id(),
             report_metadata,
             &helper_hpke_config,
-            transcript.public_share,
+            (),
             Vec::new(),
             transcript.input_shares,
         );
@@ -1899,7 +1899,7 @@ mod tests {
             *task.id(),
             report_metadata,
             &helper_hpke_config,
-            transcript.public_share,
+            (),
             Vec::new(),
             transcript.input_shares,
         );
@@ -2131,7 +2131,7 @@ mod tests {
             *task.id(),
             report_metadata,
             &helper_hpke_config,
-            transcript.public_share,
+            (),
             Vec::new(),
             transcript.input_shares,
         );
@@ -2317,7 +2317,7 @@ mod tests {
             *task.id(),
             report_metadata,
             &helper_hpke_config,
-            transcript.public_share,
+            (),
             Vec::new(),
             transcript.input_shares,
         );
