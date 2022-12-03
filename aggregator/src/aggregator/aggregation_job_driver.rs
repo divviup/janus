@@ -1,3 +1,4 @@
+use super::query_type::AccumulableQueryType;
 use crate::{
     aggregator::{accumulator::Accumulator, aggregate_step_failure_counter, post_to_helper},
     datastore::{
@@ -36,10 +37,8 @@ use prio::{
         PrepareTransition,
     },
 };
-use std::{fmt, sync::Arc};
+use std::{collections::HashSet, fmt, sync::Arc};
 use tracing::{info, warn};
-
-use super::query_type::AccumulableQueryType;
 
 #[derive(Derivative)]
 #[derivative(Debug)]
@@ -339,6 +338,25 @@ impl AggregationJobDriver {
         let mut report_shares = Vec::new();
         let mut stepped_aggregations = Vec::new();
         for (report_aggregation, report) in reports {
+            // Check for repeated extensions.
+            let mut extension_types = HashSet::new();
+            if !report
+                .leader_extensions()
+                .iter()
+                .all(|extension| extension_types.insert(extension.extension_type()))
+            {
+                info!(report_id = %report_aggregation.report_id(), "Received report with duplicate extensions");
+                self.aggregate_step_failure_counter.add(
+                    &Context::current(),
+                    1,
+                    &[KeyValue::new("type", "duplicate_extension")],
+                );
+                report_aggregations_to_write.push(report_aggregation.with_state(
+                    ReportAggregationState::Failed(ReportShareError::UnrecognizedMessage),
+                ));
+                continue;
+            }
+
             // Initialize the leader's preparation state from the input share.
             let (prep_state, prep_share) = match vdaf.prepare_init(
                 verify_key.as_bytes(),
@@ -890,9 +908,9 @@ mod tests {
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, Duration, HpkeConfig, Interval, PartialBatchSelector,
-        PlaintextInputShare, PrepareStep, PrepareStepResult, ReportIdChecksum, ReportMetadata,
-        ReportShare, Role, TaskId,
+        AggregateInitializeResp, Duration, Extension, ExtensionType, HpkeConfig, Interval,
+        PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -952,14 +970,14 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token().clone();
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
-            generate_report(
-                task.id(),
-                &report_metadata,
-                &helper_hpke_config,
-                &transcript.public_share,
-                &transcript.input_shares,
-            );
+        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            *task.id(),
+            report_metadata,
+            &helper_hpke_config,
+            transcript.public_share,
+            Vec::new(),
+            transcript.input_shares,
+        );
 
         let aggregation_job_id = random();
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
@@ -1165,23 +1183,40 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
-            generate_report(
-                task.id(),
-                &report_metadata,
+        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            *task.id(),
+            report_metadata,
+            &helper_hpke_config,
+            transcript.public_share,
+            Vec::new(),
+            transcript.input_shares.clone(),
+        );
+        let repeated_extension_report =
+            generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                *task.id(),
+                ReportMetadata::new(random(), time),
                 &helper_hpke_config,
-                &transcript.public_share,
-                &transcript.input_shares,
+                transcript.public_share,
+                Vec::from([
+                    Extension::new(ExtensionType::Tbd, Vec::new()),
+                    Extension::new(ExtensionType::Tbd, Vec::new()),
+                ]),
+                transcript.input_shares,
             );
         let aggregation_job_id = random();
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         let lease = ds
             .run_tx(|tx| {
-                let (task, report) = (task.clone(), report.clone());
+                let (task, report, repeated_extension_report) = (
+                    task.clone(),
+                    report.clone(),
+                    repeated_extension_report.clone(),
+                );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
                     tx.put_client_report(&report).await?;
+                    tx.put_client_report(&repeated_extension_report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1204,6 +1239,18 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
+                        ReportAggregationState::Start,
+                    ))
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        *repeated_extension_report.metadata().id(),
+                        *repeated_extension_report.metadata().time(),
+                        1,
                         ReportAggregationState::Start,
                     ))
                     .await?;
@@ -1306,11 +1353,20 @@ mod tests {
                 0,
                 ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
             );
+        let want_repeated_extension_report_aggregation =
+            ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
+                *task.id(),
+                aggregation_job_id,
+                *repeated_extension_report.metadata().id(),
+                *repeated_extension_report.metadata().time(),
+                1,
+                ReportAggregationState::Failed(ReportShareError::UnrecognizedMessage),
+            );
 
-        let (got_aggregation_job, got_report_aggregation) = ds
+        let (got_aggregation_job, got_report_aggregation, got_repeated_extension_report_aggregation) = ds
             .run_tx(|tx| {
-                let (vdaf, task, report_id) =
-                    (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
+                let (vdaf, task, report_id, repeated_extension_report_id) =
+                    (Arc::clone(&vdaf), task.clone(), *report.metadata().id(), *repeated_extension_report.metadata().id());
                 Box::pin(async move {
                     let aggregation_job = tx
                         .get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
@@ -1329,7 +1385,8 @@ mod tests {
                         )
                         .await?
                         .unwrap();
-                    Ok((aggregation_job, report_aggregation))
+                    let repeated_extension_report_aggregation = tx.get_report_aggregation(vdaf.as_ref(), &Role::Leader, task.id(), &aggregation_job_id, &repeated_extension_report_id).await?.unwrap();
+                    Ok((aggregation_job, report_aggregation, repeated_extension_report_aggregation))
                 })
             })
             .await
@@ -1337,6 +1394,10 @@ mod tests {
 
         assert_eq!(want_aggregation_job, got_aggregation_job);
         assert_eq!(want_report_aggregation, got_report_aggregation);
+        assert_eq!(
+            want_repeated_extension_report_aggregation,
+            got_repeated_extension_report_aggregation
+        );
     }
 
     #[tokio::test]
@@ -1379,14 +1440,14 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
-            generate_report(
-                task.id(),
-                &report_metadata,
-                &helper_hpke_config,
-                &transcript.public_share,
-                &transcript.input_shares,
-            );
+        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            *task.id(),
+            report_metadata,
+            &helper_hpke_config,
+            transcript.public_share,
+            Vec::new(),
+            transcript.input_shares,
+        );
         let batch_id = random();
         let aggregation_job_id = random();
 
@@ -1591,14 +1652,14 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
-            generate_report(
-                task.id(),
-                &report_metadata,
-                &helper_hpke_config,
-                &transcript.public_share,
-                &transcript.input_shares,
-            );
+        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            *task.id(),
+            report_metadata,
+            &helper_hpke_config,
+            transcript.public_share,
+            Vec::new(),
+            transcript.input_shares,
+        );
         let aggregation_job_id = random();
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
@@ -1834,14 +1895,14 @@ mod tests {
 
         let agg_auth_token = task.primary_aggregator_auth_token();
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
-            generate_report(
-                task.id(),
-                &report_metadata,
-                &helper_hpke_config,
-                &transcript.public_share,
-                &transcript.input_shares,
-            );
+        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            *task.id(),
+            report_metadata,
+            &helper_hpke_config,
+            transcript.public_share,
+            Vec::new(),
+            transcript.input_shares,
+        );
         let batch_id = random();
         let aggregation_job_id = random();
 
@@ -2066,14 +2127,14 @@ mod tests {
         );
 
         let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
-        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
-            generate_report(
-                task.id(),
-                &report_metadata,
-                &helper_hpke_config,
-                &transcript.public_share,
-                &transcript.input_shares,
-            );
+        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            *task.id(),
+            report_metadata,
+            &helper_hpke_config,
+            transcript.public_share,
+            Vec::new(),
+            transcript.input_shares,
+        );
         let aggregation_job_id = random();
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
@@ -2173,11 +2234,12 @@ mod tests {
     /// Returns a [`LeaderStoredReport`] with the given task ID & metadata values and encrypted
     /// input shares corresponding to the given HPKE configs & input shares.
     fn generate_report<const L: usize, A>(
-        task_id: &TaskId,
-        report_metadata: &ReportMetadata,
+        task_id: TaskId,
+        report_metadata: ReportMetadata,
         helper_hpke_config: &HpkeConfig,
-        public_share: &A::PublicShare,
-        input_shares: &[A::InputShare],
+        public_share: A::PublicShare,
+        extensions: Vec<Extension>,
+        input_shares: Vec<A::InputShare>,
     ) -> LeaderStoredReport<L, A>
     where
         A: vdaf::Aggregator<L>,
@@ -2199,18 +2261,18 @@ mod tests {
             )
             .get_encoded(),
             &associated_data_for_report_share(
-                task_id,
-                report_metadata,
+                &task_id,
+                &report_metadata,
                 &public_share.get_encoded(),
             ),
         )
         .unwrap();
 
         LeaderStoredReport::new(
-            *task_id,
-            report_metadata.clone(),
-            public_share.clone(),
-            Vec::new(),
+            task_id,
+            report_metadata,
+            public_share,
+            extensions,
             input_shares
                 .get(Role::Leader.index().unwrap())
                 .unwrap()
@@ -2251,14 +2313,14 @@ mod tests {
             .unwrap();
         let report_metadata = ReportMetadata::new(random(), time);
         let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
-        let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
-            generate_report(
-                task.id(),
-                &report_metadata,
-                &helper_hpke_config,
-                &transcript.public_share,
-                &transcript.input_shares,
-            );
+        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            *task.id(),
+            report_metadata,
+            &helper_hpke_config,
+            transcript.public_share,
+            Vec::new(),
+            transcript.input_shares,
+        );
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         // Set up fixtures in the database.
