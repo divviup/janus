@@ -890,8 +890,9 @@ mod tests {
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, Duration, HpkeConfig, Interval, PartialBatchSelector, PrepareStep,
-        PrepareStepResult, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId,
+        AggregateInitializeResp, Duration, HpkeConfig, Interval, PartialBatchSelector,
+        PlaintextInputShare, PrepareStep, PrepareStepResult, ReportIdChecksum, ReportMetadata,
+        ReportShare, Role, TaskId,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -937,7 +938,7 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
+        let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -1150,7 +1151,7 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
+        let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -1364,7 +1365,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
@@ -1577,7 +1577,7 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
+        let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -1820,7 +1820,6 @@ mod tests {
                 .now()
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
-            Vec::new(),
         );
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
@@ -2054,7 +2053,7 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
+        let report_metadata = ReportMetadata::new(random(), time);
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
@@ -2191,10 +2190,14 @@ mod tests {
         let encrypted_helper_input_share = hpke::seal(
             helper_hpke_config,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
-            &input_shares
-                .get(Role::Helper.index().unwrap())
-                .unwrap()
-                .get_encoded(),
+            &PlaintextInputShare::new(
+                Vec::new(),
+                input_shares
+                    .get(Role::Helper.index().unwrap())
+                    .unwrap()
+                    .get_encoded(),
+            )
+            .get_encoded(),
             &associated_data_for_report_share(
                 task_id,
                 report_metadata,
@@ -2207,6 +2210,7 @@ mod tests {
             *task_id,
             report_metadata.clone(),
             public_share.clone(),
+            Vec::new(),
             input_shares
                 .get(Role::Leader.index().unwrap())
                 .unwrap()
@@ -2245,7 +2249,7 @@ mod tests {
             .now()
             .to_batch_interval_start(task.time_precision())
             .unwrap();
-        let report_metadata = ReportMetadata::new(random(), time, Vec::new());
+        let report_metadata = ReportMetadata::new(random(), time);
         let transcript = run_vdaf(&vdaf, verify_key.as_bytes(), &(), report_metadata.id(), &0);
         let report: LeaderStoredReport<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count> =
             generate_report(

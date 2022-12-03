@@ -12,7 +12,9 @@ use janus_core::{
     task::url_ensure_trailing_slash,
     time::{Clock, TimeExt},
 };
-use janus_messages::{Duration, HpkeCiphertext, HpkeConfig, Report, ReportMetadata, Role, TaskId};
+use janus_messages::{
+    Duration, HpkeCiphertext, HpkeConfig, PlaintextInputShare, Report, ReportMetadata, Role, TaskId,
+};
 use prio::{
     codec::{Decode, Encode},
     vdaf,
@@ -212,11 +214,7 @@ where
             .now()
             .to_batch_interval_start(&self.parameters.time_precision)
             .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
-        let report_metadata = ReportMetadata::new(
-            random(),
-            time,
-            Vec::new(), // No extensions supported yet
-        );
+        let report_metadata = ReportMetadata::new(random(), time);
         let public_share = public_share.get_encoded();
         let associated_data = associated_data_for_report_share(
             &self.parameters.task_id,
@@ -234,7 +232,11 @@ where
             Ok(hpke::seal(
                 hpke_config,
                 &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, receiver_role),
-                &input_share.get_encoded(),
+                &PlaintextInputShare::new(
+                    Vec::new(), // No extensions supported yet.
+                    input_share.get_encoded(),
+                )
+                .get_encoded(),
                 &associated_data,
             )?)
         })
