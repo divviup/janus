@@ -60,5 +60,5 @@ janus_core = { path = ".", features = ["test-util"] }
 # lack of support for connecting to servers by IP addresses, which affects many
 # Kubernetes clusters.
 kube = { version = "0.65", features = ["openssl-tls"] }  # ensure this remains compatible with the non-dev dependency
-mockito = "0.31.0"
+mockito = "0.31.1"
 url = "2.3.1"
