@@ -7,10 +7,7 @@ use janus_core::{
     hpke::HpkePrivateKey,
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
 };
-use janus_messages::{
-    Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
-    TaskId, Time,
-};
+use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     array::TryFromSliceError,
@@ -356,7 +353,7 @@ struct SerializedTask {
     min_batch_size: u64,
     time_precision: Duration,
     tolerable_clock_skew: Duration,
-    collector_hpke_config: SerializedHpkeConfig,
+    collector_hpke_config: HpkeConfig,
     aggregator_auth_tokens: Vec<String>, // in unpadded base64url
     collector_auth_tokens: Vec<String>,  // in unpadded base64url
     hpke_keys: Vec<SerializedHpkeKeypair>, // in unpadded base64url
@@ -397,7 +394,7 @@ impl Serialize for Task {
             min_batch_size: self.min_batch_size,
             time_precision: self.time_precision,
             tolerable_clock_skew: self.tolerable_clock_skew,
-            collector_hpke_config: self.collector_hpke_config.clone().into(),
+            collector_hpke_config: self.collector_hpke_config.clone(),
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
@@ -421,12 +418,6 @@ impl<'de> Deserialize<'de> for Task {
                 ))
             })
             .collect::<Result<_, _>>()?;
-
-        // collector_hpke_config
-        let collector_hpke_config = serialized_task
-            .collector_hpke_config
-            .try_into()
-            .map_err(D::Error::custom)?;
 
         // aggregator_auth_tokens
         let aggregator_auth_tokens = serialized_task
@@ -469,7 +460,7 @@ impl<'de> Deserialize<'de> for Task {
             serialized_task.min_batch_size,
             serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
-            collector_hpke_config,
+            serialized_task.collector_hpke_config,
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
@@ -478,55 +469,17 @@ impl<'de> Deserialize<'de> for Task {
     }
 }
 
-/// This is a serialization-helper type corresponding to an HpkeConfig.
-#[derive(Serialize, Deserialize)]
-struct SerializedHpkeConfig {
-    id: HpkeConfigId,
-    kem_id: HpkeKemId,
-    kdf_id: HpkeKdfId,
-    aead_id: HpkeAeadId,
-    public_key: String, // in unpadded base64url
-}
-
-impl From<HpkeConfig> for SerializedHpkeConfig {
-    fn from(cfg: HpkeConfig) -> Self {
-        Self {
-            id: *cfg.id(),
-            kem_id: *cfg.kem_id(),
-            kdf_id: *cfg.kdf_id(),
-            aead_id: *cfg.aead_id(),
-            public_key: base64::encode_config(cfg.public_key().as_ref(), URL_SAFE_NO_PAD),
-        }
-    }
-}
-
-impl TryFrom<SerializedHpkeConfig> for HpkeConfig {
-    type Error = base64::DecodeError;
-
-    fn try_from(cfg: SerializedHpkeConfig) -> Result<Self, Self::Error> {
-        let public_key =
-            HpkePublicKey::from(base64::decode_config(cfg.public_key, URL_SAFE_NO_PAD)?);
-        Ok(Self::new(
-            cfg.id,
-            cfg.kem_id,
-            cfg.kdf_id,
-            cfg.aead_id,
-            public_key,
-        ))
-    }
-}
-
 /// This is a serialization-helper type corresponding to an (HpkeConfig, HpkePrivateKey).
 #[derive(Serialize, Deserialize)]
 struct SerializedHpkeKeypair {
-    config: SerializedHpkeConfig,
+    config: HpkeConfig,
     private_key: String, // in unpadded base64url
 }
 
 impl From<(HpkeConfig, HpkePrivateKey)> for SerializedHpkeKeypair {
     fn from(keypair: (HpkeConfig, HpkePrivateKey)) -> Self {
         Self {
-            config: keypair.0.into(),
+            config: keypair.0,
             private_key: base64::encode_config(keypair.1, URL_SAFE_NO_PAD),
         }
     }
@@ -537,7 +490,7 @@ impl TryFrom<SerializedHpkeKeypair> for (HpkeConfig, HpkePrivateKey) {
 
     fn try_from(keypair: SerializedHpkeKeypair) -> Result<Self, Self::Error> {
         Ok((
-            keypair.config.try_into()?,
+            keypair.config,
             HpkePrivateKey::new(base64::decode_config(keypair.private_key, URL_SAFE_NO_PAD)?),
         ))
     }

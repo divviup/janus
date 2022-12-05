@@ -801,8 +801,50 @@ impl Debug for HpkePublicKey {
     }
 }
 
+/// This customized implementation serializes a [`HpkePublicKey`] as a base64url-encoded string,
+/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
+impl Serialize for HpkePublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let encoded = base64::encode_config(self.as_ref(), URL_SAFE_NO_PAD);
+        serializer.serialize_str(&encoded)
+    }
+}
+
+struct HpkePublicKeyVisitor;
+
+impl<'de> Visitor<'de> for HpkePublicKeyVisitor {
+    type Value = HpkePublicKey;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a base64url-encoded string")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<HpkePublicKey, E>
+    where
+        E: de::Error,
+    {
+        let decoded = base64::decode_config(value, URL_SAFE_NO_PAD)
+            .map_err(|_| E::custom("invalid base64url value"))?;
+        Ok(HpkePublicKey::from(decoded))
+    }
+}
+
+/// This customized implementation deserializes a [`HpkePublicKey`] as a base64url-encoded string,
+/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
+impl<'de> Deserialize<'de> for HpkePublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(HpkePublicKeyVisitor)
+    }
+}
+
 /// DAP protocol message representing an HPKE config.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkeConfig {
     id: HpkeConfigId,
     kem_id: HpkeKemId,
@@ -3656,5 +3698,14 @@ mod tests {
             &[Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
             "incorrect TaskId length",
         );
+    }
+
+    #[test]
+    fn hpke_public_key_serde() {
+        assert_tokens(
+            &HpkePublicKey::from(Vec::from([1, 2, 3, 4])),
+            &[Token::Str("AQIDBA")],
+        );
+        assert_de_tokens_error::<HpkePublicKey>(&[Token::Str("/AAAA")], "invalid base64url value");
     }
 }
