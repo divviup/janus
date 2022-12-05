@@ -445,7 +445,7 @@ impl From<HpkeConfigId> for u8 {
 }
 
 /// DAP protocol message representing an identifier for a DAP task.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TaskId([u8; Self::LEN]);
 
 impl TaskId {
@@ -717,7 +717,7 @@ impl Decode for HpkeCiphertext {
 
 /// DAP protocol message representing an HPKE public key.
 // TODO(#230): refactor HpkePublicKey & HpkeConfig to simplify usage
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HpkePublicKey(Vec<u8>);
 
 impl From<Vec<u8>> for HpkePublicKey {
@@ -752,7 +752,7 @@ impl Debug for HpkePublicKey {
 }
 
 /// DAP protocol message representing an HPKE config.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HpkeConfig {
     id: HpkeConfigId,
     kem_id: HpkeKemId,
