@@ -467,9 +467,11 @@ mod tests {
 
     #[tokio::test]
     async fn argument_handling() {
-        let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
-        let encoded_hpke_config = base64::encode_config(hpke_config.get_encoded(), URL_SAFE_NO_PAD);
-        let encoded_private_key = base64::encode_config(hpke_private_key.as_ref(), URL_SAFE_NO_PAD);
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
+        let encoded_hpke_config =
+            base64::encode_config(hpke_keypair.config().get_encoded(), URL_SAFE_NO_PAD);
+        let encoded_private_key =
+            base64::encode_config(hpke_keypair.private_key().as_ref(), URL_SAFE_NO_PAD);
 
         let task_id = random();
         let leader = Url::parse("https://example.com/dap/").unwrap();
@@ -479,8 +481,8 @@ mod tests {
             task_id,
             leader: leader.clone(),
             auth_token: auth_token.clone(),
-            hpke_config: hpke_config.clone(),
-            hpke_private_key: hpke_private_key.clone(),
+            hpke_config: hpke_keypair.config().clone(),
+            hpke_private_key: hpke_keypair.private_key().clone(),
             vdaf: VdafType::Count,
             length: None,
             bits: None,
@@ -653,8 +655,8 @@ mod tests {
             task_id,
             leader: leader.clone(),
             auth_token,
-            hpke_config,
-            hpke_private_key,
+            hpke_config: hpke_keypair.config().clone(),
+            hpke_private_key: hpke_keypair.private_key().clone(),
             vdaf: VdafType::Count,
             length: None,
             bits: None,

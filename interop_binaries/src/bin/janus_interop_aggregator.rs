@@ -103,7 +103,7 @@ async fn handle_add_task(
             (AggregatorRole::Helper, _) => Vec::new(),
         };
 
-    let (hpke_config, private_key) = keyring.lock().await.get_random_keypair();
+    let hpke_keypair = keyring.lock().await.get_random_keypair();
 
     let query_type = match request.query_type {
         1 => janus_aggregator::task::QueryType::TimeInterval,
@@ -137,7 +137,7 @@ async fn handle_add_task(
         collector_hpke_config,
         Vec::from([leader_authentication_token]),
         collector_authentication_tokens,
-        [(hpke_config, private_key)],
+        [hpke_keypair],
     )
     .context("error constructing task")?;
 

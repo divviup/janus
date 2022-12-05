@@ -969,11 +969,11 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token().clone();
-        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
-            &helper_hpke_config,
+            helper_hpke_keypair.config(),
             (),
             Vec::new(),
             transcript.input_shares,
@@ -1182,11 +1182,11 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
-            &helper_hpke_config,
+            helper_hpke_keypair.config(),
             (),
             Vec::new(),
             transcript.input_shares.clone(),
@@ -1195,7 +1195,7 @@ mod tests {
             generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
                 *task.id(),
                 ReportMetadata::new(random(), time),
-                &helper_hpke_config,
+                helper_hpke_keypair.config(),
                 (),
                 Vec::from([
                     Extension::new(ExtensionType::Tbd, Vec::new()),
@@ -1439,11 +1439,11 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
-            &helper_hpke_config,
+            helper_hpke_keypair.config(),
             (),
             Vec::new(),
             transcript.input_shares,
@@ -1651,11 +1651,11 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
-            &helper_hpke_config,
+            helper_hpke_keypair.config(),
             (),
             Vec::new(),
             transcript.input_shares,
@@ -1894,11 +1894,11 @@ mod tests {
         );
 
         let agg_auth_token = task.primary_aggregator_auth_token();
-        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
-            &helper_hpke_config,
+            helper_hpke_keypair.config(),
             (),
             Vec::new(),
             transcript.input_shares,
@@ -2126,11 +2126,11 @@ mod tests {
             &0,
         );
 
-        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
         let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
-            &helper_hpke_config,
+            helper_hpke_keypair.config(),
             (),
             Vec::new(),
             transcript.input_shares,
@@ -2304,7 +2304,7 @@ mod tests {
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
 
-        let (helper_hpke_config, _) = generate_test_hpke_config_and_private_key();
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let time = clock
@@ -2316,7 +2316,7 @@ mod tests {
         let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
             *task.id(),
             report_metadata,
-            &helper_hpke_config,
+            helper_hpke_keypair.config(),
             (),
             Vec::new(),
             transcript.input_shares,

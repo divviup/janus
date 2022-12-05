@@ -4,7 +4,7 @@ use crate::SecretBytes;
 use base64::URL_SAFE_NO_PAD;
 use derivative::Derivative;
 use janus_core::{
-    hpke::HpkePrivateKey,
+    hpke::HpkeKeypair,
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
 };
 use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
@@ -107,12 +107,12 @@ pub struct Task {
     #[derivative(Debug = "ignore")]
     collector_auth_tokens: Vec<AuthenticationToken>,
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
-    hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
+    hpke_keys: HashMap<HpkeConfigId, HpkeKeypair>,
 }
 
 impl Task {
     /// Create a new [`Task`] from the provided values
-    pub fn new<I: IntoIterator<Item = (HpkeConfig, HpkePrivateKey)>>(
+    pub fn new<I: IntoIterator<Item = HpkeKeypair>>(
         task_id: TaskId,
         mut aggregator_endpoints: Vec<Url>,
         query_type: QueryType,
@@ -137,9 +137,9 @@ impl Task {
         }
 
         // Compute hpke_configs mapping cfg.id -> (cfg, key).
-        let hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> = hpke_keys
+        let hpke_keys: HashMap<HpkeConfigId, HpkeKeypair> = hpke_keys
             .into_iter()
-            .map(|(cfg, key)| (*cfg.id(), (cfg, key)))
+            .map(|keypair| (*keypair.config().id(), keypair))
             .collect();
 
         let task = Self {
@@ -259,7 +259,7 @@ impl Task {
     }
 
     /// Retrieves the HPKE keys in use associated with this task.
-    pub fn hpke_keys(&self) -> &HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)> {
+    pub fn hpke_keys(&self) -> &HashMap<HpkeConfigId, HpkeKeypair> {
         &self.hpke_keys
     }
 
@@ -356,7 +356,7 @@ struct SerializedTask {
     collector_hpke_config: HpkeConfig,
     aggregator_auth_tokens: Vec<String>, // in unpadded base64url
     collector_auth_tokens: Vec<String>,  // in unpadded base64url
-    hpke_keys: Vec<SerializedHpkeKeypair>, // in unpadded base64url
+    hpke_keys: Vec<HpkeKeypair>,         // uses unpadded base64url
 }
 
 impl Serialize for Task {
@@ -376,11 +376,7 @@ impl Serialize for Task {
             .iter()
             .map(|token| base64::encode_config(token.as_bytes(), URL_SAFE_NO_PAD))
             .collect();
-        let hpke_keys = self
-            .hpke_keys
-            .values()
-            .map(|keypair| keypair.clone().into())
-            .collect();
+        let hpke_keys = self.hpke_keys.values().cloned().collect();
 
         SerializedTask {
             task_id: self.task_id,
@@ -441,13 +437,6 @@ impl<'de> Deserialize<'de> for Task {
             })
             .collect::<Result<_, _>>()?;
 
-        // hpke_keys
-        let hpke_keys: Vec<(_, _)> = serialized_task
-            .hpke_keys
-            .into_iter()
-            .map(|keypair| keypair.try_into().map_err(D::Error::custom))
-            .collect::<Result<_, _>>()?;
-
         Task::new(
             serialized_task.task_id,
             serialized_task.aggregator_endpoints,
@@ -463,36 +452,9 @@ impl<'de> Deserialize<'de> for Task {
             serialized_task.collector_hpke_config,
             aggregator_auth_tokens,
             collector_auth_tokens,
-            hpke_keys,
+            serialized_task.hpke_keys,
         )
         .map_err(D::Error::custom)
-    }
-}
-
-/// This is a serialization-helper type corresponding to an (HpkeConfig, HpkePrivateKey).
-#[derive(Serialize, Deserialize)]
-struct SerializedHpkeKeypair {
-    config: HpkeConfig,
-    private_key: String, // in unpadded base64url
-}
-
-impl From<(HpkeConfig, HpkePrivateKey)> for SerializedHpkeKeypair {
-    fn from(keypair: (HpkeConfig, HpkePrivateKey)) -> Self {
-        Self {
-            config: keypair.0,
-            private_key: base64::encode_config(keypair.1, URL_SAFE_NO_PAD),
-        }
-    }
-}
-
-impl TryFrom<SerializedHpkeKeypair> for (HpkeConfig, HpkePrivateKey) {
-    type Error = base64::DecodeError;
-
-    fn try_from(keypair: SerializedHpkeKeypair) -> Result<Self, Self::Error> {
-        Ok((
-            keypair.config,
-            HpkePrivateKey::new(base64::decode_config(keypair.private_key, URL_SAFE_NO_PAD)?),
-        ))
     }
 }
 
@@ -504,7 +466,7 @@ pub mod test_util {
         PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
     use crate::messages::DurationExt;
-    use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
+    use janus_core::hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair};
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use url::Url;
@@ -531,16 +493,19 @@ pub mod test_util {
         /// task parameters.
         pub fn new(query_type: QueryType, vdaf: VdafInstance, role: Role) -> Self {
             let task_id = random();
-            let (aggregator_config_0, aggregator_private_key_0) =
-                generate_test_hpke_config_and_private_key();
-            let (mut aggregator_config_1, aggregator_private_key_1) =
-                generate_test_hpke_config_and_private_key();
+            let aggregator_keypair_0 = generate_test_hpke_config_and_private_key();
+            let mut aggregator_keypair_1 = generate_test_hpke_config_and_private_key();
+            let mut aggregator_config_1 = aggregator_keypair_1.config().clone();
             aggregator_config_1 = HpkeConfig::new(
                 HpkeConfigId::from(1),
                 *aggregator_config_1.kem_id(),
                 *aggregator_config_1.kdf_id(),
                 *aggregator_config_1.aead_id(),
                 aggregator_config_1.public_key().clone(),
+            );
+            aggregator_keypair_1 = HpkeKeypair::new(
+                aggregator_config_1,
+                aggregator_keypair_1.private_key().clone(),
             );
 
             let vdaf_verify_key = SecretBytes::new(
@@ -572,13 +537,10 @@ pub mod test_util {
                     0,
                     Duration::from_hours(8).unwrap(),
                     Duration::from_minutes(10).unwrap(),
-                    generate_test_hpke_config_and_private_key().0,
+                    generate_test_hpke_config_and_private_key().config().clone(),
                     Vec::from([generate_auth_token(), generate_auth_token()]),
                     collector_auth_tokens,
-                    Vec::from([
-                        (aggregator_config_0, aggregator_private_key_0),
-                        (aggregator_config_1, aggregator_private_key_1),
-                    ]),
+                    Vec::from([aggregator_keypair_0, aggregator_keypair_1]),
                 )
                 .unwrap(),
             )
@@ -711,7 +673,7 @@ mod tests {
         task::{test_util::TaskBuilder, QueryType, VdafInstance},
     };
     use janus_core::{
-        hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
+        hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
         task::AuthenticationToken,
     };
     use janus_messages::{
@@ -751,7 +713,7 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().config().clone(),
             Vec::from([generate_auth_token()]),
             Vec::new(),
             Vec::from([generate_test_hpke_config_and_private_key()]),
@@ -774,7 +736,7 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().config().clone(),
             Vec::from([generate_auth_token()]),
             Vec::from([generate_auth_token()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
@@ -797,7 +759,7 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().config().clone(),
             Vec::from([generate_auth_token()]),
             Vec::new(),
             Vec::from([generate_test_hpke_config_and_private_key()]),
@@ -820,7 +782,7 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().config().clone(),
             Vec::from([generate_auth_token()]),
             Vec::from([generate_auth_token()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
@@ -845,7 +807,7 @@ mod tests {
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
-            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().config().clone(),
             Vec::from([generate_auth_token()]),
             Vec::from([generate_auth_token()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
@@ -888,7 +850,7 @@ mod tests {
                 ),
                 Vec::from([AuthenticationToken::from(b"aggregator token".to_vec())]),
                 Vec::from([AuthenticationToken::from(b"collector token".to_vec())]),
-                [(
+                [HpkeKeypair::new(
                     HpkeConfig::new(
                         HpkeConfigId::from(255),
                         HpkeKemId::X25519HkdfSha256,
@@ -946,7 +908,7 @@ mod tests {
                 Token::U64(60),
                 Token::Str("collector_hpke_config"),
                 Token::Struct {
-                    name: "SerializedHpkeConfig",
+                    name: "HpkeConfig",
                     len: 5,
                 },
                 Token::Str("id"),
@@ -983,12 +945,12 @@ mod tests {
                 Token::Str("hpke_keys"),
                 Token::Seq { len: Some(1) },
                 Token::Struct {
-                    name: "SerializedHpkeKeypair",
+                    name: "HpkeKeypair",
                     len: 2,
                 },
                 Token::Str("config"),
                 Token::Struct {
-                    name: "SerializedHpkeConfig",
+                    name: "HpkeConfig",
                     len: 5,
                 },
                 Token::Str("id"),
@@ -1047,7 +1009,7 @@ mod tests {
                 ),
                 Vec::from([AuthenticationToken::from(b"aggregator token".to_vec())]),
                 Vec::new(),
-                [(
+                [HpkeKeypair::new(
                     HpkeConfig::new(
                         HpkeConfigId::from(255),
                         HpkeKemId::X25519HkdfSha256,
@@ -1113,7 +1075,7 @@ mod tests {
                 Token::U64(60),
                 Token::Str("collector_hpke_config"),
                 Token::Struct {
-                    name: "SerializedHpkeConfig",
+                    name: "HpkeConfig",
                     len: 5,
                 },
                 Token::Str("id"),
@@ -1149,12 +1111,12 @@ mod tests {
                 Token::Str("hpke_keys"),
                 Token::Seq { len: Some(1) },
                 Token::Struct {
-                    name: "SerializedHpkeKeypair",
+                    name: "HpkeKeypair",
                     len: 2,
                 },
                 Token::Str("config"),
                 Token::Struct {
-                    name: "SerializedHpkeConfig",
+                    name: "HpkeConfig",
                     len: 5,
                 },
                 Token::Str("id"),
