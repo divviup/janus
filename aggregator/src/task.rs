@@ -766,9 +766,16 @@ mod tests {
         messages::DurationExt,
         task::{test_util::TaskBuilder, QueryType, VdafInstance},
     };
-    use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
-    use janus_messages::{Duration, Role, Time};
+    use janus_core::{
+        hpke::{test_util::generate_test_hpke_config_and_private_key, HpkePrivateKey},
+        task::AuthenticationToken,
+    };
+    use janus_messages::{
+        Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
+        TaskId, Time,
+    };
     use rand::random;
+    use serde_test::{assert_tokens, Token};
 
     #[test]
     fn task_serialization() {
@@ -907,6 +914,334 @@ mod tests {
                 "http://leader_endpoint/foo/bar/".parse().unwrap(),
                 "http://helper_endpoint/".parse().unwrap()
             ])
+        );
+    }
+
+    #[test]
+    fn task_serde() {
+        assert_tokens(
+            &Task::new(
+                TaskId::from([0; 32]),
+                Vec::from([
+                    "https://example.com/".parse().unwrap(),
+                    "https://example.net/".parse().unwrap(),
+                ]),
+                QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128Count,
+                Role::Leader,
+                Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
+                1,
+                Time::distant_future(),
+                10,
+                Duration::from_seconds(3600),
+                Duration::from_seconds(60),
+                HpkeConfig::new(
+                    HpkeConfigId::from(8),
+                    HpkeKemId::X25519HkdfSha256,
+                    HpkeKdfId::HkdfSha256,
+                    HpkeAeadId::Aes128Gcm,
+                    HpkePublicKey::from(b"collector hpke public key".to_vec()),
+                ),
+                Vec::from([AuthenticationToken::from(b"aggregator token".to_vec())]),
+                Vec::from([AuthenticationToken::from(b"collector token".to_vec())]),
+                [(
+                    HpkeConfig::new(
+                        HpkeConfigId::from(255),
+                        HpkeKemId::X25519HkdfSha256,
+                        HpkeKdfId::HkdfSha256,
+                        HpkeAeadId::Aes128Gcm,
+                        HpkePublicKey::from(b"aggregator hpke public key".to_vec()),
+                    ),
+                    HpkePrivateKey::new(b"aggregator hpke private key".to_vec()),
+                )],
+            )
+            .unwrap(),
+            &[
+                Token::Struct {
+                    name: "SerializedTask",
+                    len: 15,
+                },
+                Token::Str("task_id"),
+                Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+                Token::Str("aggregator_endpoints"),
+                Token::Seq { len: Some(2) },
+                Token::Str("https://example.com/"),
+                Token::Str("https://example.net/"),
+                Token::SeqEnd,
+                Token::Str("query_type"),
+                Token::UnitVariant {
+                    name: "QueryType",
+                    variant: "TimeInterval",
+                },
+                Token::Str("vdaf"),
+                Token::UnitVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3Aes128Count",
+                },
+                Token::Str("role"),
+                Token::UnitVariant {
+                    name: "Role",
+                    variant: "Leader",
+                },
+                Token::Str("vdaf_verify_keys"),
+                Token::Seq { len: Some(1) },
+                Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
+                Token::SeqEnd,
+                Token::Str("max_batch_query_count"),
+                Token::U64(1),
+                Token::Str("task_expiration"),
+                Token::NewtypeStruct { name: "Time" },
+                Token::U64(9000000000),
+                Token::Str("min_batch_size"),
+                Token::U64(10),
+                Token::Str("time_precision"),
+                Token::NewtypeStruct { name: "Duration" },
+                Token::U64(3600),
+                Token::Str("tolerable_clock_skew"),
+                Token::NewtypeStruct { name: "Duration" },
+                Token::U64(60),
+                Token::Str("collector_hpke_config"),
+                Token::Struct {
+                    name: "SerializedHpkeConfig",
+                    len: 5,
+                },
+                Token::Str("id"),
+                Token::NewtypeStruct {
+                    name: "HpkeConfigId",
+                },
+                Token::U8(8),
+                Token::Str("kem_id"),
+                Token::UnitVariant {
+                    name: "HpkeKemId",
+                    variant: "X25519HkdfSha256",
+                },
+                Token::Str("kdf_id"),
+                Token::UnitVariant {
+                    name: "HpkeKdfId",
+                    variant: "HkdfSha256",
+                },
+                Token::Str("aead_id"),
+                Token::UnitVariant {
+                    name: "HpkeAeadId",
+                    variant: "Aes128Gcm",
+                },
+                Token::Str("public_key"),
+                Token::Str("Y29sbGVjdG9yIGhwa2UgcHVibGljIGtleQ"),
+                Token::StructEnd,
+                Token::Str("aggregator_auth_tokens"),
+                Token::Seq { len: Some(1) },
+                Token::Str("YWdncmVnYXRvciB0b2tlbg"),
+                Token::SeqEnd,
+                Token::Str("collector_auth_tokens"),
+                Token::Seq { len: Some(1) },
+                Token::Str("Y29sbGVjdG9yIHRva2Vu"),
+                Token::SeqEnd,
+                Token::Str("hpke_keys"),
+                Token::Seq { len: Some(1) },
+                Token::Struct {
+                    name: "SerializedHpkeKeypair",
+                    len: 2,
+                },
+                Token::Str("config"),
+                Token::Struct {
+                    name: "SerializedHpkeConfig",
+                    len: 5,
+                },
+                Token::Str("id"),
+                Token::NewtypeStruct {
+                    name: "HpkeConfigId",
+                },
+                Token::U8(255),
+                Token::Str("kem_id"),
+                Token::UnitVariant {
+                    name: "HpkeKemId",
+                    variant: "X25519HkdfSha256",
+                },
+                Token::Str("kdf_id"),
+                Token::UnitVariant {
+                    name: "HpkeKdfId",
+                    variant: "HkdfSha256",
+                },
+                Token::Str("aead_id"),
+                Token::UnitVariant {
+                    name: "HpkeAeadId",
+                    variant: "Aes128Gcm",
+                },
+                Token::Str("public_key"),
+                Token::Str("YWdncmVnYXRvciBocGtlIHB1YmxpYyBrZXk"),
+                Token::StructEnd,
+                Token::Str("private_key"),
+                Token::Str("YWdncmVnYXRvciBocGtlIHByaXZhdGUga2V5"),
+                Token::StructEnd,
+                Token::SeqEnd,
+                Token::StructEnd,
+            ],
+        );
+
+        assert_tokens(
+            &Task::new(
+                TaskId::from([255; 32]),
+                Vec::from([
+                    "https://example.com/".parse().unwrap(),
+                    "https://example.net/".parse().unwrap(),
+                ]),
+                QueryType::FixedSize { max_batch_size: 10 },
+                VdafInstance::Prio3Aes128CountVec { length: 8 },
+                Role::Helper,
+                Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
+                1,
+                Time::distant_future(),
+                10,
+                Duration::from_seconds(3600),
+                Duration::from_seconds(60),
+                HpkeConfig::new(
+                    HpkeConfigId::from(8),
+                    HpkeKemId::X25519HkdfSha256,
+                    HpkeKdfId::HkdfSha256,
+                    HpkeAeadId::Aes128Gcm,
+                    HpkePublicKey::from(b"collector hpke public key".to_vec()),
+                ),
+                Vec::from([AuthenticationToken::from(b"aggregator token".to_vec())]),
+                Vec::new(),
+                [(
+                    HpkeConfig::new(
+                        HpkeConfigId::from(255),
+                        HpkeKemId::X25519HkdfSha256,
+                        HpkeKdfId::HkdfSha256,
+                        HpkeAeadId::Aes128Gcm,
+                        HpkePublicKey::from(b"aggregator hpke public key".to_vec()),
+                    ),
+                    HpkePrivateKey::new(b"aggregator hpke private key".to_vec()),
+                )],
+            )
+            .unwrap(),
+            &[
+                Token::Struct {
+                    name: "SerializedTask",
+                    len: 15,
+                },
+                Token::Str("task_id"),
+                Token::Str("__________________________________________8"),
+                Token::Str("aggregator_endpoints"),
+                Token::Seq { len: Some(2) },
+                Token::Str("https://example.com/"),
+                Token::Str("https://example.net/"),
+                Token::SeqEnd,
+                Token::Str("query_type"),
+                Token::StructVariant {
+                    name: "QueryType",
+                    variant: "FixedSize",
+                    len: 1,
+                },
+                Token::Str("max_batch_size"),
+                Token::U64(10),
+                Token::StructVariantEnd,
+                Token::Str("vdaf"),
+                Token::StructVariant {
+                    name: "VdafInstance",
+                    variant: "Prio3Aes128CountVec",
+                    len: 1,
+                },
+                Token::Str("length"),
+                Token::U64(8),
+                Token::StructVariantEnd,
+                Token::Str("role"),
+                Token::UnitVariant {
+                    name: "Role",
+                    variant: "Helper",
+                },
+                Token::Str("vdaf_verify_keys"),
+                Token::Seq { len: Some(1) },
+                Token::Str("MTIzNDU2NzgxMjM0NTY3OA"),
+                Token::SeqEnd,
+                Token::Str("max_batch_query_count"),
+                Token::U64(1),
+                Token::Str("task_expiration"),
+                Token::NewtypeStruct { name: "Time" },
+                Token::U64(9000000000),
+                Token::Str("min_batch_size"),
+                Token::U64(10),
+                Token::Str("time_precision"),
+                Token::NewtypeStruct { name: "Duration" },
+                Token::U64(3600),
+                Token::Str("tolerable_clock_skew"),
+                Token::NewtypeStruct { name: "Duration" },
+                Token::U64(60),
+                Token::Str("collector_hpke_config"),
+                Token::Struct {
+                    name: "SerializedHpkeConfig",
+                    len: 5,
+                },
+                Token::Str("id"),
+                Token::NewtypeStruct {
+                    name: "HpkeConfigId",
+                },
+                Token::U8(8),
+                Token::Str("kem_id"),
+                Token::UnitVariant {
+                    name: "HpkeKemId",
+                    variant: "X25519HkdfSha256",
+                },
+                Token::Str("kdf_id"),
+                Token::UnitVariant {
+                    name: "HpkeKdfId",
+                    variant: "HkdfSha256",
+                },
+                Token::Str("aead_id"),
+                Token::UnitVariant {
+                    name: "HpkeAeadId",
+                    variant: "Aes128Gcm",
+                },
+                Token::Str("public_key"),
+                Token::Str("Y29sbGVjdG9yIGhwa2UgcHVibGljIGtleQ"),
+                Token::StructEnd,
+                Token::Str("aggregator_auth_tokens"),
+                Token::Seq { len: Some(1) },
+                Token::Str("YWdncmVnYXRvciB0b2tlbg"),
+                Token::SeqEnd,
+                Token::Str("collector_auth_tokens"),
+                Token::Seq { len: Some(0) },
+                Token::SeqEnd,
+                Token::Str("hpke_keys"),
+                Token::Seq { len: Some(1) },
+                Token::Struct {
+                    name: "SerializedHpkeKeypair",
+                    len: 2,
+                },
+                Token::Str("config"),
+                Token::Struct {
+                    name: "SerializedHpkeConfig",
+                    len: 5,
+                },
+                Token::Str("id"),
+                Token::NewtypeStruct {
+                    name: "HpkeConfigId",
+                },
+                Token::U8(255),
+                Token::Str("kem_id"),
+                Token::UnitVariant {
+                    name: "HpkeKemId",
+                    variant: "X25519HkdfSha256",
+                },
+                Token::Str("kdf_id"),
+                Token::UnitVariant {
+                    name: "HpkeKdfId",
+                    variant: "HkdfSha256",
+                },
+                Token::Str("aead_id"),
+                Token::UnitVariant {
+                    name: "HpkeAeadId",
+                    variant: "Aes128Gcm",
+                },
+                Token::Str("public_key"),
+                Token::Str("YWdncmVnYXRvciBocGtlIHB1YmxpYyBrZXk"),
+                Token::StructEnd,
+                Token::Str("private_key"),
+                Token::Str("YWdncmVnYXRvciBocGtlIHByaXZhdGUga2V5"),
+                Token::StructEnd,
+                Token::SeqEnd,
+                Token::StructEnd,
+            ],
         );
     }
 }
