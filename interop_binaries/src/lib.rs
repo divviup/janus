@@ -6,7 +6,7 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType as _, TimeInterval},
-    HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
+    HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
 };
 use prio::codec::Encode;
 use rand::random;
@@ -181,7 +181,7 @@ impl From<AggregatorRole> for Role {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AggregatorAddTaskRequest {
-    pub task_id: String, // in unpadded base64url
+    pub task_id: TaskId, // uses unpadded base64url
     pub leader: Url,
     pub helper: Url,
     pub vdaf: VdafObject,
@@ -215,7 +215,7 @@ impl From<Task> for AggregatorAddTaskRequest {
             }
         };
         Self {
-            task_id: base64::encode_config(task.id().as_ref(), URL_SAFE_NO_PAD),
+            task_id: *task.id(),
             leader: task.aggregator_url(&Role::Leader).unwrap().clone(),
             helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
             vdaf: task.vdaf().clone().into(),

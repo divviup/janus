@@ -13,9 +13,12 @@ use prio::codec::{
     Encode,
 };
 use rand::{distributions::Standard, prelude::Distribution, Rng};
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Serialize, Serializer,
+};
 use std::{
-    fmt::{Debug, Display, Formatter},
+    fmt::{self, Debug, Display, Formatter},
     io::{Cursor, Read},
     str::FromStr,
 };
@@ -502,6 +505,53 @@ impl AsRef<[u8; Self::LEN]> for TaskId {
 impl Distribution<TaskId> for Standard {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> TaskId {
         TaskId(rng.gen())
+    }
+}
+
+/// This customized implementation serializes a [`TaskId`] as a base64url-encoded string, instead
+/// of as a byte array. This is more compact and ergonomic when serialized to YAML, and aligns with
+/// other uses of base64url encoding in DAP.
+impl Serialize for TaskId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let encoded = base64::encode_config(self.as_ref(), URL_SAFE_NO_PAD);
+        serializer.serialize_str(&encoded)
+    }
+}
+
+struct TaskIdVisitor;
+
+impl<'de> Visitor<'de> for TaskIdVisitor {
+    type Value = TaskId;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a base64url-encoded string that decodes to 32 bytes")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<TaskId, E>
+    where
+        E: de::Error,
+    {
+        let decoded = base64::decode_config(value, URL_SAFE_NO_PAD)
+            .map_err(|_| E::custom("invalid base64url value"))?;
+        let byte_array: [u8; TaskId::LEN] = decoded
+            .try_into()
+            .map_err(|_| E::custom("incorrect TaskId length"))?;
+        Ok(TaskId::from(byte_array))
+    }
+}
+
+/// This customized implementation deserializes a [`TaskId`] as a base64url-encoded string, instead
+/// of as a byte array. This is more compact and ergonomic when serialized to YAML, and aligns with
+/// other uses of base64url encoding in DAP.
+impl<'de> Deserialize<'de> for TaskId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(TaskIdVisitor)
     }
 }
 
@@ -2018,6 +2068,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
+    use serde_test::{assert_de_tokens_error, assert_tokens, Token};
     use std::{fmt::Debug, io::Cursor};
 
     fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
@@ -3585,5 +3636,25 @@ mod tests {
                 )),
             ),
         ])
+    }
+
+    #[test]
+    fn taskid_serde() {
+        assert_tokens(
+            &TaskId::from([0; 32]),
+            &[Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
+        );
+        assert_de_tokens_error::<TaskId>(
+            &[Token::Str("/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
+            "invalid base64url value",
+        );
+        assert_de_tokens_error::<TaskId>(
+            &[Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
+            "incorrect TaskId length",
+        );
+        assert_de_tokens_error::<TaskId>(
+            &[Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
+            "incorrect TaskId length",
+        );
     }
 }

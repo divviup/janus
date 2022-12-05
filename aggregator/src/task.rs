@@ -345,7 +345,7 @@ fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
 /// Deserialize traits.
 #[derive(Serialize, Deserialize)]
 struct SerializedTask {
-    task_id: String, // in unpadded base64url
+    task_id: TaskId, // uses unpadded base64url
     aggregator_endpoints: Vec<Url>,
     query_type: QueryType,
     vdaf: VdafInstance,
@@ -364,7 +364,6 @@ struct SerializedTask {
 
 impl Serialize for Task {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let task_id = base64::encode_config(self.task_id.as_ref(), URL_SAFE_NO_PAD);
         let vdaf_verify_keys: Vec<_> = self
             .vdaf_verify_keys
             .iter()
@@ -387,7 +386,7 @@ impl Serialize for Task {
             .collect();
 
         SerializedTask {
-            task_id,
+            task_id: self.task_id,
             aggregator_endpoints: self.aggregator_endpoints.clone(),
             query_type: self.query_type,
             vdaf: self.vdaf.clone(),
@@ -411,14 +410,6 @@ impl<'de> Deserialize<'de> for Task {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // Deserialize into intermediate representation.
         let serialized_task = SerializedTask::deserialize(deserializer)?;
-
-        // task_id
-        let task_id_bytes: [u8; TaskId::LEN] =
-            base64::decode_config(serialized_task.task_id, URL_SAFE_NO_PAD)
-                .map_err(D::Error::custom)?
-                .try_into()
-                .map_err(|_| D::Error::custom("task_id length incorrect"))?;
-        let task_id = TaskId::from(task_id_bytes);
 
         // vdaf_verify_keys
         let vdaf_verify_keys: Vec<_> = serialized_task
@@ -467,7 +458,7 @@ impl<'de> Deserialize<'de> for Task {
             .collect::<Result<_, _>>()?;
 
         Task::new(
-            task_id,
+            serialized_task.task_id,
             serialized_task.aggregator_endpoints,
             serialized_task.query_type,
             serialized_task.vdaf,

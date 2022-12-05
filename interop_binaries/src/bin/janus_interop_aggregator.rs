@@ -76,9 +76,6 @@ async fn handle_add_task(
     keyring: &Mutex<HpkeConfigRegistry>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
-    let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"task_id\"")?;
-    let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
@@ -124,7 +121,7 @@ async fn handle_add_task(
     };
 
     let task = Task::new(
-        task_id,
+        request.task_id,
         Vec::from([request.leader, request.helper]),
         query_type,
         vdaf,

@@ -1712,6 +1712,7 @@ dependencies = [
  "prio",
  "rand",
  "serde",
+ "serde_test",
  "thiserror",
  "tracing-log",
  "tracing-subscriber",
