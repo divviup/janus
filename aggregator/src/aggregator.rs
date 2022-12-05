@@ -284,6 +284,8 @@ pub(crate) fn aggregate_step_failure_counter(meter: &Meter) -> Counter<u64> {
         "accumulate_failure",
         "finish_mismatch",
         "helper_step_failure",
+        "plaintext_input_share_decode_failure",
+        "duplicate_extension",
     ] {
         aggregate_step_failure_counter.add(
             &Context::current(),
@@ -1524,11 +1526,22 @@ impl VdafOps {
             });
 
             let plaintext_input_share = plaintext.and_then(|plaintext| {
-                PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
+                let plaintext_input_share = PlaintextInputShare::get_decoded(&plaintext).map_err(|error| {
                     info!(task_id = %task.id(), metadata = ?report_share.metadata(), ?error, "Couldn't decode helper's plaintext input share");
                     aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "plaintext_input_share_decode_failure")]);
                     ReportShareError::VdafPrepError
-                })
+                })?;
+                // Check for repeated extensions.
+                let mut extension_types = HashSet::new();
+                if !plaintext_input_share
+                    .extensions()
+                    .iter()
+                    .all(|extension| extension_types.insert(extension.extension_type())) {
+                        info!(task_id = %task.id(), metadata = ?report_share.metadata(), "Received report share with duplicate extensions");
+                        aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "duplicate_extension")]);
+                        return Err(ReportShareError::UnrecognizedMessage)
+                }
+                Ok(plaintext_input_share)
             });
 
             // `vdaf-prep-error` probably isn't the right code, but there is no better one & we
@@ -3298,10 +3311,10 @@ mod tests {
         query_type::TimeInterval,
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, AggregateShareReq, AggregateShareResp, BatchSelector, CollectReq,
-        CollectResp, Duration, HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval,
-        PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report,
-        ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
-        Time,
+        CollectResp, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfig, HpkeConfigId,
+        Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query,
+        Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role,
+        TaskId, Time,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -4286,6 +4299,7 @@ mod tests {
             &report_metadata_0,
             &hpke_key.0,
             &transcript.public_share,
+            Vec::new(),
             &input_share,
         );
 
@@ -4353,6 +4367,7 @@ mod tests {
             &report_metadata_3,
             &wrong_hpke_config,
             &transcript.public_share,
+            Vec::new(),
             &input_share,
         );
 
@@ -4377,6 +4392,7 @@ mod tests {
             &report_metadata_4,
             &hpke_key.0,
             &transcript.public_share,
+            Vec::new(),
             &input_share,
         );
 
@@ -4404,6 +4420,7 @@ mod tests {
             &report_metadata_5,
             &hpke_key.0,
             &transcript.public_share,
+            Vec::new(),
             &input_share,
         );
 
@@ -4423,6 +4440,26 @@ mod tests {
             public_share_6,
             &input_share.get_encoded(),
             &aad,
+        );
+
+        // report_share_7 fails due to having repeated extensions.
+        let report_metadata_7 = ReportMetadata::new(
+            random(),
+            clock
+                .now()
+                .to_batch_interval_start(task.time_precision())
+                .unwrap(),
+        );
+        let report_share_7 = generate_helper_report_share::<Prio3Aes128Count>(
+            task.id(),
+            &report_metadata_7,
+            &hpke_key.0,
+            &transcript.public_share,
+            Vec::from([
+                Extension::new(ExtensionType::Tbd, Vec::new()),
+                Extension::new(ExtensionType::Tbd, Vec::new()),
+            ]),
+            &input_share,
         );
 
         datastore
@@ -4464,6 +4501,7 @@ mod tests {
                 report_share_4.clone(),
                 report_share_5.clone(),
                 report_share_6.clone(),
+                report_share_7.clone(),
             ]),
         );
 
@@ -4495,7 +4533,7 @@ mod tests {
         let aggregate_resp = AggregateInitializeResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
-        assert_eq!(aggregate_resp.prepare_steps().len(), 7);
+        assert_eq!(aggregate_resp.prepare_steps().len(), 8);
 
         let prepare_step_0 = aggregate_resp.prepare_steps().get(0).unwrap();
         assert_eq!(prepare_step_0.report_id(), report_share_0.metadata().id());
@@ -4541,6 +4579,20 @@ mod tests {
         assert_eq!(
             prepare_step_5.result(),
             &PrepareStepResult::Failed(ReportShareError::BatchCollected)
+        );
+
+        let prepare_step_6 = aggregate_resp.prepare_steps().get(6).unwrap();
+        assert_eq!(prepare_step_6.report_id(), report_share_6.metadata().id());
+        assert_eq!(
+            prepare_step_6.result(),
+            &PrepareStepResult::Failed(ReportShareError::VdafPrepError),
+        );
+
+        let prepare_step_7 = aggregate_resp.prepare_steps().get(7).unwrap();
+        assert_eq!(prepare_step_7.report_id(), report_share_7.metadata().id());
+        assert_eq!(
+            prepare_step_7.result(),
+            &PrepareStepResult::Failed(ReportShareError::UnrecognizedMessage),
         );
 
         // Check aggregation job in datastore.
@@ -4596,6 +4648,7 @@ mod tests {
             ),
             &hpke_key.0,
             &(),
+            Vec::new(),
             &(),
         );
         let request = AggregateInitializeReq::new(
@@ -4672,6 +4725,7 @@ mod tests {
             ),
             &hpke_key.0,
             &(),
+            Vec::new(),
             &(),
         );
         let request = AggregateInitializeReq::new(
@@ -4846,6 +4900,7 @@ mod tests {
             &report_metadata_0,
             &hpke_key.0,
             &transcript_0.public_share,
+            Vec::new(),
             &transcript_0.input_shares[1],
         );
 
@@ -4870,6 +4925,7 @@ mod tests {
             &report_metadata_1,
             &hpke_key.0,
             &transcript_1.public_share,
+            Vec::new(),
             &transcript_1.input_shares[1],
         );
 
@@ -4898,6 +4954,7 @@ mod tests {
             &report_metadata_2,
             &hpke_key.0,
             &transcript_2.public_share,
+            Vec::new(),
             &transcript_2.input_shares[1],
         );
 
@@ -5161,6 +5218,7 @@ mod tests {
             &report_metadata_0,
             &hpke_key.0,
             &transcript_0.public_share,
+            Vec::new(),
             &transcript_0.input_shares[1],
         );
 
@@ -5188,6 +5246,7 @@ mod tests {
             &report_metadata_1,
             &hpke_key.0,
             &transcript_1.public_share,
+            Vec::new(),
             &transcript_1.input_shares[1],
         );
 
@@ -5214,6 +5273,7 @@ mod tests {
             &report_metadata_2,
             &hpke_key.0,
             &transcript_2.public_share,
+            Vec::new(),
             &transcript_2.input_shares[1],
         );
 
@@ -5446,6 +5506,7 @@ mod tests {
             &report_metadata_3,
             &hpke_key.0,
             &transcript_3.public_share,
+            Vec::new(),
             &transcript_3.input_shares[1],
         );
 
@@ -5472,6 +5533,7 @@ mod tests {
             &report_metadata_4,
             &hpke_key.0,
             &transcript_4.public_share,
+            Vec::new(),
             &transcript_4.input_shares[1],
         );
 
@@ -5498,6 +5560,7 @@ mod tests {
             &report_metadata_5,
             &hpke_key.0,
             &transcript_5.public_share,
+            Vec::new(),
             &transcript_5.input_shares[1],
         );
 
@@ -7917,6 +7980,7 @@ mod tests {
         report_metadata: &ReportMetadata,
         cfg: &HpkeConfig,
         public_share: &V::PublicShare,
+        extensions: Vec<Extension>,
         input_share: &V::InputShare,
     ) -> ReportShare
     where
@@ -7929,7 +7993,7 @@ mod tests {
             report_metadata.clone(),
             cfg,
             encoded_public_share,
-            &PlaintextInputShare::new(Vec::new(), input_share.get_encoded()).get_encoded(),
+            &PlaintextInputShare::new(extensions, input_share.get_encoded()).get_encoded(),
             &associated_data,
         )
     }

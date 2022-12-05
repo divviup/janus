@@ -596,6 +596,16 @@ impl Extension {
             extension_data,
         }
     }
+
+    /// Returns the type of this extension.
+    pub fn extension_type(&self) -> &ExtensionType {
+        &self.extension_type
+    }
+
+    /// Returns the unparsed data representing this extension.
+    pub fn extension_data(&self) -> &[u8] {
+        &self.extension_data
+    }
 }
 
 impl Encode for Extension {
@@ -618,7 +628,7 @@ impl Decode for Extension {
 }
 
 /// DAP protocol message representing the type of an extension included in a client report.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, TryFromPrimitive)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, TryFromPrimitive)]
 #[repr(u16)]
 pub enum ExtensionType {
     Tbd = 0,
@@ -1514,6 +1524,7 @@ pub enum ReportShareError {
     VdafPrepError = 5,
     BatchSaturated = 6,
     TaskExpired = 7,
+    UnrecognizedMessage = 8,
 }
 
 impl Encode for ReportShareError {
