@@ -1249,6 +1249,109 @@ impl<Q: QueryType> Decode for CollectResp<Q> {
     }
 }
 
+/// DAP message representing the additional associated data for an input share encryption operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputShareAad {
+    task_id: TaskId,
+    metadata: ReportMetadata,
+    public_share: Vec<u8>,
+}
+
+impl InputShareAad {
+    /// Constructs a new input share AAD.
+    pub fn new(task_id: TaskId, metadata: ReportMetadata, public_share: Vec<u8>) -> Self {
+        Self {
+            task_id,
+            metadata,
+            public_share,
+        }
+    }
+
+    /// Retrieves the task ID associated with this input share AAD.
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+
+    /// Retrieves the report metadata associated with this input share AAD.
+    pub fn metadata(&self) -> &ReportMetadata {
+        &self.metadata
+    }
+
+    /// Retrieves the public share associated with this input share AAD.
+    pub fn public_share(&self) -> &[u8] {
+        &self.public_share
+    }
+}
+
+impl Encode for InputShareAad {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.task_id.encode(bytes);
+        self.metadata.encode(bytes);
+        encode_u32_items(bytes, &(), &self.public_share);
+    }
+}
+
+impl Decode for InputShareAad {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let task_id = TaskId::decode(bytes)?;
+        let metadata = ReportMetadata::decode(bytes)?;
+        let public_share = decode_u32_items(&(), bytes)?;
+
+        Ok(Self {
+            task_id,
+            metadata,
+            public_share,
+        })
+    }
+}
+
+/// DAP message representing the additional associated data for an aggregate share encryption
+/// operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AggregateShareAad<Q: QueryType> {
+    task_id: TaskId,
+    batch_selector: BatchSelector<Q>,
+}
+
+impl<Q: QueryType> AggregateShareAad<Q> {
+    /// Constructs a new aggregate share AAD.
+    pub fn new(task_id: TaskId, batch_selector: BatchSelector<Q>) -> Self {
+        Self {
+            task_id,
+            batch_selector,
+        }
+    }
+
+    /// Retrieves the task ID associated with this aggregate share AAD.
+    pub fn task_id(&self) -> &TaskId {
+        &self.task_id
+    }
+
+    /// Retrieves the batch selector associated with this aggregate share AAD.
+    pub fn batch_selector(&self) -> &BatchSelector<Q> {
+        &self.batch_selector
+    }
+}
+
+impl<Q: QueryType> Encode for AggregateShareAad<Q> {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.task_id.encode(bytes);
+        self.batch_selector.encode(bytes);
+    }
+}
+
+impl<Q: QueryType> Decode for AggregateShareAad<Q> {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let task_id = TaskId::decode(bytes)?;
+        let batch_selector = BatchSelector::decode(bytes)?;
+
+        Ok(Self {
+            task_id,
+            batch_selector,
+        })
+    }
+}
+
 pub mod query_type {
     use super::{BatchId, Interval};
     use anyhow::anyhow;
@@ -2009,12 +2112,12 @@ mod tests {
     use crate::{
         query_type::{self, FixedSize, TimeInterval},
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, AggregateShareReq, AggregateShareResp, AggregationJobId, BatchId,
-        BatchSelector, CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeAeadId,
-        HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Interval,
-        PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report,
-        ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
-        Time,
+        AggregateInitializeResp, AggregateShareAad, AggregateShareReq, AggregateShareResp,
+        AggregationJobId, BatchId, BatchSelector, CollectReq, CollectResp, Duration, Extension,
+        ExtensionType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
+        HpkePublicKey, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
+        PrepareStep, PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata,
+        ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
@@ -3585,5 +3688,79 @@ mod tests {
                 )),
             ),
         ])
+    }
+
+    #[test]
+    fn roundtrip_input_share_aad() {
+        roundtrip_encoding(&[(
+            InputShareAad {
+                task_id: TaskId::from([12u8; 32]),
+                metadata: ReportMetadata::new(
+                    ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+                    Time::from_seconds_since_epoch(54321),
+                ),
+                public_share: Vec::from("0123"),
+            },
+            concat!(
+                "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
+                concat!(
+                    // metadata
+                    "0102030405060708090A0B0C0D0E0F10", // report_id
+                    "000000000000D431",                 // time
+                ),
+                concat!(
+                    // public_share
+                    "00000004", // length
+                    "30313233", // opaque data
+                ),
+            ),
+        )])
+    }
+
+    #[test]
+    fn roundtrip_aggregate_share_aad() {
+        // TimeInterval.
+        roundtrip_encoding(&[(
+            AggregateShareAad::<TimeInterval> {
+                task_id: TaskId::from([12u8; 32]),
+                batch_selector: BatchSelector {
+                    batch_identifier: Interval::new(
+                        Time::from_seconds_since_epoch(54321),
+                        Duration::from_seconds(12345),
+                    )
+                    .unwrap(),
+                },
+            },
+            concat!(
+                "0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C0C", // task_id
+                concat!(
+                    // batch_selector
+                    "01", // query_type
+                    concat!(
+                        // batch_interval
+                        "000000000000D431", // start
+                        "0000000000003039", // duration
+                    ),
+                ),
+            ),
+        )]);
+
+        // FixedSize.
+        roundtrip_encoding(&[(
+            AggregateShareAad::<FixedSize> {
+                task_id: TaskId::from([u8::MIN; 32]),
+                batch_selector: BatchSelector {
+                    batch_identifier: BatchId::from([7u8; 32]),
+                },
+            },
+            concat!(
+                "0000000000000000000000000000000000000000000000000000000000000000", // task_id
+                concat!(
+                    // batch_selector
+                    "02", // query_type
+                    "0707070707070707070707070707070707070707070707070707070707070707", // batch_id
+                ),
+            ),
+        )])
     }
 }

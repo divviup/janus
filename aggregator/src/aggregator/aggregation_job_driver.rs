@@ -896,8 +896,7 @@ mod tests {
     use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         hpke::{
-            self, associated_data_for_report_share,
-            test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         report_id::ReportIdChecksumExt,
         task::VdafInstance,
@@ -908,8 +907,8 @@ mod tests {
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, Duration, Extension, ExtensionType, HpkeConfig, Interval,
-        PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult,
+        AggregateInitializeResp, Duration, Extension, ExtensionType, HpkeConfig, InputShareAad,
+        Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult,
         ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
     };
     use mockito::mock;
@@ -2260,11 +2259,8 @@ mod tests {
                     .get_encoded(),
             )
             .get_encoded(),
-            &associated_data_for_report_share(
-                &task_id,
-                &report_metadata,
-                &public_share.get_encoded(),
-            ),
+            &InputShareAad::new(task_id, report_metadata.clone(), public_share.get_encoded())
+                .get_encoded(),
         )
         .unwrap();
 

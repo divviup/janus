@@ -5,7 +5,6 @@ use derivative::Derivative;
 use http::header::CONTENT_TYPE;
 use http_api_problem::HttpApiProblem;
 use janus_core::{
-    hpke::associated_data_for_report_share,
     hpke::{self, HpkeApplicationInfo, Label},
     http::response_to_problem_details,
     retries::{http_request_exponential_backoff, retry_http_request},
@@ -13,7 +12,8 @@ use janus_core::{
     time::{Clock, TimeExt},
 };
 use janus_messages::{
-    Duration, HpkeCiphertext, HpkeConfig, PlaintextInputShare, Report, ReportMetadata, Role, TaskId,
+    Duration, HpkeCiphertext, HpkeConfig, InputShareAad, PlaintextInputShare, Report,
+    ReportMetadata, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -215,12 +215,7 @@ where
             .to_batch_interval_start(&self.parameters.time_precision)
             .map_err(|_| Error::InvalidParameter("couldn't round time down to time_precision"))?;
         let report_metadata = ReportMetadata::new(random(), time);
-        let public_share = public_share.get_encoded();
-        let associated_data = associated_data_for_report_share(
-            &self.parameters.task_id,
-            &report_metadata,
-            &public_share,
-        );
+        let encoded_public_share = public_share.get_encoded();
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
             (&self.leader_hpke_config, &Role::Leader),
@@ -237,7 +232,12 @@ where
                     input_share.get_encoded(),
                 )
                 .get_encoded(),
-                &associated_data,
+                &InputShareAad::new(
+                    self.parameters.task_id,
+                    report_metadata.clone(),
+                    encoded_public_share.clone(),
+                )
+                .get_encoded(),
             )?)
         })
         .collect::<Result<_, Error>>()?;
@@ -245,7 +245,7 @@ where
         Ok(Report::new(
             self.parameters.task_id,
             report_metadata,
-            public_share,
+            encoded_public_share,
             encrypted_input_shares,
         ))
     }
