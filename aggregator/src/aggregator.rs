@@ -31,10 +31,7 @@ use http::{
 };
 use http_api_problem::HttpApiProblem;
 use janus_core::{
-    hpke::{
-        self, associated_data_for_aggregate_share, associated_data_for_report_share,
-        HpkeApplicationInfo, Label,
-    },
+    hpke::{self, HpkeApplicationInfo, Label},
     http::response_to_problem_details,
     task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER},
     time::Clock,
@@ -43,10 +40,10 @@ use janus_messages::{
     problem_type::DapProblemType,
     query_type::{FixedSize, QueryType, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
-    AggregateShareReq, AggregateShareResp, AggregationJobId, CollectReq, CollectResp,
-    HpkeCiphertext, HpkeConfig, HpkeConfigId, Interval, PartialBatchSelector, PlaintextInputShare,
-    PrepareStep, PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare,
-    ReportShareError, Role, TaskId, Time,
+    AggregateShareAad, AggregateShareReq, AggregateShareResp, AggregationJobId, BatchSelector,
+    CollectReq, CollectResp, HpkeCiphertext, HpkeConfig, HpkeConfigId, InputShareAad, Interval,
+    PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Report, ReportId,
+    ReportIdChecksum, ReportShare, ReportShareError, Role, TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -1321,11 +1318,12 @@ impl VdafOps {
             hpke_private_key,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, task.role()),
             leader_encrypted_input_share,
-            &associated_data_for_report_share(
-                report.task_id(),
-                report.metadata(),
-                report.public_share(),
-            ),
+            &InputShareAad::new(
+                *report.task_id(),
+                report.metadata().clone(),
+                report.public_share().to_vec(),
+            )
+            .get_encoded(),
         ) {
             Ok(encoded_leader_plaintext_input_share) => encoded_leader_plaintext_input_share,
             Err(error) => {
@@ -1503,11 +1501,12 @@ impl VdafOps {
                     hpke_private_key,
                     &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
                     report_share.encrypted_input_share(),
-                    &associated_data_for_report_share(
-                        task.id(),
-                        report_share.metadata(),
-                        report_share.public_share(),
-                    ),
+                    &InputShareAad::new(
+                        *task.id(),
+                        report_share.metadata().clone(),
+                        report_share.public_share().to_vec(),
+                    )
+                    .get_encoded(),
                 )
                 .map_err(|error| {
                     info!(
@@ -2260,10 +2259,6 @@ impl VdafOps {
                     task_id = %task.id(),
                     "Serving cached collect job response"
                 );
-                let associated_data = associated_data_for_aggregate_share::<Q>(
-                    collect_job.task_id(),
-                    collect_job.batch_identifier(),
-                );
                 let encrypted_leader_aggregate_share = hpke::seal(
                     task.collector_hpke_config(),
                     &HpkeApplicationInfo::new(
@@ -2272,7 +2267,11 @@ impl VdafOps {
                         &Role::Collector,
                     ),
                     &<Vec<u8>>::from(leader_aggregate_share),
-                    &associated_data,
+                    &AggregateShareAad::new(
+                        *collect_job.task_id(),
+                        BatchSelector::<Q>::new(collect_job.batch_identifier().clone()),
+                    )
+                    .get_encoded(),
                 )?;
 
                 Ok(Some(
@@ -2693,10 +2692,11 @@ impl VdafOps {
             task.collector_hpke_config(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &<Vec<u8>>::from(aggregate_share_job.helper_aggregate_share()),
-            &associated_data_for_aggregate_share::<Q>(
-                aggregate_share_req.task_id(),
-                aggregate_share_req.batch_selector().batch_identifier(),
-            ),
+            &AggregateShareAad::new(
+                *aggregate_share_req.task_id(),
+                aggregate_share_req.batch_selector().clone(),
+            )
+            .get_encoded(),
         )?;
 
         Ok(AggregateShareResp::new(encrypted_aggregate_share))
@@ -3295,10 +3295,8 @@ mod tests {
     };
     use hyper::body;
     use janus_core::{
-        hpke::associated_data_for_report_share,
         hpke::{
-            self, associated_data_for_aggregate_share,
-            test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
+            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
             HpkePrivateKey, Label,
         },
         report_id::ReportIdChecksumExt,
@@ -3310,11 +3308,11 @@ mod tests {
         problem_type::{DapProblemType, DapProblemTypeParseError},
         query_type::TimeInterval,
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, AggregateShareReq, AggregateShareResp, BatchSelector, CollectReq,
-        CollectResp, Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfig, HpkeConfigId,
-        Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query,
-        Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role,
-        TaskId, Time,
+        AggregateInitializeResp, AggregateShareAad, AggregateShareReq, AggregateShareResp,
+        BatchSelector, CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeCiphertext,
+        HpkeConfig, HpkeConfigId, InputShareAad, Interval, PartialBatchSelector,
+        PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report, ReportId,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -3522,24 +3520,24 @@ mod tests {
 
         let (public_share, measurements) = vdaf.shard(&1).unwrap();
 
-        let associated_data = associated_data_for_report_share(
-            task.id(),
-            &report_metadata,
-            &public_share.get_encoded(),
+        let associated_data = InputShareAad::new(
+            *task.id(),
+            report_metadata.clone(),
+            public_share.get_encoded(),
         );
 
         let leader_ciphertext = hpke::seal(
             &hpke_key.0,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader),
             &PlaintextInputShare::new(Vec::new(), measurements[0].get_encoded()).get_encoded(),
-            &associated_data,
+            &associated_data.get_encoded(),
         )
         .unwrap();
         let helper_ciphertext = hpke::seal(
             &hpke_key.0,
             &HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Helper),
             &PlaintextInputShare::new(Vec::new(), measurements[1].get_encoded()).get_encoded(),
-            &associated_data,
+            &associated_data.get_encoded(),
         )
         .unwrap();
 
@@ -4295,8 +4293,8 @@ mod tests {
         );
         let input_share = transcript.input_shares[1].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_0,
+            *task.id(),
+            report_metadata_0,
             &hpke_key.0,
             &transcript.public_share,
             Vec::new(),
@@ -4337,14 +4335,12 @@ mod tests {
         );
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
-        let aad =
-            associated_data_for_report_share(task.id(), &report_metadata_2, &encoded_public_share);
         let report_share_2 = generate_helper_report_share_for_plaintext(
-            report_metadata_2,
+            report_metadata_2.clone(),
             &hpke_key.0,
-            encoded_public_share,
+            encoded_public_share.clone(),
             &input_share_bytes,
-            &aad,
+            &InputShareAad::new(*task.id(), report_metadata_2, encoded_public_share).get_encoded(),
         );
 
         // report_share_3 has an unknown HPKE config ID.
@@ -4363,8 +4359,8 @@ mod tests {
             break hpke_config;
         };
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_3,
+            *task.id(),
+            report_metadata_3,
             &wrong_hpke_config,
             &transcript.public_share,
             Vec::new(),
@@ -4388,8 +4384,8 @@ mod tests {
         );
         let input_share = transcript.input_shares[1].clone();
         let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_4,
+            *task.id(),
+            report_metadata_4,
             &hpke_key.0,
             &transcript.public_share,
             Vec::new(),
@@ -4416,8 +4412,8 @@ mod tests {
         );
         let input_share = transcript.input_shares[1].clone();
         let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_5,
+            *task.id(),
+            report_metadata_5,
             &hpke_key.0,
             &transcript.public_share,
             Vec::new(),
@@ -4433,13 +4429,12 @@ mod tests {
                 .to_batch_interval_start(task.time_precision())
                 .unwrap(),
         );
-        let aad = associated_data_for_report_share(task.id(), &report_metadata_6, &public_share_6);
         let report_share_6 = generate_helper_report_share_for_plaintext(
-            report_metadata_6,
+            report_metadata_6.clone(),
             &hpke_key.0,
-            public_share_6,
+            public_share_6.clone(),
             &input_share.get_encoded(),
-            &aad,
+            &InputShareAad::new(*task.id(), report_metadata_6, public_share_6).get_encoded(),
         );
 
         // report_share_7 fails due to having repeated extensions.
@@ -4451,8 +4446,8 @@ mod tests {
                 .unwrap(),
         );
         let report_share_7 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_7,
+            *task.id(),
+            report_metadata_7,
             &hpke_key.0,
             &transcript.public_share,
             Vec::from([
@@ -4638,8 +4633,8 @@ mod tests {
         datastore.put_task(&task).await.unwrap();
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            task.id(),
-            &ReportMetadata::new(
+            *task.id(),
+            ReportMetadata::new(
                 random(),
                 clock
                     .now()
@@ -4715,8 +4710,8 @@ mod tests {
         datastore.put_task(&task).await.unwrap();
 
         let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            task.id(),
-            &ReportMetadata::new(
+            *task.id(),
+            ReportMetadata::new(
                 random(),
                 clock
                     .now()
@@ -4896,8 +4891,8 @@ mod tests {
         );
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_0,
+            *task.id(),
+            report_metadata_0.clone(),
             &hpke_key.0,
             &transcript_0.public_share,
             Vec::new(),
@@ -4921,8 +4916,8 @@ mod tests {
         );
         let prep_state_1 = assert_matches!(&transcript_1.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_1,
+            *task.id(),
+            report_metadata_1.clone(),
             &hpke_key.0,
             &transcript_1.public_share,
             Vec::new(),
@@ -4950,8 +4945,8 @@ mod tests {
         let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_2,
+            *task.id(),
+            report_metadata_2.clone(),
             &hpke_key.0,
             &transcript_2.public_share,
             Vec::new(),
@@ -5214,8 +5209,8 @@ mod tests {
         let out_share_0 = assert_matches!(&transcript_0.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_0,
+            *task.id(),
+            report_metadata_0.clone(),
             &hpke_key.0,
             &transcript_0.public_share,
             Vec::new(),
@@ -5242,8 +5237,8 @@ mod tests {
         let out_share_1 = assert_matches!(&transcript_1.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_1 = transcript_1.prepare_messages[0].clone();
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_1,
+            *task.id(),
+            report_metadata_1.clone(),
             &hpke_key.0,
             &transcript_1.public_share,
             Vec::new(),
@@ -5269,8 +5264,8 @@ mod tests {
         let out_share_2 = assert_matches!(&transcript_2.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_2,
+            *task.id(),
+            report_metadata_2.clone(),
             &hpke_key.0,
             &transcript_2.public_share,
             Vec::new(),
@@ -5502,8 +5497,8 @@ mod tests {
         let out_share_3 = assert_matches!(&transcript_3.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_3 = transcript_3.prepare_messages[0].clone();
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_3,
+            *task.id(),
+            report_metadata_3.clone(),
             &hpke_key.0,
             &transcript_3.public_share,
             Vec::new(),
@@ -5529,8 +5524,8 @@ mod tests {
         let out_share_4 = assert_matches!(&transcript_4.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_4 = transcript_4.prepare_messages[0].clone();
         let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_4,
+            *task.id(),
+            report_metadata_4.clone(),
             &hpke_key.0,
             &transcript_4.public_share,
             Vec::new(),
@@ -5556,8 +5551,8 @@ mod tests {
         let out_share_5 = assert_matches!(&transcript_5.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_5 = transcript_5.prepare_messages[0].clone();
         let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
-            task.id(),
-            &report_metadata_5,
+            *task.id(),
+            report_metadata_5.clone(),
             &hpke_key.0,
             &transcript_5.public_share,
             Vec::new(),
@@ -6980,10 +6975,7 @@ mod tests {
                             &Role::Collector,
                         ),
                         &helper_aggregate_share_bytes,
-                        &associated_data_for_aggregate_share::<TimeInterval>(
-                            task.id(),
-                            &batch_interval,
-                        ),
+                        &AggregateShareAad::new(*task.id(), BatchSelector::new_time_interval(batch_interval)).get_encoded(),
                     )
                     .unwrap();
 
@@ -7038,7 +7030,8 @@ mod tests {
             &collector_hpke_recipient,
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[0],
-            &associated_data_for_aggregate_share::<TimeInterval>(task.id(), &batch_interval),
+            &AggregateShareAad::new(*task.id(), BatchSelector::new_time_interval(batch_interval))
+                .get_encoded(),
         )
         .unwrap();
         assert_eq!(
@@ -7051,7 +7044,8 @@ mod tests {
             &collector_hpke_recipient,
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[1],
-            &associated_data_for_aggregate_share::<TimeInterval>(task.id(), &batch_interval),
+            &AggregateShareAad::new(*task.id(), BatchSelector::new_time_interval(batch_interval))
+                .get_encoded(),
         )
         .unwrap();
         assert_eq!(
@@ -7845,10 +7839,8 @@ mod tests {
                         &Role::Collector,
                     ),
                     aggregate_share_resp.encrypted_aggregate_share(),
-                    &associated_data_for_aggregate_share::<TimeInterval>(
-                        request.task_id(),
-                        request.batch_selector().batch_identifier(),
-                    ),
+                    &AggregateShareAad::new(*request.task_id(), request.batch_selector().clone())
+                        .get_encoded(),
                 )
                 .unwrap();
 
@@ -7976,8 +7968,8 @@ mod tests {
     }
 
     fn generate_helper_report_share<V: vdaf::Client>(
-        task_id: &TaskId,
-        report_metadata: &ReportMetadata,
+        task_id: TaskId,
+        report_metadata: ReportMetadata,
         cfg: &HpkeConfig,
         public_share: &V::PublicShare,
         extensions: Vec<Extension>,
@@ -7986,15 +7978,12 @@ mod tests {
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let encoded_public_share = public_share.get_encoded();
-        let associated_data =
-            associated_data_for_report_share(task_id, report_metadata, &encoded_public_share);
         generate_helper_report_share_for_plaintext(
             report_metadata.clone(),
             cfg,
-            encoded_public_share,
+            public_share.get_encoded(),
             &PlaintextInputShare::new(extensions, input_share.get_encoded()).get_encoded(),
-            &associated_data,
+            &InputShareAad::new(task_id, report_metadata, public_share.get_encoded()).get_encoded(),
         )
     }
 
