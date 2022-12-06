@@ -4814,7 +4814,7 @@ mod tests {
     use chrono::NaiveDate;
     use futures::future::join_all;
     use janus_core::{
-        hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, Label},
+        hpke::{self, HpkeApplicationInfo, Label},
         task::VdafInstance,
         test_util::{
             dummy_vdaf::{self, AggregateShare, AggregationParam},
@@ -4824,11 +4824,12 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        Duration, Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, ReportId,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+        AggregateShareAad, BatchSelector, Duration, Extension, ExtensionType, HpkeCiphertext,
+        HpkeConfigId, Interval, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
+        ReportShareError, Role, TaskId, Time,
     };
     use prio::{
-        codec::Decode,
+        codec::{Decode, Encode},
         vdaf::{
             self,
             prio3::{Prio3, Prio3Aes128Count},
@@ -6967,10 +6968,11 @@ mod tests {
                         &Role::Collector,
                     ),
                     &[0, 1, 2, 3, 4, 5],
-                    &associated_data_for_aggregate_share::<TimeInterval>(
-                        task.id(),
-                        &first_batch_interval,
-                    ),
+                    &AggregateShareAad::new(
+                        *task.id(),
+                        BatchSelector::new_time_interval(first_batch_interval),
+                    )
+                    .get_encoded(),
                 )
                 .unwrap();
 

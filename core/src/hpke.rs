@@ -4,10 +4,8 @@ use base64::URL_SAFE_NO_PAD;
 use derivative::Derivative;
 use hpke_dispatch::{HpkeError, Kem, Keypair};
 use janus_messages::{
-    query_type::QueryType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId,
-    HpkeKemId, HpkePublicKey, ReportMetadata, Role, TaskId,
+    HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
 };
-use prio::codec::{encode_u32_items, Encode};
 use serde::{
     de::{self, Visitor},
     Deserialize, Serialize, Serializer,
@@ -40,32 +38,6 @@ fn hpke_dispatch_config_from_hpke_config(
             .try_into()
             .map_err(|_| Error::InvalidConfiguration("did not recognize kem"))?,
     })
-}
-
-/// Construct the HPKE associated data for sealing or opening data enciphered for a report or report
-/// share, per §4.3.2 and 4.4.1.3 of draft-ietf-ppm-dap-02
-pub fn associated_data_for_report_share(
-    task_id: &TaskId,
-    report_metadata: &ReportMetadata,
-    public_share: &[u8],
-) -> Vec<u8> {
-    let mut associated_data = Vec::new();
-    task_id.encode(&mut associated_data);
-    report_metadata.encode(&mut associated_data);
-    encode_u32_items(&mut associated_data, &(), public_share);
-    associated_data
-}
-
-/// Construct the HPKE associated data for sealing or opening an aggregate share.
-pub fn associated_data_for_aggregate_share<Q: QueryType>(
-    task_id: &TaskId,
-    batch_identifier: &Q::BatchIdentifier,
-) -> Vec<u8> {
-    let mut associated_data = Vec::new();
-    task_id.encode(&mut associated_data);
-    Q::CODE.encode(&mut associated_data);
-    batch_identifier.encode(&mut associated_data);
-    associated_data
 }
 
 /// Labels incorporated into HPKE application info string

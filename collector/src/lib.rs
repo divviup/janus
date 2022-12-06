@@ -56,7 +56,7 @@ use backoff::{backoff::Backoff, ExponentialBackoff};
 use derivative::Derivative;
 use http_api_problem::HttpApiProblem;
 use janus_core::{
-    hpke::{self, associated_data_for_aggregate_share, HpkeApplicationInfo, HpkePrivateKey},
+    hpke::{self, HpkeApplicationInfo, HpkePrivateKey},
     http::response_to_problem_details,
     retries::{http_request_exponential_backoff, retry_http_request},
     task::{url_ensure_trailing_slash, AuthenticationToken, DAP_AUTH_HEADER},
@@ -64,7 +64,7 @@ use janus_core::{
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{QueryType, TimeInterval},
-    CollectReq, CollectResp, HpkeConfig, Query, Role, TaskId,
+    AggregateShareAad, BatchSelector, CollectReq, CollectResp, HpkeConfig, Query, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -471,10 +471,6 @@ where
             ));
         }
 
-        let associated_data = associated_data_for_aggregate_share::<Q>(
-            &self.parameters.task_id,
-            job.query.batch_identifier(),
-        );
         let aggregate_shares_bytes = collect_response
             .encrypted_aggregate_shares()
             .iter()
@@ -485,7 +481,11 @@ where
                     &self.parameters.hpke_private_key,
                     &HpkeApplicationInfo::new(&hpke::Label::AggregateShare, role, &Role::Collector),
                     encrypted_aggregate_share,
-                    &associated_data,
+                    &AggregateShareAad::new(
+                        self.parameters.task_id,
+                        BatchSelector::<Q>::new(job.query.batch_identifier().clone()),
+                    )
+                    .get_encoded(),
                 )
             });
         let aggregate_shares = aggregate_shares_bytes
@@ -611,8 +611,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use janus_core::{
         hpke::{
-            self, associated_data_for_aggregate_share,
-            test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
+            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         retries::test_http_request_exponential_backoff,
         task::AuthenticationToken,
@@ -621,8 +620,8 @@ mod tests {
     use janus_messages::{
         problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
-        BatchId, CollectReq, CollectResp, Duration, HpkeCiphertext, Interval, PartialBatchSelector,
-        Query, Role, Time,
+        AggregateShareAad, BatchId, BatchSelector, CollectReq, CollectResp, Duration,
+        HpkeCiphertext, Interval, PartialBatchSelector, Query, Role, Time,
     };
     use mockito::mock;
     use prio::{
@@ -667,9 +666,9 @@ mod tests {
     where
         for<'a> Vec<u8>: From<&'a V::AggregateShare>,
     {
-        let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
-            &parameters.task_id,
-            &batch_interval,
+        let associated_data = AggregateShareAad::new(
+            parameters.task_id,
+            BatchSelector::new_time_interval(batch_interval),
         );
         CollectResp::new(
             PartialBatchSelector::new_time_interval(),
@@ -683,7 +682,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     &<Vec<u8>>::from(&transcript.aggregate_shares[0]),
-                    &associated_data,
+                    &associated_data.get_encoded(),
                 )
                 .unwrap(),
                 hpke::seal(
@@ -694,7 +693,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     &<Vec<u8>>::from(&transcript.aggregate_shares[1]),
-                    &associated_data,
+                    &associated_data.get_encoded(),
                 )
                 .unwrap(),
             ]),
@@ -710,7 +709,7 @@ mod tests {
         for<'a> Vec<u8>: From<&'a V::AggregateShare>,
     {
         let associated_data =
-            associated_data_for_aggregate_share::<FixedSize>(&parameters.task_id, &batch_id);
+            AggregateShareAad::new(parameters.task_id, BatchSelector::new_fixed_size(batch_id));
         CollectResp::new(
             PartialBatchSelector::new_fixed_size(batch_id),
             1,
@@ -723,7 +722,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     &<Vec<u8>>::from(&transcript.aggregate_shares[0]),
-                    &associated_data,
+                    &associated_data.get_encoded(),
                 )
                 .unwrap(),
                 hpke::seal(
@@ -734,7 +733,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     &<Vec<u8>>::from(&transcript.aggregate_shares[1]),
-                    &associated_data,
+                    &associated_data.get_encoded(),
                 )
                 .unwrap(),
             ]),
@@ -1227,9 +1226,9 @@ mod tests {
 
         mock_collect_job_bad_ciphertext.assert();
 
-        let associated_data = associated_data_for_aggregate_share::<TimeInterval>(
-            &collector.parameters.task_id,
-            &batch_interval,
+        let associated_data = AggregateShareAad::new(
+            collector.parameters.task_id,
+            BatchSelector::new_time_interval(batch_interval),
         );
         let collect_resp = CollectResp::new(
             PartialBatchSelector::new_time_interval(),
@@ -1243,7 +1242,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     b"bad",
-                    &associated_data,
+                    &associated_data.get_encoded(),
                 )
                 .unwrap(),
                 hpke::seal(
@@ -1254,7 +1253,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     b"bad",
-                    &associated_data,
+                    &associated_data.get_encoded(),
                 )
                 .unwrap(),
             ]),
@@ -1286,7 +1285,7 @@ mod tests {
                         &Role::Collector,
                     ),
                     &<Vec<u8>>::from(&AggregateShare::from(Vec::from([Field64::from(0)]))),
-                    &associated_data,
+                    &associated_data.get_encoded(),
                 )
                 .unwrap(),
                 hpke::seal(
@@ -1300,7 +1299,7 @@ mod tests {
                         Field64::from(0),
                         Field64::from(0),
                     ]))),
-                    &associated_data,
+                    &associated_data.get_encoded(),
                 )
                 .unwrap(),
             ]),
