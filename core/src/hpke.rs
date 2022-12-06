@@ -253,6 +253,7 @@ pub fn generate_hpke_config_and_private_key(
     )
 }
 
+/// An HPKE configuration and its corresponding private key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HpkeKeypair {
     config: HpkeConfig,
@@ -260,6 +261,7 @@ pub struct HpkeKeypair {
 }
 
 impl HpkeKeypair {
+    /// Construct a keypair from its two halves.
     pub fn new(config: HpkeConfig, private_key: HpkePrivateKey) -> HpkeKeypair {
         HpkeKeypair {
             config,
@@ -267,10 +269,12 @@ impl HpkeKeypair {
         }
     }
 
+    /// Retrieve the HPKE configuration from this keypair.
     pub fn config(&self) -> &HpkeConfig {
         &self.config
     }
 
+    /// Retrieve the HPKE private key from this keypair.
     pub fn private_key(&self) -> &HpkePrivateKey {
         &self.private_key
     }
