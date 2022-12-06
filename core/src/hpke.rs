@@ -6,7 +6,7 @@ use janus_messages::{
     query_type::QueryType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId,
     HpkeKemId, HpkePublicKey, ReportMetadata, Role, TaskId,
 };
-use prio::codec::Encode;
+use prio::codec::{encode_u32_items, Encode};
 use std::{fmt::Debug, str::FromStr};
 
 #[derive(Debug, thiserror::Error)]
@@ -40,11 +40,16 @@ pub fn associated_data_for_report_share(
     task_id: &TaskId,
     report_metadata: &ReportMetadata,
     public_share: &[u8],
+    tweak: bool,
 ) -> Vec<u8> {
     let mut associated_data = Vec::new();
     task_id.encode(&mut associated_data);
     report_metadata.encode(&mut associated_data);
-    associated_data.extend(public_share);
+    if tweak {
+        encode_u32_items(&mut associated_data, &(), public_share);
+    } else {
+        associated_data.extend(public_share);
+    }
     associated_data
 }
 
@@ -221,12 +226,15 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::{test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label};
-    use crate::hpke::{open, seal, HpkePrivateKey};
+    use super::{
+        associated_data_for_report_share, open, seal,
+        test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, HpkePrivateKey,
+        Label,
+    };
     use hpke_dispatch::{Kem, Keypair};
     use janus_messages::{
         HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
-        Role,
+        ReportId, ReportMetadata, Role, TaskId, Time,
     };
     use serde::Deserialize;
     use std::collections::HashSet;
@@ -478,5 +486,48 @@ mod tests {
         // provided. (AES-128-GCM, AES-256-GCM, and ChaCha20Poly1305) This makes for an expected
         // total of 2 * 2 * 3 = 12 unique combinations of algorithms.
         assert_eq!(algorithms_tested.len(), 12);
+    }
+
+    #[test]
+    fn report_share_aad() {
+        let task_id = TaskId::from([1; 32]);
+        let report_id = ReportId::from([2; 16]);
+        let time = Time::from_seconds_since_epoch(1_000_000_000);
+        let report_metadata = ReportMetadata::new(report_id, time, Vec::new());
+        let public_share = b"public share";
+        assert_eq!(
+            associated_data_for_report_share(&task_id, &report_metadata, &public_share[..], false),
+            hex::decode(concat!(
+                // Task ID
+                "0101010101010101010101010101010101010101010101010101010101010101",
+                // Report ID
+                "02020202020202020202020202020202",
+                // Time
+                "000000003b9aca00",
+                // Length of extensions (0)
+                "0000",
+                // Public share
+                "7075626c6963207368617265",
+            ))
+            .unwrap(),
+        );
+        assert_eq!(
+            associated_data_for_report_share(&task_id, &report_metadata, &public_share[..], true),
+            hex::decode(concat!(
+                // Task ID
+                "0101010101010101010101010101010101010101010101010101010101010101",
+                // Report ID
+                "02020202020202020202020202020202",
+                // Time
+                "000000003b9aca00",
+                // Length of extensions (0)
+                "0000",
+                // Length of public share (12)
+                "0000000c",
+                // Public share
+                "7075626c6963207368617265",
+            ))
+            .unwrap(),
+        );
     }
 }

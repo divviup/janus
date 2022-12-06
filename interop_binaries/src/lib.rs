@@ -197,6 +197,8 @@ pub struct AggregatorAddTaskRequest {
     pub time_precision: u64,           // in seconds
     pub collector_hpke_config: String, // in unpadded base64url
     pub task_expiration: u64,          // in seconds since the epoch
+    #[serde(default)]
+    pub input_share_aad_tweak: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -246,6 +248,7 @@ impl From<Task> for AggregatorAddTaskRequest {
                 URL_SAFE_NO_PAD,
             ),
             task_expiration: task.task_expiration().as_seconds_since_epoch(),
+            input_share_aad_tweak: task.input_share_aad_tweak(),
         }
     }
 }

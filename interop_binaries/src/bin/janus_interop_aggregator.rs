@@ -141,6 +141,7 @@ async fn handle_add_task(
         Vec::from([leader_authentication_token]),
         collector_authentication_tokens,
         [(hpke_config, private_key)],
+        request.input_share_aad_tweak,
     )
     .context("error constructing task")?;
 

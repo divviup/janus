@@ -89,6 +89,7 @@ where
         task_id,
         Vec::<Url>::from([request.leader, request.helper]),
         time_precision,
+        false,
     );
 
     let leader_hpke_config = janus_client::aggregator_hpke_config(

@@ -22,7 +22,8 @@ CREATE TABLE tasks(
     min_batch_size         BIGINT NOT NULL,           -- the minimum number of reports in a batch to allow it to be collected
     time_precision         BIGINT NOT NULL,           -- the duration to which clients are expected to round their report timestamps, in seconds
     tolerable_clock_skew   BIGINT NOT NULL,           -- the maximum acceptable clock skew to allow between client and aggregator, in seconds
-    collector_hpke_config  BYTEA NOT NULL             -- the HPKE config of the collector (encoded HpkeConfig message)
+    collector_hpke_config  BYTEA NOT NULL,            -- the HPKE config of the collector (encoded HpkeConfig message)
+    input_share_aad_tweak  BOOLEAN NOT NULL DEFAULT false -- selects which input share AAD format should be used (true: includes a length prefix for the public share, akin to DAP-03, false: no length prefix for the public share)
 );
 
 -- The aggregator authentication tokens used by a given task.
