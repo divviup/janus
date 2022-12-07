@@ -4,7 +4,7 @@ use base64::URL_SAFE_NO_PAD;
 use clap::{value_parser, Arg, Command};
 use janus_collector::{Collector, CollectorParameters};
 use janus_core::{
-    hpke::HpkePrivateKey,
+    hpke::HpkeKeypair,
     task::{AuthenticationToken, VdafInstance},
 };
 use janus_interop_binaries::{
@@ -104,8 +104,7 @@ struct CollectPollResponse {
 }
 
 struct TaskState {
-    private_key: HpkePrivateKey,
-    hpke_config: HpkeConfig,
+    keypair: HpkeKeypair,
     leader_url: Url,
     vdaf: VdafObject,
     auth_token: AuthenticationToken,
@@ -145,11 +144,11 @@ async fn handle_add_task(
         return Err(anyhow::anyhow!("cannot add a task with a duplicate ID"));
     }
 
-    let (hpke_config, private_key) = keyring.lock().await.get_random_keypair();
+    let keypair = keyring.lock().await.get_random_keypair();
+    let hpke_config = keypair.config().clone();
 
     entry.or_insert(TaskState {
-        private_key,
-        hpke_config: hpke_config.clone(),
+        keypair,
         leader_url: request.leader,
         vdaf: request.vdaf,
         auth_token: AuthenticationToken::from(request.collector_authentication_token.into_bytes()),
@@ -210,8 +209,8 @@ async fn handle_collect_start(
         task_id,
         task_state.leader_url.clone(),
         task_state.auth_token.clone(),
-        task_state.hpke_config.clone(),
-        task_state.private_key.clone(),
+        task_state.keypair.config().clone(),
+        task_state.keypair.private_key().clone(),
     )
     .with_http_request_backoff(
         ExponentialBackoffBuilder::new()

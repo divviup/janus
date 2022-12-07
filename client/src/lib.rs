@@ -312,8 +312,8 @@ mod tests {
             vdaf_client,
             MockClock::default(),
             &default_http_client().unwrap(),
-            generate_test_hpke_config_and_private_key().0,
-            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().config().clone(),
+            generate_test_hpke_config_and_private_key().config().clone(),
         )
     }
 
@@ -432,8 +432,8 @@ mod tests {
             Prio3::new_aes128_count(2).unwrap(),
             MockClock::default(),
             &default_http_client().unwrap(),
-            generate_test_hpke_config_and_private_key().0,
-            generate_test_hpke_config_and_private_key().0,
+            generate_test_hpke_config_and_private_key().config().clone(),
+            generate_test_hpke_config_and_private_key().config().clone(),
         );
         let result = client.upload(&1).await;
         assert_matches!(result, Err(Error::InvalidParameter(_)));

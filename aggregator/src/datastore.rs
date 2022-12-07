@@ -17,7 +17,7 @@ use crate::{
 use anyhow::anyhow;
 use futures::future::join_all;
 use janus_core::{
-    hpke::HpkePrivateKey,
+    hpke::{HpkeKeypair, HpkePrivateKey},
     task::{AuthenticationToken, VdafInstance},
     time::Clock,
 };
@@ -384,20 +384,21 @@ impl<C: Clock> Transaction<'_, C> {
         let mut hpke_config_ids: Vec<i16> = Vec::new();
         let mut hpke_configs: Vec<Vec<u8>> = Vec::new();
         let mut hpke_private_keys: Vec<Vec<u8>> = Vec::new();
-        for (hpke_config, hpke_private_key) in task.hpke_keys().values() {
+        for hpke_keypair in task.hpke_keys().values() {
             let mut row_id = [0u8; TaskId::LEN + size_of::<u8>()];
             row_id[..TaskId::LEN].copy_from_slice(task.id().as_ref());
-            row_id[TaskId::LEN..].copy_from_slice(&u8::from(*hpke_config.id()).to_be_bytes());
+            row_id[TaskId::LEN..]
+                .copy_from_slice(&u8::from(*hpke_keypair.config().id()).to_be_bytes());
 
             let encrypted_hpke_private_key = self.crypter.encrypt(
                 "task_hpke_keys",
                 &row_id,
                 "private_key",
-                hpke_private_key.as_ref(),
+                hpke_keypair.private_key().as_ref(),
             )?;
 
-            hpke_config_ids.push(u8::from(*hpke_config.id()) as i16);
-            hpke_configs.push(hpke_config.get_encoded());
+            hpke_config_ids.push(u8::from(*hpke_keypair.config().id()) as i16);
+            hpke_configs.push(hpke_keypair.config().get_encoded());
             hpke_private_keys.push(encrypted_hpke_private_key);
         }
         let stmt = self
@@ -779,7 +780,7 @@ impl<C: Clock> Transaction<'_, C> {
         }
 
         // HPKE keys.
-        let mut hpke_configs = Vec::new();
+        let mut hpke_keypairs = Vec::new();
         for row in hpke_key_rows {
             let config_id = u8::try_from(row.get::<_, i16>("config_id"))?;
             let config = HpkeConfig::get_decoded(row.get("config"))?;
@@ -796,7 +797,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &encrypted_private_key,
             )?);
 
-            hpke_configs.push((config, private_key));
+            hpke_keypairs.push(HpkeKeypair::new(config, private_key));
         }
 
         // VDAF verify keys.
@@ -826,7 +827,7 @@ impl<C: Clock> Transaction<'_, C> {
             collector_hpke_config,
             aggregator_auth_tokens,
             collector_auth_tokens,
-            hpke_configs,
+            hpke_keypairs,
         )?)
     }
 

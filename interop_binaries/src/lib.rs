@@ -1,12 +1,12 @@
 use base64::URL_SAFE_NO_PAD;
 use janus_aggregator::task::{QueryType, Task};
 use janus_core::{
-    hpke::{generate_hpke_config_and_private_key, HpkePrivateKey},
+    hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
     task::VdafInstance,
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType as _, TimeInterval},
-    HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role,
+    HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId,
 };
 use prio::codec::Encode;
 use rand::random;
@@ -181,7 +181,7 @@ impl From<AggregatorRole> for Role {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AggregatorAddTaskRequest {
-    pub task_id: String, // in unpadded base64url
+    pub task_id: TaskId, // uses unpadded base64url
     pub leader: Url,
     pub helper: Url,
     pub vdaf: VdafObject,
@@ -215,7 +215,7 @@ impl From<Task> for AggregatorAddTaskRequest {
             }
         };
         Self {
-            task_id: base64::encode_config(task.id().as_ref(), URL_SAFE_NO_PAD),
+            task_id: *task.id(),
             leader: task.aggregator_url(&Role::Leader).unwrap().clone(),
             helper: task.aggregator_url(&Role::Helper).unwrap().clone(),
             vdaf: task.vdaf().clone().into(),
@@ -272,7 +272,7 @@ pub fn install_tracing_subscriber() -> anyhow::Result<()> {
 /// [`HpkeConfigId`].
 #[derive(Default)]
 pub struct HpkeConfigRegistry {
-    keypairs: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
+    keypairs: HashMap<HpkeConfigId, HpkeKeypair>,
 }
 
 impl HpkeConfigRegistry {
@@ -281,7 +281,7 @@ impl HpkeConfigRegistry {
     }
 
     /// Get the keypair associated with a given ID.
-    pub fn fetch_keypair(&mut self, id: HpkeConfigId) -> (HpkeConfig, HpkePrivateKey) {
+    pub fn fetch_keypair(&mut self, id: HpkeConfigId) -> HpkeKeypair {
         self.keypairs
             .entry(id)
             .or_insert_with(|| {
@@ -298,7 +298,7 @@ impl HpkeConfigRegistry {
     }
 
     /// Choose a random [`HpkeConfigId`], and then get the keypair associated with that ID.
-    pub fn get_random_keypair(&mut self) -> (HpkeConfig, HpkePrivateKey) {
+    pub fn get_random_keypair(&mut self) -> HpkeKeypair {
         self.fetch_keypair(random::<u8>().into())
     }
 }

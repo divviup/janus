@@ -76,9 +76,6 @@ async fn handle_add_task(
     keyring: &Mutex<HpkeConfigRegistry>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
-    let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"task_id\"")?;
-    let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
@@ -106,7 +103,7 @@ async fn handle_add_task(
             (AggregatorRole::Helper, _) => Vec::new(),
         };
 
-    let (hpke_config, private_key) = keyring.lock().await.get_random_keypair();
+    let hpke_keypair = keyring.lock().await.get_random_keypair();
 
     let query_type = match request.query_type {
         1 => janus_aggregator::task::QueryType::TimeInterval,
@@ -124,7 +121,7 @@ async fn handle_add_task(
     };
 
     let task = Task::new(
-        task_id,
+        request.task_id,
         Vec::from([request.leader, request.helper]),
         query_type,
         vdaf,
@@ -140,7 +137,7 @@ async fn handle_add_task(
         collector_hpke_config,
         Vec::from([leader_authentication_token]),
         collector_authentication_tokens,
-        [(hpke_config, private_key)],
+        [hpke_keypair],
     )
     .context("error constructing task")?;
 
