@@ -112,7 +112,7 @@ pub struct Task {
     /// HPKE configurations & private keys used by this aggregator to decrypt client reports.
     hpke_keys: HashMap<HpkeConfigId, (HpkeConfig, HpkePrivateKey)>,
     /// Configuration option to add a length prefix for the public share in the input share AAD.
-    input_share_aad_tweak: bool,
+    input_share_aad_public_share_length_prefix: bool,
 }
 
 impl Task {
@@ -133,7 +133,7 @@ impl Task {
         aggregator_auth_tokens: Vec<AuthenticationToken>,
         collector_auth_tokens: Vec<AuthenticationToken>,
         hpke_keys: I,
-        input_share_aad_tweak: bool,
+        input_share_aad_public_share_length_prefix: bool,
     ) -> Result<Self, Error> {
         // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
         // path segments into these endpoints & the Url::join implementation is persnickety about
@@ -164,7 +164,7 @@ impl Task {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
-            input_share_aad_tweak,
+            input_share_aad_public_share_length_prefix,
         };
         task.validate()?;
         Ok(task)
@@ -338,8 +338,8 @@ impl Task {
 
     /// Fetch the configuration setting specifying whether an additional length prefix should be
     /// added to the input share AAD, before the public share.
-    pub fn input_share_aad_tweak(&self) -> bool {
-        self.input_share_aad_tweak
+    pub fn input_share_aad_public_share_length_prefix(&self) -> bool {
+        self.input_share_aad_public_share_length_prefix
     }
 }
 
@@ -370,7 +370,7 @@ struct SerializedTask {
     aggregator_auth_tokens: Vec<String>, // in unpadded base64url
     collector_auth_tokens: Vec<String>,  // in unpadded base64url
     hpke_keys: Vec<SerializedHpkeKeypair>, // in unpadded base64url
-    input_share_aad_tweak: bool,
+    input_share_aad_public_share_length_prefix: bool,
 }
 
 impl Serialize for Task {
@@ -413,7 +413,8 @@ impl Serialize for Task {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
-            input_share_aad_tweak: self.input_share_aad_tweak,
+            input_share_aad_public_share_length_prefix: self
+                .input_share_aad_public_share_length_prefix,
         }
         .serialize(serializer)
     }
@@ -494,7 +495,7 @@ impl<'de> Deserialize<'de> for Task {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_keys,
-            serialized_task.input_share_aad_tweak,
+            serialized_task.input_share_aad_public_share_length_prefix,
         )
         .map_err(D::Error::custom)
     }
@@ -756,9 +757,12 @@ pub mod test_util {
         }
 
         /// Selects the input share AAD format.
-        pub fn with_input_share_aad_tweak(self, input_share_aad_tweak: bool) -> Self {
+        pub fn with_input_share_aad_public_share_length_prefix(
+            self,
+            input_share_aad_public_share_length_prefix: bool,
+        ) -> Self {
             Self(Task {
-                input_share_aad_tweak,
+                input_share_aad_public_share_length_prefix,
                 ..self.0
             })
         }
@@ -801,7 +805,7 @@ mod tests {
         )
         .build();
         roundtrip_encoding(task.clone());
-        task.input_share_aad_tweak = true;
+        task.input_share_aad_public_share_length_prefix = true;
         roundtrip_encoding(task);
     }
 

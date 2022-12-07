@@ -25,7 +25,7 @@ use tokio::time::{self, sleep};
 pub fn test_task_builders(
     vdaf: VdafInstance,
     query_type: QueryType,
-    input_share_aad_tweak: bool,
+    input_share_aad_public_share_length_prefix: bool,
 ) -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
     let (collector_hpke_config, collector_private_key) =
@@ -36,7 +36,7 @@ pub fn test_task_builders(
             Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
         ]))
         .with_query_type(query_type)
-        .with_input_share_aad_tweak(input_share_aad_tweak)
+        .with_input_share_aad_public_share_length_prefix(input_share_aad_public_share_length_prefix)
         .with_min_batch_size(46)
         .with_collector_hpke_config(collector_hpke_config);
     let helper_task = leader_task

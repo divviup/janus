@@ -222,7 +222,7 @@ where
             *task.id(),
             aggregator_endpoints,
             *task.time_precision(),
-            task.input_share_aad_tweak(),
+            task.input_share_aad_public_share_length_prefix(),
         );
         let http_client = default_http_client()?;
         let leader_config =

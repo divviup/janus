@@ -67,7 +67,7 @@ pub struct ClientParameters {
     http_request_retry_parameters: ExponentialBackoff,
     /// Configuration setting to add an additional length prefix to the input share AAD, before
     /// the public share.
-    input_share_aad_tweak: bool,
+    input_share_aad_public_share_length_prefix: bool,
 }
 
 impl ClientParameters {
@@ -76,13 +76,13 @@ impl ClientParameters {
         task_id: TaskId,
         aggregator_endpoints: Vec<Url>,
         time_precision: Duration,
-        input_share_aad_tweak: bool,
+        input_share_aad_public_share_length_prefix: bool,
     ) -> Self {
         Self::new_with_backoff(
             task_id,
             aggregator_endpoints,
             time_precision,
-            input_share_aad_tweak,
+            input_share_aad_public_share_length_prefix,
             http_request_exponential_backoff(),
         )
     }
@@ -92,7 +92,7 @@ impl ClientParameters {
         task_id: TaskId,
         mut aggregator_endpoints: Vec<Url>,
         time_precision: Duration,
-        input_share_aad_tweak: bool,
+        input_share_aad_public_share_length_prefix: bool,
         http_request_retry_parameters: ExponentialBackoff,
     ) -> Self {
         // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
@@ -107,7 +107,7 @@ impl ClientParameters {
             aggregator_endpoints,
             time_precision,
             http_request_retry_parameters,
-            input_share_aad_tweak,
+            input_share_aad_public_share_length_prefix,
         }
     }
 
@@ -233,7 +233,7 @@ where
             &self.parameters.task_id,
             &report_metadata,
             &public_share,
-            self.parameters.input_share_aad_tweak,
+            self.parameters.input_share_aad_public_share_length_prefix,
         );
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [

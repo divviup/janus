@@ -1323,7 +1323,7 @@ impl VdafOps {
                 report.task_id(),
                 report.metadata(),
                 report.public_share(),
-                task.input_share_aad_tweak(),
+                task.input_share_aad_public_share_length_prefix(),
             ),
         ) {
             Ok(leader_decrypted_input_share) => leader_decrypted_input_share,
@@ -1502,7 +1502,7 @@ impl VdafOps {
                         task.id(),
                         report_share.metadata(),
                         report_share.public_share(),
-                        task.input_share_aad_tweak(),
+                        task.input_share_aad_public_share_length_prefix(),
                     ),
                 )
                 .map_err(|error| {

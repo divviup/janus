@@ -52,10 +52,10 @@ impl<'a> JanusPair<'a> {
         container_client: &'a Cli,
         vdaf: VdafInstance,
         query_type: QueryType,
-        input_share_aad_tweak: bool,
+        input_share_aad_public_share_length_prefix: bool,
     ) -> JanusPair<'a> {
         let (collector_private_key, leader_task, helper_task) =
-            test_task_builders(vdaf, query_type, input_share_aad_tweak);
+            test_task_builders(vdaf, query_type, input_share_aad_public_share_length_prefix);
 
         // The environment variables should either all be present, or all be absent
         let (leader_task, leader, helper) = match (
@@ -290,7 +290,9 @@ async fn janus_janus_aad_tweak() {
         true,
     )
     .await;
-    assert!(janus_pair.leader_task.input_share_aad_tweak());
+    assert!(janus_pair
+        .leader_task
+        .input_share_aad_public_share_length_prefix());
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
