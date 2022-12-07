@@ -92,7 +92,7 @@ hyper = "0.14.23"
 # Kubernetes clusters. Enable the `test-util` feature for various utilities
 # used in unit tests.
 janus_aggregator = { workspace = true, features = ["kube-openssl", "test-util"] }
-mockito = "0.31.0"
+mockito = "0.31.1"
 serde_test = "1.0.149"
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
