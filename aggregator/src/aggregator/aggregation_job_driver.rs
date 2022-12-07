@@ -2199,6 +2199,7 @@ mod tests {
                 task_id,
                 report_metadata,
                 &public_share.get_encoded(),
+                false,
             ),
         )
         .unwrap();

@@ -291,8 +291,9 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, query_type,
                     vdaf, max_batch_query_count, task_expiration, min_batch_size, time_precision,
-                    tolerable_clock_skew, collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                    tolerable_clock_skew, collector_hpke_config,
+                    input_share_aad_public_share_length_prefix)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             )
             .await?;
         self.tx
@@ -313,6 +314,8 @@ impl<C: Clock> Transaction<'_, C> {
                     /* tolerable_clock_skew */
                     &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
                     /* collector_hpke_config */ &task.collector_hpke_config().get_encoded(),
+                    /* input_share_aad_public_share_length_prefix */
+                    &task.input_share_aad_public_share_length_prefix(),
                 ],
             )
             .await?;
@@ -517,7 +520,8 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, min_batch_size, time_precision,
-                    tolerable_clock_skew, collector_hpke_config
+                    tolerable_clock_skew, collector_hpke_config,
+                    input_share_aad_public_share_length_prefix
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -594,7 +598,8 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, min_batch_size, time_precision,
-                    tolerable_clock_skew, collector_hpke_config
+                    tolerable_clock_skew, collector_hpke_config,
+                    input_share_aad_public_share_length_prefix
                 FROM tasks",
             )
             .await?;
@@ -741,6 +746,8 @@ impl<C: Clock> Transaction<'_, C> {
         let tolerable_clock_skew =
             Duration::from_seconds(row.get_bigint_and_convert("tolerable_clock_skew")?);
         let collector_hpke_config = HpkeConfig::get_decoded(row.get("collector_hpke_config"))?;
+        let input_share_aad_public_share_length_prefix =
+            row.get("input_share_aad_public_share_length_prefix");
 
         // Aggregator authentication tokens.
         let mut aggregator_auth_tokens = Vec::new();
@@ -827,6 +834,7 @@ impl<C: Clock> Transaction<'_, C> {
             aggregator_auth_tokens,
             collector_auth_tokens,
             hpke_configs,
+            input_share_aad_public_share_length_prefix,
         )?)
     }
 

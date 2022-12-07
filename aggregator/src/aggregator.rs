@@ -1323,6 +1323,7 @@ impl VdafOps {
                 report.task_id(),
                 report.metadata(),
                 report.public_share(),
+                task.input_share_aad_public_share_length_prefix(),
             ),
         ) {
             Ok(leader_decrypted_input_share) => leader_decrypted_input_share,
@@ -1501,6 +1502,7 @@ impl VdafOps {
                         task.id(),
                         report_share.metadata(),
                         report_share.public_share(),
+                        task.input_share_aad_public_share_length_prefix(),
                     ),
                 )
                 .map_err(|error| {
@@ -3500,6 +3502,7 @@ mod tests {
             task.id(),
             &report_metadata,
             &public_share.get_encoded(),
+            false,
         );
 
         let leader_ciphertext = hpke::seal(
@@ -4318,8 +4321,12 @@ mod tests {
         );
         let mut input_share_bytes = input_share.get_encoded();
         input_share_bytes.push(0); // can no longer be decoded.
-        let aad =
-            associated_data_for_report_share(task.id(), &report_metadata_2, &encoded_public_share);
+        let aad = associated_data_for_report_share(
+            task.id(),
+            &report_metadata_2,
+            &encoded_public_share,
+            false,
+        );
         let report_share_2 = generate_helper_report_share_for_plaintext(
             report_metadata_2,
             &hpke_key.0,
@@ -4415,7 +4422,8 @@ mod tests {
                 .unwrap(),
             Vec::new(),
         );
-        let aad = associated_data_for_report_share(task.id(), &report_metadata_6, &public_share_6);
+        let aad =
+            associated_data_for_report_share(task.id(), &report_metadata_6, &public_share_6, false);
         let report_share_6 = generate_helper_report_share_for_plaintext(
             report_metadata_6,
             &hpke_key.0,
@@ -7940,8 +7948,12 @@ mod tests {
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
         let encoded_public_share = public_share.get_encoded();
-        let associated_data =
-            associated_data_for_report_share(task_id, report_metadata, &encoded_public_share);
+        let associated_data = associated_data_for_report_share(
+            task_id,
+            report_metadata,
+            &encoded_public_share,
+            false,
+        );
         generate_helper_report_share_for_plaintext(
             report_metadata.clone(),
             cfg,

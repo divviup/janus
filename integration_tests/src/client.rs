@@ -218,8 +218,12 @@ where
         aggregator_endpoints: Vec<Url>,
         vdaf: V,
     ) -> Result<ClientImplementation<'static, V>, janus_client::Error> {
-        let client_parameters =
-            ClientParameters::new(*task.id(), aggregator_endpoints, *task.time_precision());
+        let client_parameters = ClientParameters::new(
+            *task.id(),
+            aggregator_endpoints,
+            *task.time_precision(),
+            task.input_share_aad_public_share_length_prefix(),
+        );
         let http_client = default_http_client()?;
         let leader_config =
             aggregator_hpke_config(&client_parameters, &Role::Leader, task.id(), &http_client)

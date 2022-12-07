@@ -65,15 +65,24 @@ pub struct ClientParameters {
     time_precision: Duration,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,
+    /// Configuration setting to add an additional length prefix to the input share AAD, before
+    /// the public share.
+    input_share_aad_public_share_length_prefix: bool,
 }
 
 impl ClientParameters {
     /// Creates a new set of client task parameters.
-    pub fn new(task_id: TaskId, aggregator_endpoints: Vec<Url>, time_precision: Duration) -> Self {
+    pub fn new(
+        task_id: TaskId,
+        aggregator_endpoints: Vec<Url>,
+        time_precision: Duration,
+        input_share_aad_public_share_length_prefix: bool,
+    ) -> Self {
         Self::new_with_backoff(
             task_id,
             aggregator_endpoints,
             time_precision,
+            input_share_aad_public_share_length_prefix,
             http_request_exponential_backoff(),
         )
     }
@@ -83,6 +92,7 @@ impl ClientParameters {
         task_id: TaskId,
         mut aggregator_endpoints: Vec<Url>,
         time_precision: Duration,
+        input_share_aad_public_share_length_prefix: bool,
         http_request_retry_parameters: ExponentialBackoff,
     ) -> Self {
         // Ensure provided aggregator endpoints end with a slash, as we will be joining additional
@@ -97,6 +107,7 @@ impl ClientParameters {
             aggregator_endpoints,
             time_precision,
             http_request_retry_parameters,
+            input_share_aad_public_share_length_prefix,
         }
     }
 
@@ -222,6 +233,7 @@ where
             &self.parameters.task_id,
             &report_metadata,
             &public_share,
+            self.parameters.input_share_aad_public_share_length_prefix,
         );
 
         let encrypted_input_shares: Vec<HpkeCiphertext> = [
@@ -305,6 +317,7 @@ mod tests {
                 random(),
                 Vec::from([server_url.clone(), server_url]),
                 Duration::from_seconds(1),
+                false,
                 test_http_request_exponential_backoff(),
             ),
             vdaf_client,
@@ -324,6 +337,7 @@ mod tests {
                 "http://helper_endpoint".parse().unwrap(),
             ]),
             Duration::from_seconds(1),
+            false,
         );
 
         assert_eq!(
@@ -424,7 +438,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let client_parameters =
-            ClientParameters::new(random(), Vec::new(), Duration::from_seconds(0));
+            ClientParameters::new(random(), Vec::new(), Duration::from_seconds(0), false);
         let client = Client::new(
             client_parameters,
             Prio3::new_aes128_count(2).unwrap(),

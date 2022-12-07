@@ -52,9 +52,10 @@ impl<'a> JanusPair<'a> {
         container_client: &'a Cli,
         vdaf: VdafInstance,
         query_type: QueryType,
+        input_share_aad_public_share_length_prefix: bool,
     ) -> JanusPair<'a> {
         let (collector_private_key, leader_task, helper_task) =
-            test_task_builders(vdaf, query_type);
+            test_task_builders(vdaf, query_type, input_share_aad_public_share_length_prefix);
 
         // The environment variables should either all be present, or all be absent
         let (leader_task, leader, helper) = match (
@@ -153,6 +154,7 @@ async fn janus_janus_count() {
         &container_client,
         VdafInstance::Prio3Aes128Count,
         QueryType::TimeInterval,
+        false,
     )
     .await;
 
@@ -178,6 +180,7 @@ async fn janus_janus_sum_16() {
         &container_client,
         VdafInstance::Prio3Aes128Sum { bits: 16 },
         QueryType::TimeInterval,
+        false,
     )
     .await;
 
@@ -205,6 +208,7 @@ async fn janus_janus_histogram_4_buckets() {
         &container_client,
         VdafInstance::Prio3Aes128Histogram { buckets },
         QueryType::TimeInterval,
+        false,
     )
     .await;
 
@@ -230,6 +234,7 @@ async fn janus_janus_count_vec_15() {
         &container_client,
         VdafInstance::Prio3Aes128CountVec { length: 15 },
         QueryType::TimeInterval,
+        false,
     )
     .await;
 
@@ -255,8 +260,39 @@ async fn janus_janus_fixed_size() {
         &container_client,
         VdafInstance::Prio3Aes128Count,
         QueryType::FixedSize { max_batch_size: 50 },
+        false,
     )
     .await;
+
+    // Run the behavioral test.
+    submit_measurements_and_verify_aggregate(
+        (janus_pair.leader.port(), janus_pair.helper.port()),
+        &janus_pair.leader_task,
+        &janus_pair.collector_private_key,
+        &ClientBackend::InProcess,
+        janus_pair.leader.batch_discovery(),
+    )
+    .await;
+}
+
+/// This test runs an aggregation using an alternate input share AAD construction in both the
+/// client and the aggregators.
+#[tokio::test(flavor = "multi_thread")]
+async fn janus_janus_aad_tweak() {
+    install_test_trace_subscriber();
+
+    // Start servers.
+    let container_client = container_client();
+    let janus_pair = JanusPair::new(
+        &container_client,
+        VdafInstance::Prio3Aes128Count,
+        QueryType::TimeInterval,
+        true,
+    )
+    .await;
+    assert!(janus_pair
+        .leader_task
+        .input_share_aad_public_share_length_prefix());
 
     // Run the behavioral test.
     submit_measurements_and_verify_aggregate(
