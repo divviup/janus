@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp /src/target/$PROFILE/collect_job_driver /collect_job_driver && \
     cp /src/target/$PROFILE/janus_cli /janus_cli
 
-FROM postgres:14-alpine
+FROM postgres:15-alpine
 RUN mkdir /logs && mkdir /etc/janus
 RUN apk add --update supervisor && rm -rf /tmp/* /var/cache/apk/*
 COPY interop_binaries/setup.sh /usr/local/bin/setup.sh
