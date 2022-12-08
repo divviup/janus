@@ -2,11 +2,15 @@
 
 use crate::{SecretBytes, URL_SAFE_NO_PAD};
 use derivative::Derivative;
+pub use janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use janus_core::{
-    hpke::HpkeKeypair,
+    hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
 };
-use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
+use janus_messages::{
+    Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
+};
+use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     array::TryFromSliceError,
@@ -24,6 +28,8 @@ pub enum Error {
     Url(#[from] url::ParseError),
     #[error("aggregator verification key size out of range")]
     AggregatorVerifyKeySize,
+    #[error("base64 decode error")]
+    Base64Decode(#[from] base64::DecodeError),
 }
 
 /// Identifiers for query types used by a task, along with query-type specific configuration.
@@ -39,9 +45,6 @@ pub enum QueryType {
         max_batch_size: u64,
     },
 }
-
-/// The length of the verify key parameter for Prio3 AES-128 VDAF instantiations.
-pub const PRIO3_AES128_VERIFY_KEY_LENGTH: usize = 16;
 
 /// A verification key for a VDAF, with a fixed length. It must be kept secret from clients to
 /// maintain robustness, and it must be shared between aggregators.
@@ -339,9 +342,9 @@ fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
 
 /// SerializedTask is an intermediate representation for tasks being serialized via the Serialize &
 /// Deserialize traits.
-#[derive(Serialize, Deserialize)]
-struct SerializedTask {
-    task_id: TaskId, // uses unpadded base64url
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SerializedTask {
+    task_id: Option<TaskId>,
     aggregator_endpoints: Vec<Url>,
     query_type: QueryType,
     vdaf: VdafInstance,
@@ -356,6 +359,68 @@ struct SerializedTask {
     aggregator_auth_tokens: Vec<String>, // in unpadded base64url
     collector_auth_tokens: Vec<String>,  // in unpadded base64url
     hpke_keys: Vec<HpkeKeypair>,         // uses unpadded base64url
+}
+
+impl SerializedTask {
+    /// Returns the task ID, if one is set.
+    pub fn task_id(&self) -> Option<TaskId> {
+        self.task_id
+    }
+
+    /// Randomly generates and fills values for the following fields if they are not set in the
+    /// [`SerializedTask`]
+    ///
+    /// - Task ID
+    /// - VDAF verify keys (only one key is generated)
+    /// - Aggregator authentication tokens (only one token is generated)
+    /// - Collector authentication tokens (only one token is generated and only if the task's role
+    ///   is leader)
+    /// - The aggregator's HPKE keypair (only one keypair is generated)
+    pub fn generate_missing_fields(&mut self) {
+        if self.task_id.is_none() {
+            let task_id: TaskId = random();
+            self.task_id = Some(task_id);
+        }
+
+        if self.vdaf_verify_keys.is_empty() {
+            let vdaf_verify_key = SecretBytes::new(
+                thread_rng()
+                    .sample_iter(Standard)
+                    .take(self.vdaf.verify_key_length())
+                    .collect(),
+            );
+
+            self.vdaf_verify_keys = Vec::from([base64::encode_engine(
+                vdaf_verify_key.as_ref(),
+                &URL_SAFE_NO_PAD,
+            )]);
+        }
+
+        if self.aggregator_auth_tokens.is_empty() {
+            self.aggregator_auth_tokens = Vec::from([base64::encode_engine(
+                random::<AuthenticationToken>().as_bytes(),
+                &URL_SAFE_NO_PAD,
+            )]);
+        }
+
+        if self.collector_auth_tokens.is_empty() && self.role == Role::Leader {
+            self.collector_auth_tokens = Vec::from([base64::encode_engine(
+                random::<AuthenticationToken>().as_bytes(),
+                &URL_SAFE_NO_PAD,
+            )]);
+        }
+
+        if self.hpke_keys.is_empty() {
+            let hpke_keypair = generate_hpke_config_and_private_key(
+                random(),
+                HpkeKemId::X25519HkdfSha256,
+                HpkeKdfId::HkdfSha256,
+                HpkeAeadId::ChaCha20Poly1305,
+            );
+
+            self.hpke_keys = Vec::from([hpke_keypair]);
+        }
+    }
 }
 
 impl Serialize for Task {
@@ -378,7 +443,7 @@ impl Serialize for Task {
         let hpke_keys = self.hpke_keys.values().cloned().collect();
 
         SerializedTask {
-            task_id: self.task_id,
+            task_id: Some(self.task_id),
             aggregator_endpoints: self.aggregator_endpoints.clone(),
             query_type: self.query_type,
             vdaf: self.vdaf.clone(),
@@ -398,46 +463,53 @@ impl Serialize for Task {
     }
 }
 
-impl<'de> Deserialize<'de> for Task {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        // Deserialize into intermediate representation.
-        let serialized_task = SerializedTask::deserialize(deserializer)?;
+impl TryFrom<SerializedTask> for Task {
+    type Error = Error;
+
+    fn try_from(serialized_task: SerializedTask) -> Result<Self, Self::Error> {
+        // task_id
+        let task_id = serialized_task
+            .task_id
+            .ok_or(Error::InvalidParameter("missing field task_id"))?;
 
         // vdaf_verify_keys
         let vdaf_verify_keys: Vec<_> = serialized_task
             .vdaf_verify_keys
             .into_iter()
             .map(|key| {
-                Ok(SecretBytes::new(
-                    base64::decode_engine(key, &URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
-                ))
+                Ok(SecretBytes::new(base64::decode_engine(
+                    key,
+                    &URL_SAFE_NO_PAD,
+                )?))
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<_, Self::Error>>()?;
 
         // aggregator_auth_tokens
         let aggregator_auth_tokens = serialized_task
             .aggregator_auth_tokens
             .into_iter()
             .map(|token| {
-                Ok(AuthenticationToken::from(
-                    base64::decode_engine(token, &URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
-                ))
+                Ok(AuthenticationToken::from(base64::decode_engine(
+                    token,
+                    &URL_SAFE_NO_PAD,
+                )?))
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<_, Self::Error>>()?;
 
         // collector_auth_tokens
         let collector_auth_tokens = serialized_task
             .collector_auth_tokens
             .into_iter()
             .map(|token| {
-                Ok(AuthenticationToken::from(
-                    base64::decode_engine(token, &URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
-                ))
+                Ok(AuthenticationToken::from(base64::decode_engine(
+                    token,
+                    &URL_SAFE_NO_PAD,
+                )?))
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<_, Self::Error>>()?;
 
         Task::new(
-            serialized_task.task_id,
+            task_id,
             serialized_task.aggregator_endpoints,
             serialized_task.query_type,
             serialized_task.vdaf,
@@ -453,7 +525,15 @@ impl<'de> Deserialize<'de> for Task {
             collector_auth_tokens,
             serialized_task.hpke_keys,
         )
-        .map_err(D::Error::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for Task {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Deserialize into intermediate representation.
+        let serialized_task = SerializedTask::deserialize(deserializer)?;
+
+        Task::try_from(serialized_task).map_err(D::Error::custom)
     }
 }
 
@@ -464,7 +544,7 @@ pub mod test_util {
         AuthenticationToken, QueryType, SecretBytes, Task, VdafInstance,
         PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
-    use crate::{messages::DurationExt, URL_SAFE_NO_PAD};
+    use crate::messages::DurationExt;
     use janus_core::hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair};
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
     use rand::{distributions::Standard, random, thread_rng, Rng};
@@ -515,7 +595,7 @@ pub mod test_util {
             );
 
             let collector_auth_tokens = if role == Role::Leader {
-                Vec::from([generate_auth_token(), generate_auth_token()])
+                Vec::from([random(), random()])
             } else {
                 Vec::new()
             };
@@ -537,7 +617,7 @@ pub mod test_util {
                     Duration::from_hours(8).unwrap(),
                     Duration::from_minutes(10).unwrap(),
                     generate_test_hpke_config_and_private_key().config().clone(),
-                    Vec::from([generate_auth_token(), generate_auth_token()]),
+                    Vec::from([random(), random()]),
                     collector_auth_tokens,
                     Vec::from([aggregator_keypair_0, aggregator_keypair_1]),
                 )
@@ -646,26 +726,29 @@ pub mod test_util {
             })
         }
 
+        /// Sets the task HPKE keys
+        pub fn with_hpke_keys(self, hpke_keys: Vec<HpkeKeypair>) -> Self {
+            let hpke_keys = hpke_keys
+                .into_iter()
+                .map(|hpke_keypair| (*hpke_keypair.config().id(), hpke_keypair))
+                .collect();
+            Self(Task {
+                hpke_keys,
+                ..self.0
+            })
+        }
+
         /// Consumes this task builder & produces a [`Task`] with the given specifications.
         pub fn build(self) -> Task {
             self.0.validate().unwrap();
             self.0
         }
     }
-
-    pub fn generate_auth_token() -> AuthenticationToken {
-        let buf: [u8; 16] = random();
-        base64::encode_engine(buf, &URL_SAFE_NO_PAD)
-            .into_bytes()
-            .into()
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        test_util::generate_auth_token, SecretBytes, Task, PRIO3_AES128_VERIFY_KEY_LENGTH,
-    };
+    use super::{SecretBytes, Task, PRIO3_AES128_VERIFY_KEY_LENGTH};
     use crate::{
         config::test_util::roundtrip_encoding,
         messages::DurationExt,
@@ -713,7 +796,7 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([generate_auth_token()]),
+            Vec::from([random()]),
             Vec::new(),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
@@ -736,8 +819,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([generate_auth_token()]),
-            Vec::from([generate_auth_token()]),
+            Vec::from([random::<AuthenticationToken>()]),
+            Vec::from([random::<AuthenticationToken>()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
@@ -759,7 +842,7 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([generate_auth_token()]),
+            Vec::from([random::<AuthenticationToken>()]),
             Vec::new(),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
@@ -782,8 +865,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([generate_auth_token()]),
-            Vec::from([generate_auth_token()]),
+            Vec::from([random::<AuthenticationToken>()]),
+            Vec::from([random::<AuthenticationToken>()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap_err();
@@ -807,8 +890,8 @@ mod tests {
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
             generate_test_hpke_config_and_private_key().config().clone(),
-            Vec::from([generate_auth_token()]),
-            Vec::from([generate_auth_token()]),
+            Vec::from([random::<AuthenticationToken>()]),
+            Vec::from([random::<AuthenticationToken>()]),
             Vec::from([generate_test_hpke_config_and_private_key()]),
         )
         .unwrap();
@@ -867,6 +950,7 @@ mod tests {
                     len: 15,
                 },
                 Token::Str("task_id"),
+                Token::Some,
                 Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
                 Token::Str("aggregator_endpoints"),
                 Token::Seq { len: Some(2) },
@@ -1026,6 +1110,7 @@ mod tests {
                     len: 15,
                 },
                 Token::Str("task_id"),
+                Token::Some,
                 Token::Str("__________________________________________8"),
                 Token::Str("aggregator_endpoints"),
                 Token::Seq { len: Some(2) },
