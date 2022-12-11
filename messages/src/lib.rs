@@ -995,11 +995,46 @@ impl Decode for Report {
     }
 }
 
+/// DAP protocol message representing a fixed-size query.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FixedSizeQuery {
+    ByBatchId { batch_id: BatchId },
+    CurrentBatch,
+}
+
+impl Encode for FixedSizeQuery {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        match self {
+            FixedSizeQuery::ByBatchId { batch_id } => {
+                0u8.encode(bytes);
+                batch_id.encode(bytes);
+            }
+            FixedSizeQuery::CurrentBatch => 1u8.encode(bytes),
+        }
+    }
+}
+
+impl Decode for FixedSizeQuery {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let query_type = u8::decode(bytes)?;
+        match query_type {
+            0 => {
+                let batch_id = BatchId::decode(bytes)?;
+                Ok(FixedSizeQuery::ByBatchId { batch_id })
+            }
+            1 => Ok(FixedSizeQuery::CurrentBatch),
+            _ => Err(CodecError::Other(
+                anyhow!("unexpected FixedSizeQueryTypevalue {}", query_type).into(),
+            )),
+        }
+    }
+}
+
 /// Represents a query for a specific batch identifier, received from a Collector as part of the
 /// collection flow.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Query<Q: QueryType> {
-    batch_identifier: Q::BatchIdentifier,
+    query_body: Q::QueryBody,
 }
 
 impl<Q: QueryType> Query<Q> {
@@ -1008,17 +1043,17 @@ impl<Q: QueryType> Query<Q> {
     /// This method would typically be used for code which is generic over the query type.
     /// Query-type specific code will typically call one of [`Self::new_time_interval`] or
     /// [`Self::new_fixed_size`].
-    pub fn new(batch_identifier: Q::BatchIdentifier) -> Self {
-        Self { batch_identifier }
+    pub fn new(query_body: Q::QueryBody) -> Self {
+        Self { query_body }
     }
 
-    /// Gets the batch identifier included in this query.
+    /// Gets the query body included in this query.
     ///
     /// This method would typically be used for code which is generic over the query type.
     /// Query-type specific code will typically call one of [`Self::batch_interval`] or
-    /// [`Self::batch_id`].
-    pub fn batch_identifier(&self) -> &Q::BatchIdentifier {
-        &self.batch_identifier
+    /// [`Self::fixed_size_query`].
+    pub fn query_body(&self) -> &Q::QueryBody {
+        &self.query_body
     }
 }
 
@@ -1030,35 +1065,35 @@ impl Query<TimeInterval> {
 
     /// Gets the batch interval associated with this query.
     pub fn batch_interval(&self) -> &Interval {
-        self.batch_identifier()
+        self.query_body()
     }
 }
 
 impl Query<FixedSize> {
     /// Constructs a new query for a fixed-size task.
-    pub fn new_fixed_size(batch_id: BatchId) -> Self {
-        Self::new(batch_id)
+    pub fn new_fixed_size(fixed_size_query: FixedSizeQuery) -> Self {
+        Self::new(fixed_size_query)
     }
 
-    /// Gets the batch ID associated with this query.
-    pub fn batch_id(&self) -> &BatchId {
-        self.batch_identifier()
+    /// Gets the fixed size query associated with this query.
+    pub fn fixed_size_query(&self) -> &FixedSizeQuery {
+        self.query_body()
     }
 }
 
 impl<Q: QueryType> Encode for Query<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         Q::CODE.encode(bytes);
-        self.batch_identifier.encode(bytes);
+        self.query_body.encode(bytes);
     }
 }
 
 impl<Q: QueryType> Decode for Query<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         query_type::Code::decode_expecting_value(bytes, Q::CODE)?;
-        let batch_identifier = Q::BatchIdentifier::decode(bytes)?;
+        let query_body = Q::QueryBody::decode(bytes)?;
 
-        Ok(Self { batch_identifier })
+        Ok(Self { query_body })
     }
 }
 
@@ -1353,6 +1388,8 @@ impl<Q: QueryType> Decode for AggregateShareAad<Q> {
 }
 
 pub mod query_type {
+    use crate::{CollectResp, FixedSizeQuery, Query};
+
     use super::{BatchId, Interval};
     use anyhow::anyhow;
     use num_enum::TryFromPrimitive;
@@ -1394,11 +1431,20 @@ pub mod query_type {
             + Send
             + Sync;
 
+        /// The type of the body of a [`Query`] for this query type.
+        type QueryBody: Debug + Clone + PartialEq + Eq + Encode + Decode + Send + Sync;
+
         /// Computes the `PartialBatchIdentifier` corresponding to the given
         /// `BatchIdentifier`.
         fn partial_batch_identifier(
             batch_identifier: &Self::BatchIdentifier,
         ) -> &Self::PartialBatchIdentifier;
+
+        /// Retrieves the batch identifier associated with an ongoing collection.
+        fn batch_identifier_for_collection(
+            query: &Query<Self>,
+            collect_resp: &CollectResp<Self>,
+        ) -> Self::BatchIdentifier;
     }
 
     /// Represents a `time-interval` DAP query type.
@@ -1410,9 +1456,17 @@ pub mod query_type {
 
         type BatchIdentifier = Interval;
         type PartialBatchIdentifier = ();
+        type QueryBody = Interval;
 
         fn partial_batch_identifier(_: &Self::BatchIdentifier) -> &Self::PartialBatchIdentifier {
             &()
+        }
+
+        fn batch_identifier_for_collection(
+            query: &Query<Self>,
+            _: &CollectResp<Self>,
+        ) -> Self::BatchIdentifier {
+            *query.batch_interval()
         }
     }
 
@@ -1425,11 +1479,19 @@ pub mod query_type {
 
         type BatchIdentifier = BatchId;
         type PartialBatchIdentifier = BatchId;
+        type QueryBody = FixedSizeQuery;
 
         fn partial_batch_identifier(
             batch_identifier: &Self::BatchIdentifier,
         ) -> &Self::PartialBatchIdentifier {
             batch_identifier
+        }
+
+        fn batch_identifier_for_collection(
+            _: &Query<Self>,
+            collect_resp: &CollectResp<Self>,
+        ) -> Self::BatchIdentifier {
+            *collect_resp.partial_batch_selector().batch_identifier()
         }
     }
 
@@ -2114,10 +2176,10 @@ mod tests {
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, AggregateShareAad, AggregateShareReq, AggregateShareResp,
         AggregationJobId, BatchId, BatchSelector, CollectReq, CollectResp, Duration, Extension,
-        ExtensionType, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId,
-        HpkePublicKey, InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare,
-        PrepareStep, PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata,
-        ReportShare, ReportShareError, Role, TaskId, Time,
+        ExtensionType, FixedSizeQuery, HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId,
+        HpkeKdfId, HpkeKemId, HpkePublicKey, InputShareAad, Interval, PartialBatchSelector,
+        PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report, ReportId,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
@@ -2627,12 +2689,33 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_fixed_size_query() {
+        roundtrip_encoding(&[
+            (
+                FixedSizeQuery::ByBatchId {
+                    batch_id: BatchId::from([10u8; 32]),
+                },
+                concat!(
+                    "00",                                                               // query_type
+                    "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
+                ),
+            ),
+            (
+                FixedSizeQuery::CurrentBatch,
+                concat!(
+                    "01", // query_type
+                ),
+            ),
+        ])
+    }
+
+    #[test]
     fn roundtrip_query() {
         // TimeInterval.
         roundtrip_encoding(&[
             (
                 Query::<TimeInterval> {
-                    batch_identifier: Interval::new(
+                    query_body: Interval::new(
                         Time::from_seconds_since_epoch(54321),
                         Duration::from_seconds(12345),
                     )
@@ -2641,7 +2724,7 @@ mod tests {
                 concat!(
                     "01", // query_type
                     concat!(
-                        // batch_interval
+                        // query_body
                         "000000000000D431", // start
                         "0000000000003039", // duration
                     ),
@@ -2649,7 +2732,7 @@ mod tests {
             ),
             (
                 Query::<TimeInterval> {
-                    batch_identifier: Interval::new(
+                    query_body: Interval::new(
                         Time::from_seconds_since_epoch(48913),
                         Duration::from_seconds(44721),
                     )
@@ -2658,7 +2741,7 @@ mod tests {
                 concat!(
                     "01", // query_type
                     concat!(
-                        // batch_interval
+                        // query_body
                         "000000000000BF11", // start
                         "000000000000AEB1", // duration
                     ),
@@ -2670,20 +2753,29 @@ mod tests {
         roundtrip_encoding(&[
             (
                 Query::<FixedSize> {
-                    batch_identifier: BatchId::from([10u8; 32]),
+                    query_body: FixedSizeQuery::ByBatchId {
+                        batch_id: BatchId::from([10u8; 32]),
+                    },
                 },
                 concat!(
-                    "02",                                                               // query_type
-                    "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
+                    "02", // query_type
+                    concat!(
+                        // query_body
+                        "00", // query_type
+                        "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
+                    ),
                 ),
             ),
             (
                 Query::<FixedSize> {
-                    batch_identifier: BatchId::from([8u8; 32]),
+                    query_body: FixedSizeQuery::CurrentBatch,
                 },
                 concat!(
-                    "02",                                                               // query_type
-                    "0808080808080808080808080808080808080808080808080808080808080808", // batch_id
+                    "02", // query_type
+                    concat!(
+                        // query_body
+                        "01", // query_type
+                    ),
                 ),
             ),
         ])
@@ -2697,7 +2789,7 @@ mod tests {
                 CollectReq::<TimeInterval> {
                     task_id: TaskId::from([u8::MIN; 32]),
                     query: Query {
-                        batch_identifier: Interval::new(
+                        query_body: Interval::new(
                             Time::from_seconds_since_epoch(54321),
                             Duration::from_seconds(12345),
                         )
@@ -2711,7 +2803,7 @@ mod tests {
                         // query
                         "01", // query_type
                         concat!(
-                            // batch_interval
+                            // query_body
                             "000000000000D431", // start
                             "0000000000003039", // duration
                         ),
@@ -2727,7 +2819,7 @@ mod tests {
                 CollectReq::<TimeInterval> {
                     task_id: TaskId::from([13u8; 32]),
                     query: Query {
-                        batch_identifier: Interval::new(
+                        query_body: Interval::new(
                             Time::from_seconds_since_epoch(48913),
                             Duration::from_seconds(44721),
                         )
@@ -2761,16 +2853,21 @@ mod tests {
                 CollectReq::<FixedSize> {
                     task_id: TaskId::from([u8::MIN; 32]),
                     query: Query {
-                        batch_identifier: BatchId::from([10u8; 32]),
+                        query_body: FixedSizeQuery::ByBatchId {
+                            batch_id: BatchId::from([10u8; 32]),
+                        },
                     },
                     aggregation_parameter: Vec::new(),
                 },
                 concat!(
                     "0000000000000000000000000000000000000000000000000000000000000000", // task_id,
                     concat!(
-                        // query
                         "02", // query_type
-                        "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
+                        concat!(
+                            // query_body
+                            "00", // query_type
+                            "0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A", // batch_id
+                        ),
                     ),
                     concat!(
                         // aggregation_parameter
@@ -2782,17 +2879,19 @@ mod tests {
             (
                 CollectReq::<FixedSize> {
                     task_id: TaskId::from([13u8; 32]),
-                    query: Query {
-                        batch_identifier: BatchId::from([8u8; 32]),
+                    query: Query::<FixedSize> {
+                        query_body: FixedSizeQuery::CurrentBatch,
                     },
                     aggregation_parameter: Vec::from("012345"),
                 },
                 concat!(
                     "0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D", // task_id
                     concat!(
-                        // query
                         "02", // query_type
-                        "0808080808080808080808080808080808080808080808080808080808080808", // batch_id
+                        concat!(
+                            // query_body
+                            "01", // query_type
+                        ),
                     ),
                     concat!(
                         // aggregation_parameter

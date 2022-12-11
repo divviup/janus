@@ -2878,6 +2878,73 @@ ORDER BY id DESC
                 .try_into()?,
         ))
     }
+
+    /// Deletes an outstanding batch.
+    pub async fn delete_outstanding_batch(
+        &self,
+        task_id: &TaskId,
+        batch_id: &BatchId,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "DELETE FROM outstanding_batches
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                  AND batch_id = $2",
+            )
+            .await?;
+
+        self.tx
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* batch_id */ batch_id.as_ref(),
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Retrieves an outstanding batch for the given task with at least the given number of
+    /// successfully-aggregated reports.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn get_filled_outstanding_batch(
+        &self,
+        task_id: &TaskId,
+        min_report_count: u64,
+    ) -> Result<Option<BatchId>, Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "WITH batches AS (
+                    SELECT
+                        outstanding_batches.batch_id AS batch_id,
+                        COUNT(DISTINCT report_aggregations.client_report_id) AS count
+                    FROM outstanding_batches
+                    JOIN aggregation_jobs
+                      ON aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                     AND aggregation_jobs.batch_identifier = outstanding_batches.batch_id
+                    JOIN report_aggregations
+                      ON report_aggregations.aggregation_job_id = aggregation_jobs.id
+                     AND report_aggregations.state = 'FINISHED'
+                    GROUP BY outstanding_batches.batch_id
+                )
+                SELECT batch_id FROM batches WHERE count >= $2 LIMIT 1",
+            )
+            .await?;
+        self.tx
+            .query_opt(
+                &stmt,
+                &[
+                    /* task_id */ task_id.as_ref(),
+                    /* min_report_count */ &i64::try_from(min_report_count)?,
+                ],
+            )
+            .await?
+            .map(|row| Ok(BatchId::get_decoded(row.get("batch_id"))?))
+            .transpose()
+    }
 }
 
 fn check_single_row_mutation(row_count: u64) -> Result<(), Error> {
@@ -8597,9 +8664,20 @@ mod tests {
             .await
             .unwrap();
 
-        let outstanding_batches = ds
-            .run_tx(|tx| {
-                Box::pin(async move { tx.get_outstanding_batches_for_task(&task_id).await })
+        let (outstanding_batches, outstanding_batch_1, outstanding_batch_2, outstanding_batch_3) =
+            ds.run_tx(|tx| {
+                Box::pin(async move {
+                    let outstanding_batches = tx.get_outstanding_batches_for_task(&task_id).await?;
+                    let outstanding_batch_1 = tx.get_filled_outstanding_batch(&task_id, 1).await?;
+                    let outstanding_batch_2 = tx.get_filled_outstanding_batch(&task_id, 2).await?;
+                    let outstanding_batch_3 = tx.get_filled_outstanding_batch(&task_id, 3).await?;
+                    Ok((
+                        outstanding_batches,
+                        outstanding_batch_1,
+                        outstanding_batch_2,
+                        outstanding_batch_3,
+                    ))
+                })
             })
             .await
             .unwrap();
@@ -8611,6 +8689,24 @@ mod tests {
                 RangeInclusive::new(2, 4)
             )])
         );
+        assert_eq!(outstanding_batch_1, Some(batch_id));
+        assert_eq!(outstanding_batch_2, Some(batch_id));
+        assert_eq!(outstanding_batch_3, None);
+
+        // Delete the outstanding batch, then check that it is no longer available.
+        ds.run_tx(|tx| {
+            Box::pin(async move { tx.delete_outstanding_batch(&task_id, &batch_id).await })
+        })
+        .await
+        .unwrap();
+
+        let outstanding_batches = ds
+            .run_tx(|tx| {
+                Box::pin(async move { tx.get_outstanding_batches_for_task(&task_id).await })
+            })
+            .await
+            .unwrap();
+        assert!(outstanding_batches.is_empty());
     }
 
     /// generate_vdaf_values generates some arbitrary VDAF values for use in testing. It is cribbed

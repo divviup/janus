@@ -13,7 +13,8 @@ use janus_interop_binaries::{
     HpkeConfigRegistry, NumberAsString, VdafObject,
 };
 use janus_messages::{
-    query_type::QueryType, BatchId, Duration, HpkeConfig, Interval, Query, TaskId, Time,
+    query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, Query, TaskId,
+    Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -340,7 +341,7 @@ async fn handle_collect_start(
             handle_collect_generic(
                 http_client,
                 collector_params,
-                Query::new_fixed_size(batch_id),
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
                 vdaf,
                 &agg_param,
                 |result| AggregationResult::Number(NumberAsString((*result).into())),
@@ -354,7 +355,7 @@ async fn handle_collect_start(
             handle_collect_generic(
                 http_client,
                 collector_params,
-                Query::new_fixed_size(batch_id),
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
                 vdaf,
                 &agg_param,
                 |result| {
@@ -371,7 +372,7 @@ async fn handle_collect_start(
             handle_collect_generic(
                 http_client,
                 collector_params,
-                Query::new_fixed_size(batch_id),
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
                 vdaf,
                 &agg_param,
                 |result| AggregationResult::Number(NumberAsString(*result)),
@@ -385,7 +386,7 @@ async fn handle_collect_start(
             handle_collect_generic(
                 http_client,
                 collector_params,
-                Query::new_fixed_size(batch_id),
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
                 vdaf,
                 &agg_param,
                 |result| {

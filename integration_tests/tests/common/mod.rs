@@ -14,7 +14,9 @@ use janus_integration_tests::{
     client::{ClientBackend, ClientImplementation, InteropClientEncoding},
     BatchDiscovery,
 };
-use janus_messages::{problem_type::DapProblemType, query_type, Duration, Interval, Query, Role};
+use janus_messages::{
+    problem_type::DapProblemType, query_type, Duration, FixedSizeQuery, Interval, Query, Role,
+};
 use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
 use reqwest::Url;
@@ -192,7 +194,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
             let batch_id = batch_ids[0];
             collect_generic(
                 &collector,
-                Query::new_fixed_size(batch_id),
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
                 &test_case.aggregation_parameter,
                 "127.0.0.1",
                 forwarded_port,

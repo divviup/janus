@@ -483,7 +483,10 @@ where
                     encrypted_aggregate_share,
                     &AggregateShareAad::new(
                         self.parameters.task_id,
-                        BatchSelector::<Q>::new(job.query.batch_identifier().clone()),
+                        BatchSelector::<Q>::new(Q::batch_identifier_for_collection(
+                            &job.query,
+                            &collect_response,
+                        )),
                     )
                     .get_encoded(),
                 )
@@ -621,7 +624,7 @@ mod tests {
         problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
         AggregateShareAad, BatchId, BatchSelector, CollectReq, CollectResp, Duration,
-        HpkeCiphertext, Interval, PartialBatchSelector, Query, Role, Time,
+        FixedSizeQuery, HpkeCiphertext, Interval, PartialBatchSelector, Query, Role, Time,
     };
     use mockito::mock;
     use prio::{
@@ -827,7 +830,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
-        assert_eq!(job.query.batch_identifier(), &batch_interval);
+        assert_eq!(job.query.batch_interval(), &batch_interval);
 
         let poll_result = collector.poll_once(&job).await.unwrap();
         assert_matches!(poll_result, PollResult::NextAttempt(None));
@@ -883,7 +886,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
-        assert_eq!(job.query.batch_identifier(), &batch_interval);
+        assert_eq!(job.query.batch_interval(), &batch_interval);
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(collection, Collection::new(1, 144));
@@ -933,7 +936,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
-        assert_eq!(job.query.batch_identifier(), &batch_interval);
+        assert_eq!(job.query.batch_interval(), &batch_interval);
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(collection, Collection::new(1, Vec::from([0, 0, 0, 1, 0])));
@@ -969,11 +972,17 @@ mod tests {
             .create();
 
         let job = collector
-            .start_collection(Query::new_fixed_size(batch_id), &())
+            .start_collection(
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                &(),
+            )
             .await
             .unwrap();
         assert_eq!(job.collect_job_url.as_str(), collect_job_url);
-        assert_eq!(job.query.batch_identifier(), &batch_id);
+        assert_eq!(
+            job.query.fixed_size_query(),
+            &FixedSizeQuery::ByBatchId { batch_id }
+        );
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(collection, Collection::new(1, 1));

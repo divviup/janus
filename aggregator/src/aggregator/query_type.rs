@@ -13,7 +13,7 @@ use futures::future::join_all;
 use janus_core::time::{Clock, TimeExt as _};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    Duration, Interval, ReportMetadata, Role, TaskId, Time,
+    Duration, FixedSizeQuery, Interval, Query, ReportMetadata, Role, TaskId, Time,
 };
 use prio::vdaf;
 use std::iter;
@@ -170,6 +170,13 @@ impl AccumulableQueryType for FixedSize {
 pub trait CollectableQueryType: AccumulableQueryType {
     type Iter: Iterator<Item = Self::BatchIdentifier> + Send + Sync;
 
+    /// Retrieves the batch identifier for a given query.
+    async fn batch_identifier_for_query<C: Clock>(
+        tx: &Transaction<'_, C>,
+        task: &Task,
+        query: &Query<Self>,
+    ) -> Result<Option<Self::BatchIdentifier>, datastore::Error>;
+
     /// Some query types (e.g. [`TimeInterval`]) can receive a batch identifier in collect requests
     /// which refers to multiple batches. This method takes a batch identifier received in a collect
     /// request and provides an iterator over the individual batches' identifiers.
@@ -240,11 +247,25 @@ pub trait CollectableQueryType: AccumulableQueryType {
         )?;
         Ok(batch_aggregations.into_iter().flatten().collect::<Vec<_>>())
     }
+
+    async fn acknowledge_collection<C: Clock>(
+        tx: &Transaction<'_, C>,
+        task_id: &TaskId,
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Result<(), datastore::Error>;
 }
 
 #[async_trait]
 impl CollectableQueryType for TimeInterval {
     type Iter = TimeIntervalBatchIdentifierIter;
+
+    async fn batch_identifier_for_query<C: Clock>(
+        _: &Transaction<'_, C>,
+        _: &Task,
+        query: &Query<Self>,
+    ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
+        Ok(Some(*query.batch_interval()))
+    }
 
     fn batch_identifiers_for_collect_identifier(
         task: &Task,
@@ -328,6 +349,14 @@ impl CollectableQueryType for TimeInterval {
         tx.count_client_reports_for_interval(task.id(), batch_interval)
             .await
     }
+
+    async fn acknowledge_collection<C: Clock>(
+        _: &Transaction<'_, C>,
+        _: &TaskId,
+        _: &Self::BatchIdentifier,
+    ) -> Result<(), datastore::Error> {
+        Ok(()) // Purposeful no-op.
+    }
 }
 
 // This type only exists because the CollectableQueryType trait requires specifying the type of the
@@ -389,6 +418,20 @@ impl Iterator for TimeIntervalBatchIdentifierIter {
 impl CollectableQueryType for FixedSize {
     type Iter = iter::Once<Self::BatchIdentifier>;
 
+    async fn batch_identifier_for_query<C: Clock>(
+        tx: &Transaction<'_, C>,
+        task: &Task,
+        query: &Query<Self>,
+    ) -> Result<Option<Self::BatchIdentifier>, datastore::Error> {
+        match query.fixed_size_query() {
+            FixedSizeQuery::ByBatchId { batch_id } => Ok(Some(*batch_id)),
+            FixedSizeQuery::CurrentBatch => {
+                tx.get_filled_outstanding_batch(task.id(), task.min_batch_size())
+                    .await
+            }
+        }
+    }
+
     fn batch_identifiers_for_collect_identifier(
         _: &Task,
         batch_id: &Self::BatchIdentifier,
@@ -444,6 +487,14 @@ impl CollectableQueryType for FixedSize {
     ) -> Result<u64, datastore::Error> {
         tx.count_client_reports_for_batch_id(task.id(), batch_id)
             .await
+    }
+
+    async fn acknowledge_collection<C: Clock>(
+        tx: &Transaction<'_, C>,
+        task_id: &TaskId,
+        batch_identifier: &Self::BatchIdentifier,
+    ) -> Result<(), datastore::Error> {
+        tx.delete_outstanding_batch(task_id, batch_identifier).await
     }
 }
 
