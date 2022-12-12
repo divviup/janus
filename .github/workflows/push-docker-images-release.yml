@@ -14,7 +14,7 @@ jobs:
     permissions:
       id-token: "write"
       contents: "read"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v3
     # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry

@@ -10,7 +10,7 @@ env:
 
 jobs:
   crate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v3
     # We retry crate publishing to allow the newly published janus_messages to be visible on
