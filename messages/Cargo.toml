@@ -15,7 +15,7 @@ test-util = []
 
 [dependencies]
 anyhow = "1"
-base64 = "0.13.1"
+base64 = "0.20.0"
 clap = { version = "4.0.27", features = ["cargo", "derive"], optional = true }
 derivative = "2.2.0"
 hex = "0.4"
