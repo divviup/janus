@@ -39,6 +39,7 @@ use std::{
     ops::RangeInclusive, pin::Pin,
 };
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
+use tracing::info;
 use url::Url;
 use uuid::Uuid;
 
@@ -127,6 +128,7 @@ pub struct Datastore<C: Clock> {
     pool: deadpool_postgres::Pool,
     crypter: Crypter,
     clock: C,
+    dry_run: bool,
     transaction_status_counter: Counter<u64>,
     rollback_error_counter: Counter<u64>,
 }
@@ -134,7 +136,12 @@ pub struct Datastore<C: Clock> {
 impl<C: Clock> Datastore<C> {
     /// new creates a new Datastore using the given Client for backing storage. It is assumed that
     /// the Client is connected to a database with a compatible version of the Janus database schema.
-    pub fn new(pool: deadpool_postgres::Pool, crypter: Crypter, clock: C) -> Datastore<C> {
+    pub fn new(
+        pool: deadpool_postgres::Pool,
+        crypter: Crypter,
+        clock: C,
+        dry_run: bool,
+    ) -> Datastore<C> {
         let meter = opentelemetry::global::meter("janus_aggregator");
         let transaction_status_counter = meter
             .u64_counter("janus_database_transactions_total")
@@ -158,10 +165,15 @@ impl<C: Clock> Datastore<C> {
             );
         }
 
+        if dry_run {
+            info!("DRY RUN: All database transactions run through this datastore will be rolled back.")
+        }
+
         Self {
             pool,
             crypter,
             clock,
+            dry_run,
             transaction_status_counter,
             rollback_error_counter,
         }
@@ -232,8 +244,12 @@ impl<C: Clock> Datastore<C> {
         // Run user-provided function with the transaction.
         match f(&tx).await {
             Ok(rslt) => {
-                // Commit.
-                tx.tx.commit().await?;
+                if self.dry_run {
+                    tx.tx.rollback().await?;
+                } else {
+                    // Commit.
+                    tx.tx.commit().await?;
+                }
                 Ok(rslt)
             }
             Err(error) => match tx.tx.rollback().await {
@@ -4694,12 +4710,16 @@ pub mod test_util {
     impl DbHandle {
         /// Retrieve a datastore attached to the ephemeral database.
         pub fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
+            self.datastore_with_dry_run(clock, false)
+        }
+
+        pub fn datastore_with_dry_run<C: Clock>(&self, clock: C, dry_run: bool) -> Datastore<C> {
             // Create a crypter based on the generated key bytes.
             let datastore_key =
                 LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &self.datastore_key_bytes).unwrap());
             let crypter = Crypter::new(Vec::from([datastore_key]));
 
-            Datastore::new(self.pool(), crypter, clock)
+            Datastore::new(self.pool(), crypter, clock, dry_run)
         }
 
         /// Retrieve a Postgres connection pool attached to the ephemeral database.
@@ -4837,10 +4857,17 @@ pub mod test_util {
     ///
     /// Dropping the second return value causes the database to be shut down & cleaned up.
     pub async fn ephemeral_datastore<C: Clock>(clock: C) -> (Datastore<C>, DbHandle) {
+        ephemeral_datastore_with_dry_run(clock, false).await
+    }
+
+    pub async fn ephemeral_datastore_with_dry_run<C: Clock>(
+        clock: C,
+        dry_run: bool,
+    ) -> (Datastore<C>, DbHandle) {
         let db_handle = ephemeral_db_handle();
         let client = db_handle.pool().get().await.unwrap();
         client.batch_execute(SCHEMA).await.unwrap();
-        (db_handle.datastore(clock), db_handle)
+        (db_handle.datastore_with_dry_run(clock, dry_run), db_handle)
     }
 
     pub fn generate_aead_key_bytes() -> Vec<u8> {
@@ -4908,7 +4935,37 @@ mod tests {
     };
     use uuid::Uuid;
 
-    use super::{models::AcquiredCollectJob, Datastore};
+    use super::{
+        models::AcquiredCollectJob, test_util::ephemeral_datastore_with_dry_run, Datastore,
+    };
+
+    #[tokio::test]
+    async fn dry_run_datastore() {
+        install_test_trace_subscriber();
+
+        let (ds, _db_handle) = ephemeral_datastore_with_dry_run(MockClock::default(), true).await;
+
+        let task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count,
+            Role::Leader,
+        )
+        .build();
+
+        // Write the task in one transaction. It should not be visible to a subsequent transaction.
+        ds.put_task(&task).await.unwrap();
+
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                let got_tasks = tx.get_tasks().await.unwrap();
+                assert!(got_tasks.is_empty());
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn roundtrip_task() {

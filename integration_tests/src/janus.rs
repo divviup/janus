@@ -191,6 +191,7 @@ impl Janus<'static> {
                 ))
                 .unwrap(),
                 connection_pool_timeouts_secs: 60,
+                dry_run_mode: false,
             },
             None,
         )
@@ -202,7 +203,7 @@ impl Janus<'static> {
         // depends on this task being defined will likely time out or otherwise fail.
         // This should become more robust in the future when we implement dynamic task provisioning
         // (#44).
-        let datastore = datastore(pool, RealClock::default(), &[datastore_key]).unwrap();
+        let datastore = datastore(pool, RealClock::default(), &[datastore_key], false).unwrap();
         datastore.put_task(task).await.unwrap();
 
         let batch_discovery = Arc::new(JanusClusterBatchFetch {
