@@ -31,27 +31,31 @@ static SCHEMA: &str = include_str!("../../../db/schema.sql");
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse options, then read & parse config.
-    let options = Options::parse();
+    // Parse command-line options, then read & parse config.
+    let command_line_options = CommandLineOptions::parse();
+    let config_file: ConfigFile = read_config(&command_line_options.common_options)?;
 
-    debug!(?options, "Starting up");
+    install_tracing_and_metrics_handlers(config_file.common_config())?;
 
-    options.cmd.execute().await
+    debug!(?command_line_options, ?config_file, "Starting up");
+
+    if command_line_options.dry_run {
+        info!("DRY RUN: no persistent changes will be made")
+    }
+
+    command_line_options
+        .cmd
+        .execute(&command_line_options, &config_file)
+        .await
 }
 
 #[derive(Debug, Parser)]
 enum Command {
     /// Write the Janus database schema to the database.
-    WriteSchema {
-        #[clap(flatten)]
-        common_options: CommonBinaryOptions,
-    },
+    WriteSchema,
 
     /// Write a set of tasks identified in a file to the datastore.
     ProvisionTasks {
-        #[clap(flatten)]
-        common_options: CommonBinaryOptions,
-
         #[clap(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
 
@@ -71,32 +75,33 @@ enum Command {
     /// Create a datastore key and write it to a Kubernetes secret.
     CreateDatastoreKey {
         #[clap(flatten)]
-        common_options: CommonBinaryOptions,
-
-        #[clap(flatten)]
         kubernetes_secret_options: KubernetesSecretOptions,
     },
 }
 
 impl Command {
-    async fn execute(&self) -> Result<()> {
+    async fn execute(
+        &self,
+        command_line_options: &CommandLineOptions,
+        config_file: &ConfigFile,
+    ) -> Result<()> {
         // Note: to keep this function reasonably-readable, individual command handlers should
         // generally create the command's dependencies based on options/config, then call another
         // function with the main command logic.
         match self {
-            Command::WriteSchema { common_options } => {
-                let config: Config = read_config(common_options)?;
-                install_tracing_and_metrics_handlers(config.common_config())?;
+            Command::WriteSchema => {
                 let pool = database_pool(
-                    &config.common_config.database,
-                    common_options.database_password.as_deref(),
+                    &config_file.common_config.database,
+                    command_line_options
+                        .common_options
+                        .database_password
+                        .as_deref(),
                 )
                 .await?;
-                write_schema(&pool).await
+                write_schema(&pool, command_line_options.dry_run).await
             }
 
             Command::ProvisionTasks {
-                common_options,
                 kubernetes_secret_options,
                 tasks_file,
                 generate_missing_parameters,
@@ -105,24 +110,21 @@ impl Command {
                 let kube_client = kube::Client::try_default()
                     .await
                     .context("couldn't connect to Kubernetes environment")?;
-                let config: Config = read_config(common_options)?;
-                install_tracing_and_metrics_handlers(config.common_config())?;
-                let pool = database_pool(
-                    &config.common_config.database,
-                    common_options.database_password.as_deref(),
+                let datastore = datastore_from_opts(
+                    kubernetes_secret_options,
+                    command_line_options,
+                    config_file,
+                    Some(&kube_client),
                 )
                 .await?;
 
-                let datastore = datastore(
-                    pool,
-                    RealClock::default(),
-                    &kubernetes_secret_options
-                        .datastore_keys(common_options, kube_client)
-                        .await?,
-                )?;
-
-                let written_tasks =
-                    provision_tasks(&datastore, tasks_file, *generate_missing_parameters).await?;
+                let written_tasks = provision_tasks(
+                    &datastore,
+                    tasks_file,
+                    *generate_missing_parameters,
+                    command_line_options.dry_run,
+                )
+                .await?;
 
                 if *echo_tasks {
                     let tasks_yaml = serde_yaml::to_string(&written_tasks)
@@ -134,20 +136,18 @@ impl Command {
             }
 
             Command::CreateDatastoreKey {
-                common_options,
                 kubernetes_secret_options,
             } => {
                 let kube_client = kube::Client::try_default()
                     .await
                     .context("couldn't connect to Kubernetes environment")?;
-                let config: Config = read_config(common_options)?;
-                install_tracing_and_metrics_handlers(config.common_config())?;
                 let k8s_namespace = kubernetes_secret_options
                     .secrets_k8s_namespace
                     .as_deref()
                     .context("--secrets-k8s-namespace is required")?;
                 create_datastore_key(
-                    kube_client,
+                    command_line_options.dry_run,
+                    &kube_client,
                     k8s_namespace,
                     &kubernetes_secret_options.datastore_keys_secret_name,
                     &kubernetes_secret_options.datastore_keys_secret_data_key,
@@ -167,20 +167,26 @@ fn install_tracing_and_metrics_handlers(config: &CommonConfig) -> Result<()> {
     Ok(())
 }
 
-async fn write_schema(pool: &Pool) -> Result<()> {
+async fn write_schema(pool: &Pool, dry_run: bool) -> Result<()> {
     info!("Writing database schema");
     let db_client = pool.get().await.context("couldn't get database client")?;
+
+    if dry_run {
+        info!(schema = SCHEMA, "DRY RUN: not writing schema.");
+        return Ok(());
+    }
+
     db_client
         .batch_execute(SCHEMA)
         .await
-        .context("couldn't write database schema")?;
-    Ok(())
+        .context("couldn't write database schema")
 }
 
 async fn provision_tasks<C: Clock>(
     datastore: &Datastore<C>,
     tasks_file: &Path,
     generate_missing_parameters: bool,
+    dry_run: bool,
 ) -> Result<Vec<Task>> {
     // Read tasks file.
     let tasks: Vec<SerializedTask> = {
@@ -201,6 +207,11 @@ async fn provision_tasks<C: Clock>(
             Task::try_from(task)
         })
         .collect::<Result<_, _>>()?;
+
+    if dry_run {
+        info!(task_count = %tasks.len(), "DRY RUN: Not writing tasks");
+        return Ok(tasks);
+    }
 
     let tasks = Arc::new(tasks);
 
@@ -264,12 +275,18 @@ async fn fetch_datastore_keys(
 }
 
 async fn create_datastore_key(
-    kube_client: kube::Client,
+    dry_run: bool,
+    kube_client: &kube::Client,
     k8s_namespace: &str,
     k8s_secret_name: &str,
     k8s_secret_data_key: &str,
 ) -> Result<()> {
-    info!("Creating datastore key");
+    info!(
+        namespace = k8s_namespace,
+        secret_name = k8s_secret_name,
+        secret_data_key = k8s_secret_data_key,
+        "Creating datastore key"
+    );
     let secrets_api: kube::Api<Secret> = kube::Api::namespaced(kube_client.clone(), k8s_namespace);
 
     // Generate a random datastore key & encode it into unpadded base64 as will be expected by
@@ -283,7 +300,10 @@ async fn create_datastore_key(
     // Write the secret.
     secrets_api
         .create(
-            &PostParams::default(),
+            &PostParams {
+                dry_run,
+                ..Default::default()
+            },
             &Secret {
                 metadata: ObjectMeta {
                     namespace: Some(k8s_namespace.to_string()),
@@ -300,6 +320,50 @@ async fn create_datastore_key(
         .await
         .context("couldn't write datastore key secret")?;
     Ok(())
+}
+
+async fn datastore_from_opts(
+    kubernetes_secret_options: &KubernetesSecretOptions,
+    command_line_options: &CommandLineOptions,
+    config_file: &ConfigFile,
+    kube_client: Option<&kube::Client>,
+) -> Result<Datastore<RealClock>> {
+    let pool = database_pool(
+        &config_file.common_config.database,
+        command_line_options
+            .common_options
+            .database_password
+            .as_deref(),
+    )
+    .await?;
+
+    datastore(
+        pool,
+        RealClock::default(),
+        &kubernetes_secret_options
+            .datastore_keys(&command_line_options.common_options, kube_client)
+            .await?,
+    )
+}
+
+#[derive(Debug, Parser)]
+#[clap(
+    name = "janus_cli",
+    about = "Janus CLI tool",
+    rename_all = "kebab-case",
+    version = env!("CARGO_PKG_VERSION"),
+)]
+struct CommandLineOptions {
+    #[clap(subcommand)]
+    cmd: Command,
+
+    #[clap(flatten)]
+    common_options: CommonBinaryOptions,
+
+    /// When in dry-run mode, the tool will print out what it would do but will not make any real,
+    /// permanent changes.
+    #[clap(long, default_value = "false")]
+    dry_run: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -341,11 +405,13 @@ impl KubernetesSecretOptions {
     async fn datastore_keys(
         &self,
         options: &CommonBinaryOptions,
-        kube_client: kube::Client,
+        kube_client: Option<&kube::Client>,
     ) -> Result<Vec<String>> {
-        if let Some(ref secrets_namespace) = self.secrets_k8s_namespace {
+        if let (Some(ref secrets_namespace), Some(kube_client)) =
+            (&self.secrets_k8s_namespace, kube_client)
+        {
             fetch_datastore_keys(
-                &kube_client,
+                kube_client,
                 secrets_namespace,
                 &self.datastore_keys_secret_name,
                 &self.datastore_keys_secret_data_key,
@@ -362,25 +428,13 @@ impl KubernetesSecretOptions {
     }
 }
 
-#[derive(Debug, Parser)]
-#[clap(
-    name = "janus_cli",
-    about = "Janus CLI tool",
-    rename_all = "kebab-case",
-    version = env!("CARGO_PKG_VERSION"),
-)]
-struct Options {
-    #[clap(subcommand)]
-    cmd: Command,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Config {
+struct ConfigFile {
     #[serde(flatten)]
     common_config: CommonConfig,
 }
 
-impl BinaryConfig for Config {
+impl BinaryConfig for ConfigFile {
     fn common_config(&self) -> &CommonConfig {
         &self.common_config
     }
@@ -394,9 +448,8 @@ const STANDARD_NO_PAD: FastPortable = FastPortable::from(&STANDARD, NO_PAD);
 
 #[cfg(test)]
 mod tests {
+    use super::{fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions};
     use crate::STANDARD_NO_PAD;
-
-    use super::{fetch_datastore_keys, Config, KubernetesSecretOptions, Options};
     use clap::CommandFactory;
     use janus_aggregator::{
         binary_utils::CommonBinaryOptions,
@@ -404,7 +457,10 @@ mod tests {
             generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
         },
         config::CommonConfig,
-        datastore::test_util::{ephemeral_datastore, ephemeral_db_handle},
+        datastore::{
+            test_util::{ephemeral_datastore, ephemeral_db_handle},
+            Datastore,
+        },
         task::{test_util::TaskBuilder, QueryType, Task},
     };
     use janus_core::{task::VdafInstance, test_util::kubernetes, time::RealClock};
@@ -419,7 +475,7 @@ mod tests {
 
     #[test]
     fn verify_app() {
-        Options::command().debug_assert()
+        CommandLineOptions::command().debug_assert()
     }
 
     #[tokio::test]
@@ -428,7 +484,8 @@ mod tests {
         let k8s_cluster = kubernetes::EphemeralCluster::create();
         let kube_client = k8s_cluster.cluster().client().await;
         super::create_datastore_key(
-            kube_client.clone(),
+            false,
+            &kube_client,
             "default",
             "secret-name",
             "secret-data-key",
@@ -440,33 +497,34 @@ mod tests {
             Vec::from(["datastore-key-1".to_string(), "datastore-key-2".to_string()]);
 
         // Keys provided at command line, not present in k8s
-        let mut binary_options = CommonBinaryOptions::default();
-        binary_options.datastore_keys = expected_datastore_keys.clone();
+        let mut common_options = CommonBinaryOptions::default();
+        common_options.datastore_keys = expected_datastore_keys.clone();
 
-        let k8s_secret_options = KubernetesSecretOptions {
+        let kubernetes_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),
             datastore_keys_secret_data_key: "secret-data-key".to_string(),
             secrets_k8s_namespace: None,
         };
 
         assert_eq!(
-            k8s_secret_options
-                .datastore_keys(&binary_options, kube_client.clone())
+            kubernetes_secret_options
+                .datastore_keys(&common_options, Some(&kube_client))
                 .await
                 .unwrap(),
             expected_datastore_keys
         );
 
         // Keys not provided at command line, present in k8s
-        let k8s_secret_options = KubernetesSecretOptions {
+        let common_options = CommonBinaryOptions::default();
+        let kubernetes_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),
             datastore_keys_secret_data_key: "secret-data-key".to_string(),
             secrets_k8s_namespace: Some("default".to_string()),
         };
 
         assert_eq!(
-            k8s_secret_options
-                .datastore_keys(&CommonBinaryOptions::default(), kube_client.clone())
+            kubernetes_secret_options
+                .datastore_keys(&common_options, Some(&kube_client))
                 .await
                 .unwrap()
                 .len(),
@@ -474,14 +532,15 @@ mod tests {
         );
 
         // Neither flag provided
-        let k8s_secret_options = KubernetesSecretOptions {
+        let common_options = CommonBinaryOptions::default();
+        let kubernetes_secret_options = KubernetesSecretOptions {
             datastore_keys_secret_name: "secret-name".to_string(),
             datastore_keys_secret_data_key: "secret-data-key".to_string(),
             secrets_k8s_namespace: None,
         };
 
-        k8s_secret_options
-            .datastore_keys(&CommonBinaryOptions::default(), kube_client.clone())
+        kubernetes_secret_options
+            .datastore_keys(&common_options, Some(&kube_client))
             .await
             .unwrap_err();
     }
@@ -497,7 +556,7 @@ mod tests {
             .unwrap_err();
 
         // Run the program logic.
-        super::write_schema(&db_handle.pool()).await.unwrap();
+        super::write_schema(&db_handle.pool(), false).await.unwrap();
 
         // Verify that the schema was written (by running a query that would fail if it weren't).
         ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
@@ -505,12 +564,49 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn write_schema_dry_run() {
+        let db_handle = ephemeral_db_handle();
+        let ds = db_handle.datastore(RealClock::default());
+
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .await
+            .unwrap_err();
+
+        super::write_schema(&db_handle.pool(), true).await.unwrap();
+
+        // Verify that no schema was written (by running a query that would fail if it weren't).
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .await
+            .unwrap_err();
+    }
+
     fn task_hashmap_from_slice(tasks: Vec<Task>) -> HashMap<TaskId, Task> {
         tasks.into_iter().map(|task| (*task.id(), task)).collect()
     }
 
+    async fn run_provision_tasks_testcase(
+        ds: &Datastore<RealClock>,
+        tasks: &[Task],
+        dry_run: bool,
+    ) -> Vec<Task> {
+        // Write tasks to a temporary file.
+        let mut tasks_file = NamedTempFile::new().unwrap();
+        tasks_file
+            .write_all(serde_yaml::to_string(&tasks).unwrap().as_ref())
+            .unwrap();
+        let tasks_path = tasks_file.into_temp_path();
+
+        // Run the program logic.
+        super::provision_tasks(ds, &tasks_path, false, dry_run)
+            .await
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn provision_tasks() {
+        let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
+
         let tasks = Vec::from([
             TaskBuilder::new(
                 QueryType::TimeInterval,
@@ -526,19 +622,7 @@ mod tests {
             .build(),
         ]);
 
-        let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
-
-        // Write tasks to a temporary file.
-        let mut tasks_file = NamedTempFile::new().unwrap();
-        tasks_file
-            .write_all(serde_yaml::to_string(&tasks).unwrap().as_ref())
-            .unwrap();
-        let tasks_path = tasks_file.into_temp_path();
-
-        // Run the program logic.
-        let written_tasks = super::provision_tasks(&ds, &tasks_path, false)
-            .await
-            .unwrap();
+        let written_tasks = run_provision_tasks_testcase(&ds, &tasks, false).await;
 
         // Verify that the expected tasks were written.
         let want_tasks = task_hashmap_from_slice(tasks);
@@ -550,6 +634,30 @@ mod tests {
         );
         assert_eq!(want_tasks, got_tasks);
         assert_eq!(want_tasks, written_tasks);
+    }
+
+    #[tokio::test]
+    async fn provision_task_dry_run() {
+        let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
+
+        let tasks = Vec::from([TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count,
+            Role::Leader,
+        )
+        .build()]);
+
+        let written_tasks = run_provision_tasks_testcase(&ds, &tasks, true).await;
+
+        let want_tasks = task_hashmap_from_slice(tasks);
+        let written_tasks = task_hashmap_from_slice(written_tasks);
+        assert_eq!(want_tasks, written_tasks);
+        let got_tasks = task_hashmap_from_slice(
+            ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+                .await
+                .unwrap(),
+        );
+        assert!(got_tasks.is_empty());
     }
 
     #[tokio::test]
@@ -576,7 +684,7 @@ mod tests {
             .write_all(serde_yaml::to_string(&tasks).unwrap().as_ref())
             .unwrap();
 
-        super::provision_tasks(&ds, &tasks_file.into_temp_path(), false)
+        super::provision_tasks(&ds, &tasks_file.into_temp_path(), false, false)
             .await
             .unwrap();
 
@@ -601,7 +709,7 @@ mod tests {
             .unwrap();
 
         let written_tasks =
-            super::provision_tasks(&ds, &replacement_tasks_file.into_temp_path(), false)
+            super::provision_tasks(&ds, &replacement_tasks_file.into_temp_path(), false, false)
                 .await
                 .unwrap();
         assert_eq!(written_tasks.len(), 1);
@@ -687,6 +795,8 @@ mod tests {
             &tasks_file_path,
             // do not generate missing parameters
             false,
+            // not a dry-run
+            false,
         )
         .await
         // Should fail because parameters are omitted from task YAML
@@ -697,6 +807,8 @@ mod tests {
             &tasks_file_path,
             // generate missing parameters
             true,
+            // not a dry-run
+            false,
         )
         .await
         .unwrap();
@@ -732,9 +844,15 @@ mod tests {
         const NAMESPACE: &str = "default";
         const SECRET_NAME: &str = "secret-name";
         const SECRET_DATA_KEY: &str = "secret-data-key";
-        super::create_datastore_key(kube_client.clone(), NAMESPACE, SECRET_NAME, SECRET_DATA_KEY)
-            .await
-            .unwrap();
+        super::create_datastore_key(
+            /* dry_run */ false,
+            &kube_client,
+            NAMESPACE,
+            SECRET_NAME,
+            SECRET_DATA_KEY,
+        )
+        .await
+        .unwrap();
 
         // Verify that the secret was created.
         let secret_data =
@@ -748,9 +866,33 @@ mod tests {
         UnboundKey::new(&AES_128_GCM, &datastore_key_bytes).unwrap();
     }
 
+    #[tokio::test]
+    async fn create_datastore_key_dry_run() {
+        let k8s_cluster = kubernetes::EphemeralCluster::create();
+        let kube_client = k8s_cluster.cluster().client().await;
+
+        const NAMESPACE: &str = "default";
+        const SECRET_NAME: &str = "secret-name";
+        const SECRET_DATA_KEY: &str = "secret-data-key";
+        super::create_datastore_key(
+            /* dry_run */ true,
+            &kube_client,
+            NAMESPACE,
+            SECRET_NAME,
+            SECRET_DATA_KEY,
+        )
+        .await
+        .unwrap();
+
+        // Verify that no secret was created.
+        fetch_datastore_keys(&kube_client, NAMESPACE, SECRET_NAME, SECRET_DATA_KEY)
+            .await
+            .unwrap_err();
+    }
+
     #[test]
     fn roundtrip_config() {
-        roundtrip_encoding(Config {
+        roundtrip_encoding(ConfigFile {
             common_config: CommonConfig {
                 database: generate_db_config(),
                 logging_config: generate_trace_config(),
