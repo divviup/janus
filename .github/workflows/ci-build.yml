@@ -60,8 +60,6 @@ jobs:
       uses: arduino/setup-protoc@v1
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo test --no-run --verbose --locked --all-targets
     - name: Smaller test
