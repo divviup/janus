@@ -23,6 +23,8 @@ jobs:
       DAPHNE_INTEROP_CONTAINER: prebuilt=${{ secrets.DAPHNE_PREBUILT_IMAGE_NAME_AND_TAG }}
       RUSTFLAGS: "-D warnings"
     steps:
+    - name: Dump environment
+      run: env
     - name: Set default input values
       id: default-input-values
       run: |
@@ -61,9 +63,9 @@ jobs:
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
     - name: Build
-      run: cargo test --no-run --locked --all-targets
+      run: cargo test --no-run --verbose --locked --all-targets
     - name: Smaller test
-      run: cargo test -p janus_aggregator --bin janus_cli -- tests::simplified_openssl_test --nocapture
+      run: cargo test --verbose -p janus_aggregator --bin janus_cli -- tests::simplified_openssl_test --nocapture
     - name: Test
       id: test
       env:
