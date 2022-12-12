@@ -13,7 +13,7 @@ on:
 
 jobs:
   janus_build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     permissions:
       id-token: "write"
       contents: "read"
@@ -92,7 +92,7 @@ jobs:
       run: exit 1
   
   janus_lints:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
@@ -120,7 +120,7 @@ jobs:
       run: cargo doc --workspace
 
   janus_docker:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       DOCKER_BUILDKIT: 1
     steps:
@@ -137,7 +137,7 @@ jobs:
     - run: docker run --rm janus_cli --help
 
   janus_interop_docker:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       DOCKER_BUILDKIT: 1
     steps:
