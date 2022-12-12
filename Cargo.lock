@@ -1617,6 +1617,7 @@ dependencies = [
  "rand",
  "reqwest",
  "ring",
+ "secrecy",
  "serde",
  "serde_json",
  "serde_test",

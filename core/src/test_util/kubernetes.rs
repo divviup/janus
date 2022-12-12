@@ -2,6 +2,7 @@
 
 use kube::config::{KubeConfigOptions, Kubeconfig};
 use rand::random;
+use secrecy::ExposeSecret;
 use std::{
     io::{self, ErrorKind},
     path::{Path, PathBuf},
@@ -47,6 +48,14 @@ impl Cluster {
         .await
         .unwrap();
         dbg!(&config.auth_info);
+        let client_cert_data = config.auth_info.client_certificate_data.as_ref().unwrap();
+        let client_key_data = config
+            .auth_info
+            .client_key_data
+            .as_ref()
+            .unwrap()
+            .expose_secret();
+        dbg!(client_cert_data, client_key_data);
         kube::Client::try_from(config).unwrap()
     }
 

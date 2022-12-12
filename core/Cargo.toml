@@ -48,6 +48,7 @@ tracing = "0.1.37"
 # Dependencies required only if feature "test-util" is enabled
 assert_matches = { version = "1", optional = true }
 lazy_static = { version = "1", optional = true }
+secrecy = "0.8.0"
 serde_json = { version = "1.0.89", optional = true }
 tempfile = { version = "3", optional = true }
 testcontainers = { version = "0.14", optional = true }
