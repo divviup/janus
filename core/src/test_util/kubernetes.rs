@@ -35,18 +35,19 @@ impl Cluster {
 
     /// Returns a new [`kube::Client`] configured to interact with this Kubernetes cluster.
     pub async fn client(&self) -> kube::Client {
-        kube::Client::try_from(
-            kube::Config::from_custom_kubeconfig(
-                Kubeconfig::read_from(&self.kubeconfig_path).unwrap(),
-                &KubeConfigOptions {
-                    context: Some(self.context_name.clone()),
-                    ..KubeConfigOptions::default()
-                },
-            )
-            .await
-            .unwrap(),
+        let kubeconfig = Kubeconfig::read_from(&self.kubeconfig_path).unwrap();
+        dbg!(&kubeconfig);
+        let config = kube::Config::from_custom_kubeconfig(
+            kubeconfig,
+            &KubeConfigOptions {
+                context: Some(self.context_name.clone()),
+                ..KubeConfigOptions::default()
+            },
         )
-        .unwrap()
+        .await
+        .unwrap();
+        dbg!(&config.root_cert);
+        kube::Client::try_from(config).unwrap()
     }
 
     /// Set up port forwarding from `local_port` to `service_port` on the service in the namespace.
