@@ -46,7 +46,7 @@ impl Cluster {
         )
         .await
         .unwrap();
-        dbg!(&config.root_cert);
+        dbg!(&config.auth_info);
         kube::Client::try_from(config).unwrap()
     }
 
