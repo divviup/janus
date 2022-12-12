@@ -62,6 +62,8 @@ jobs:
       uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo test --no-run --locked --all-targets
+    - name: Smaller test
+      run: cargo test -p janus_aggregator --bin janus_cli --tests::simplified_openssl_test --nocapture
     - name: Test
       id: test
       env:

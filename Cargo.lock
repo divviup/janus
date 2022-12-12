@@ -1500,6 +1500,7 @@ dependencies = [
  "kube",
  "lazy_static",
  "mockito",
+ "openssl",
  "opentelemetry",
  "opentelemetry-jaeger",
  "opentelemetry-otlp",
