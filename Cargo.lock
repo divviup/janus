@@ -1638,6 +1638,7 @@ version = "0.2.1"
 dependencies = [
  "assert_matches",
  "backoff",
+ "base64 0.13.1",
  "chrono",
  "derivative",
  "futures",

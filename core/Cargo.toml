@@ -26,6 +26,7 @@ test-util = [
 
 [dependencies]
 backoff = { version = "0.4.0", features = ["tokio"] }
+base64 = "0.13.1"
 chrono = "0.4"
 derivative = "2.2.0"
 futures = "0.3.25"

@@ -1,9 +1,14 @@
+use base64::URL_SAFE_NO_PAD;
+use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
 use serde::{Deserialize, Serialize};
 
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
+
+/// The length of the verify key parameter for Prio3 AES-128 VDAF instantiations.
+pub const PRIO3_AES128_VERIFY_KEY_LENGTH: usize = 16;
 
 /// Identifiers for supported VDAFs, corresponding to definitions in
 /// [draft-irtf-cfrg-vdaf-03][1] and implementations in [`prio::vdaf::prio3`].
@@ -29,6 +34,22 @@ pub enum VdafInstance {
     FakeFailsPrepInit,
     #[cfg(feature = "test-util")]
     FakeFailsPrepStep,
+}
+
+impl VdafInstance {
+    /// Returns the expected length of a VDAF verification key for a VDAF of this type.
+    pub fn verify_key_length(&self) -> usize {
+        match self {
+            #[cfg(feature = "test-util")]
+            VdafInstance::Fake
+            | VdafInstance::FakeFailsPrepInit
+            | VdafInstance::FakeFailsPrepStep => 0,
+
+            // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
+            // not yet done being specified, so choosing 16 bytes is fine for testing.)
+            _ => PRIO3_AES128_VERIFY_KEY_LENGTH,
+        }
+    }
 }
 
 /// An authentication (bearer) token used by aggregators for aggregator-to-aggregator and
@@ -60,6 +81,15 @@ impl PartialEq for AuthenticationToken {
 }
 
 impl Eq for AuthenticationToken {}
+
+impl Distribution<AuthenticationToken> for Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> AuthenticationToken {
+        let buf: [u8; 16] = rng.gen();
+        base64::encode_config(buf, URL_SAFE_NO_PAD)
+            .into_bytes()
+            .into()
+    }
+}
 
 /// Modifies a [`Url`] in place to ensure it ends with a slash.
 ///

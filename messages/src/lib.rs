@@ -29,6 +29,12 @@ pub mod problem_type;
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// An invalid parameter was passed.
+    #[error("{0}")]
+    InvalidParameter(&'static str),
+    /// An error occurred while handling Base64 encoding or decoding.
+    #[error("base64 decode error")]
+    Base64Decode(#[from] base64::DecodeError),
     /// An illegal arithmetic operation on a [`Time`] or [`Duration`].
     #[error("{0}")]
     IllegalTimeArithmetic(&'static str),
@@ -440,6 +446,12 @@ impl From<HpkeConfigId> for u8 {
     }
 }
 
+impl Distribution<HpkeConfigId> for Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> HpkeConfigId {
+        HpkeConfigId(rng.gen())
+    }
+}
+
 /// DAP protocol message representing an identifier for a DAP task.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TaskId([u8; Self::LEN]);
@@ -447,6 +459,13 @@ pub struct TaskId([u8; Self::LEN]);
 impl TaskId {
     /// LEN is the length of a task ID in bytes.
     pub const LEN: usize = 32;
+
+    pub fn from_base64_url_no_padding(encoded: &str) -> Result<Self, Error> {
+        let task_id_bytes: [u8; TaskId::LEN] = base64::decode_engine(encoded, &URL_SAFE_NO_PAD)?
+            .try_into()
+            .map_err(|_| Error::InvalidParameter("TaskID length incorrect"))?;
+        Ok(Self::from(task_id_bytes))
+    }
 }
 
 impl Debug for TaskId {

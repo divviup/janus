@@ -10,7 +10,7 @@ use janus_aggregator::{
     config::{BinaryConfig, CommonConfig},
     datastore::{self, Datastore},
     metrics::install_metrics_exporter,
-    task::Task,
+    task::{SerializedTask, Task},
     trace::install_trace_subscriber,
 };
 use janus_core::time::{Clock, RealClock};
@@ -58,6 +58,14 @@ enum Command {
         /// A YAML file containing a list of tasks to be written. Existing tasks (matching by task
         /// ID) will be overwritten.
         tasks_file: PathBuf,
+
+        /// If true, task parameters omitted from the YAML tasks file will be randomly generated.
+        #[clap(long, default_value = "false")]
+        generate_missing_parameters: bool,
+
+        /// Write the YAML representation of the tasks that are written to stdout.
+        #[clap(long, default_value = "false")]
+        echo_tasks: bool,
     },
 
     /// Create a datastore key and write it to a Kubernetes secret.
@@ -91,6 +99,8 @@ impl Command {
                 common_options,
                 kubernetes_secret_options,
                 tasks_file,
+                generate_missing_parameters,
+                echo_tasks,
             } => {
                 let kube_client = kube::Client::try_default()
                     .await
@@ -111,7 +121,16 @@ impl Command {
                         .await?,
                 )?;
 
-                provision_tasks(&datastore, tasks_file).await
+                let written_tasks =
+                    provision_tasks(&datastore, tasks_file, *generate_missing_parameters).await?;
+
+                if *echo_tasks {
+                    let tasks_yaml = serde_yaml::to_string(written_tasks.as_ref())
+                        .context("couldn't serialize tasks to YAML")?;
+                    println!("{tasks_yaml}");
+                }
+
+                Ok(())
             }
 
             Command::CreateDatastoreKey {
@@ -158,10 +177,13 @@ async fn write_schema(pool: &Pool) -> Result<()> {
     Ok(())
 }
 
-async fn provision_tasks<C: Clock>(datastore: &Datastore<C>, tasks_file: &Path) -> Result<()> {
+async fn provision_tasks<C: Clock>(
+    datastore: &Datastore<C>,
+    tasks_file: &Path,
+    generate_missing_parameters: bool,
+) -> Result<Arc<Vec<Task>>> {
     // Read tasks file.
-    info!("Reading tasks file");
-    let tasks: Vec<Task> = {
+    let tasks: Vec<SerializedTask> = {
         let task_file_contents = fs::read_to_string(tasks_file)
             .await
             .with_context(|| format!("couldn't read tasks file {:?}", tasks_file))?;
@@ -169,9 +191,22 @@ async fn provision_tasks<C: Clock>(datastore: &Datastore<C>, tasks_file: &Path) 
             .with_context(|| format!("couldn't parse tasks file {:?}", tasks_file))?
     };
 
-    // Write all tasks requested.
+    let tasks: Vec<Task> = tasks
+        .into_iter()
+        .map(|mut task| {
+            if generate_missing_parameters {
+                task.generate_missing_fields();
+            }
+
+            Task::try_from(task)
+        })
+        .collect::<Result<_, _>>()?;
+
     let tasks = Arc::new(tasks);
+
+    // Write all tasks requested.
     info!(task_count = %tasks.len(), "Writing tasks");
+
     datastore
         .run_tx(|tx| {
             let tasks = Arc::clone(&tasks);
@@ -180,7 +215,10 @@ async fn provision_tasks<C: Clock>(datastore: &Datastore<C>, tasks_file: &Path) 
                     // We attempt to delete the task, but ignore "task not found" errors since
                     // the task not existing is an OK outcome too.
                     match tx.delete_task(task.id()).await {
-                        Ok(_) | Err(datastore::Error::MutationTargetNotFound) => (),
+                        Ok(()) => {
+                            info!(task_id = %task.id(), "replacing existing task");
+                        }
+                        Err(datastore::Error::MutationTargetNotFound) => (),
                         err => err?,
                     }
 
@@ -190,7 +228,9 @@ async fn provision_tasks<C: Clock>(datastore: &Datastore<C>, tasks_file: &Path) 
             })
         })
         .await
-        .context("couldn't write tasks")
+        .context("couldn't write tasks")?;
+
+    Ok(tasks)
 }
 
 async fn fetch_datastore_keys(
@@ -363,10 +403,10 @@ mod tests {
         },
         config::CommonConfig,
         datastore::test_util::{ephemeral_datastore, ephemeral_db_handle},
-        task::{test_util::TaskBuilder, QueryType},
+        task::{test_util::TaskBuilder, QueryType, Task},
     };
     use janus_core::{task::VdafInstance, test_util::kubernetes, time::RealClock};
-    use janus_messages::Role;
+    use janus_messages::{Role, TaskId};
     use ring::aead::{UnboundKey, AES_128_GCM};
     use std::{
         collections::HashMap,
@@ -463,6 +503,10 @@ mod tests {
             .unwrap();
     }
 
+    fn task_hashmap_from_slice(tasks: Vec<Task>) -> HashMap<TaskId, Task> {
+        tasks.into_iter().map(|task| (*task.id(), task)).collect()
+    }
+
     #[tokio::test]
     async fn provision_tasks() {
         let tasks = Vec::from([
@@ -490,18 +534,191 @@ mod tests {
         let tasks_path = tasks_file.into_temp_path();
 
         // Run the program logic.
-        super::provision_tasks(&ds, &tasks_path).await.unwrap();
+        let written_tasks = super::provision_tasks(&ds, &tasks_path, false)
+            .await
+            .unwrap();
 
         // Verify that the expected tasks were written.
-        let want_tasks: HashMap<_, _> = tasks.into_iter().map(|task| (*task.id(), task)).collect();
+        let want_tasks = task_hashmap_from_slice(tasks);
+        let written_tasks = task_hashmap_from_slice(written_tasks.as_ref().clone());
+        let got_tasks = task_hashmap_from_slice(
+            ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+                .await
+                .unwrap(),
+        );
+        assert_eq!(want_tasks, got_tasks);
+        assert_eq!(want_tasks, written_tasks);
+    }
+
+    #[tokio::test]
+    async fn replace_task() {
+        let tasks = Vec::from([
+            TaskBuilder::new(
+                QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128Count,
+                Role::Leader,
+            )
+            .build(),
+            TaskBuilder::new(
+                QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128Sum { bits: 64 },
+                Role::Helper,
+            )
+            .build(),
+        ]);
+
+        let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
+
+        let mut tasks_file = NamedTempFile::new().unwrap();
+        tasks_file
+            .write_all(serde_yaml::to_string(&tasks).unwrap().as_ref())
+            .unwrap();
+
+        super::provision_tasks(&ds, &tasks_file.into_temp_path(), false)
+            .await
+            .unwrap();
+
+        // Construct a "new" task with a previously existing ID.
+        let replacement_task = TaskBuilder::new(
+            QueryType::FixedSize {
+                max_batch_size: 100,
+            },
+            VdafInstance::Prio3Aes128CountVec { length: 4 },
+            Role::Leader,
+        )
+        .with_id(*tasks[0].id())
+        .build();
+
+        let mut replacement_tasks_file = NamedTempFile::new().unwrap();
+        replacement_tasks_file
+            .write_all(
+                serde_yaml::to_string(&[&replacement_task])
+                    .unwrap()
+                    .as_ref(),
+            )
+            .unwrap();
+
+        let written_tasks =
+            super::provision_tasks(&ds, &replacement_tasks_file.into_temp_path(), false)
+                .await
+                .unwrap();
+        assert_eq!(written_tasks.len(), 1);
+        assert_eq!(written_tasks[0].id(), tasks[0].id());
+
+        // Verify that the expected tasks were written.
+        let got_tasks = task_hashmap_from_slice(
+            ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+                .await
+                .unwrap(),
+        );
+        let want_tasks = HashMap::from([
+            (*replacement_task.id(), replacement_task),
+            (*tasks[1].id(), tasks[1].clone()),
+        ]);
+
+        assert_eq!(want_tasks, got_tasks);
+    }
+
+    #[tokio::test]
+    async fn provision_task_with_generated_values() {
+        // YAML contains no task ID, VDAF verify keys, aggregator auth tokens, collector auth tokens
+        // or HPKE keys.
+        let serialized_task_yaml = r#"
+- aggregator_endpoints:
+  - https://leader
+  - https://helper
+  query_type: TimeInterval
+  vdaf: !Prio3Aes128Sum
+    bits: 2
+  role: Leader
+  vdaf_verify_keys:
+  max_batch_query_count: 1
+  task_expiration: 9000000000
+  min_batch_size: 10
+  time_precision: 300
+  tolerable_clock_skew: 600
+  input_share_aad_public_share_length_prefix: false
+  collector_hpke_config:
+    id: 23
+    kem_id: X25519HkdfSha256
+    kdf_id: HkdfSha256
+    aead_id: Aes128Gcm
+    public_key: 8lAqZ7OfNV2Gi_9cNE6J9WRmPbO-k1UPtu2Bztd0-yc
+  aggregator_auth_tokens: []
+  collector_auth_tokens: []
+  hpke_keys: []
+- aggregator_endpoints:
+  - https://leader
+  - https://helper
+  query_type: TimeInterval
+  vdaf: !Prio3Aes128Sum
+    bits: 2
+  role: Helper
+  vdaf_verify_keys:
+  max_batch_query_count: 1
+  task_expiration: 9000000000
+  min_batch_size: 10
+  time_precision: 300
+  tolerable_clock_skew: 600
+  input_share_aad_public_share_length_prefix: false
+  collector_hpke_config:
+    id: 23
+    kem_id: X25519HkdfSha256
+    kdf_id: HkdfSha256
+    aead_id: Aes128Gcm
+    public_key: 8lAqZ7OfNV2Gi_9cNE6J9WRmPbO-k1UPtu2Bztd0-yc
+  aggregator_auth_tokens: []
+  collector_auth_tokens: []
+  hpke_keys: []
+"#;
+
+        let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
+
+        let mut tasks_file = NamedTempFile::new().unwrap();
+        tasks_file
+            .write_all(serialized_task_yaml.as_bytes())
+            .unwrap();
+        let tasks_file_path = tasks_file.into_temp_path();
+
+        super::provision_tasks(
+            &ds,
+            &tasks_file_path,
+            // do not generate missing parameters
+            false,
+        )
+        .await
+        // Should fail because parameters are omitted from task YAML
+        .unwrap_err();
+
+        let written_tasks = super::provision_tasks(
+            &ds,
+            &tasks_file_path,
+            // generate missing parameters
+            true,
+        )
+        .await
+        .unwrap();
+
+        // Verify that the expected tasks were written.
         let got_tasks = ds
             .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
-            .unwrap()
-            .into_iter()
-            .map(|task| (*task.id(), task))
-            .collect();
-        assert_eq!(want_tasks, got_tasks);
+            .unwrap();
+
+        assert_eq!(got_tasks.len(), 2);
+
+        for task in &got_tasks {
+            match task.role() {
+                Role::Leader => assert_eq!(task.collector_auth_tokens().len(), 1),
+                Role::Helper => assert!(task.collector_auth_tokens().is_empty()),
+                role => panic!("unexpected role {role}"),
+            }
+        }
+
+        assert_eq!(
+            task_hashmap_from_slice(written_tasks.as_ref().clone()),
+            task_hashmap_from_slice(got_tasks)
+        );
     }
 
     #[tokio::test]

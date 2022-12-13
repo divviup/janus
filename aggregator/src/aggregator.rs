@@ -3261,8 +3261,7 @@ mod tests {
         },
         messages::{DurationExt, TimeExt},
         task::{
-            test_util::{generate_auth_token, TaskBuilder},
-            QueryType, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH,
+            test_util::TaskBuilder, QueryType, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH,
         },
     };
     use assert_matches::assert_matches;
@@ -4181,7 +4180,7 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/aggregate")
-            .header("DAP-Auth-Token", generate_auth_token().as_bytes())
+            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
             .header(
                 CONTENT_TYPE,
                 AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -6406,7 +6405,7 @@ mod tests {
         let (parts, body) = warp::test::request()
             .method("POST")
             .path("/collect")
-            .header("DAP-Auth-Token", generate_auth_token().as_bytes())
+            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
             .header(CONTENT_TYPE, CollectReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
@@ -6640,7 +6639,7 @@ mod tests {
         let mut response = warp::test::request()
             .method("POST")
             .path("/collect")
-            .header("DAP-Auth-Token", generate_auth_token().as_bytes())
+            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
             .header(CONTENT_TYPE, CollectReq::<TimeInterval>::MEDIA_TYPE)
             .body(req.get_encoded())
             .filter(&filter)
@@ -6779,7 +6778,7 @@ mod tests {
         let mut response = warp::test::request()
             .method("GET")
             .path(&format!("/collect_jobs/{}", collect_job_id))
-            .header("DAP-Auth-Token", generate_auth_token().as_bytes())
+            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
             .filter(&filter)
             .await
             .unwrap()
