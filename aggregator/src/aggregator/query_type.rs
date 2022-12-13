@@ -248,6 +248,10 @@ pub trait CollectableQueryType: AccumulableQueryType {
         Ok(batch_aggregations.into_iter().flatten().collect::<Vec<_>>())
     }
 
+    /// Acknowledges that a collection attempt has been made, allowing any query-type specific
+    /// updates to be made. For exmaple, a task using fixed-size queries might remove the given
+    /// batch to be removed from the list of batches ready to be returned by a `current-batch`
+    /// query.
     async fn acknowledge_collection<C: Clock>(
         tx: &Transaction<'_, C>,
         task_id: &TaskId,

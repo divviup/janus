@@ -1108,7 +1108,7 @@ impl Decode for FixedSizeQuery {
             }
             1 => Ok(FixedSizeQuery::CurrentBatch),
             _ => Err(CodecError::Other(
-                anyhow!("unexpected FixedSizeQueryTypevalue {}", query_type).into(),
+                anyhow!("unexpected FixedSizeQueryType value {}", query_type).into(),
             )),
         }
     }

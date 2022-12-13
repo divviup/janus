@@ -24,7 +24,6 @@ use crate::{
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     try_join, URL_SAFE_NO_PAD,
 };
-use anyhow::anyhow;
 use bytes::Bytes;
 use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
@@ -2040,7 +2039,13 @@ impl VdafOps {
                     let batch_identifier = Q::batch_identifier_for_query(tx, &task, req.query())
                         .await?
                         .ok_or_else(|| {
-                            datastore::Error::User(anyhow!("No batch ready for collection").into())
+                            datastore::Error::User(
+                                Error::BatchInvalid(
+                                    *task.id(),
+                                    "no batch ready for collection".to_string(),
+                                )
+                                .into(),
+                            )
                         })?;
 
                     // Check that the batch interval is valid for the task
