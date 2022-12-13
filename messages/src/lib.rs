@@ -5,7 +5,11 @@
 
 use self::query_type::{FixedSize, QueryType, TimeInterval};
 use anyhow::anyhow;
-use base64::{display::Base64Display, URL_SAFE_NO_PAD};
+use base64::{
+    alphabet::URL_SAFE,
+    display::Base64Display,
+    engine::fast_portable::{FastPortable, NO_PAD},
+};
 use derivative::Derivative;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
@@ -13,9 +17,12 @@ use prio::codec::{
     Encode,
 };
 use rand::{distributions::Standard, prelude::Distribution, Rng};
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Serialize, Serializer,
+};
 use std::{
-    fmt::{Debug, Display, Formatter},
+    fmt::{self, Debug, Display, Formatter},
     io::{Cursor, Read},
     str::FromStr,
 };
@@ -191,18 +198,14 @@ impl Debug for BatchId {
         write!(
             f,
             "BatchId({})",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
+            Base64Display::from(&self.0, &URL_SAFE_NO_PAD)
         )
     }
 }
 
 impl Display for BatchId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
-        )
+        write!(f, "{}", Base64Display::from(&self.0, &URL_SAFE_NO_PAD))
     }
 }
 
@@ -252,18 +255,14 @@ impl Debug for ReportId {
         write!(
             f,
             "ReportId({})",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
+            Base64Display::from(&self.0, &URL_SAFE_NO_PAD)
         )
     }
 }
 
 impl Display for ReportId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
-        )
+        write!(f, "{}", Base64Display::from(&self.0, &URL_SAFE_NO_PAD))
     }
 }
 
@@ -445,7 +444,7 @@ impl From<HpkeConfigId> for u8 {
 }
 
 /// DAP protocol message representing an identifier for a DAP task.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TaskId([u8; Self::LEN]);
 
 impl TaskId {
@@ -458,18 +457,14 @@ impl Debug for TaskId {
         write!(
             f,
             "TaskId({})",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
+            Base64Display::from(&self.0, &URL_SAFE_NO_PAD)
         )
     }
 }
 
 impl Display for TaskId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
-        )
+        write!(f, "{}", Base64Display::from(&self.0, &URL_SAFE_NO_PAD))
     }
 }
 
@@ -502,6 +497,53 @@ impl AsRef<[u8; Self::LEN]> for TaskId {
 impl Distribution<TaskId> for Standard {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> TaskId {
         TaskId(rng.gen())
+    }
+}
+
+/// This customized implementation serializes a [`TaskId`] as a base64url-encoded string, instead
+/// of as a byte array. This is more compact and ergonomic when serialized to YAML, and aligns with
+/// other uses of base64url encoding in DAP.
+impl Serialize for TaskId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let encoded = base64::encode_engine(self.as_ref(), &URL_SAFE_NO_PAD);
+        serializer.serialize_str(&encoded)
+    }
+}
+
+struct TaskIdVisitor;
+
+impl<'de> Visitor<'de> for TaskIdVisitor {
+    type Value = TaskId;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a base64url-encoded string that decodes to 32 bytes")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<TaskId, E>
+    where
+        E: de::Error,
+    {
+        let decoded = base64::decode_engine(value, &URL_SAFE_NO_PAD)
+            .map_err(|_| E::custom("invalid base64url value"))?;
+        let byte_array: [u8; TaskId::LEN] = decoded
+            .try_into()
+            .map_err(|_| E::custom("incorrect TaskId length"))?;
+        Ok(TaskId::from(byte_array))
+    }
+}
+
+/// This customized implementation deserializes a [`TaskId`] as a base64url-encoded string, instead
+/// of as a byte array. This is more compact and ergonomic when serialized to YAML, and aligns with
+/// other uses of base64url encoding in DAP.
+impl<'de> Deserialize<'de> for TaskId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(TaskIdVisitor)
     }
 }
 
@@ -717,7 +759,7 @@ impl Decode for HpkeCiphertext {
 
 /// DAP protocol message representing an HPKE public key.
 // TODO(#230): refactor HpkePublicKey & HpkeConfig to simplify usage
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HpkePublicKey(Vec<u8>);
 
 impl From<Vec<u8>> for HpkePublicKey {
@@ -748,6 +790,48 @@ impl Decode for HpkePublicKey {
 impl Debug for HpkePublicKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(&self.0))
+    }
+}
+
+/// This customized implementation serializes a [`HpkePublicKey`] as a base64url-encoded string,
+/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
+impl Serialize for HpkePublicKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let encoded = base64::encode_engine(self.as_ref(), &URL_SAFE_NO_PAD);
+        serializer.serialize_str(&encoded)
+    }
+}
+
+struct HpkePublicKeyVisitor;
+
+impl<'de> Visitor<'de> for HpkePublicKeyVisitor {
+    type Value = HpkePublicKey;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a base64url-encoded string")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<HpkePublicKey, E>
+    where
+        E: de::Error,
+    {
+        let decoded = base64::decode_engine(value, &URL_SAFE_NO_PAD)
+            .map_err(|_| E::custom("invalid base64url value"))?;
+        Ok(HpkePublicKey::from(decoded))
+    }
+}
+
+/// This customized implementation deserializes a [`HpkePublicKey`] as a base64url-encoded string,
+/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
+impl<'de> Deserialize<'de> for HpkePublicKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(HpkePublicKeyVisitor)
     }
 }
 
@@ -1727,18 +1811,14 @@ impl Debug for AggregationJobId {
         write!(
             f,
             "AggregationJobId({})",
-            Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+            Base64Display::from(&self.0, &URL_SAFE_NO_PAD)
         )
     }
 }
 
 impl Display for AggregationJobId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
-        )
+        write!(f, "{}", Base64Display::from(&self.0, &URL_SAFE_NO_PAD))
     }
 }
 
@@ -2169,6 +2249,8 @@ impl Decode for AggregateShareResp {
     }
 }
 
+const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -2183,6 +2265,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
+    use serde_test::{assert_de_tokens_error, assert_tokens, Token};
     use std::{fmt::Debug, io::Cursor};
 
     fn roundtrip_encoding<T>(vals_and_encodings: &[(T, &str)])
@@ -3861,5 +3944,34 @@ mod tests {
                 ),
             ),
         )])
+    }
+
+    #[test]
+    fn taskid_serde() {
+        assert_tokens(
+            &TaskId::from([0; 32]),
+            &[Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
+        );
+        assert_de_tokens_error::<TaskId>(
+            &[Token::Str("/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
+            "invalid base64url value",
+        );
+        assert_de_tokens_error::<TaskId>(
+            &[Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
+            "incorrect TaskId length",
+        );
+        assert_de_tokens_error::<TaskId>(
+            &[Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
+            "incorrect TaskId length",
+        );
+    }
+
+    #[test]
+    fn hpke_public_key_serde() {
+        assert_tokens(
+            &HpkePublicKey::from(Vec::from([1, 2, 3, 4])),
+            &[Token::Str("AQIDBA")],
+        );
+        assert_de_tokens_error::<HpkePublicKey>(&[Token::Str("/AAAA")], "invalid base64url value");
     }
 }

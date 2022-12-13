@@ -33,7 +33,7 @@ async-trait = "0.1"
 anyhow = "1"
 atty = "0.2"
 backoff = { version = "0.4.0", features = ["tokio"] }
-base64 = "0.13.1"
+base64 = "0.20.0"
 bytes = "1.3.0"
 chrono = "0.4"
 clap = { version = "4.0.27", features = ["derive", "env"] }
@@ -63,14 +63,14 @@ prometheus = { version = "0.13.3", optional = true }
 rand = { version = "0.8", features = ["min_const_gen"] }
 reqwest = { version = "0.11.13", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
-serde = { version = "1.0.148", features = ["derive"] }
+serde = { version = "1.0.150", features = ["derive"] }
 serde_json = "1.0.89"
 serde_yaml = "0.9.14"
 signal-hook = "0.3.14"
 signal-hook-tokio = { version = "0.3.1", features = ["futures-v0_3"] }
 testcontainers = { version = "0.14.0", optional = true }
 thiserror = "1.0"
-tokio = { version = "1.22", features = ["full", "tracing"] }
+tokio = { version = "1.23", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.7", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1", "array-impls"] }
 tonic = { version = "0.8", optional = true, features = ["tls", "tls-webpki-roots"] }  # keep this version in sync with what opentelemetry-otlp uses
 tracing = "0.1.37"
@@ -92,7 +92,8 @@ hyper = "0.14.23"
 # Kubernetes clusters. Enable the `test-util` feature for various utilities
 # used in unit tests.
 janus_aggregator = { workspace = true, features = ["kube-openssl", "test-util"] }
-mockito = "0.31.0"
+mockito = "0.31.1"
+serde_test = "1.0.150"
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
 trycmd = "0.14.5"

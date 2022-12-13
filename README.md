@@ -5,9 +5,19 @@
 [actions]: https://github.com/divviup/janus/actions?query=branch%3Amain
 
 Janus is an experimental implementation of the
-[Distributed Aggregation Protocol (DAP) specification](https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap).
+[Distributed Aggregation Protocol (DAP) specification](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/).
 
 Janus is currently in active development.
+
+## Draft versions and release branches
+
+The `main` branch is under continuous development and will usually be partway between DAP drafts. Janus uses stable release branches to maintain implementations of different DAP draft versions. Rust crates and container images with versions `x.y.z` are released from a corresponding `release/x.y` branch.
+
+| Git branch | Draft version | Conforms to protocol? | Status |
+| ---------- | ------------- | --------------------- | ------ |
+| `release/0.1` | [`draft-ietf-ppm-dap-01`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/) | Yes | Unmaintained as of December 7, 2022 |
+| `release/0.2` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) | Yes | Supported |
+| `main` | `draft-ietf-ppm-dap-03` (forthcoming) | Partially | Supported |
 
 ## Building
 

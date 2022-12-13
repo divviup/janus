@@ -5,7 +5,16 @@ use hpke_dispatch::{HpkeError, Kem, Keypair};
 use janus_messages::{
     HpkeAeadId, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
 };
-use std::{fmt::Debug, str::FromStr};
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Serialize, Serializer,
+};
+use std::{
+    fmt::{self, Debug},
+    str::FromStr,
+};
+
+use crate::URL_SAFE_NO_PAD;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -101,6 +110,48 @@ impl FromStr for HpkePrivateKey {
     }
 }
 
+/// This customized implementation serializes a [`HpkePrivateKey`] as a base64url-encoded string,
+/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
+impl Serialize for HpkePrivateKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let encoded = base64::encode_engine(self.as_ref(), &URL_SAFE_NO_PAD);
+        serializer.serialize_str(&encoded)
+    }
+}
+
+struct HpkePrivateKeyVisitor;
+
+impl<'de> Visitor<'de> for HpkePrivateKeyVisitor {
+    type Value = HpkePrivateKey;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a base64url-encoded string")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<HpkePrivateKey, E>
+    where
+        E: de::Error,
+    {
+        let decoded = base64::decode_engine(value, &URL_SAFE_NO_PAD)
+            .map_err(|_| E::custom("invalid base64url value"))?;
+        Ok(HpkePrivateKey::new(decoded))
+    }
+}
+
+/// This customized implementation deserializes a [`HpkePrivateKey`] as a base64url-encoded string,
+/// instead of as a byte array. This is more compact and ergonomic when serialized to YAML.
+impl<'de> Deserialize<'de> for HpkePrivateKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(HpkePrivateKeyVisitor)
+    }
+}
+
 /// Encrypt `plaintext` using the provided `recipient_config` and return the HPKE ciphertext. The
 /// provided `application_info` and `associated_data` are cryptographically bound to the ciphertext
 /// and are required to successfully decrypt it.
@@ -155,7 +206,7 @@ pub fn generate_hpke_config_and_private_key(
     kem_id: HpkeKemId,
     kdf_id: HpkeKdfId,
     aead_id: HpkeAeadId,
-) -> (HpkeConfig, HpkePrivateKey) {
+) -> HpkeKeypair {
     let Keypair {
         private_key,
         public_key,
@@ -163,7 +214,7 @@ pub fn generate_hpke_config_and_private_key(
         HpkeKemId::X25519HkdfSha256 => Kem::X25519HkdfSha256.gen_keypair(),
         HpkeKemId::P256HkdfSha256 => Kem::DhP256HkdfSha256.gen_keypair(),
     };
-    (
+    HpkeKeypair::new(
         HpkeConfig::new(
             hpke_config_id,
             kem_id,
@@ -175,13 +226,40 @@ pub fn generate_hpke_config_and_private_key(
     )
 }
 
+/// An HPKE configuration and its corresponding private key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HpkeKeypair {
+    config: HpkeConfig,
+    private_key: HpkePrivateKey, // uses unpadded base64url
+}
+
+impl HpkeKeypair {
+    /// Construct a keypair from its two halves.
+    pub fn new(config: HpkeConfig, private_key: HpkePrivateKey) -> HpkeKeypair {
+        HpkeKeypair {
+            config,
+            private_key,
+        }
+    }
+
+    /// Retrieve the HPKE configuration from this keypair.
+    pub fn config(&self) -> &HpkeConfig {
+        &self.config
+    }
+
+    /// Retrieve the HPKE private key from this keypair.
+    pub fn private_key(&self) -> &HpkePrivateKey {
+        &self.private_key
+    }
+}
+
 #[cfg(feature = "test-util")]
 pub mod test_util {
-    use super::{generate_hpke_config_and_private_key, HpkePrivateKey};
-    use janus_messages::{HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId};
+    use super::{generate_hpke_config_and_private_key, HpkeKeypair};
+    use janus_messages::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};
     use rand::random;
 
-    pub fn generate_test_hpke_config_and_private_key() -> (HpkeConfig, HpkePrivateKey) {
+    pub fn generate_test_hpke_config_and_private_key() -> HpkeKeypair {
         generate_hpke_config_and_private_key(
             HpkeConfigId::from(random::<u8>()),
             HpkeKemId::X25519HkdfSha256,
@@ -205,17 +283,23 @@ mod tests {
 
     #[test]
     fn exchange_message() {
-        let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
-        let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
+        let ciphertext = seal(
+            hpke_keypair.config(),
+            &application_info,
+            message,
+            associated_data,
+        )
+        .unwrap();
 
         let plaintext = open(
-            &hpke_config,
-            &hpke_private_key,
+            hpke_keypair.config(),
+            hpke_keypair.private_key(),
             &application_info,
             &ciphertext,
             associated_data,
@@ -227,20 +311,25 @@ mod tests {
 
     #[test]
     fn wrong_private_key() {
-        let (hpke_config, _) = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
-        let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
+        let ciphertext = seal(
+            hpke_keypair.config(),
+            &application_info,
+            message,
+            associated_data,
+        )
+        .unwrap();
 
         // Attempt to decrypt with different private key, and verify this fails.
-        let (wrong_hpke_config, wrong_hpke_private_key) =
-            generate_test_hpke_config_and_private_key();
+        let wrong_hpke_keypair = generate_test_hpke_config_and_private_key();
         open(
-            &wrong_hpke_config,
-            &wrong_hpke_private_key,
+            wrong_hpke_keypair.config(),
+            wrong_hpke_keypair.private_key(),
             &application_info,
             &ciphertext,
             associated_data,
@@ -250,19 +339,25 @@ mod tests {
 
     #[test]
     fn wrong_application_info() {
-        let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
-        let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
+        let ciphertext = seal(
+            hpke_keypair.config(),
+            &application_info,
+            message,
+            associated_data,
+        )
+        .unwrap();
 
         let wrong_application_info =
             HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Client, &Role::Leader);
         open(
-            &hpke_config,
-            &hpke_private_key,
+            hpke_keypair.config(),
+            hpke_keypair.private_key(),
             &wrong_application_info,
             &ciphertext,
             associated_data,
@@ -272,19 +367,25 @@ mod tests {
 
     #[test]
     fn wrong_associated_data() {
-        let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"a message that is secret";
         let associated_data = b"message associated data";
 
-        let ciphertext = seal(&hpke_config, &application_info, message, associated_data).unwrap();
+        let ciphertext = seal(
+            hpke_keypair.config(),
+            &application_info,
+            message,
+            associated_data,
+        )
+        .unwrap();
 
         // Sender and receiver must agree on AAD for each message.
         let wrong_associated_data = b"wrong associated data";
         open(
-            &hpke_config,
-            &hpke_private_key,
+            hpke_keypair.config(),
+            hpke_keypair.private_key(),
             &application_info,
             &ciphertext,
             wrong_associated_data,

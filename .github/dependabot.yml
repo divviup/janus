@@ -7,7 +7,7 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "main"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 20
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -19,20 +19,20 @@ updates:
       interval: "weekly"
     target-branch: "main"
 
-  # Manage dependencies on the release/0.1 branch
+  # Manage dependencies on the release/0.2 branch
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
-    target-branch: "release/0.1"
-    open-pull-requests-limit: 10
+    target-branch: "release/0.2"
+    open-pull-requests-limit: 20
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    target-branch: "release/0.1"
+    target-branch: "release/0.2"
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
-    target-branch: "release/0.1"
+    target-branch: "release/0.2"

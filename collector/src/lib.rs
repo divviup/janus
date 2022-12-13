@@ -20,7 +20,7 @@
 //! # async fn run() {
 //! // Supply DAP task paramenters.
 //! let task_id = random();
-//! let (hpke_config, private_key) = janus_core::hpke::generate_hpke_config_and_private_key(
+//! let hpke_keypair = janus_core::hpke::generate_hpke_config_and_private_key(
 //!     HpkeConfigId::from(0),
 //!     HpkeKemId::X25519HkdfSha256,
 //!     HpkeKdfId::HkdfSha256,
@@ -31,8 +31,8 @@
 //!     task_id,
 //!     "https://example.com/dap/".parse().unwrap(),
 //!     authentication_token,
-//!     hpke_config,
-//!     private_key,
+//!     hpke_keypair.config().clone(),
+//!     hpke_keypair.private_key().clone(),
 //! );
 //!
 //! // Supply a VDAF implementation, corresponding to this task.
@@ -644,13 +644,13 @@ mod tests {
         for<'a> Vec<u8>: From<&'a V::AggregateShare>,
     {
         let server_url = Url::parse(&mockito::server_url()).unwrap();
-        let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
         let parameters = CollectorParameters::new(
             random(),
             server_url,
             AuthenticationToken::from(b"token".to_vec()),
-            hpke_config,
-            hpke_private_key,
+            hpke_keypair.config().clone(),
+            hpke_keypair.private_key().clone(),
         )
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff());
@@ -745,13 +745,13 @@ mod tests {
 
     #[test]
     fn leader_endpoint_end_in_slash() {
-        let (hpke_config, hpke_private_key) = generate_test_hpke_config_and_private_key();
+        let hpke_keypair = generate_test_hpke_config_and_private_key();
         let collector_parameters = CollectorParameters::new(
             random(),
             "http://example.com/dap".parse().unwrap(),
             AuthenticationToken::from(b"token".to_vec()),
-            hpke_config.clone(),
-            hpke_private_key.clone(),
+            hpke_keypair.config().clone(),
+            hpke_keypair.private_key().clone(),
         );
 
         assert_eq!(
@@ -763,8 +763,8 @@ mod tests {
             random(),
             "http://example.com".parse().unwrap(),
             AuthenticationToken::from(b"token".to_vec()),
-            hpke_config,
-            hpke_private_key,
+            hpke_keypair.config().clone(),
+            hpke_keypair.private_key().clone(),
         );
 
         assert_eq!(

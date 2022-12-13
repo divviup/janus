@@ -15,7 +15,7 @@ kube-openssl = ["kube/openssl-tls"]
 anyhow = "1"
 async-trait = "0.1"
 backoff = { version = "0.4", features = ["tokio"] }
-base64 = "0.13.1"
+base64 = "0.20.0"
 futures = "0.3.25"
 hex = "0.4"
 janus_aggregator = { workspace = true, features = ["test-util"] }
@@ -29,7 +29,7 @@ portpicker = "0.1"
 prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
-serde = "1.0.147"
+serde = "1.0.150"
 serde_json = "1.0.89"
 testcontainers = "0.14.0"
 tokio = { version = "1", features = ["full", "tracing"] }

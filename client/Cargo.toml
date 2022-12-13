@@ -20,13 +20,13 @@ prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
 reqwest = { version = "0.11.13", default-features = false, features = ["rustls-tls", "json"] }
 thiserror = "1.0"
-tokio = { version = "1.22", features = ["full"] }
+tokio = { version = "1.23", features = ["full"] }
 tracing = "0.1.37"
 url = "2.3.1"
 
 [dev-dependencies]
 assert_matches = "1"
 janus_core = { workspace = true, features = ["test-util"]}
-mockito = "0.31.0"
+mockito = "0.31.1"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }
