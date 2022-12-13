@@ -13,7 +13,7 @@ on:
 
 jobs:
   janus_build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     permissions:
       id-token: "write"
       contents: "read"
@@ -28,6 +28,9 @@ jobs:
       run: |
         DIVVIUP_TS_INTEROP_CONTAINER= ${{ inputs.divviup_ts_interop_container }}
         echo "divviup_ts_interop_container=${DIVVIUP_TS_INTEROP_CONTAINER:-us-west2-docker.pkg.dev/divviup-artifacts-public/divviup-ts/divviup_ts_interop_client:dap-draft-02@sha256:dc4c111adce5719fef9d231f79aecb842c3f626d51363b04355e987d6a40aadc}" >> $GITHUB_OUTPUT
+    - name: Get OS version
+      id: os-version
+      run: echo "release=$(lsb_release --release --short)" >> $GITHUB_OUTPUT
     - uses: actions/checkout@v3
     # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry
     - id: "gcp-auth"
@@ -60,6 +63,8 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ steps.os-version.outputs.release }}
     - name: Build
       run: cargo test --no-run --locked --all-targets
     - name: Build minimal janus_messages
@@ -87,7 +92,7 @@ jobs:
       run: exit 1
   
   janus_lints:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: always
@@ -115,7 +120,7 @@ jobs:
       run: cargo doc --workspace
 
   janus_docker:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       DOCKER_BUILDKIT: 1
     steps:
@@ -132,7 +137,7 @@ jobs:
     - run: docker run --rm janus_cli --help
 
   janus_interop_docker:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     env:
       DOCKER_BUILDKIT: 1
     steps:
