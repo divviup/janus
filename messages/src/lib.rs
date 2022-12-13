@@ -5,7 +5,11 @@
 
 use self::query_type::{FixedSize, QueryType, TimeInterval};
 use anyhow::anyhow;
-use base64::{display::Base64Display, URL_SAFE_NO_PAD};
+use base64::{
+    alphabet::URL_SAFE,
+    display::Base64Display,
+    engine::fast_portable::{FastPortable, NO_PAD},
+};
 use derivative::Derivative;
 use num_enum::TryFromPrimitive;
 use prio::codec::{
@@ -191,18 +195,14 @@ impl Debug for BatchId {
         write!(
             f,
             "BatchId({})",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
+            Base64Display::from(&self.0, &URL_SAFE_NO_PAD)
         )
     }
 }
 
 impl Display for BatchId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
-        )
+        write!(f, "{}", Base64Display::from(&self.0, &URL_SAFE_NO_PAD))
     }
 }
 
@@ -252,18 +252,14 @@ impl Debug for ReportId {
         write!(
             f,
             "ReportId({})",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
+            Base64Display::from(&self.0, &URL_SAFE_NO_PAD)
         )
     }
 }
 
 impl Display for ReportId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
-        )
+        write!(f, "{}", Base64Display::from(&self.0, &URL_SAFE_NO_PAD))
     }
 }
 
@@ -458,18 +454,14 @@ impl Debug for TaskId {
         write!(
             f,
             "TaskId({})",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
+            Base64Display::from(&self.0, &URL_SAFE_NO_PAD)
         )
     }
 }
 
 impl Display for TaskId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
-        )
+        write!(f, "{}", Base64Display::from(&self.0, &URL_SAFE_NO_PAD))
     }
 }
 
@@ -1521,18 +1513,14 @@ impl Debug for AggregationJobId {
         write!(
             f,
             "AggregationJobId({})",
-            Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
+            Base64Display::from(&self.0, &URL_SAFE_NO_PAD)
         )
     }
 }
 
 impl Display for AggregationJobId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            Base64Display::with_config(&self.0, base64::URL_SAFE_NO_PAD)
-        )
+        write!(f, "{}", Base64Display::from(&self.0, &URL_SAFE_NO_PAD))
     }
 }
 
@@ -1962,6 +1950,8 @@ impl Decode for AggregateShareResp {
         })
     }
 }
+
+const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
 
 #[cfg(test)]
 mod tests {
