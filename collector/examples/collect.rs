@@ -11,7 +11,8 @@ use derivative::Derivative;
 use janus_collector::{default_http_client, Collector, CollectorParameters};
 use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
 use janus_messages::{
-    query_type::QueryType, BatchId, Duration, HpkeConfig, Interval, Query, TaskId, Time,
+    query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, Query, TaskId,
+    Time,
 };
 use prio::{
     codec::Decode,
@@ -359,7 +360,11 @@ async fn run(options: Options) -> Result<(), Error> {
         }
         (None, None, Some(batch_id)) => {
             let batch_id = *batch_id;
-            run_with_query(options, Query::new_fixed_size(batch_id)).await
+            run_with_query(
+                options,
+                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+            )
+            .await
         }
         _ => unreachable!(),
     }

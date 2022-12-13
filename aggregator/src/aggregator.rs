@@ -38,7 +38,7 @@ use janus_core::{
 };
 use janus_messages::{
     problem_type::DapProblemType,
-    query_type::{FixedSize, QueryType, TimeInterval},
+    query_type::{FixedSize, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
     AggregateShareAad, AggregateShareReq, AggregateShareResp, AggregationJobId, BatchSelector,
     CollectReq, CollectResp, HpkeCiphertext, HpkeConfig, HpkeConfigId, InputShareAad, Interval,
@@ -758,7 +758,7 @@ impl TaskAggregator {
         collect_job_id: Uuid,
     ) -> Result<Option<Vec<u8>>, Error> {
         self.vdaf_ops
-            .handle_get_collect_job(datastore, &self.task, Arc::new(collect_job_id))
+            .handle_get_collect_job(datastore, Arc::clone(&self.task), Arc::new(collect_job_id))
             .await
     }
 
@@ -768,7 +768,7 @@ impl TaskAggregator {
         collect_job_id: Uuid,
     ) -> Result<(), Error> {
         self.vdaf_ops
-            .handle_delete_collect_job(datastore, &self.task, collect_job_id)
+            .handle_delete_collect_job(datastore, Arc::clone(&self.task), Arc::new(collect_job_id))
             .await
     }
 
@@ -2024,29 +2024,42 @@ impl VdafOps {
         // that the task IDs match as this should be guaranteed by the caller.
         let req = Arc::new(CollectReq::<Q>::get_decoded(req_bytes)?);
         assert_eq!(req.task_id(), task.id());
-
-        let aggregation_param =
-            A::AggregationParam::get_decoded(req.as_ref().aggregation_parameter())?;
-
-        // Check that the batch interval is valid for the task
-        // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
-        if !Q::validate_collect_identifier(&task, req.query().batch_identifier()) {
-            return Err(Error::BatchInvalid(
-                *task.id(),
-                format!("{}", req.query().batch_identifier()),
-            ));
-        }
+        let aggregation_param = Arc::new(A::AggregationParam::get_decoded(
+            req.as_ref().aggregation_parameter(),
+        )?);
 
         Ok(datastore
             .run_tx(move |tx| {
-                let aggregation_param = aggregation_param.clone();
-                let task = task.clone();
-                let req = req.clone();
+                let (task, req, aggregation_param) = (
+                    Arc::clone(&task),
+                    Arc::clone(&req),
+                    Arc::clone(&aggregation_param),
+                );
                 Box::pin(async move {
+                    let batch_identifier = Q::batch_identifier_for_query(tx, &task, req.query())
+                        .await?
+                        .ok_or_else(|| {
+                            datastore::Error::User(
+                                Error::BatchInvalid(
+                                    *task.id(),
+                                    "no batch ready for collection".to_string(),
+                                )
+                                .into(),
+                            )
+                        })?;
+
+                    // Check that the batch interval is valid for the task
+                    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
+                    if !Q::validate_collect_identifier(&task, &batch_identifier) {
+                        return Err(datastore::Error::User(
+                            Error::BatchInvalid(*task.id(), format!("{}", batch_identifier)).into(),
+                        ));
+                    }
+
                     if let Some(collect_job_id) = tx
                         .get_collect_job_id::<L, Q, A>(
                             task.id(),
-                            req.query().batch_identifier(),
+                            &batch_identifier,
                             &aggregation_param,
                         )
                         .await?
@@ -2057,12 +2070,8 @@ impl VdafOps {
 
                     debug!(collect_request = ?req, "Cache miss, creating new collect job UUID");
                     let (_, report_count) = try_join!(
-                        Q::validate_query_count::<L, C, A>(
-                            tx,
-                            &task,
-                            req.query().batch_identifier(),
-                        ),
-                        Q::count_client_reports(tx, &task, req.query().batch_identifier()),
+                        Q::validate_query_count::<L, C, A>(tx, &task, &batch_identifier),
+                        Q::count_client_reports(tx, &task, &batch_identifier),
                     )?;
 
                     // Batch size must be validated while handling CollectReq and hence before
@@ -2078,8 +2087,8 @@ impl VdafOps {
                     tx.put_collect_job(&CollectJob::<L, Q, A>::new(
                         *req.task_id(),
                         collect_job_id,
-                        req.query().batch_identifier().clone(),
-                        aggregation_param,
+                        batch_identifier,
+                        aggregation_param.as_ref().clone(),
                         CollectJobState::<L, A>::Start,
                     ))
                     .await?;
@@ -2095,7 +2104,7 @@ impl VdafOps {
     async fn handle_get_collect_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        task: &Task,
+        task: Arc<Task>,
         collect_job_id: Arc<Uuid>,
     ) -> Result<Option<Vec<u8>>, Error> {
         match (task.query_type(), self) {
@@ -2204,12 +2213,12 @@ impl VdafOps {
     // return value is an encoded CollectResp<Q>
     async fn handle_get_collect_job_generic<
         const L: usize,
-        Q: QueryType,
+        Q: CollectableQueryType,
         A: vdaf::Aggregator<L>,
         C: Clock,
     >(
         datastore: &Datastore<C>,
-        task: &Task,
+        task: Arc<Task>,
         collect_job_id: Arc<Uuid>,
     ) -> Result<Option<Vec<u8>>, Error>
     where
@@ -2220,15 +2229,19 @@ impl VdafOps {
     {
         let collect_job = datastore
             .run_tx(|tx| {
-                let collect_job_id = Arc::clone(&collect_job_id);
+                let (task, collect_job_id) = (Arc::clone(&task), Arc::clone(&collect_job_id));
                 Box::pin(async move {
-                    tx.get_collect_job::<L, Q, A>(&collect_job_id)
+                    let collect_job = tx
+                        .get_collect_job::<L, Q, A>(&collect_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
                                 Error::UnrecognizedCollectJob(*collect_job_id).into(),
                             )
-                        })
+                        })?;
+                    Q::acknowledge_collection(tx, task.id(), collect_job.batch_identifier())
+                        .await?;
+                    Ok(collect_job)
                 })
             })
             .await?;
@@ -2306,8 +2319,8 @@ impl VdafOps {
     async fn handle_delete_collect_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
-        task: &Task,
-        collect_job_id: Uuid,
+        task: Arc<Task>,
+        collect_job_id: Arc<Uuid>,
     ) -> Result<(), Error> {
         match (task.query_type(), self) {
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
@@ -2316,7 +2329,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128Count,
                     _,
-                >(datastore, collect_job_id)
+                >(datastore, task, collect_job_id)
                 .await
             }
 
@@ -2326,7 +2339,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, collect_job_id)
+                >(datastore, task, collect_job_id)
                 .await
             }
 
@@ -2336,7 +2349,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, collect_job_id)
+                >(datastore, task, collect_job_id)
                 .await
             }
 
@@ -2346,7 +2359,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, collect_job_id)
+                >(datastore, task, collect_job_id)
                 .await
             }
 
@@ -2354,6 +2367,7 @@ impl VdafOps {
             (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
                 Self::handle_delete_collect_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
                     datastore,
+                    task,
                     collect_job_id,
                 )
                 .await
@@ -2365,7 +2379,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128Count,
                     _,
-                >(datastore, collect_job_id)
+                >(datastore, task, collect_job_id)
                 .await
             }
 
@@ -2375,7 +2389,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, collect_job_id)
+                >(datastore, task, collect_job_id)
                 .await
             }
 
@@ -2385,7 +2399,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, collect_job_id)
+                >(datastore, task, collect_job_id)
                 .await
             }
 
@@ -2395,7 +2409,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, collect_job_id)
+                >(datastore, task, collect_job_id)
                 .await
             }
 
@@ -2403,6 +2417,7 @@ impl VdafOps {
             (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
                 Self::handle_delete_collect_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
                     datastore,
+                    task,
                     collect_job_id,
                 )
                 .await
@@ -2412,12 +2427,13 @@ impl VdafOps {
 
     async fn handle_delete_collect_job_generic<
         const L: usize,
-        Q: QueryType,
+        Q: CollectableQueryType,
         A: vdaf::Aggregator<L>,
         C: Clock,
     >(
         datastore: &Datastore<C>,
-        collect_job_id: Uuid,
+        task: Arc<Task>,
+        collect_job_id: Arc<Uuid>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Send + Sync,
@@ -2427,16 +2443,18 @@ impl VdafOps {
     {
         datastore
             .run_tx(move |tx| {
+                let (task, collect_job_id) = (Arc::clone(&task), Arc::clone(&collect_job_id));
                 Box::pin(async move {
                     let collect_job = tx
                         .get_collect_job::<L, Q, A>(&collect_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
-                                Error::UnrecognizedCollectJob(collect_job_id).into(),
+                                Error::UnrecognizedCollectJob(*collect_job_id).into(),
                             )
                         })?;
-
+                    Q::acknowledge_collection(tx, task.id(), collect_job.batch_identifier())
+                        .await?;
                     if collect_job.state() != &CollectJobState::Deleted {
                         tx.update_collect_job::<L, Q, A>(
                             &collect_job.with_state(CollectJobState::Deleted),
