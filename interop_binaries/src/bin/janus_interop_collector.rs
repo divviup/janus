@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Context};
 use backoff::ExponentialBackoffBuilder;
-use base64::URL_SAFE_NO_PAD;
+use base64::{
+    alphabet::URL_SAFE,
+    engine::fast_portable::{FastPortable, NO_PAD},
+};
 use clap::{value_parser, Arg, Command};
 use janus_collector::{Collector, CollectorParameters};
 use janus_core::{
@@ -117,9 +120,9 @@ struct Handle(String);
 
 impl Distribution<Handle> for Standard {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Handle {
-        Handle(base64::encode_config(
+        Handle(base64::encode_engine(
             rng.gen::<[u8; 32]>(),
-            URL_SAFE_NO_PAD,
+            &URL_SAFE_NO_PAD,
         ))
     }
 }
@@ -135,7 +138,7 @@ async fn handle_add_task(
     keyring: &Mutex<HpkeConfigRegistry>,
     request: AddTaskRequest,
 ) -> anyhow::Result<HpkeConfig> {
-    let task_id_bytes = base64::decode_config(request.task_id, base64::URL_SAFE_NO_PAD)
+    let task_id_bytes = base64::decode_engine(request.task_id, &URL_SAFE_NO_PAD)
         .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
 
@@ -195,10 +198,10 @@ async fn handle_collect_start(
     collect_jobs: &Mutex<HashMap<Handle, CollectJobState>>,
     request: CollectStartRequest,
 ) -> anyhow::Result<Handle> {
-    let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
+    let task_id_bytes = base64::decode_engine(request.task_id, &URL_SAFE_NO_PAD)
         .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
-    let agg_param = base64::decode_config(request.agg_param, URL_SAFE_NO_PAD)
+    let agg_param = base64::decode_engine(request.agg_param, &URL_SAFE_NO_PAD)
         .context("invalid base64url content in \"agg_param\"")?;
 
     let tasks_guard = tasks.lock().await;
@@ -248,9 +251,9 @@ async fn handle_collect_start(
             ParsedQuery::TimeInterval(interval)
         }
         2 => {
-            let batch_id_bytes = base64::decode_config(
+            let batch_id_bytes = base64::decode_engine(
                 request.query.batch_id.context("\"batch_id\" was missing")?,
-                URL_SAFE_NO_PAD,
+                &URL_SAFE_NO_PAD,
             )?;
             ParsedQuery::FixedSize(
                 BatchId::get_decoded(&batch_id_bytes).context("invalid length of BatchId")?,
@@ -484,9 +487,9 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
                     Ok(collector_hpke_config) => AddTaskResponse {
                         status: SUCCESS,
                         error: None,
-                        collector_hpke_config: Some(base64::encode_config(
+                        collector_hpke_config: Some(base64::encode_engine(
                             collector_hpke_config.get_encoded(),
-                            URL_SAFE_NO_PAD,
+                            &URL_SAFE_NO_PAD,
                         )),
                     },
                     Err(e) => AddTaskResponse {
@@ -580,6 +583,8 @@ fn app() -> clap::Command {
             .help("Port number to listen on."),
     )
 }
+
+const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
