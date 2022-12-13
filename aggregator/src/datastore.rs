@@ -3193,9 +3193,9 @@ pub mod models {
     use crate::{
         aggregator::query_type::AccumulableQueryType,
         messages::{DurationExt, IntervalExt, TimeExt},
-        task,
+        task, URL_SAFE_NO_PAD,
     };
-    use base64::{display::Base64Display, URL_SAFE_NO_PAD};
+    use base64::display::Base64Display;
     use derivative::Derivative;
     use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance};
     use janus_messages::{
@@ -3519,18 +3519,14 @@ pub mod models {
             write!(
                 f,
                 "LeaseToken({})",
-                Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
+                Base64Display::from(&self.0, &URL_SAFE_NO_PAD)
             )
         }
     }
 
     impl Display for LeaseToken {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(
-                f,
-                "{}",
-                Base64Display::with_config(&self.0, URL_SAFE_NO_PAD)
-            )
+            write!(f, "{}", Base64Display::from(&self.0, &URL_SAFE_NO_PAD))
         }
     }
 
