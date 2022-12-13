@@ -1,7 +1,6 @@
 //! Shared parameters for a DAP task.
 
-use crate::SecretBytes;
-use base64::URL_SAFE_NO_PAD;
+use crate::{SecretBytes, URL_SAFE_NO_PAD};
 use derivative::Derivative;
 use janus_core::{
     hpke::HpkePrivateKey,
@@ -375,21 +374,21 @@ struct SerializedTask {
 
 impl Serialize for Task {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let task_id = base64::encode_config(self.task_id.as_ref(), URL_SAFE_NO_PAD);
+        let task_id = base64::encode_engine(self.task_id.as_ref(), &URL_SAFE_NO_PAD);
         let vdaf_verify_keys: Vec<_> = self
             .vdaf_verify_keys
             .iter()
-            .map(|key| base64::encode_config(key.as_ref(), URL_SAFE_NO_PAD))
+            .map(|key| base64::encode_engine(key.as_ref(), &URL_SAFE_NO_PAD))
             .collect();
         let aggregator_auth_tokens = self
             .aggregator_auth_tokens
             .iter()
-            .map(|token| base64::encode_config(token.as_bytes(), URL_SAFE_NO_PAD))
+            .map(|token| base64::encode_engine(token.as_bytes(), &URL_SAFE_NO_PAD))
             .collect();
         let collector_auth_tokens = self
             .collector_auth_tokens
             .iter()
-            .map(|token| base64::encode_config(token.as_bytes(), URL_SAFE_NO_PAD))
+            .map(|token| base64::encode_engine(token.as_bytes(), &URL_SAFE_NO_PAD))
             .collect();
         let hpke_keys = self
             .hpke_keys
@@ -427,7 +426,7 @@ impl<'de> Deserialize<'de> for Task {
 
         // task_id
         let task_id_bytes: [u8; TaskId::LEN] =
-            base64::decode_config(serialized_task.task_id, URL_SAFE_NO_PAD)
+            base64::decode_engine(serialized_task.task_id, &URL_SAFE_NO_PAD)
                 .map_err(D::Error::custom)?
                 .try_into()
                 .map_err(|_| D::Error::custom("task_id length incorrect"))?;
@@ -439,7 +438,7 @@ impl<'de> Deserialize<'de> for Task {
             .into_iter()
             .map(|key| {
                 Ok(SecretBytes::new(
-                    base64::decode_config(key, URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
+                    base64::decode_engine(key, &URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
                 ))
             })
             .collect::<Result<_, _>>()?;
@@ -456,7 +455,7 @@ impl<'de> Deserialize<'de> for Task {
             .into_iter()
             .map(|token| {
                 Ok(AuthenticationToken::from(
-                    base64::decode_config(token, URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
+                    base64::decode_engine(token, &URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
                 ))
             })
             .collect::<Result<_, _>>()?;
@@ -467,7 +466,7 @@ impl<'de> Deserialize<'de> for Task {
             .into_iter()
             .map(|token| {
                 Ok(AuthenticationToken::from(
-                    base64::decode_config(token, URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
+                    base64::decode_engine(token, &URL_SAFE_NO_PAD).map_err(D::Error::custom)?,
                 ))
             })
             .collect::<Result<_, _>>()?;
@@ -518,7 +517,7 @@ impl From<HpkeConfig> for SerializedHpkeConfig {
             kem_id: *cfg.kem_id(),
             kdf_id: *cfg.kdf_id(),
             aead_id: *cfg.aead_id(),
-            public_key: base64::encode_config(cfg.public_key().as_ref(), URL_SAFE_NO_PAD),
+            public_key: base64::encode_engine(cfg.public_key().as_ref(), &URL_SAFE_NO_PAD),
         }
     }
 }
@@ -528,7 +527,7 @@ impl TryFrom<SerializedHpkeConfig> for HpkeConfig {
 
     fn try_from(cfg: SerializedHpkeConfig) -> Result<Self, Self::Error> {
         let public_key =
-            HpkePublicKey::from(base64::decode_config(cfg.public_key, URL_SAFE_NO_PAD)?);
+            HpkePublicKey::from(base64::decode_engine(cfg.public_key, &URL_SAFE_NO_PAD)?);
         Ok(Self::new(
             cfg.id,
             cfg.kem_id,
@@ -550,7 +549,7 @@ impl From<(HpkeConfig, HpkePrivateKey)> for SerializedHpkeKeypair {
     fn from(keypair: (HpkeConfig, HpkePrivateKey)) -> Self {
         Self {
             config: keypair.0.into(),
-            private_key: base64::encode_config(keypair.1, URL_SAFE_NO_PAD),
+            private_key: base64::encode_engine(keypair.1, &URL_SAFE_NO_PAD),
         }
     }
 }
@@ -561,7 +560,10 @@ impl TryFrom<SerializedHpkeKeypair> for (HpkeConfig, HpkePrivateKey) {
     fn try_from(keypair: SerializedHpkeKeypair) -> Result<Self, Self::Error> {
         Ok((
             keypair.config.try_into()?,
-            HpkePrivateKey::new(base64::decode_config(keypair.private_key, URL_SAFE_NO_PAD)?),
+            HpkePrivateKey::new(base64::decode_engine(
+                keypair.private_key,
+                &URL_SAFE_NO_PAD,
+            )?),
         ))
     }
 }
@@ -573,7 +575,7 @@ pub mod test_util {
         AuthenticationToken, QueryType, SecretBytes, Task, VdafInstance,
         PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
-    use crate::messages::DurationExt;
+    use crate::{messages::DurationExt, URL_SAFE_NO_PAD};
     use janus_core::hpke::test_util::generate_test_hpke_config_and_private_key;
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
     use rand::{distributions::Standard, random, thread_rng, Rng};
@@ -776,7 +778,7 @@ pub mod test_util {
 
     pub fn generate_auth_token() -> AuthenticationToken {
         let buf: [u8; 16] = random();
-        base64::encode_config(buf, base64::URL_SAFE_NO_PAD)
+        base64::encode_engine(buf, &URL_SAFE_NO_PAD)
             .into_bytes()
             .into()
     }
