@@ -443,6 +443,12 @@ impl From<HpkeConfigId> for u8 {
     }
 }
 
+impl Distribution<HpkeConfigId> for Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> HpkeConfigId {
+        HpkeConfigId(rng.gen())
+    }
+}
+
 /// DAP protocol message representing an identifier for a DAP task.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TaskId([u8; Self::LEN]);
