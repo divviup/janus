@@ -1,4 +1,7 @@
-use base64::URL_SAFE_NO_PAD;
+use base64::{
+    alphabet::URL_SAFE,
+    engine::fast_portable::{FastPortable, NO_PAD},
+};
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
@@ -78,7 +81,7 @@ impl TypedValueParser for TaskIdValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let task_id_bytes: [u8; TaskId::LEN] = base64::decode_config(input, URL_SAFE_NO_PAD)
+        let task_id_bytes: [u8; TaskId::LEN] = base64::decode_engine(input, &URL_SAFE_NO_PAD)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
             .try_into()
             .map_err(|_| {
@@ -111,7 +114,7 @@ impl TypedValueParser for BatchIdValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let batch_id_bytes: [u8; BatchId::LEN] = base64::decode_config(input, URL_SAFE_NO_PAD)
+        let batch_id_bytes: [u8; BatchId::LEN] = base64::decode_engine(input, &URL_SAFE_NO_PAD)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
             .try_into()
             .map_err(|_| {
@@ -148,7 +151,7 @@ impl TypedValueParser for HpkeConfigValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let bytes = base64::decode_config(input, URL_SAFE_NO_PAD)
+        let bytes = base64::decode_engine(input, &URL_SAFE_NO_PAD)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?;
         HpkeConfig::get_decoded(&bytes)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))
@@ -178,7 +181,7 @@ impl TypedValueParser for PrivateKeyValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let bytes = base64::decode_config(input, URL_SAFE_NO_PAD)
+        let bytes = base64::decode_engine(input, &URL_SAFE_NO_PAD)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?;
         Ok(HpkePrivateKey::new(bytes))
     }
@@ -445,6 +448,8 @@ fn install_tracing_subscriber() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
 
 #[cfg(test)]
 mod tests {
