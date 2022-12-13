@@ -1,5 +1,8 @@
 use anyhow::Context;
-use base64::URL_SAFE_NO_PAD;
+use base64::{
+    alphabet::URL_SAFE,
+    engine::fast_portable::{FastPortable, NO_PAD},
+};
 use clap::Parser;
 use janus_aggregator::{
     aggregator::aggregator_filter,
@@ -80,12 +83,12 @@ async fn handle_add_task(
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
     let verify_key = SecretBytes::new(
-        base64::decode_config(request.verify_key, URL_SAFE_NO_PAD)
+        base64::decode_engine(request.verify_key, &URL_SAFE_NO_PAD)
             .context("invalid base64url content in \"verify_key\"")?,
     );
     let time_precision = Duration::from_seconds(request.time_precision);
     let collector_hpke_config_bytes =
-        base64::decode_config(request.collector_hpke_config, URL_SAFE_NO_PAD)
+        base64::decode_engine(request.collector_hpke_config, &URL_SAFE_NO_PAD)
             .context("invalid base64url content in \"collector_hpke_config\"")?;
     let collector_hpke_config = HpkeConfig::get_decoded(&collector_hpke_config_bytes)
         .context("could not parse collector HPKE configuration")?;
@@ -155,7 +158,7 @@ async fn handle_fetch_batch_ids(
     batch_id_storage: &Mutex<BatchIdStorage>,
     request: FetchBatchIdsRequest,
 ) -> anyhow::Result<Vec<BatchId>> {
-    let task_id_bytes = base64::decode_config(request.task_id, URL_SAFE_NO_PAD)
+    let task_id_bytes = base64::decode_engine(request.task_id, &URL_SAFE_NO_PAD)
         .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
 
@@ -242,7 +245,7 @@ fn make_filter(
                                 batch_ids
                                     .into_iter()
                                     .map(|batch_id| {
-                                        base64::encode_config(batch_id.as_ref(), URL_SAFE_NO_PAD)
+                                        base64::encode_engine(batch_id.as_ref(), &URL_SAFE_NO_PAD)
                                     })
                                     .collect(),
                             ),
@@ -321,6 +324,8 @@ impl BinaryConfig for Config {
         &mut self.common_config
     }
 }
+
+const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

@@ -1,5 +1,5 @@
+use crate::URL_SAFE_NO_PAD;
 use anyhow::anyhow;
-use base64::URL_SAFE_NO_PAD;
 use janus_aggregator::task::Task;
 use janus_client::{aggregator_hpke_config, default_http_client, Client, ClientParameters};
 use janus_core::{task::VdafInstance, time::RealClock};
@@ -275,7 +275,7 @@ where
             }
             ClientImplementation::Container(inner) => {
                 let task_id_encoded =
-                    base64::encode_config(&inner.task_id.get_encoded(), URL_SAFE_NO_PAD);
+                    base64::encode_engine(&inner.task_id.get_encoded(), &URL_SAFE_NO_PAD);
                 let upload_response = inner
                     .http_client
                     .post(format!(
