@@ -13,6 +13,13 @@ on:
 
 jobs:
   janus_build:
+    strategy:
+      matrix:
+        rust-toolchain: [
+          # MSRV from Cargo.toml
+          "1.65",
+          "stable",
+        ]
     runs-on: ubuntu-latest
     permissions:
       id-token: "write"
@@ -56,7 +63,9 @@ jobs:
       # `janus_core::test_util::kubernetes::EphemeralCluster`
       run: go install sigs.k8s.io/kind@v0.14.0
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust-toolchain }}
     - name: Install Protoc
       uses: arduino/setup-protoc@v1
       with:
@@ -92,6 +101,13 @@ jobs:
       run: exit 1
   
   janus_lints:
+    strategy:
+      matrix:
+        rust-toolchain: [
+          # MSRV from Cargo.toml
+          "1.65",
+          "stable",
+        ]
     runs-on: ubuntu-latest
     env:
       CARGO_INCREMENTAL: 0
@@ -103,8 +119,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@master
       with:
+        toolchain: ${{ matrix.rust-toolchain }}
         components: clippy, rustfmt
     - name: Install Protoc
       uses: arduino/setup-protoc@v1
