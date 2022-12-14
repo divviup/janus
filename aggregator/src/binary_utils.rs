@@ -128,6 +128,7 @@ pub fn datastore<C: Clock>(
     pool: Pool,
     clock: C,
     datastore_keys: &[String],
+    dry_run_mode: bool,
 ) -> Result<Datastore<C>> {
     let datastore_keys = datastore_keys
         .iter()
@@ -147,7 +148,12 @@ pub fn datastore<C: Clock>(
         return Err(anyhow!("datastore_keys is empty"));
     }
 
-    Ok(Datastore::new(pool, Crypter::new(datastore_keys), clock))
+    Ok(Datastore::new(
+        pool,
+        Crypter::new(datastore_keys),
+        clock,
+        dry_run_mode,
+    ))
 }
 
 /// Options for Janus binaries.
@@ -274,6 +280,7 @@ where
         pool,
         clock.clone(),
         &options.common_options().datastore_keys,
+        config.common_config().database.dry_run_mode,
     )
     .context("couldn't create datastore")?;
 
