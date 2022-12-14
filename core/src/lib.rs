@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 use base64::{
     alphabet::URL_SAFE,
     engine::fast_portable::{FastPortable, NO_PAD},
@@ -11,6 +13,7 @@ pub mod report_id;
 pub mod retries;
 pub mod task;
 #[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util;
 pub mod time;
 

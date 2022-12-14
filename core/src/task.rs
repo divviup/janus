@@ -28,11 +28,17 @@ pub enum VdafInstance {
     /// The `poplar1` VDAF. Support for this VDAF is experimental.
     Poplar1 { bits: usize },
 
+    /// A fake, no-op VDAF.
     #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     Fake,
+    /// A fake, no-op VDAF that always fails during initialization of input preparation.
     #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     FakeFailsPrepInit,
+    /// A fake, no-op VDAF that always fails when stepping input preparation.
     #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     FakeFailsPrepStep,
 }
 

@@ -254,6 +254,7 @@ impl HpkeKeypair {
 }
 
 #[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use super::{generate_hpke_config_and_private_key, HpkeKeypair};
     use janus_messages::{HpkeAeadId, HpkeConfigId, HpkeKdfId, HpkeKemId};

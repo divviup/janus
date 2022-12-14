@@ -39,6 +39,7 @@ pub fn http_request_exponential_backoff() -> ExponentialBackoff {
 /// An [`ExponentialBackoff`] with parameters tuned for tests where we don't want to be retrying
 /// for 10 minutes.
 #[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub fn test_http_request_exponential_backoff() -> ExponentialBackoff {
     ExponentialBackoff {
         initial_interval: Duration::from_nanos(1),

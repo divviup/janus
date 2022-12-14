@@ -539,6 +539,7 @@ impl<'de> Deserialize<'de> for Task {
 
 // This is public to allow use in integration tests.
 #[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use super::{
         AuthenticationToken, QueryType, SecretBytes, Task, VdafInstance,

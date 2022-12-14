@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(clippy::too_many_arguments)]
 
 use base64::{
