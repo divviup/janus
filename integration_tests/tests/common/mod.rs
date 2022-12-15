@@ -270,7 +270,7 @@ pub async fn submit_measurements_and_verify_aggregate(
         VdafInstance::Prio3Aes128Sum { bits } => {
             let vdaf = Prio3::new_aes128_sum(2, *bits).unwrap();
 
-            let measurements = iter::repeat_with(|| (random::<u128>() as u128) >> (128 - bits))
+            let measurements = iter::repeat_with(|| (random::<u128>()) >> (128 - bits))
                 .take(total_measurements)
                 .collect::<Vec<_>>();
             let aggregate_result = measurements.iter().sum();
