@@ -247,7 +247,7 @@ impl From<Task> for AggregatorAddTaskRequest {
             max_batch_size,
             time_precision: task.time_precision().as_seconds(),
             collector_hpke_config: base64::encode_engine(
-                &task.collector_hpke_config().get_encoded(),
+                task.collector_hpke_config().get_encoded(),
                 &URL_SAFE_NO_PAD,
             ),
             task_expiration: task.task_expiration().as_seconds_since_epoch(),
