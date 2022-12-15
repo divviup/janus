@@ -52,6 +52,8 @@
 //! # }
 //! ```
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use derivative::Derivative;
 use http_api_problem::HttpApiProblem;
@@ -288,6 +290,7 @@ impl<T> Collection<T> {
 }
 
 #[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 impl<T> Collection<T> {
     /// Creates a new [`Collection`].
     pub fn new(report_count: u64, aggregate_result: T) -> Self {
@@ -580,6 +583,7 @@ where
 }
 
 #[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use crate::{Collection, Collector, Error};
     use janus_messages::{query_type::QueryType, Query};

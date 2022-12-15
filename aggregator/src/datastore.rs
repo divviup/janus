@@ -275,6 +275,7 @@ impl<C: Clock> Datastore<C> {
 
     /// Write a task into the datastore.
     #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
         self.run_tx(|tx| {
             let task = task.clone();
@@ -1247,6 +1248,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID.
     #[cfg(feature = "test-util")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     #[tracing::instrument(skip(self), err)]
     pub async fn get_aggregation_jobs_for_task_id<
         const L: usize,
@@ -4674,6 +4676,7 @@ pub mod models {
 }
 
 #[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use super::{Crypter, Datastore};
     use deadpool_postgres::{Manager, Pool};

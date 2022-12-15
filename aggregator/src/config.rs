@@ -125,6 +125,7 @@ pub struct JobDriverConfig {
 }
 
 #[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use super::DbConfig;
     use crate::{
