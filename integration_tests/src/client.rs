@@ -279,7 +279,7 @@ where
             }
             ClientImplementation::Container(inner) => {
                 let task_id_encoded =
-                    base64::encode_engine(&inner.task_id.get_encoded(), &URL_SAFE_NO_PAD);
+                    base64::encode_engine(inner.task_id.get_encoded(), &URL_SAFE_NO_PAD);
                 let upload_response = inner
                     .http_client
                     .post(format!(

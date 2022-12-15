@@ -13,33 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    # We retry crate publishing to allow the newly published janus_messages to be visible on
-    # crates.io when we get around to publishing janus_core, janus_client and janus_collector.
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
     - name: "Publish janus_messages"
-      uses: nick-fields/retry@v2
-      with:
-        timeout_minutes: 10
-        max_attempts: 5
-        polling_interval_seconds: 30
-        command: cargo publish -p janus_messages
+      run: cargo publish --package janus_messages
     - name: "Publish janus_core"
-      uses: nick-fields/retry@v2
-      with:
-        timeout_minutes: 10
-        max_attempts: 5
-        polling_interval_seconds: 30
-        command: cargo publish -p janus_core
+      run: cargo publish --package janus_core
     - name: "Publish janus_client"
-      uses: nick-fields/retry@v2
-      with:
-        timeout_minutes: 10
-        max_attempts: 5
-        polling_interval_seconds: 30
-        command: cargo publish -p janus_client
+      run: cargo publish --package janus_client
     - name: "Publish janus_collector"
-      uses: nick-fields/retry@v2
-      with:
-        timeout_minutes: 10
-        max_attempts: 5
-        polling_interval_seconds: 30
-        command: cargo publish -p janus_collector
+      run: cargo publish --package janus_collector

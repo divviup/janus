@@ -273,7 +273,7 @@ struct JanusContainerBatchFetch {
 #[async_trait]
 impl BatchDiscovery for JanusContainerBatchFetch {
     async fn get_batch_ids(&self, task_id: &TaskId) -> anyhow::Result<Vec<BatchId>> {
-        let task_id_encoded = base64::encode_engine(&task_id.get_encoded(), &URL_SAFE_NO_PAD);
+        let task_id_encoded = base64::encode_engine(task_id.get_encoded(), &URL_SAFE_NO_PAD);
         let response = self
             .http_client
             .post(self.fetch_batch_ids_url.clone())
