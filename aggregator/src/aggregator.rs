@@ -41,7 +41,7 @@ use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
     AggregateShareAad, AggregateShareReq, AggregateShareResp, AggregationJobId, BatchSelector,
-    CollectReq, CollectResp, HpkeCiphertext, HpkeConfig, HpkeConfigId, InputShareAad, Interval,
+    CollectReq, CollectResp, HpkeCiphertext, HpkeConfigId, HpkeConfigList, InputShareAad, Interval,
     PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Report, ReportId,
     ReportIdChecksum, ReportShare, ReportShareError, Role, TaskId, Time,
 };
@@ -669,18 +669,19 @@ impl TaskAggregator {
         })
     }
 
-    fn handle_hpke_config(&self) -> HpkeConfig {
+    fn handle_hpke_config(&self) -> HpkeConfigList {
         // TODO(#239): consider deciding a better way to determine "primary" (e.g. most-recent) HPKE
         // config/key -- right now it's the one with the maximal config ID, but that will run into
         // trouble if we ever need to wrap-around, which we may since config IDs are effectively a u8.
-        self.task
+        HpkeConfigList::new(Vec::from([self
+            .task
             .hpke_keys()
             .iter()
             .max_by_key(|(&id, _)| id)
             .unwrap()
             .1
             .config()
-            .clone()
+            .clone()]))
     }
 
     async fn handle_upload<C: Clock>(
@@ -2969,7 +2970,7 @@ pub fn aggregator_filter<C: Clock>(
                     .await?;
                 http::Response::builder()
                     .header(CACHE_CONTROL, "max-age=86400")
-                    .header(CONTENT_TYPE, HpkeConfig::MEDIA_TYPE)
+                    .header(CONTENT_TYPE, HpkeConfigList::MEDIA_TYPE)
                     .body(hpke_config_bytes)
                     .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
             },
@@ -3327,7 +3328,7 @@ mod tests {
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, AggregateShareAad, AggregateShareReq, AggregateShareResp,
         BatchSelector, CollectReq, CollectResp, Duration, Extension, ExtensionType, HpkeCiphertext,
-        HpkeConfig, HpkeConfigId, InputShareAad, Interval, PartialBatchSelector,
+        HpkeConfig, HpkeConfigId, HpkeConfigList, InputShareAad, Interval, PartialBatchSelector,
         PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report, ReportId,
         ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
@@ -3443,20 +3444,28 @@ mod tests {
         );
         assert_eq!(
             response.headers().get(CONTENT_TYPE).unwrap(),
-            HpkeConfig::MEDIA_TYPE
+            HpkeConfigList::MEDIA_TYPE
         );
 
         let bytes = body::to_bytes(response.into_body()).await.unwrap();
-        let hpke_config = HpkeConfig::decode(&mut Cursor::new(&bytes)).unwrap();
-        assert_eq!(&hpke_config, want_hpke_key.config());
+        let hpke_config_list = HpkeConfigList::decode(&mut Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            hpke_config_list.hpke_configs(),
+            &[want_hpke_key.config().clone()]
+        );
 
         let application_info =
             HpkeApplicationInfo::new(&Label::InputShare, &Role::Client, &Role::Leader);
         let message = b"this is a message";
         let associated_data = b"some associated data";
 
-        let ciphertext =
-            hpke::seal(&hpke_config, &application_info, message, associated_data).unwrap();
+        let ciphertext = hpke::seal(
+            &hpke_config_list.hpke_configs()[0],
+            &application_info,
+            message,
+            associated_data,
+        )
+        .unwrap();
         let plaintext = hpke::open(
             want_hpke_key.config(),
             want_hpke_key.private_key(),

@@ -12,8 +12,8 @@ use janus_core::{
     time::{Clock, TimeExt},
 };
 use janus_messages::{
-    Duration, HpkeCiphertext, HpkeConfig, InputShareAad, PlaintextInputShare, Report,
-    ReportMetadata, Role, TaskId,
+    Duration, HpkeCiphertext, HpkeConfig, HpkeConfigList, InputShareAad, PlaintextInputShare,
+    Report, ReportMetadata, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -42,6 +42,8 @@ pub enum Error {
     Vdaf(#[from] prio::vdaf::VdafError),
     #[error("HPKE error: {0}")]
     Hpke(#[from] janus_core::hpke::Error),
+    #[error("unexpected server response {0}")]
+    UnexpectedServerResponse(&'static str),
 }
 
 static CLIENT_USER_AGENT: &str = concat!(
@@ -155,9 +157,21 @@ pub async fn aggregator_hpke_config(
         )));
     }
 
-    Ok(HpkeConfig::decode(&mut Cursor::new(
+    let hpke_configs = HpkeConfigList::decode(&mut Cursor::new(
         hpke_config_response.bytes().await?.as_ref(),
-    ))?)
+    ))?;
+
+    // TODO(#857): Pick one of the advertised HPKE configs. For now, just take the first one, since
+    // we support any HpkeConfig we can decode, and it should be the server's preferred one.
+    let hpke_config = hpke_configs
+        .hpke_configs()
+        .get(0)
+        .ok_or(Error::UnexpectedServerResponse(
+            "aggregator provided empty HpkeConfigList",
+        ))?
+        .clone();
+
+    Ok(hpke_config)
 }
 
 /// Construct a [`reqwest::Client`] suitable for use in a DAP [`Client`].

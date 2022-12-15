@@ -35,6 +35,9 @@ pub enum Error {
     /// An illegal arithmetic operation on a [`Time`] or [`Duration`].
     #[error("{0}")]
     IllegalTimeArithmetic(&'static str),
+    /// An unsupported algorithm identifier was encountered.
+    #[error("Unsupported {0} algorithm identifier {1}")]
+    UnsupportedAlgorithmIdentifier(&'static str, u16),
 }
 
 /// DAP protocol message representing a duration with a resolution of seconds.
@@ -572,8 +575,9 @@ impl Encode for HpkeKemId {
 impl Decode for HpkeKemId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeKemId value {}", val).into()))
+        Self::try_from(val).map_err(|_| {
+            CodecError::Other(Error::UnsupportedAlgorithmIdentifier("HpkeKemId", val).into())
+        })
     }
 }
 
@@ -598,8 +602,9 @@ impl Encode for HpkeKdfId {
 impl Decode for HpkeKdfId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeKdfId value {}", val).into()))
+        Self::try_from(val).map_err(|_| {
+            CodecError::Other(Error::UnsupportedAlgorithmIdentifier("HpkeKdfId", val).into())
+        })
     }
 }
 
@@ -624,8 +629,9 @@ impl Encode for HpkeAeadId {
 impl Decode for HpkeAeadId {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let val = u16::decode(bytes)?;
-        Self::try_from(val)
-            .map_err(|_| CodecError::Other(anyhow!("unexpected HpkeAeadId value {}", val).into()))
+        Self::try_from(val).map_err(|_| {
+            CodecError::Other(Error::UnsupportedAlgorithmIdentifier("HpkeAeadId", val).into())
+        })
     }
 }
 
@@ -852,9 +858,6 @@ pub struct HpkeConfig {
 }
 
 impl HpkeConfig {
-    /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-hpke-config";
-
     /// Construct a HPKE configuration message from its components.
     pub fn new(
         id: HpkeConfigId,
@@ -923,6 +926,36 @@ impl Decode for HpkeConfig {
             aead_id,
             public_key,
         })
+    }
+}
+
+/// DAP protocol message representing a list of HPKE configurations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HpkeConfigList(Vec<HpkeConfig>);
+
+impl HpkeConfigList {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-hpke-config-list";
+
+    /// Construct an HPKE configuration list.
+    pub fn new(hpke_configs: Vec<HpkeConfig>) -> Self {
+        Self(hpke_configs)
+    }
+
+    pub fn hpke_configs(&self) -> &[HpkeConfig] {
+        &self.0
+    }
+}
+
+impl Encode for HpkeConfigList {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        encode_u16_items(bytes, &(), &self.0);
+    }
+}
+
+impl Decode for HpkeConfigList {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self(decode_u16_items(&(), bytes)?))
     }
 }
 
@@ -2606,6 +2639,75 @@ mod tests {
                 ),
             ),
         ])
+    }
+
+    #[test]
+    fn decode_unknown_hpke_algorithms() {
+        let unknown_kem_id = hex::decode(concat!(
+            "0C",   // id
+            "9999", // kem_id
+            "0003", // kdf_id
+            "0002", // aead_id
+            concat!(
+                // public_key
+                "0000", // length
+                "",     // opaque data
+            )
+        ))
+        .unwrap();
+
+        let err = HpkeConfig::get_decoded(&unknown_kem_id).unwrap_err();
+        assert_matches!(
+            err,
+            CodecError::Other(e) => assert_matches!(
+                e.downcast::<super::Error>().unwrap().as_ref(),
+                &super::Error::UnsupportedAlgorithmIdentifier("HpkeKemId", 0x9999)
+            )
+        );
+
+        let unknown_kdf_id = hex::decode(concat!(
+            "0C",   // id
+            "0010", // kem_id
+            "9999", // kdf_id
+            "0002", // aead_id
+            concat!(
+                // public_key
+                "0000", // length
+                "",     // opaque data
+            )
+        ))
+        .unwrap();
+
+        let err = HpkeConfig::get_decoded(&unknown_kdf_id).unwrap_err();
+        assert_matches!(
+            err,
+            CodecError::Other(e) => assert_matches!(
+                e.downcast::<super::Error>().unwrap().as_ref(),
+                &super::Error::UnsupportedAlgorithmIdentifier("HpkeKdfId", 0x9999)
+            )
+        );
+
+        let unknown_aead_id = hex::decode(concat!(
+            "0C",   // id
+            "0010", // kem_id
+            "0003", // kdf_id
+            "9999", // aead_id
+            concat!(
+                // public_key
+                "0000", // length
+                "",     // opaque data
+            )
+        ))
+        .unwrap();
+
+        let err = HpkeConfig::get_decoded(&unknown_aead_id).unwrap_err();
+        assert_matches!(
+            err,
+            CodecError::Other(e) => assert_matches!(
+                e.downcast::<super::Error>().unwrap().as_ref(),
+                &super::Error::UnsupportedAlgorithmIdentifier("HpkeAeadId", 0x9999)
+            )
+        );
     }
 
     #[test]
