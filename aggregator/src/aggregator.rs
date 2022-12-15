@@ -102,9 +102,9 @@ pub enum Error {
     /// Error handling a message.
     #[error("invalid message: {0}")]
     Message(#[from] janus_messages::Error),
-    /// Corresponds to `reportTooLate`, §3.2
-    #[error("task {0}: report {1} too late: {2}")]
-    ReportTooLate(TaskId, ReportId, Time),
+    /// Corresponds to `reportRejected`, §3.2
+    #[error("task {0}: report {1} rejected: {2}")]
+    ReportRejected(TaskId, ReportId, Time),
     /// Corresponds to `reportTooEarly`, §3.2. A report was rejected becuase the timestamp is too
     /// far in the future, §4.3.2.
     #[error("task {0}: report {1} too early: {2}")]
@@ -188,7 +188,7 @@ impl Error {
             Error::InvalidConfiguration(_) => "invalid_configuration",
             Error::MessageDecode(_) => "message_decode",
             Error::Message(_) => "message",
-            Error::ReportTooLate(_, _, _) => "report_too_late",
+            Error::ReportRejected(_, _, _) => "report_rejected",
             Error::ReportTooEarly(_, _, _) => "report_too_early",
             Error::UnrecognizedMessage(_, _) => "unrecognized_message",
             Error::UnrecognizedTask(_) => "unrecognized_task",
@@ -1286,7 +1286,7 @@ impl VdafOps {
         // Reject reports after a task has expired.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if report.metadata().time().is_after(task.task_expiration()) {
-            return Err(Error::ReportTooLate(
+            return Err(Error::ReportRejected(
                 *report.task_id(),
                 *report.metadata().id(),
                 *report.metadata().time(),
@@ -1387,10 +1387,10 @@ impl VdafOps {
                     )?;
 
                     // Reject reports whose report IDs have been seen before.
+                    // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-16
                     if existing_client_report.is_some() {
-                        // TODO(#34): change this error type.
                         return Err(datastore::Error::User(
-                            Error::ReportTooLate(
+                            Error::ReportRejected(
                                 *stored_report.task_id(),
                                 *stored_report.metadata().id(),
                                 *stored_report.metadata().time(),
@@ -1401,10 +1401,10 @@ impl VdafOps {
 
                     // Reject reports whose timestamps fall into a batch interval that has already
                     // been collected.
-                    // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
+                    // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-17
                     if !conflicting_collect_jobs.is_empty() {
                         return Err(datastore::Error::User(
-                            Error::ReportTooLate(
+                            Error::ReportRejected(
                                 *stored_report.task_id(),
                                 *stored_report.metadata().id(),
                                 *stored_report.metadata().time(),
@@ -2820,9 +2820,10 @@ where
                     Err(Error::MessageDecode(_)) => {
                         build_problem_details_response(DapProblemType::UnrecognizedMessage, None)
                     }
-                    Err(Error::ReportTooLate(task_id, _, _)) => {
-                        build_problem_details_response(DapProblemType::ReportTooLate, Some(task_id))
-                    }
+                    Err(Error::ReportRejected(task_id, _, _)) => build_problem_details_response(
+                        DapProblemType::ReportRejected,
+                        Some(task_id),
+                    ),
                     Err(Error::UnrecognizedMessage(task_id, _)) => {
                         build_problem_details_response(DapProblemType::UnrecognizedMessage, task_id)
                     }
@@ -3610,8 +3611,7 @@ mod tests {
             .unwrap()
             .is_empty());
 
-        // Verify that we reject duplicate reports with the reportTooLate type.
-        // TODO(#34): change this error type.
+        // Verify that we reject duplicate reports with the reportRejected type.
         let mut response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
             .unwrap();
@@ -3622,9 +3622,9 @@ mod tests {
             problem_details,
             json!({
                 "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:reportTooLate",
-                "title": "Report could not be processed because it arrived too late.",
-                "detail": "Report could not be processed because it arrived too late.",
+                "type": "urn:ietf:params:ppm:dap:error:reportRejected",
+                "title": "Report could not be processed.",
+                "detail": "Report could not be processed.",
                 "instance": "..",
                 "taskid": format!("{}", report.task_id()),
             })
@@ -3752,9 +3752,9 @@ mod tests {
             problem_details,
             json!({
                 "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:reportTooLate",
-                "title": "Report could not be processed because it arrived too late.",
-                "detail": "Report could not be processed because it arrived too late.",
+                "type": "urn:ietf:params:ppm:dap:error:reportRejected",
+                "title": "Report could not be processed.",
+                "detail": "Report could not be processed.",
                 "instance": "..",
                 "taskid": format!("{}", report_2.task_id()),
             })
@@ -3950,8 +3950,7 @@ mod tests {
         assert_eq!(report.metadata(), got_report.metadata());
 
         // should reject duplicate reports.
-        // TODO(#34): change this error type.
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportTooLate(task_id, stale_report_id, stale_time)) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportRejected(task_id, stale_report_id, stale_time)) => {
             assert_eq!(&task_id, report.task_id());
             assert_eq!(report.metadata().id(), &stale_report_id);
             assert_eq!(report.metadata().time(), &stale_time);
@@ -4095,7 +4094,7 @@ mod tests {
             .unwrap();
 
         // Try to upload the report, verify that we get the expected error.
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err(), Error::ReportTooLate(err_task_id, err_report_id, err_time) => {
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err(), Error::ReportRejected(err_task_id, err_report_id, err_time) => {
             assert_eq!(report.task_id(), &err_task_id);
             assert_eq!(report.metadata().id(), &err_report_id);
             assert_eq!(report.metadata().time(), &err_time);
@@ -8028,7 +8027,7 @@ mod tests {
             DapProblemType::MissingTaskId,
             DapProblemType::UnrecognizedAggregationJob,
             DapProblemType::OutdatedConfig,
-            DapProblemType::ReportTooLate,
+            DapProblemType::ReportRejected,
             DapProblemType::ReportTooEarly,
             DapProblemType::BatchInvalid,
             DapProblemType::InvalidBatchSize,
@@ -8074,8 +8073,8 @@ mod tests {
         let test_cases = [
             TestCase::new(Box::new(|| Error::InvalidConfiguration("test")), None),
             TestCase::new(
-                Box::new(|| Error::ReportTooLate(random(), random(), RealClock::default().now())),
-                Some(DapProblemType::ReportTooLate),
+                Box::new(|| Error::ReportRejected(random(), random(), RealClock::default().now())),
+                Some(DapProblemType::ReportRejected),
             ),
             TestCase::new(
                 Box::new(|| Error::UnrecognizedMessage(Some(random()), "test")),
