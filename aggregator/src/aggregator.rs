@@ -61,7 +61,6 @@ use prio::{
     },
 };
 use reqwest::Client;
-use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     convert::Infallible,
@@ -2753,26 +2752,30 @@ impl DapProblemTypeExt for DapProblemType {
 /// The media type for problem details formatted as a JSON document, per RFC 7807.
 static PROBLEM_DETAILS_JSON_MEDIA_TYPE: &str = "application/problem+json";
 
-/// Construct an error response in accordance with §3.2.
-// TODO(https://github.com/ietf-wg-ppm/draft-ietf-ppm-dap/issues/209): The handling of the instance,
-// title, detail, and taskid fields are subject to change.
+/// Construct an error response in accordance with
+/// https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-3.2.
 fn build_problem_details_response(error_type: DapProblemType, task_id: Option<TaskId>) -> Response {
     let status = error_type.http_status();
 
+    let mut problem_document = serde_json::Map::from_iter(
+        [
+            ("type", serde_json::Value::from(error_type.type_uri())),
+            ("title", serde_json::Value::from(error_type.description())),
+            ("status", serde_json::Value::from(status.as_u16())),
+        ]
+        .map(|(k, v)| (k.to_string(), v)),
+    );
+
+    if let Some(task_id) = task_id {
+        problem_document.insert(
+            "taskid".to_string(),
+            serde_json::Value::from(format!("{task_id}")),
+        );
+    }
+
     warp::reply::with_status(
         warp::reply::with_header(
-            warp::reply::json(&json!({
-                "type": error_type.type_uri(),
-                "title": error_type.description(),
-                "status": status.as_u16(),
-                "detail": error_type.description(),
-                // The base URI is either "[leader]/upload", "[aggregator]/aggregate",
-                // "[helper]/aggregate_share", or "[leader]/collect". Relative URLs are allowed in
-                // the instance member, thus ".." will always refer to the aggregator's endpoint,
-                // as required by §3.2.
-                "instance": "..",
-                "taskid": task_id.map(|tid| format!("{}", tid)),
-            })),
+            warp::reply::json(&problem_document),
             http::header::CONTENT_TYPE,
             PROBLEM_DETAILS_JSON_MEDIA_TYPE,
         ),
@@ -3397,10 +3400,6 @@ mod tests {
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:missingTaskID",
                 "title": "HPKE configuration was requested without specifying a task ID.",
-                "detail": "HPKE configuration was requested without specifying a task ID.",
-                "instance": "..",
-                // TODO(#545) problem document shouldn't include taskid key
-                "taskid": serde_json::Value::Null,
             })
         );
 
@@ -3423,8 +3422,6 @@ mod tests {
                 "status": 404u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
-                "detail": "An endpoint received a message with an unknown task ID.",
-                "instance": "..",
                 "taskid": format!("{unknown_task_id}"),
             })
         );
@@ -3633,8 +3630,6 @@ mod tests {
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:reportRejected",
                 "title": "Report could not be processed.",
-                "detail": "Report could not be processed.",
-                "instance": "..",
                 "taskid": format!("{}", report.task_id()),
             })
         );
@@ -3659,8 +3654,6 @@ mod tests {
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
-                "detail": "The message type for a response was incorrect or the payload was malformed.",
-                "instance": "..",
                 "taskid": format!("{}", report.task_id()),
             })
         );
@@ -3699,8 +3692,6 @@ mod tests {
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:outdatedConfig",
                 "title": "The message was generated using an outdated configuration.",
-                "detail": "The message was generated using an outdated configuration.",
-                "instance": "..",
                 "taskid": format!("{}", report.task_id()),
             })
         );
@@ -3731,8 +3722,6 @@ mod tests {
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:reportTooEarly",
                 "title": "Report could not be processed because it arrived too early.",
-                "detail": "Report could not be processed because it arrived too early.",
-                "instance": "..",
                 "taskid": format!("{}", report.task_id()),
             })
         );
@@ -3763,8 +3752,6 @@ mod tests {
                 "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:reportRejected",
                 "title": "Report could not be processed.",
-                "detail": "Report could not be processed.",
-                "instance": "..",
                 "taskid": format!("{}", report_2.task_id()),
             })
         );
@@ -3866,8 +3853,6 @@ mod tests {
                 "status": 404,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
-                "detail": "An endpoint received a message with an unknown task ID.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -4162,8 +4147,6 @@ mod tests {
                 "status": 404,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
-                "detail": "An endpoint received a message with an unknown task ID.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -4243,8 +4226,6 @@ mod tests {
                 "status": want_status,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "detail": "The request's authorization is not valid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -4273,8 +4254,6 @@ mod tests {
                 "status": want_status,
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "detail": "The request's authorization is not valid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -4860,8 +4839,6 @@ mod tests {
                 "status": want_status,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
-                "detail": "The message type for a response was incorrect or the payload was malformed.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -5897,8 +5874,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
-                "detail": "The message type for a response was incorrect or the payload was malformed.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6170,8 +6145,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
-                "detail": "The message type for a response was incorrect or the payload was malformed.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6323,8 +6296,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
-                "detail": "The message type for a response was incorrect or the payload was malformed.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6432,8 +6403,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
-                "detail": "The message type for a response was incorrect or the payload was malformed.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6482,8 +6451,6 @@ mod tests {
                 "status": StatusCode::NOT_FOUND.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
-                "detail": "An endpoint received a message with an unknown task ID.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6540,8 +6507,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
                 "title": "The batch implied by the query is invalid.",
-                "detail": "The batch implied by the query is invalid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6600,9 +6565,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
                 "title": "The message type for a response was incorrect or the payload was malformed.",
-                "detail": "The message type for a response was incorrect or the payload was malformed.",
-                "instance": "..",
-                "taskid": serde_json::Value::Null,
             })
         );
     }
@@ -6659,8 +6621,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
                 "title": "The number of reports included in the batch is invalid.",
-                "detail": "The number of reports included in the batch is invalid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6715,8 +6675,6 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "detail": "The request's authorization is not valid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6746,8 +6704,6 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "detail": "The request's authorization is not valid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6773,8 +6729,6 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "detail": "The request's authorization is not valid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6852,8 +6806,6 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "detail": "The request's authorization is not valid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6881,8 +6833,6 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "detail": "The request's authorization is not valid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -6906,8 +6856,6 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "detail": "The request's authorization is not valid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -7193,8 +7141,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
                 "title": "The batch described by the query has been queried too many times.",
-                "detail": "The batch described by the query has been queried too many times.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -7305,8 +7251,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
                 "title": "The queried batch overlaps with a previously queried batch.",
-                "detail": "The queried batch overlaps with a previously queried batch.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -7457,8 +7401,6 @@ mod tests {
                 "status": StatusCode::NOT_FOUND.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
-                "detail": "An endpoint received a message with an unknown task ID.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -7517,8 +7459,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
                 "title": "The batch implied by the query is invalid.",
-                "detail": "The batch implied by the query is invalid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -7579,8 +7519,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
                 "title": "The number of reports included in the batch is invalid.",
-                "detail": "The number of reports included in the batch is invalid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -7711,8 +7649,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:invalidBatchSize",
                 "title": "The number of reports included in the batch is invalid.",
-                "detail": "The number of reports included in the batch is invalid.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             })
         );
@@ -7772,8 +7708,6 @@ mod tests {
                     "status": StatusCode::BAD_REQUEST.as_u16(),
                     "type": "urn:ietf:params:ppm:dap:error:batchMismatch",
                     "title": "Leader and helper disagree on reports aggregated in a batch.",
-                    "detail": "Leader and helper disagree on reports aggregated in a batch.",
-                    "instance": "..",
                     "taskid": format!("{}", task.id()),
                 })
             );
@@ -7915,8 +7849,6 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
                 "title": "The queried batch overlaps with a previously queried batch.",
-                "detail": "The queried batch overlaps with a previously queried batch.",
-                "instance": "..",
                 "taskid": format!("{}", task.id()),
             }),
         );
@@ -7973,8 +7905,6 @@ mod tests {
                     "status": StatusCode::BAD_REQUEST.as_u16(),
                     "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
                     "title": "The batch described by the query has been queried too many times.",
-                    "detail": "The batch described by the query has been queried too many times.",
-                    "instance": "..",
                     "taskid": format!("{}", task.id()),
                 })
             );
