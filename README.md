@@ -17,7 +17,7 @@ The `main` branch is under continuous development and will usually be partway be
 | ---------- | ------------- | --------------------- | ------ |
 | `release/0.1` | [`draft-ietf-ppm-dap-01`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/01/) | Yes | Unmaintained as of December 7, 2022 |
 | `release/0.2` | [`draft-ietf-ppm-dap-02`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/02/) | Yes | Supported |
-| `main` | `draft-ietf-ppm-dap-03` (forthcoming) | Partially | Supported |
+| `main` | [`draft-ietf-ppm-dap-03`](https://datatracker.ietf.org/doc/draft-ietf-ppm-dap/03/) | [Partially](https://github.com/divviup/janus/milestone/2) | Supported |
 
 ## Building
 
