@@ -8,4 +8,4 @@
 [docs badge]: https://img.shields.io/badge/docs.rs-rustdoc-green
 [docs.rs]: https://docs.rs/janus_core/
 
-`janus_core` contains type definitions and support code used in various Janus targets. It should not be depended on directly. `janus_core` is published to crates.io by a GitHub Action that runs when a `janus` release is created.
+`janus_core` contains type definitions and support code used in various [Janus](https://github.com/divviup/janus) targets. It should not be depended on directly. `janus_core` is published to crates.io by a GitHub Action that runs when a `janus` release is created.
