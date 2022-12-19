@@ -11,7 +11,8 @@ use derivative::Derivative;
 use janus_collector::{default_http_client, Collector, CollectorParameters};
 use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
 use janus_messages::{
-    query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, Query, TaskId,
+    query_type::{FixedSize, QueryType, TimeInterval},
+    BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId,
     Time,
 };
 use prio::{
@@ -316,10 +317,18 @@ struct Options {
     #[clap(
         long,
         value_parser = BatchIdValueParser::new(),
-        conflicts_with_all = ["batch_interval_start", "batch_interval_duration"],
+        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "current_batch"],
         help_heading = "Collect Request Parameters (Fixed Size)",
     )]
     batch_id: Option<BatchId>,
+    /// Have the aggregator select a batch that has not yet been collected
+    #[clap(
+        long,
+        action = ArgAction::SetTrue,
+        conflicts_with_all = ["batch_interval_start", "batch_interval_duration", "batch_id"],
+        help_heading = "Collect Request Parameters (Fixed Size)",
+    )]
+    current_batch: bool,
 }
 
 #[tokio::main]
@@ -349,8 +358,9 @@ async fn run(options: Options) -> Result<(), Error> {
         &options.batch_interval_start,
         &options.batch_interval_duration,
         &options.batch_id,
+        options.current_batch,
     ) {
-        (Some(batch_interval_start), Some(batch_interval_duration), None) => {
+        (Some(batch_interval_start), Some(batch_interval_duration), None, false) => {
             let batch_interval = Interval::new(
                 Time::from_seconds_since_epoch(*batch_interval_start),
                 Duration::from_seconds(*batch_interval_duration),
@@ -358,7 +368,7 @@ async fn run(options: Options) -> Result<(), Error> {
             .map_err(|err| Error::Anyhow(err.into()))?;
             run_with_query(options, Query::new_time_interval(batch_interval)).await
         }
-        (None, None, Some(batch_id)) => {
+        (None, None, Some(batch_id), false) => {
             let batch_id = *batch_id;
             run_with_query(
                 options,
@@ -366,11 +376,17 @@ async fn run(options: Options) -> Result<(), Error> {
             )
             .await
         }
+        (None, None, None, true) => {
+            run_with_query(options, Query::new_fixed_size(FixedSizeQuery::CurrentBatch)).await
+        }
         _ => unreachable!(),
     }
 }
 
-async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Result<(), Error> {
+async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Result<(), Error>
+where
+    Q: QueryTypeExt,
+{
     let parameters = CollectorParameters::new(
         options.task_id,
         options.leader,
@@ -422,7 +438,7 @@ async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Resu
     }
 }
 
-async fn run_collection_generic<V: vdaf::Collector, Q: QueryType>(
+async fn run_collection_generic<V: vdaf::Collector, Q: QueryTypeExt>(
     parameters: CollectorParameters,
     vdaf: V,
     http_client: reqwest::Client,
@@ -435,8 +451,14 @@ where
 {
     let collector = Collector::new(parameters, vdaf, http_client);
     let collection = collector.collect(query, agg_param).await?;
-    println!("Aggregation result: {:?}", collection.aggregate_result());
+    if !Q::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
+        println!(
+            "Batch: {}",
+            Q::format_partial_batch_selector(collection.partial_batch_selector())
+        );
+    }
     println!("Number of reports: {}", collection.report_count());
+    println!("Aggregation result: {:?}", collection.aggregate_result());
     Ok(())
 }
 
@@ -455,6 +477,31 @@ fn install_tracing_subscriber() -> anyhow::Result<()> {
 }
 
 const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
+
+trait QueryTypeExt: QueryType {
+    const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool;
+
+    fn format_partial_batch_selector(partial_batch_selector: &PartialBatchSelector<Self>)
+        -> String;
+}
+
+impl QueryTypeExt for TimeInterval {
+    const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = true;
+
+    fn format_partial_batch_selector(_: &PartialBatchSelector<Self>) -> String {
+        "()".to_string()
+    }
+}
+
+impl QueryTypeExt for FixedSize {
+    const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = false;
+
+    fn format_partial_batch_selector(
+        partial_batch_selector: &PartialBatchSelector<Self>,
+    ) -> String {
+        base64::encode_engine(partial_batch_selector.batch_id().as_ref(), &URL_SAFE_NO_PAD)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -499,6 +546,7 @@ mod tests {
             batch_interval_start: Some(1_000_000),
             batch_interval_duration: Some(1_000),
             batch_id: None,
+            current_batch: false,
         };
         let task_id_encoded = base64::encode_engine(task_id.get_encoded(), &URL_SAFE_NO_PAD);
         let correct_arguments = [
@@ -658,6 +706,40 @@ mod tests {
         ]);
         Options::try_parse_from(good_arguments).unwrap();
 
+        // Check parsing arguments for a current batch query.
+        let expected = Options {
+            task_id,
+            leader: leader.clone(),
+            auth_token: auth_token.clone(),
+            hpke_config: hpke_keypair.config().clone(),
+            hpke_private_key: hpke_keypair.private_key().clone(),
+            vdaf: VdafType::Count,
+            length: None,
+            bits: None,
+            buckets: None,
+            batch_interval_start: None,
+            batch_interval_duration: None,
+            batch_id: None,
+            current_batch: true,
+        };
+        let correct_arguments = [
+            "collect",
+            &format!("--task-id={task_id_encoded}"),
+            "--leader",
+            leader.as_str(),
+            "--auth-token",
+            "collector-authentication-token",
+            &format!("--hpke-config={encoded_hpke_config}"),
+            &format!("--hpke-private-key={encoded_private_key}"),
+            "--vdaf",
+            "count",
+            "--current-batch",
+        ];
+        match Options::try_parse_from(correct_arguments) {
+            Ok(got) => assert_eq!(got, expected),
+            Err(e) => panic!("{}\narguments were {:?}", e, correct_arguments),
+        }
+
         let batch_id: BatchId = random();
         let batch_id_encoded = base64::encode_engine(batch_id.as_ref(), &URL_SAFE_NO_PAD);
         let expected = Options {
@@ -673,6 +755,7 @@ mod tests {
             batch_interval_start: None,
             batch_interval_duration: None,
             batch_id: Some(batch_id),
+            current_batch: false,
         };
         let correct_arguments = [
             "collect",
@@ -746,6 +829,33 @@ mod tests {
         bad_arguments.extend([
             "--batch-interval-duration=1".to_string(),
             "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ArgumentConflict
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.extend([
+            "--batch-interval-start=1".to_string(),
+            "--current-batch".to_string(),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ArgumentConflict
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.extend([
+            "--batch-interval-duration=1".to_string(),
+            "--current-batch".to_string(),
+        ]);
+        assert_eq!(
+            Options::try_parse_from(bad_arguments).unwrap_err().kind(),
+            ErrorKind::ArgumentConflict
+        );
+        let mut bad_arguments = base_arguments.clone();
+        bad_arguments.extend([
+            "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+            "--current-batch".to_string(),
         ]);
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),

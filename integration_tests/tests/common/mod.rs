@@ -15,7 +15,9 @@ use janus_integration_tests::{
     BatchDiscovery,
 };
 use janus_messages::{
-    problem_type::DapProblemType, query_type, Duration, FixedSizeQuery, Interval, Query, Role,
+    problem_type::DapProblemType,
+    query_type::{self, FixedSize},
+    Duration, FixedSizeQuery, Interval, Query, Role,
 };
 use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
@@ -74,7 +76,7 @@ pub async fn collect_generic<'a, V, Q>(
     aggregation_parameter: &V::AggregationParam,
     host: &str,
     port: u16,
-) -> Result<Collection<V::AggregateResult>, janus_collector::Error>
+) -> Result<Collection<V::AggregateResult, Q>, janus_collector::Error>
 where
     V: vdaf::Client + vdaf::Collector + InteropClientEncoding,
     Vec<u8>: for<'b> From<&'b V::AggregateShare>,
@@ -153,8 +155,8 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
         .port()
         .unwrap();
 
-    // Send a collect request.
-    let collection = match leader_task.query_type() {
+    // Send a collect request and verify that we got the correct result.
+    match leader_task.query_type() {
         QueryType::TimeInterval => {
             let batch_interval = Interval::new(
                 before_timestamp
@@ -165,7 +167,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
                 Duration::from_seconds(2 * leader_task.time_precision().as_seconds()),
             )
             .unwrap();
-            collect_generic(
+            let collection = collect_generic(
                 &collector,
                 Query::new_time_interval(batch_interval),
                 &test_case.aggregation_parameter,
@@ -173,7 +175,13 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
                 forwarded_port,
             )
             .await
-            .unwrap()
+            .unwrap();
+
+            assert_eq!(
+                collection.report_count(),
+                u64::try_from(test_case.measurements.len()).unwrap()
+            );
+            assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
         }
         QueryType::FixedSize { .. } => {
             let mut requests = 0;
@@ -195,7 +203,7 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
                 break;
             }
             let batch_id = batch_ids[0];
-            collect_generic(
+            let collection = collect_generic::<_, FixedSize>(
                 &collector,
                 Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
                 &test_case.aggregation_parameter,
@@ -203,16 +211,16 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
                 forwarded_port,
             )
             .await
-            .unwrap()
+            .unwrap();
+
+            assert_eq!(collection.partial_batch_selector().batch_id(), &batch_id);
+            assert_eq!(
+                collection.report_count(),
+                u64::try_from(test_case.measurements.len()).unwrap()
+            );
+            assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
         }
     };
-
-    // Verify that we got the correct result.
-    assert_eq!(
-        collection.report_count(),
-        u64::try_from(test_case.measurements.len()).unwrap()
-    );
-    assert_eq!(collection.aggregate_result(), &test_case.aggregate_result);
 }
 
 pub async fn submit_measurements_and_verify_aggregate(
