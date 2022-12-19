@@ -11,7 +11,8 @@ use derivative::Derivative;
 use janus_collector::{default_http_client, Collector, CollectorParameters};
 use janus_core::{hpke::HpkePrivateKey, task::AuthenticationToken};
 use janus_messages::{
-    query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, Query, TaskId,
+    query_type::{FixedSize, QueryType, TimeInterval},
+    BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, PartialBatchSelector, Query, TaskId,
     Time,
 };
 use prio::{
@@ -382,7 +383,10 @@ async fn run(options: Options) -> Result<(), Error> {
     }
 }
 
-async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Result<(), Error> {
+async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Result<(), Error>
+where
+    Q: QueryTypeExt,
+{
     let parameters = CollectorParameters::new(
         options.task_id,
         options.leader,
@@ -434,7 +438,7 @@ async fn run_with_query<Q: QueryType>(options: Options, query: Query<Q>) -> Resu
     }
 }
 
-async fn run_collection_generic<V: vdaf::Collector, Q: QueryType>(
+async fn run_collection_generic<V: vdaf::Collector, Q: QueryTypeExt>(
     parameters: CollectorParameters,
     vdaf: V,
     http_client: reqwest::Client,
@@ -447,8 +451,14 @@ where
 {
     let collector = Collector::new(parameters, vdaf, http_client);
     let collection = collector.collect(query, agg_param).await?;
-    println!("Aggregation result: {:?}", collection.aggregate_result());
+    if !Q::IS_PARTIAL_BATCH_SELECTOR_TRIVIAL {
+        println!(
+            "Batch: {}",
+            Q::format_partial_batch_selector(collection.partial_batch_selector())
+        );
+    }
     println!("Number of reports: {}", collection.report_count());
+    println!("Aggregation result: {:?}", collection.aggregate_result());
     Ok(())
 }
 
@@ -467,6 +477,31 @@ fn install_tracing_subscriber() -> anyhow::Result<()> {
 }
 
 const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
+
+trait QueryTypeExt: QueryType {
+    const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool;
+
+    fn format_partial_batch_selector(partial_batch_selector: &PartialBatchSelector<Self>)
+        -> String;
+}
+
+impl QueryTypeExt for TimeInterval {
+    const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = true;
+
+    fn format_partial_batch_selector(_: &PartialBatchSelector<Self>) -> String {
+        "()".to_string()
+    }
+}
+
+impl QueryTypeExt for FixedSize {
+    const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool = false;
+
+    fn format_partial_batch_selector(
+        partial_batch_selector: &PartialBatchSelector<Self>,
+    ) -> String {
+        base64::encode_engine(partial_batch_selector.batch_id().as_ref(), &URL_SAFE_NO_PAD)
+    }
+}
 
 #[cfg(test)]
 mod tests {
