@@ -66,7 +66,8 @@ use janus_core::{
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{QueryType, TimeInterval},
-    AggregateShareAad, BatchSelector, CollectReq, CollectResp, HpkeConfig, Query, Role, TaskId,
+    AggregateShareAad, BatchSelector, CollectReq, CollectResp, HpkeConfig, PartialBatchSelector,
+    Query, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -262,9 +263,12 @@ impl<P, Q: QueryType> CollectJob<P, Q> {
 #[derivative(Debug)]
 /// The result of a collect request poll operation. This will either provide the collection result
 /// or indicate that the collection is still being processed.
-enum PollResult<T> {
+enum PollResult<T, Q>
+where
+    Q: QueryType,
+{
     /// The collection result from a completed collect request.
-    CollectionResult(#[derivative(Debug = "ignore")] Collection<T>),
+    CollectionResult(#[derivative(Debug = "ignore")] Collection<T, Q>),
     /// The collect request is not yet ready. If present, the [`RetryAfter`] object is the time at
     /// which the leader recommends retrying the request.
     NextAttempt(Option<RetryAfter>),
@@ -272,12 +276,24 @@ enum PollResult<T> {
 
 /// The result of a collection operation.
 #[derive(Debug)]
-pub struct Collection<T> {
+pub struct Collection<T, Q>
+where
+    Q: QueryType,
+{
+    partial_batch_selector: PartialBatchSelector<Q>,
     report_count: u64,
     aggregate_result: T,
 }
 
-impl<T> Collection<T> {
+impl<T, Q> Collection<T, Q>
+where
+    Q: QueryType,
+{
+    /// Retrieves the partial batch selector of this collection.
+    pub fn partial_batch_selector(&self) -> &PartialBatchSelector<Q> {
+        &self.partial_batch_selector
+    }
+
     /// Retrieves the number of client reports included in this collection.
     pub fn report_count(&self) -> u64 {
         self.report_count
@@ -291,23 +307,42 @@ impl<T> Collection<T> {
 
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-impl<T> Collection<T> {
+impl<T, Q> Collection<T, Q>
+where
+    Q: QueryType,
+{
     /// Creates a new [`Collection`].
-    pub fn new(report_count: u64, aggregate_result: T) -> Self {
+    pub fn new(
+        partial_batch_selector: PartialBatchSelector<Q>,
+        report_count: u64,
+        aggregate_result: T,
+    ) -> Self {
         Self {
+            partial_batch_selector,
             report_count,
             aggregate_result,
         }
     }
 }
 
-impl<T: PartialEq> PartialEq for Collection<T> {
+impl<T, Q> PartialEq for Collection<T, Q>
+where
+    T: PartialEq,
+    Q: QueryType,
+{
     fn eq(&self, other: &Self) -> bool {
-        self.report_count == other.report_count && self.aggregate_result == other.aggregate_result
+        self.partial_batch_selector == other.partial_batch_selector
+            && self.report_count == other.report_count
+            && self.aggregate_result == other.aggregate_result
     }
 }
 
-impl<T: Eq> Eq for Collection<T> {}
+impl<T, Q> Eq for Collection<T, Q>
+where
+    T: Eq,
+    Q: QueryType,
+{
+}
 
 /// A DAP collector.
 #[derive(Debug)]
@@ -413,7 +448,7 @@ where
     async fn poll_once<Q: QueryType>(
         &self,
         job: &CollectJob<V::AggregationParam, Q>,
-    ) -> Result<PollResult<V::AggregateResult>, Error> {
+    ) -> Result<PollResult<V::AggregateResult, Q>, Error> {
         let response_res = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
             || async {
@@ -511,6 +546,7 @@ where
         )?;
 
         Ok(PollResult::CollectionResult(Collection {
+            partial_batch_selector: collect_response.partial_batch_selector().clone(),
             report_count: collect_response.report_count(),
             aggregate_result,
         }))
@@ -521,7 +557,7 @@ where
     async fn poll_until_complete<Q: QueryType>(
         &self,
         job: &CollectJob<V::AggregationParam, Q>,
-    ) -> Result<Collection<V::AggregateResult>, Error> {
+    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
         let mut backoff = self.parameters.collect_poll_wait_parameters.clone();
         backoff.reset();
         let deadline = backoff
@@ -576,7 +612,7 @@ where
         &self,
         query: Query<Q>,
         aggregation_parameter: &V::AggregationParam,
-    ) -> Result<Collection<V::AggregateResult>, Error> {
+    ) -> Result<Collection<V::AggregateResult, Q>, Error> {
         let job = self.start_collection(query, aggregation_parameter).await?;
         self.poll_until_complete(&job).await
     }
@@ -595,7 +631,7 @@ pub mod test_util {
         aggregation_parameter: &V::AggregationParam,
         host: &str,
         port: u16,
-    ) -> Result<Collection<V::AggregateResult>, Error>
+    ) -> Result<Collection<V::AggregateResult, Q>, Error>
     where
         for<'a> Vec<u8>: From<&'a <V as vdaf::Vdaf>::AggregateShare>,
     {
@@ -840,7 +876,10 @@ mod tests {
         assert_matches!(poll_result, PollResult::NextAttempt(None));
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
-        assert_eq!(collection, Collection::new(1, 1));
+        assert_eq!(
+            collection,
+            Collection::new(PartialBatchSelector::new_time_interval(), 1, 1)
+        );
 
         mocked_collect_start_error.assert();
         mocked_collect_start_success.assert();
@@ -893,7 +932,10 @@ mod tests {
         assert_eq!(job.query.batch_interval(), &batch_interval);
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
-        assert_eq!(collection, Collection::new(1, 144));
+        assert_eq!(
+            collection,
+            Collection::new(PartialBatchSelector::new_time_interval(), 1, 144)
+        );
 
         mocked_collect_start_success.assert();
         mocked_collect_complete.assert();
@@ -943,7 +985,14 @@ mod tests {
         assert_eq!(job.query.batch_interval(), &batch_interval);
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
-        assert_eq!(collection, Collection::new(1, Vec::from([0, 0, 0, 1, 0])));
+        assert_eq!(
+            collection,
+            Collection::new(
+                PartialBatchSelector::new_time_interval(),
+                1,
+                Vec::from([0, 0, 0, 1, 0])
+            )
+        );
 
         mocked_collect_start_success.assert();
         mocked_collect_complete.assert();
@@ -989,7 +1038,10 @@ mod tests {
         );
 
         let collection = collector.poll_until_complete(&job).await.unwrap();
-        assert_eq!(collection, Collection::new(1, 1));
+        assert_eq!(
+            collection,
+            Collection::new(PartialBatchSelector::new_fixed_size(batch_id), 1, 1)
+        );
 
         mocked_collect_start_success.assert();
         mocked_collect_complete.assert();
