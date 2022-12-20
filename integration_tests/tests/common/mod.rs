@@ -10,10 +10,7 @@ use janus_core::{
     task::VdafInstance,
     time::{Clock, RealClock, TimeExt},
 };
-use janus_integration_tests::{
-    client::{ClientBackend, ClientImplementation, InteropClientEncoding},
-    BatchDiscovery,
-};
+use janus_integration_tests::client::{ClientBackend, ClientImplementation, InteropClientEncoding};
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{self, FixedSize},
@@ -22,7 +19,7 @@ use janus_messages::{
 use prio::vdaf::{self, prio3::Prio3};
 use rand::{random, thread_rng, Rng};
 use reqwest::Url;
-use std::{iter, sync::Arc, time::Duration as StdDuration};
+use std::{iter, time::Duration as StdDuration};
 use tokio::time::{self, sleep};
 
 // Returns (collector_private_key, leader_task, helper_task).
@@ -117,7 +114,6 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
     collector_private_key: &'a HpkePrivateKey,
     test_case: &'a AggregationTestCase<V>,
     client_implementation: &'a ClientImplementation<'a, V>,
-    batch_discovery: Arc<dyn BatchDiscovery>,
 ) where
     V: vdaf::Client + vdaf::Collector + InteropClientEncoding,
     Vec<u8>: for<'b> From<&'b V::AggregateShare>,
@@ -185,35 +181,30 @@ pub async fn submit_measurements_and_verify_aggregate_generic<'a, V>(
         }
         QueryType::FixedSize { .. } => {
             let mut requests = 0;
-            let mut batch_ids;
-            loop {
+            let collection = loop {
                 requests += 1;
-                batch_ids = batch_discovery
-                    .get_batch_ids(leader_task.id())
-                    .await
-                    .unwrap();
-                if batch_ids.is_empty() {
-                    if requests >= 15 {
-                        panic!("timed out waiting for a batch ID to be assigned");
+                let collection_res = collect_generic::<_, FixedSize>(
+                    &collector,
+                    Query::new_fixed_size(FixedSizeQuery::CurrentBatch),
+                    &test_case.aggregation_parameter,
+                    "127.0.0.1",
+                    forwarded_port,
+                )
+                .await;
+                match collection_res {
+                    Ok(collection) => break collection,
+                    Err(e) => {
+                        if requests >= 15 {
+                            panic!(
+                                "timed out waiting for a current batch query to succeed, error: {e}"
+                            );
+                        }
+                        sleep(StdDuration::from_secs(1)).await;
+                        continue;
                     }
-                    sleep(StdDuration::from_secs(1)).await;
-                    continue;
                 }
-                assert_eq!(batch_ids.len(), 1, "too many batch IDs were assigned");
-                break;
-            }
-            let batch_id = batch_ids[0];
-            let collection = collect_generic::<_, FixedSize>(
-                &collector,
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
-                &test_case.aggregation_parameter,
-                "127.0.0.1",
-                forwarded_port,
-            )
-            .await
-            .unwrap();
+            };
 
-            assert_eq!(collection.partial_batch_selector().batch_id(), &batch_id);
             assert_eq!(
                 collection.report_count(),
                 u64::try_from(test_case.measurements.len()).unwrap()
@@ -228,7 +219,6 @@ pub async fn submit_measurements_and_verify_aggregate(
     leader_task: &Task,
     collector_private_key: &HpkePrivateKey,
     client_backend: &ClientBackend<'_>,
-    batch_discovery: Arc<dyn BatchDiscovery>,
 ) {
     // Translate aggregator endpoints for our perspective outside the container network.
     let aggregator_endpoints: Vec<_> = leader_task
@@ -271,7 +261,6 @@ pub async fn submit_measurements_and_verify_aggregate(
                 collector_private_key,
                 &test_case,
                 &client_implementation,
-                batch_discovery,
             )
             .await;
         }
@@ -300,7 +289,6 @@ pub async fn submit_measurements_and_verify_aggregate(
                 collector_private_key,
                 &test_case,
                 &client_implementation,
-                batch_discovery,
             )
             .await;
         }
@@ -340,7 +328,6 @@ pub async fn submit_measurements_and_verify_aggregate(
                 collector_private_key,
                 &test_case,
                 &client_implementation,
-                batch_discovery,
             )
             .await;
         }
@@ -381,7 +368,6 @@ pub async fn submit_measurements_and_verify_aggregate(
                 collector_private_key,
                 &test_case,
                 &client_implementation,
-                batch_discovery,
             )
             .await;
         }

@@ -19,7 +19,7 @@ use testcontainers::{clients::Cli, core::WaitFor, Image, RunnableImage};
 use url::Url;
 
 /// Extension trait to encode measurements for VDAFs as JSON objects, according to
-/// draft-dcook-ppm-dap-interop-test-design-02.
+/// draft-dcook-ppm-dap-interop-test-design.
 pub trait InteropClientEncoding: vdaf::Client
 where
     for<'a> Vec<u8>: From<&'a Self::AggregateShare>,
@@ -86,7 +86,7 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
 }
 
 /// This represents a container image that implements the client role of
-/// draft-dcook-ppm-dap-interop-test-design-02, for use with [`testcontainers`].
+/// draft-dcook-ppm-dap-interop-test-design, for use with [`testcontainers`].
 #[derive(Clone)]
 pub struct InteropClient {
     name: String,
@@ -141,7 +141,7 @@ pub enum ClientBackend<'a> {
     /// Uploads reports using `janus-client` as a library.
     InProcess,
     /// Uploads reports by starting a containerized client implementation, and sending it requests
-    /// using draft-dcook-ppm-dap-interop-test-design-02.
+    /// using draft-dcook-ppm-dap-interop-test-design.
     Container {
         container_client: &'a Cli,
         container_image: InteropClient,

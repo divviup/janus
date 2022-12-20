@@ -1,12 +1,8 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-use crate::{BatchDiscovery, URL_SAFE_NO_PAD};
-use anyhow::{anyhow, Context};
-use async_trait::async_trait;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore},
     config::DbConfig,
-    datastore::Datastore,
     task::Task,
 };
 use janus_core::{
@@ -17,17 +13,13 @@ use janus_interop_binaries::{
     log_export_path, test_util::await_http_server, testcontainer::Aggregator,
     AggregatorAddTaskRequest,
 };
-use janus_messages::{BatchId, Role, TaskId};
+use janus_messages::Role;
 use k8s_openapi::api::core::v1::Secret;
 use portpicker::pick_unused_port;
-use prio::codec::{Decode, Encode};
-use serde::Deserialize;
-use serde_json::json;
 use std::{
     collections::HashMap,
     path::Path,
     process::{Command, Stdio},
-    sync::Arc,
     thread::panicking,
 };
 use testcontainers::{clients::Cli, Container, RunnableImage};
@@ -41,7 +33,6 @@ pub enum Janus<'a> {
     Container {
         role: Role,
         container: Container<'a, Aggregator>,
-        batch_discovery: Arc<dyn BatchDiscovery>,
     },
 
     /// Janus components are assumed to already be running in the Kubernetes cluster. Running tests
@@ -49,7 +40,6 @@ pub enum Janus<'a> {
     /// new tasks and reports into its datastore.
     KubernetesCluster {
         aggregator_port_forward: PortForward,
-        batch_discovery: Arc<dyn BatchDiscovery>,
     },
 }
 
@@ -90,20 +80,9 @@ impl<'a> Janus<'a> {
             resp.get("error")
         );
 
-        let fetch_batch_ids_url = Url::parse(&format!(
-            "http://127.0.0.1:{}/internal/test/fetch_batch_ids",
-            port
-        ))
-        .unwrap();
-        let batch_discovery = Arc::new(JanusContainerBatchFetch {
-            http_client,
-            fetch_batch_ids_url,
-        });
-
         Self::Container {
             role: *task.role(),
             container,
-            batch_discovery,
         }
     }
 
@@ -117,17 +96,6 @@ impl<'a> Janus<'a> {
                 aggregator_port_forward,
                 ..
             } => aggregator_port_forward.local_port(),
-        }
-    }
-
-    pub fn batch_discovery(&self) -> Arc<dyn BatchDiscovery> {
-        match self {
-            Janus::KubernetesCluster {
-                batch_discovery, ..
-            }
-            | Janus::Container {
-                batch_discovery, ..
-            } => Arc::clone(batch_discovery),
         }
     }
 }
@@ -206,18 +174,12 @@ impl Janus<'static> {
         let datastore = datastore(pool, RealClock::default(), &[datastore_key], false).unwrap();
         datastore.put_task(task).await.unwrap();
 
-        let batch_discovery = Arc::new(JanusClusterBatchFetch {
-            datastore,
-            _datastore_port_forward,
-        });
-
         let aggregator_port_forward = cluster
             .forward_port(namespace, "aggregator", pick_unused_port().unwrap(), 80)
             .await;
 
         Self::KubernetesCluster {
             aggregator_port_forward,
-            batch_discovery,
         }
     }
 }
@@ -230,10 +192,7 @@ impl<'a> Drop for Janus<'a> {
         // (log export is a no-op for non-containers: when running tests against a cluster, we
         // gather up logfiles with `kind export logs`)
 
-        if let Janus::Container {
-            role, container, ..
-        } = self
-        {
+        if let Janus::Container { role, container } = self {
             if !panicking() {
                 return;
             }
@@ -256,81 +215,5 @@ impl<'a> Drop for Janus<'a> {
                 );
             }
         }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct InteropFetchBatchIdsResponse {
-    status: String,
-    error: Option<String>,
-    batch_ids: Option<Vec<String>>,
-}
-
-struct JanusContainerBatchFetch {
-    http_client: reqwest::Client,
-    fetch_batch_ids_url: Url,
-}
-
-#[async_trait]
-impl BatchDiscovery for JanusContainerBatchFetch {
-    async fn get_batch_ids(&self, task_id: &TaskId) -> anyhow::Result<Vec<BatchId>> {
-        let task_id_encoded = base64::encode_engine(task_id.get_encoded(), &URL_SAFE_NO_PAD);
-        let response = self
-            .http_client
-            .post(self.fetch_batch_ids_url.clone())
-            .json(&json!({
-                "task_id": task_id_encoded,
-            }))
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<InteropFetchBatchIdsResponse>()
-            .await?;
-        if &response.status != "success" {
-            if let Some(error) = &response.error {
-                return Err(anyhow!(
-                    "Error from /internal/test/fetch_batch_ids: {error}"
-                ));
-            } else {
-                return Err(anyhow!("Error from /internal/test/fetch_batch_ids"));
-            }
-        }
-        if let Some(batch_ids) = &response.batch_ids {
-            batch_ids
-                .iter()
-                .map(|text| {
-                    let bytes = base64::decode_engine(text, &URL_SAFE_NO_PAD)
-                        .context("Invalid base64url content in fetch_batch_ids repsonse")?;
-                    BatchId::get_decoded(&bytes)
-                        .context("Incorrect batch ID length in fetch_batch_ids response")
-                })
-                .collect::<Result<Vec<BatchId>, _>>()
-                .map_err(Into::into)
-        } else {
-            Err(anyhow!("Response is missing \"batch_ids\" attribute"))
-        }
-    }
-}
-
-struct JanusClusterBatchFetch {
-    datastore: Datastore<RealClock>,
-    _datastore_port_forward: PortForward,
-}
-
-#[async_trait]
-impl BatchDiscovery for JanusClusterBatchFetch {
-    async fn get_batch_ids(&self, task_id: &TaskId) -> anyhow::Result<Vec<BatchId>> {
-        let outstanding_batches = self
-            .datastore
-            .run_tx(|tx| {
-                let task_id = *task_id;
-                Box::pin(async move { tx.get_outstanding_batches_for_task(&task_id).await })
-            })
-            .await?;
-        let batch_ids = outstanding_batches
-            .into_iter()
-            .map(|outstanding_batch| *outstanding_batch.id())
-            .collect();
-        Ok(batch_ids)
     }
 }

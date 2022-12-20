@@ -17,14 +17,10 @@ use janus_interop_binaries::{
     status::{ERROR, SUCCESS},
     AddTaskResponse, AggregatorAddTaskRequest, AggregatorRole, HpkeConfigRegistry,
 };
-use janus_messages::{BatchId, Duration, HpkeConfig, TaskId, Time};
+use janus_messages::{Duration, HpkeConfig, Time};
 use prio::codec::Decode;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
@@ -32,46 +28,6 @@ use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 struct EndpointResponse<'a> {
     status: &'a str,
     endpoint: &'a str,
-}
-
-#[derive(Debug, Deserialize)]
-struct FetchBatchIdsRequest {
-    task_id: String,
-}
-
-#[derive(Debug, Serialize)]
-struct FetchBatchIdsResponse {
-    status: &'static str,
-    #[serde(default)]
-    error: Option<String>,
-    #[serde(default)]
-    batch_ids: Option<Vec<String>>,
-}
-
-/// This data structure records batch IDs as they are observed. Batch IDs are stored here to adapt
-/// between the semantics of the `outstanding_batches` table, which only stores batches before they
-/// are collected for the first time, and the `/internal/test/fetch_batch_ids` API, which returns
-/// all batches for a task.
-struct BatchIdStorage {
-    map: HashMap<TaskId, HashSet<BatchId>>,
-}
-
-impl BatchIdStorage {
-    fn new() -> BatchIdStorage {
-        BatchIdStorage {
-            map: HashMap::new(),
-        }
-    }
-
-    fn update(
-        &mut self,
-        task_id: TaskId,
-        batch_ids: impl Iterator<Item = BatchId>,
-    ) -> &HashSet<BatchId> {
-        let hash_set = self.map.entry(task_id).or_default();
-        hash_set.extend(batch_ids);
-        hash_set
-    }
 }
 
 async fn handle_add_task(
@@ -153,39 +109,11 @@ async fn handle_add_task(
         .context("error adding task to database")
 }
 
-async fn handle_fetch_batch_ids(
-    datastore: &Datastore<RealClock>,
-    batch_id_storage: &Mutex<BatchIdStorage>,
-    request: FetchBatchIdsRequest,
-) -> anyhow::Result<Vec<BatchId>> {
-    let task_id_bytes = base64::decode_engine(request.task_id, &URL_SAFE_NO_PAD)
-        .context("invalid base64url content in \"task_id\"")?;
-    let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
-
-    let outstanding_batches = datastore
-        .run_tx(move |tx| {
-            Box::pin(async move { tx.get_outstanding_batches_for_task(&task_id).await })
-        })
-        .await
-        .context("error fetching batches from database")?;
-    let new_batch_ids = outstanding_batches
-        .into_iter()
-        .map(|outstanding_batch| *outstanding_batch.id());
-    let mut guard = batch_id_storage.lock().await;
-    let batch_ids = guard
-        .update(task_id, new_batch_ids)
-        .iter()
-        .copied()
-        .collect::<Vec<_>>();
-    Ok(batch_ids)
-}
-
 fn make_filter(
     datastore: Arc<Datastore<RealClock>>,
     dap_serving_prefix: String,
 ) -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
-    let batch_id_storage = Arc::new(Mutex::new(BatchIdStorage::new()));
     let dap_filter = aggregator_filter(Arc::clone(&datastore), RealClock::default())?;
 
     // Respect dap_serving_prefix.
@@ -231,36 +159,6 @@ fn make_filter(
             }
         }
     });
-    let fetch_batch_ids_filter = warp::path!("fetch_batch_ids").and(warp::body::json()).then(
-        move |request: FetchBatchIdsRequest| {
-            let datastore = Arc::clone(&datastore);
-            let batch_id_storage = Arc::clone(&batch_id_storage);
-            async move {
-                let response =
-                    match handle_fetch_batch_ids(&datastore, &batch_id_storage, request).await {
-                        Ok(batch_ids) => FetchBatchIdsResponse {
-                            status: SUCCESS,
-                            error: None,
-                            batch_ids: Some(
-                                batch_ids
-                                    .into_iter()
-                                    .map(|batch_id| {
-                                        base64::encode_engine(batch_id.as_ref(), &URL_SAFE_NO_PAD)
-                                    })
-                                    .collect(),
-                            ),
-                        },
-                        Err(e) => FetchBatchIdsResponse {
-                            status: ERROR,
-                            error: Some(format!("{:?}", e)),
-                            batch_ids: None,
-                        },
-                    };
-                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                    .into_response()
-            }
-        },
-    );
 
     Ok(warp::path!("internal" / "test" / ..)
         .and(warp::post())
@@ -269,8 +167,6 @@ fn make_filter(
                 .or(endpoint_filter)
                 .unify()
                 .or(add_task_filter)
-                .unify()
-                .or(fetch_batch_ids_filter)
                 .unify(),
         )
         .or(dap_filter.map(Reply::into_response))

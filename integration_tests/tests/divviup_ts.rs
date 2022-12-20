@@ -33,7 +33,6 @@ async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInsta
         &leader_task,
         &collector_private_key,
         &client_backend,
-        leader.batch_discovery(),
     )
     .await;
 }
