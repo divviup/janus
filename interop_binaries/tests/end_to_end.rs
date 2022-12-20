@@ -24,7 +24,6 @@ use reqwest::{header::CONTENT_TYPE, StatusCode, Url};
 use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
 use testcontainers::RunnableImage;
-use tokio::time::sleep;
 
 const JSON_MEDIA_TYPE: &str = "application/json";
 const TIME_PRECISION: u64 = 3600;
@@ -416,147 +415,112 @@ async fn run(
             })
         }
         QueryKind::FixedSize => {
-            // Make an additional request to the leader to fetch batch IDs.
-            let batch_id_encoded;
-            let mut requests = 0;
-            loop {
-                requests += 1;
-                let fetch_batch_ids_response = http_client
-                    .post(
-                        local_leader_endpoint
-                            .join("/internal/test/fetch_batch_ids")
-                            .unwrap(),
-                    )
-                    .json(&json!({
-                        "task_id": task_id_encoded,
-                    }))
-                    .send()
-                    .await
-                    .unwrap();
-                assert_eq!(fetch_batch_ids_response.status(), StatusCode::OK);
-                assert_eq!(
-                    fetch_batch_ids_response
-                        .headers()
-                        .get(CONTENT_TYPE)
-                        .unwrap(),
-                    JSON_MEDIA_TYPE,
-                );
-                let fetch_batch_ids_response_body =
-                    fetch_batch_ids_response.json::<Value>().await.unwrap();
-                let fetch_batch_ids_response_object = fetch_batch_ids_response_body
-                    .as_object()
-                    .expect("fetch_batch_ids response is not an object");
-                assert_eq!(
-                    fetch_batch_ids_response_object
-                        .get("status")
-                        .expect("fetch_batch_ids response is missing \"status\""),
-                    "success",
-                    "error: {:?}",
-                    fetch_batch_ids_response_object.get("error"),
-                );
-                let batch_id_list = fetch_batch_ids_response_object
-                    .get("batch_ids")
-                    .expect("fetch_batch_ids response is missing \"batch_ids\"")
-                    .as_array()
-                    .expect("\"batch_ids\" value is not an array");
-
-                if batch_id_list.is_empty() {
-                    if requests >= 30 {
-                        panic!("timed out polling for batch ID");
-                    }
-                    sleep(StdDuration::from_secs(1)).await
-                } else {
-                    assert_eq!(batch_id_list.len(), 1, "did not get exactly one batch ID");
-                    batch_id_encoded = batch_id_list[0].clone();
-                    assert!(batch_id_encoded.is_string());
-                    break;
-                }
-            }
-
             json!({
                 "type": query_type_json,
-                "batch_id": batch_id_encoded,
+                "subtype": 1, // current_batch
             })
         }
     };
 
-    // Send a /internal/test/collect_start request to the collector.
-    let collect_start_response = http_client
-        .post(
-            local_collector_endpoint
-                .join("/internal/test/collect_start")
-                .unwrap(),
-        )
-        .json(&json!({
-            "task_id": task_id_encoded,
-            "agg_param": base64::encode_engine(aggregation_parameter, &URL_SAFE_NO_PAD),
-            "query": query_json,
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(collect_start_response.status(), StatusCode::OK);
-    assert_eq!(
-        collect_start_response.headers().get(CONTENT_TYPE).unwrap(),
-        JSON_MEDIA_TYPE,
-    );
-    let collect_start_response_body = collect_start_response.json::<Value>().await.unwrap();
-    let collect_start_response_object = collect_start_response_body
-        .as_object()
-        .expect("collect_start response is not an object");
-    assert_eq!(
-        collect_start_response_object
-            .get("status")
-            .expect("collect_start response is missing \"status\""),
-        "success",
-        "error: {:?}",
-        collect_start_response_object.get("error"),
-    );
-    let collect_job_handle = collect_start_response_object
-        .get("handle")
-        .expect("collect_start response is missing \"handle\"")
-        .as_str()
-        .expect("\"handle\" value is not a string");
-
-    // Send /internal/test/collect_poll requests to the collector, polling until it is completed.
-    let mut backoff = ExponentialBackoffBuilder::new()
-        .with_initial_interval(StdDuration::from_millis(500))
-        .with_max_interval(StdDuration::from_millis(500))
-        .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
+    // Try collecting one or more times. For fixed size tasks, a "current batch" query will fail
+    // with an invalid batch until enough reports are ready.
+    let mut collect_attempt_backoff = ExponentialBackoffBuilder::new()
+        .with_initial_interval(StdDuration::from_secs(1))
+        .with_max_interval(StdDuration::from_secs(1))
+        .with_max_elapsed_time(match query_kind {
+            QueryKind::TimeInterval => Some(StdDuration::from_secs(0)),
+            QueryKind::FixedSize => Some(StdDuration::from_secs(15)),
+        })
         .build();
     loop {
-        let collect_poll_response = http_client
+        // Send a /internal/test/collect_start request to the collector.
+        let collect_start_response = http_client
             .post(
                 local_collector_endpoint
-                    .join("/internal/test/collect_poll")
+                    .join("/internal/test/collect_start")
                     .unwrap(),
             )
             .json(&json!({
-                "handle": collect_job_handle,
+                "task_id": task_id_encoded,
+                "agg_param": base64::encode_engine(aggregation_parameter, &URL_SAFE_NO_PAD),
+                "query": query_json,
             }))
             .send()
             .await
             .unwrap();
-        assert_eq!(collect_poll_response.status(), StatusCode::OK);
+        assert_eq!(collect_start_response.status(), StatusCode::OK);
         assert_eq!(
-            collect_poll_response.headers().get(CONTENT_TYPE).unwrap(),
+            collect_start_response.headers().get(CONTENT_TYPE).unwrap(),
             JSON_MEDIA_TYPE,
         );
-        let collect_poll_response_body = collect_poll_response.json::<Value>().await.unwrap();
-        let collect_poll_response_object = collect_poll_response_body
+        let collect_start_response_body = collect_start_response.json::<Value>().await.unwrap();
+        let collect_start_response_object = collect_start_response_body
             .as_object()
-            .expect("collect_poll response is not an object");
-        let status = collect_poll_response_object
-            .get("status")
-            .expect("collect_poll response is missing \"status\"")
+            .expect("collect_start response is not an object");
+        assert_eq!(
+            collect_start_response_object
+                .get("status")
+                .expect("collect_start response is missing \"status\""),
+            "success",
+            "error: {:?}",
+            collect_start_response_object.get("error"),
+        );
+        let collect_job_handle = collect_start_response_object
+            .get("handle")
+            .expect("collect_start response is missing \"handle\"")
             .as_str()
-            .expect("\"status\" value is not a string");
-        if status == "in progress" {
-            if let Some(duration) = backoff.next_backoff() {
+            .expect("\"handle\" value is not a string");
+
+        // Send /internal/test/collect_poll requests to the collector, polling until it is completed.
+        let mut collect_poll_backoff = ExponentialBackoffBuilder::new()
+            .with_initial_interval(StdDuration::from_millis(500))
+            .with_max_interval(StdDuration::from_millis(500))
+            .with_max_elapsed_time(Some(StdDuration::from_secs(60)))
+            .build();
+        let (status, collect_poll_response_object) = loop {
+            let collect_poll_response = http_client
+                .post(
+                    local_collector_endpoint
+                        .join("/internal/test/collect_poll")
+                        .unwrap(),
+                )
+                .json(&json!({
+                    "handle": collect_job_handle,
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(collect_poll_response.status(), StatusCode::OK);
+            assert_eq!(
+                collect_poll_response.headers().get(CONTENT_TYPE).unwrap(),
+                JSON_MEDIA_TYPE,
+            );
+            let collect_poll_response_body = collect_poll_response.json::<Value>().await.unwrap();
+            let collect_poll_response_object = collect_poll_response_body
+                .as_object()
+                .expect("collect_poll response is not an object");
+            let status = collect_poll_response_object
+                .get("status")
+                .expect("collect_poll response is missing \"status\"")
+                .as_str()
+                .expect("\"status\" value is not a string");
+            if status == "in progress" {
+                if let Some(duration) = collect_poll_backoff.next_backoff() {
+                    tokio::time::sleep(duration).await;
+                    continue;
+                } else {
+                    panic!("timed out fetching aggregation result");
+                }
+            }
+            break (status.to_owned(), collect_poll_response_object.clone());
+        };
+
+        if status == "error" {
+            if let Some(duration) = collect_attempt_backoff.next_backoff() {
                 tokio::time::sleep(duration).await;
                 continue;
             } else {
-                panic!("timed out fetching aggregation result");
+                panic!("timed out waiting for collect to succeed");
             }
         }
         assert_eq!(
@@ -565,6 +529,14 @@ async fn run(
             "error: {:?}",
             collect_poll_response_object.get("error"),
         );
+        if let QueryKind::FixedSize = query_kind {
+            let batch_id_encoded = collect_poll_response_object
+                .get("batch_id")
+                .expect("completed collect_poll response is missing \"batch_id\"")
+                .as_str()
+                .expect("\"batch_id\" value is not a string");
+            base64::decode_engine(batch_id_encoded, &URL_SAFE_NO_PAD).unwrap();
+        }
         assert_eq!(
             collect_poll_response_object
                 .get("report_count")

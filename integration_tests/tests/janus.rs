@@ -162,7 +162,6 @@ async fn janus_janus_count() {
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
-        janus_pair.leader.batch_discovery(),
     )
     .await;
 }
@@ -187,7 +186,6 @@ async fn janus_janus_sum_16() {
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
-        janus_pair.leader.batch_discovery(),
     )
     .await;
 }
@@ -214,7 +212,6 @@ async fn janus_janus_histogram_4_buckets() {
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
-        janus_pair.leader.batch_discovery(),
     )
     .await;
 }
@@ -239,7 +236,6 @@ async fn janus_janus_count_vec_15() {
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
-        janus_pair.leader.batch_discovery(),
     )
     .await;
 }
@@ -264,7 +260,6 @@ async fn janus_janus_fixed_size() {
         &janus_pair.leader_task,
         &janus_pair.collector_private_key,
         &ClientBackend::InProcess,
-        janus_pair.leader.batch_discovery(),
     )
     .await;
 }

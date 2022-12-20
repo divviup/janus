@@ -1641,7 +1641,6 @@ name = "janus_integration_tests"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "backoff",
  "base64 0.20.0",
  "futures",
@@ -1660,7 +1659,6 @@ dependencies = [
  "prio",
  "rand",
  "reqwest",
- "serde",
  "serde_json",
  "tempfile",
  "testcontainers",

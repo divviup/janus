@@ -16,8 +16,8 @@ use janus_interop_binaries::{
     HpkeConfigRegistry, NumberAsString, VdafObject,
 };
 use janus_messages::{
-    query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval, Query, TaskId,
-    Time,
+    query_type::QueryType, BatchId, Duration, FixedSizeQuery, HpkeConfig, Interval,
+    PartialBatchSelector, Query, TaskId, Time,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -59,6 +59,7 @@ struct RequestQuery {
     query_type: u8,
     batch_interval_start: Option<u64>,
     batch_interval_duration: Option<u64>,
+    subtype: Option<u8>,
     batch_id: Option<String>,
 }
 
@@ -85,6 +86,7 @@ struct CollectPollRequest {
 
 #[derive(Debug, Clone)]
 struct CollectResult {
+    partial_batch_selector: Option<BatchId>,
     report_count: u64,
     aggregation_result: AggregationResult,
 }
@@ -101,6 +103,8 @@ struct CollectPollResponse {
     status: &'static str,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    batch_id: Option<String>,
     #[serde(default)]
     report_count: Option<u64>,
     #[serde(default)]
@@ -167,7 +171,8 @@ async fn handle_collect_generic<V, Q>(
     query: Query<Q>,
     vdaf: V,
     agg_param_encoded: &[u8],
-    convert_fn: impl Fn(&V::AggregateResult) -> AggregationResult + Send + 'static,
+    batch_convert_fn: impl Fn(&PartialBatchSelector<Q>) -> Option<BatchId> + Send + 'static,
+    result_convert_fn: impl Fn(&V::AggregateResult) -> AggregationResult + Send + 'static,
 ) -> anyhow::Result<JoinHandle<anyhow::Result<CollectResult>>>
 where
     V: vdaf::Collector + Send + Sync + 'static,
@@ -180,8 +185,9 @@ where
     let handle = spawn(async move {
         let collect_result = collector.collect(query, &agg_param).await?;
         Ok(CollectResult {
+            partial_batch_selector: batch_convert_fn(collect_result.partial_batch_selector()),
             report_count: collect_result.report_count(),
-            aggregation_result: convert_fn(collect_result.aggregate_result()),
+            aggregation_result: result_convert_fn(collect_result.aggregate_result()),
         })
     });
     Ok(handle)
@@ -189,7 +195,7 @@ where
 
 enum ParsedQuery {
     TimeInterval(Interval),
-    FixedSize(BatchId),
+    FixedSize(FixedSizeQuery),
 }
 
 async fn handle_collect_start(
@@ -250,15 +256,20 @@ async fn handle_collect_start(
                 Interval::new(start, duration).context("invalid batch interval specification")?;
             ParsedQuery::TimeInterval(interval)
         }
-        2 => {
-            let batch_id_bytes = base64::decode_engine(
-                request.query.batch_id.context("\"batch_id\" was missing")?,
-                &URL_SAFE_NO_PAD,
-            )?;
-            ParsedQuery::FixedSize(
-                BatchId::get_decoded(&batch_id_bytes).context("invalid length of BatchId")?,
-            )
-        }
+        2 => match request.query.subtype {
+            Some(0) => {
+                let batch_id_bytes = base64::decode_engine(
+                    request.query.batch_id.context("\"batch_id\" was missing")?,
+                    &URL_SAFE_NO_PAD,
+                )?;
+                let batch_id =
+                    BatchId::get_decoded(&batch_id_bytes).context("invalid length of BatchId")?;
+                ParsedQuery::FixedSize(FixedSizeQuery::ByBatchId { batch_id })
+            }
+            Some(1) => ParsedQuery::FixedSize(FixedSizeQuery::CurrentBatch),
+            None => return Err(anyhow::anyhow!("\"subtype\" was missing")),
+            _ => return Err(anyhow::anyhow!("unrecognized \"subtype\" in query")),
+        },
         _ => {
             return Err(anyhow::anyhow!(
                 "unsupported query type: {}",
@@ -278,6 +289,7 @@ async fn handle_collect_start(
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
+                |_| None,
                 |result| AggregationResult::Number(NumberAsString((*result).into())),
             )
             .await?
@@ -295,6 +307,7 @@ async fn handle_collect_start(
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
+                |_| None,
                 |result| {
                     let converted = result.iter().cloned().map(NumberAsString).collect();
                     AggregationResult::NumberVec(converted)
@@ -312,6 +325,7 @@ async fn handle_collect_start(
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
+                |_| None,
                 |result| AggregationResult::Number(NumberAsString(*result)),
             )
             .await?
@@ -329,6 +343,7 @@ async fn handle_collect_start(
                 Query::new_time_interval(batch_interval),
                 vdaf,
                 &agg_param,
+                |_| None,
                 |result| {
                     let converted = result.iter().cloned().map(NumberAsString).collect();
                     AggregationResult::NumberVec(converted)
@@ -337,29 +352,34 @@ async fn handle_collect_start(
             .await?
         }
 
-        (ParsedQuery::FixedSize(batch_id), VdafInstance::Prio3Aes128Count {}) => {
+        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Aes128Count {}) => {
             let vdaf =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
+                |selector| Some(*selector.batch_id()),
                 |result| AggregationResult::Number(NumberAsString((*result).into())),
             )
             .await?
         }
 
-        (ParsedQuery::FixedSize(batch_id), VdafInstance::Prio3Aes128CountVec { length }) => {
+        (
+            ParsedQuery::FixedSize(fixed_size_query),
+            VdafInstance::Prio3Aes128CountVec { length },
+        ) => {
             let vdaf = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3Aes128CountVec VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
+                |selector| Some(*selector.batch_id()),
                 |result| {
                     let converted = result.iter().cloned().map(NumberAsString).collect();
                     AggregationResult::NumberVec(converted)
@@ -368,29 +388,34 @@ async fn handle_collect_start(
             .await?
         }
 
-        (ParsedQuery::FixedSize(batch_id), VdafInstance::Prio3Aes128Sum { bits }) => {
+        (ParsedQuery::FixedSize(fixed_size_query), VdafInstance::Prio3Aes128Sum { bits }) => {
             let vdaf = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
+                |selector| Some(*selector.batch_id()),
                 |result| AggregationResult::Number(NumberAsString(*result)),
             )
             .await?
         }
 
-        (ParsedQuery::FixedSize(batch_id), VdafInstance::Prio3Aes128Histogram { buckets }) => {
+        (
+            ParsedQuery::FixedSize(fixed_size_query),
+            VdafInstance::Prio3Aes128Histogram { buckets },
+        ) => {
             let vdaf = Prio3::new_aes128_histogram(2, &buckets)
                 .context("failed to construct Prio3Aes128Histogram VDAF")?;
             handle_collect_generic(
                 http_client,
                 collector_params,
-                Query::new_fixed_size(FixedSizeQuery::ByBatchId { batch_id }),
+                Query::new_fixed_size(fixed_size_query),
                 vdaf,
                 &agg_param,
+                |selector| Some(*selector.batch_id()),
                 |result| {
                     let converted = result.iter().cloned().map(NumberAsString).collect();
                     AggregationResult::NumberVec(converted)
@@ -540,18 +565,23 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
                     Ok(Some(collect_result)) => CollectPollResponse {
                         status: COMPLETE,
                         error: None,
+                        batch_id: collect_result.partial_batch_selector.map(|batch_id| {
+                            base64::encode_engine(batch_id.as_ref(), &URL_SAFE_NO_PAD)
+                        }),
                         report_count: Some(collect_result.report_count),
                         result: Some(collect_result.aggregation_result),
                     },
                     Ok(None) => CollectPollResponse {
                         status: IN_PROGRESS,
                         error: None,
+                        batch_id: None,
                         report_count: None,
                         result: None,
                     },
                     Err(e) => CollectPollResponse {
                         status: ERROR,
                         error: Some(format!("{:?}", e)),
+                        batch_id: None,
                         report_count: None,
                         result: None,
                     },
