@@ -5,6 +5,7 @@ pub mod aggregate_share;
 pub mod aggregation_job_creator;
 pub mod aggregation_job_driver;
 pub mod collect_job_driver;
+pub mod garbage_collector;
 pub mod query_type;
 
 use crate::{
@@ -4554,7 +4555,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_aggregation_jobs_for_task_id::<
+                    tx.get_aggregation_jobs_for_task::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,

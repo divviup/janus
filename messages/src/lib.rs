@@ -53,7 +53,7 @@ impl Duration {
     }
 
     /// Get the number of seconds this duration represents.
-    pub fn as_seconds(self) -> u64 {
+    pub fn as_seconds(&self) -> u64 {
         self.0
     }
 }
@@ -1519,6 +1519,12 @@ pub struct AggregationJobId([u8; Self::LEN]);
 impl AggregationJobId {
     /// LEN is the length of an aggregation job ID in bytes.
     pub const LEN: usize = 32;
+}
+
+impl From<[u8; Self::LEN]> for AggregationJobId {
+    fn from(aggregation_job_id: [u8; Self::LEN]) -> Self {
+        Self(aggregation_job_id)
+    }
 }
 
 impl AsRef<[u8; Self::LEN]> for AggregationJobId {
