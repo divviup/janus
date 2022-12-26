@@ -30,7 +30,7 @@ assert_matches = "1"
 serde_test = "1.0.151"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }
-trycmd = "0.14.5"
+trycmd = "0.14.6"
 
 [[bin]]
 name = "dap-decode"
