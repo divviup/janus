@@ -38,9 +38,9 @@ async fn handle_add_task(
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
-    let verify_key = SecretBytes::new(
-        base64::decode_engine(request.verify_key, &URL_SAFE_NO_PAD)
-            .context("invalid base64url content in \"verify_key\"")?,
+    let vdaf_verify_key = SecretBytes::new(
+        base64::decode_engine(request.vdaf_verify_key, &URL_SAFE_NO_PAD)
+            .context("invalid base64url content in \"vdaf_verify_key\"")?,
     );
     let time_precision = Duration::from_seconds(request.time_precision);
     let collector_hpke_config_bytes =
@@ -85,7 +85,7 @@ async fn handle_add_task(
         query_type,
         vdaf,
         request.role.into(),
-        Vec::from([verify_key]),
+        Vec::from([vdaf_verify_key]),
         request.max_batch_query_count,
         Time::from_seconds_since_epoch(request.task_expiration),
         request.min_batch_size,

@@ -109,10 +109,10 @@ async fn run(
     let task_id: TaskId = random();
     let aggregator_auth_token = base64::encode_engine(random::<[u8; 16]>(), &URL_SAFE_NO_PAD);
     let collector_auth_token = base64::encode_engine(random::<[u8; 16]>(), &URL_SAFE_NO_PAD);
-    let verify_key = rand::random::<[u8; PRIO3_AES128_VERIFY_KEY_LENGTH]>();
+    let vdaf_verify_key = rand::random::<[u8; PRIO3_AES128_VERIFY_KEY_LENGTH]>();
 
     let task_id_encoded = base64::encode_engine(task_id.get_encoded(), &URL_SAFE_NO_PAD);
-    let verify_key_encoded = base64::encode_engine(verify_key, &URL_SAFE_NO_PAD);
+    let vdaf_verify_key_encoded = base64::encode_engine(vdaf_verify_key, &URL_SAFE_NO_PAD);
 
     // Endpoints, from the POV of this test (i.e. the Docker host).
     let local_client_endpoint = Url::parse(&format!("http://127.0.0.1:{client_port}/")).unwrap();
@@ -264,7 +264,7 @@ async fn run(
         "leader_authentication_token": aggregator_auth_token,
         "collector_authentication_token": collector_auth_token,
         "role": "leader",
-        "verify_key": verify_key_encoded,
+        "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
         "query_type": query_type_json,
         "min_batch_size": 1,
@@ -317,7 +317,7 @@ async fn run(
         "vdaf": vdaf_object,
         "leader_authentication_token": aggregator_auth_token,
         "role": "helper",
-        "verify_key": verify_key_encoded,
+        "vdaf_verify_key": vdaf_verify_key_encoded,
         "max_batch_query_count": 1,
         "query_type": query_type_json,
         "min_batch_size": 1,

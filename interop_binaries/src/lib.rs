@@ -192,7 +192,7 @@ pub struct AggregatorAddTaskRequest {
     #[serde(default)]
     pub collector_authentication_token: Option<String>,
     pub role: AggregatorRole,
-    pub verify_key: String, // in unpadded base64url
+    pub vdaf_verify_key: String, // in unpadded base64url
     pub max_batch_query_count: u64,
     pub query_type: u8,
     pub min_batch_size: u64,
@@ -235,7 +235,7 @@ impl From<Task> for AggregatorAddTaskRequest {
                 None
             },
             role: (*task.role()).try_into().unwrap(),
-            verify_key: base64::encode_engine(
+            vdaf_verify_key: base64::encode_engine(
                 task.vdaf_verify_keys().first().unwrap().as_ref(),
                 &URL_SAFE_NO_PAD,
             ),
