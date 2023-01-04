@@ -119,7 +119,6 @@ impl Command {
                     &kubernetes_secret_options
                         .datastore_keys(common_options, kube_client)
                         .await?,
-                    config.common_config().database.dry_run_mode,
                 )?;
 
                 let written_tasks =

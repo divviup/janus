@@ -67,11 +67,6 @@ pub struct DbConfig {
     /// `deadpool_postgres::Timeouts` value.
     #[serde(default = "DbConfig::default_connection_pool_timeout")]
     pub connection_pool_timeouts_secs: u64,
-    /// When in dry-run mode, all database transactions will be rolled back
-    /// instead of being completed. Database queries will otherwise mostly but
-    /// not perfectly correct results.
-    #[serde(default)]
-    pub dry_run_mode: bool,
     // TODO(#231): add option for connecting to database over TLS, if necessary
 }
 
@@ -149,7 +144,6 @@ pub mod test_util {
         DbConfig {
             url: Url::parse("postgres://postgres:postgres@localhost:5432/postgres").unwrap(),
             connection_pool_timeouts_secs: 60,
-            dry_run_mode: false,
         }
     }
 
