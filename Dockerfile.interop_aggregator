@@ -17,12 +17,12 @@ COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --profile $PROFILE -p janus_interop_binaries \
+    cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries \
     --bin janus_interop_aggregator && \
     cp /src/target/$PROFILE/janus_interop_aggregator /janus_interop_aggregator
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --profile $PROFILE -p janus_aggregator \
+    cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_aggregator \
     --bin aggregation_job_creator \
     --bin aggregation_job_driver \
     --bin collect_job_driver \
