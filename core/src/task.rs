@@ -1,4 +1,4 @@
-use base64::URL_SAFE_NO_PAD;
+use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::{distributions::Standard, prelude::Distribution};
 use reqwest::Url;
 use ring::constant_time;
@@ -85,9 +85,7 @@ impl Eq for AuthenticationToken {}
 impl Distribution<AuthenticationToken> for Standard {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> AuthenticationToken {
         let buf: [u8; 16] = rng.gen();
-        base64::encode_config(buf, URL_SAFE_NO_PAD)
-            .into_bytes()
-            .into()
+        URL_SAFE_NO_PAD.encode(buf).into_bytes().into()
     }
 }
 

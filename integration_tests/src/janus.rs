@@ -1,8 +1,9 @@
 //! Functionality for tests interacting with Janus (<https://github.com/divviup/janus>).
 
-use crate::{BatchDiscovery, URL_SAFE_NO_PAD};
+use crate::BatchDiscovery;
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator::{
     binary_utils::{database_pool, datastore},
     config::DbConfig,
@@ -273,7 +274,7 @@ struct JanusContainerBatchFetch {
 #[async_trait]
 impl BatchDiscovery for JanusContainerBatchFetch {
     async fn get_batch_ids(&self, task_id: &TaskId) -> anyhow::Result<Vec<BatchId>> {
-        let task_id_encoded = base64::encode_engine(task_id.get_encoded(), &URL_SAFE_NO_PAD);
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
         let response = self
             .http_client
             .post(self.fetch_batch_ids_url.clone())
@@ -298,9 +299,10 @@ impl BatchDiscovery for JanusContainerBatchFetch {
             batch_ids
                 .iter()
                 .map(|text| {
-                    let bytes = base64::decode_engine(text, &URL_SAFE_NO_PAD)
+                    let bytes = URL_SAFE_NO_PAD
+                        .decode(text)
                         .context("Invalid base64url content in fetch_batch_ids repsonse")?;
-                    BatchId::get_decoded(&bytes)
+                    BatchId::get_decoded(bytes.as_ref())
                         .context("Incorrect batch ID length in fetch_batch_ids response")
                 })
                 .collect::<Result<Vec<BatchId>, _>>()

@@ -3,10 +3,7 @@
 //! process. The process should promptly shut down, and this test will fail if
 //! it times out waiting for the process to do so.
 
-use base64::{
-    alphabet::STANDARD,
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use janus_aggregator::{
     datastore::test_util::ephemeral_datastore,
     task::{test_util::TaskBuilder, QueryType},
@@ -162,7 +159,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .env("RUSTLOG", "trace")
         .env(
             "DATASTORE_KEYS",
-            base64::encode_engine(db_handle.datastore_key_bytes(), &STANDARD_NO_PAD),
+            STANDARD_NO_PAD.encode(db_handle.datastore_key_bytes()),
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -293,5 +290,3 @@ async fn collect_job_driver_shutdown() {
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("collect_job_driver"), config).await;
 }
-
-const STANDARD_NO_PAD: FastPortable = FastPortable::from(&STANDARD, NO_PAD);

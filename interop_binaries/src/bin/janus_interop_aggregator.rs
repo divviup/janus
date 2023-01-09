@@ -1,8 +1,5 @@
 use anyhow::Context;
-use base64::{
-    alphabet::URL_SAFE,
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
     aggregator::aggregator_filter,
@@ -79,20 +76,22 @@ async fn handle_add_task(
     keyring: &Mutex<HpkeConfigRegistry>,
     request: AggregatorAddTaskRequest,
 ) -> anyhow::Result<()> {
-    let task_id_bytes = base64::decode_engine(request.task_id, &URL_SAFE_NO_PAD)
+    let task_id_bytes = URL_SAFE_NO_PAD
+        .decode(request.task_id)
         .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let vdaf = request.vdaf.into();
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
     let verify_key = SecretBytes::new(
-        base64::decode_engine(request.verify_key, &URL_SAFE_NO_PAD)
+        URL_SAFE_NO_PAD
+            .decode(request.verify_key)
             .context("invalid base64url content in \"verify_key\"")?,
     );
     let time_precision = Duration::from_seconds(request.time_precision);
-    let collector_hpke_config_bytes =
-        base64::decode_engine(request.collector_hpke_config, &URL_SAFE_NO_PAD)
-            .context("invalid base64url content in \"collector_hpke_config\"")?;
+    let collector_hpke_config_bytes = URL_SAFE_NO_PAD
+        .decode(request.collector_hpke_config)
+        .context("invalid base64url content in \"collector_hpke_config\"")?;
     let collector_hpke_config = HpkeConfig::get_decoded(&collector_hpke_config_bytes)
         .context("could not parse collector HPKE configuration")?;
 
@@ -162,7 +161,8 @@ async fn handle_fetch_batch_ids(
     batch_id_storage: &Mutex<BatchIdStorage>,
     request: FetchBatchIdsRequest,
 ) -> anyhow::Result<Vec<BatchId>> {
-    let task_id_bytes = base64::decode_engine(request.task_id, &URL_SAFE_NO_PAD)
+    let task_id_bytes = URL_SAFE_NO_PAD
+        .decode(request.task_id)
         .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
 
@@ -248,9 +248,7 @@ fn make_filter(
                             batch_ids: Some(
                                 batch_ids
                                     .into_iter()
-                                    .map(|batch_id| {
-                                        base64::encode_engine(batch_id.as_ref(), &URL_SAFE_NO_PAD)
-                                    })
+                                    .map(|batch_id| URL_SAFE_NO_PAD.encode(batch_id.as_ref()))
                                     .collect(),
                             ),
                         },
@@ -328,8 +326,6 @@ impl BinaryConfig for Config {
         &mut self.common_config
     }
 }
-
-const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

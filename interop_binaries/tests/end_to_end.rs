@@ -1,8 +1,5 @@
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
-use base64::{
-    alphabet::URL_SAFE,
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::join_all;
 use janus_aggregator::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use janus_core::{
@@ -108,12 +105,12 @@ async fn run(
 
     // Generate a random TaskId, random authentication tokens, and a VDAF verification key.
     let task_id: TaskId = random();
-    let aggregator_auth_token = base64::encode_engine(random::<[u8; 16]>(), &URL_SAFE_NO_PAD);
-    let collector_auth_token = base64::encode_engine(random::<[u8; 16]>(), &URL_SAFE_NO_PAD);
+    let aggregator_auth_token = URL_SAFE_NO_PAD.encode(random::<[u8; 16]>());
+    let collector_auth_token = URL_SAFE_NO_PAD.encode(random::<[u8; 16]>());
     let verify_key = rand::random::<[u8; PRIO3_AES128_VERIFY_KEY_LENGTH]>();
 
-    let task_id_encoded = base64::encode_engine(task_id.get_encoded(), &URL_SAFE_NO_PAD);
-    let verify_key_encoded = base64::encode_engine(verify_key, &URL_SAFE_NO_PAD);
+    let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
+    let verify_key_encoded = URL_SAFE_NO_PAD.encode(verify_key);
 
     // Endpoints, from the POV of this test (i.e. the Docker host).
     let local_client_endpoint = Url::parse(&format!("http://127.0.0.1:{client_port}/")).unwrap();
@@ -489,7 +486,7 @@ async fn run(
         )
         .json(&json!({
             "task_id": task_id_encoded,
-            "agg_param": base64::encode_engine(aggregation_parameter, &URL_SAFE_NO_PAD),
+            "agg_param": URL_SAFE_NO_PAD.encode(aggregation_parameter, ),
             "query": query_json,
         }))
         .send()
@@ -577,8 +574,6 @@ async fn run(
             .clone();
     }
 }
-
-const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
 
 #[tokio::test]
 async fn e2e_prio3_count() {
