@@ -29,7 +29,7 @@ url = "2.3.1"
 [dev-dependencies]
 anyhow = "1"
 assert_matches = "1"
-base64 = "0.20.0"
+base64 = "0.21.0"
 chrono = "0.4"
 clap = { version = "4.0.27", features = ["derive", "env"] }
 janus_collector = { path = ".", features = ["test-util"] }
