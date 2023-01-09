@@ -1,5 +1,6 @@
 //! Encryption and decryption of messages using HPKE (RFC 9180).
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use hpke_dispatch::{HpkeError, Kem, Keypair};
 use janus_messages::{
@@ -13,8 +14,6 @@ use std::{
     fmt::{self, Debug},
     str::FromStr,
 };
-
-use crate::URL_SAFE_NO_PAD;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -117,7 +116,7 @@ impl Serialize for HpkePrivateKey {
     where
         S: Serializer,
     {
-        let encoded = base64::encode_engine(self.as_ref(), &URL_SAFE_NO_PAD);
+        let encoded = URL_SAFE_NO_PAD.encode(self.as_ref());
         serializer.serialize_str(&encoded)
     }
 }
@@ -135,7 +134,8 @@ impl<'de> Visitor<'de> for HpkePrivateKeyVisitor {
     where
         E: de::Error,
     {
-        let decoded = base64::decode_engine(value, &URL_SAFE_NO_PAD)
+        let decoded = URL_SAFE_NO_PAD
+            .decode(value)
             .map_err(|_| E::custom("invalid base64url value"))?;
         Ok(HpkePrivateKey::new(decoded))
     }

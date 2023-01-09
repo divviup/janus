@@ -1,6 +1,7 @@
 //! Shared parameters for a DAP task.
 
-use crate::{SecretBytes, URL_SAFE_NO_PAD};
+use crate::SecretBytes;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 pub use janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use janus_core::{
@@ -390,24 +391,17 @@ impl SerializedTask {
                     .collect(),
             );
 
-            self.vdaf_verify_keys = Vec::from([base64::encode_engine(
-                vdaf_verify_key.as_ref(),
-                &URL_SAFE_NO_PAD,
-            )]);
+            self.vdaf_verify_keys = Vec::from([URL_SAFE_NO_PAD.encode(vdaf_verify_key.as_ref())]);
         }
 
         if self.aggregator_auth_tokens.is_empty() {
-            self.aggregator_auth_tokens = Vec::from([base64::encode_engine(
-                random::<AuthenticationToken>().as_bytes(),
-                &URL_SAFE_NO_PAD,
-            )]);
+            self.aggregator_auth_tokens =
+                Vec::from([URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>().as_bytes())]);
         }
 
         if self.collector_auth_tokens.is_empty() && self.role == Role::Leader {
-            self.collector_auth_tokens = Vec::from([base64::encode_engine(
-                random::<AuthenticationToken>().as_bytes(),
-                &URL_SAFE_NO_PAD,
-            )]);
+            self.collector_auth_tokens =
+                Vec::from([URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>().as_bytes())]);
         }
 
         if self.hpke_keys.is_empty() {
@@ -428,17 +422,17 @@ impl Serialize for Task {
         let vdaf_verify_keys: Vec<_> = self
             .vdaf_verify_keys
             .iter()
-            .map(|key| base64::encode_engine(key.as_ref(), &URL_SAFE_NO_PAD))
+            .map(|key| URL_SAFE_NO_PAD.encode(key.as_ref()))
             .collect();
         let aggregator_auth_tokens = self
             .aggregator_auth_tokens
             .iter()
-            .map(|token| base64::encode_engine(token.as_bytes(), &URL_SAFE_NO_PAD))
+            .map(|token| URL_SAFE_NO_PAD.encode(token.as_bytes()))
             .collect();
         let collector_auth_tokens = self
             .collector_auth_tokens
             .iter()
-            .map(|token| base64::encode_engine(token.as_bytes(), &URL_SAFE_NO_PAD))
+            .map(|token| URL_SAFE_NO_PAD.encode(token.as_bytes()))
             .collect();
         let hpke_keys = self.hpke_keys.values().cloned().collect();
 
@@ -476,36 +470,21 @@ impl TryFrom<SerializedTask> for Task {
         let vdaf_verify_keys: Vec<_> = serialized_task
             .vdaf_verify_keys
             .into_iter()
-            .map(|key| {
-                Ok(SecretBytes::new(base64::decode_engine(
-                    key,
-                    &URL_SAFE_NO_PAD,
-                )?))
-            })
+            .map(|key| Ok(SecretBytes::new(URL_SAFE_NO_PAD.decode(key)?)))
             .collect::<Result<_, Self::Error>>()?;
 
         // aggregator_auth_tokens
         let aggregator_auth_tokens = serialized_task
             .aggregator_auth_tokens
             .into_iter()
-            .map(|token| {
-                Ok(AuthenticationToken::from(base64::decode_engine(
-                    token,
-                    &URL_SAFE_NO_PAD,
-                )?))
-            })
+            .map(|token| Ok(AuthenticationToken::from(URL_SAFE_NO_PAD.decode(token)?)))
             .collect::<Result<_, Self::Error>>()?;
 
         // collector_auth_tokens
         let collector_auth_tokens = serialized_task
             .collector_auth_tokens
             .into_iter()
-            .map(|token| {
-                Ok(AuthenticationToken::from(base64::decode_engine(
-                    token,
-                    &URL_SAFE_NO_PAD,
-                )?))
-            })
+            .map(|token| Ok(AuthenticationToken::from(URL_SAFE_NO_PAD.decode(token)?)))
             .collect::<Result<_, Self::Error>>()?;
 
         Task::new(

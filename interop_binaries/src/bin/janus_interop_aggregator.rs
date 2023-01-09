@@ -1,8 +1,5 @@
 use anyhow::Context;
-use base64::{
-    alphabet::URL_SAFE,
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
     aggregator::aggregator_filter,
@@ -39,13 +36,14 @@ async fn handle_add_task(
     let leader_authentication_token =
         AuthenticationToken::from(request.leader_authentication_token.into_bytes());
     let vdaf_verify_key = SecretBytes::new(
-        base64::decode_engine(request.vdaf_verify_key, &URL_SAFE_NO_PAD)
+        URL_SAFE_NO_PAD
+            .decode(request.vdaf_verify_key)
             .context("invalid base64url content in \"vdaf_verify_key\"")?,
     );
     let time_precision = Duration::from_seconds(request.time_precision);
-    let collector_hpke_config_bytes =
-        base64::decode_engine(request.collector_hpke_config, &URL_SAFE_NO_PAD)
-            .context("invalid base64url content in \"collector_hpke_config\"")?;
+    let collector_hpke_config_bytes = URL_SAFE_NO_PAD
+        .decode(request.collector_hpke_config)
+        .context("invalid base64url content in \"collector_hpke_config\"")?;
     let collector_hpke_config = HpkeConfig::get_decoded(&collector_hpke_config_bytes)
         .context("could not parse collector HPKE configuration")?;
 
@@ -220,8 +218,6 @@ impl BinaryConfig for Config {
         &mut self.common_config
     }
 }
-
-const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

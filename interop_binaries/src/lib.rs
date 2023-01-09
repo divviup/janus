@@ -1,7 +1,4 @@
-use base64::{
-    alphabet::URL_SAFE,
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use janus_aggregator::task::{QueryType, Task};
 use janus_core::{
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
@@ -235,19 +232,15 @@ impl From<Task> for AggregatorAddTaskRequest {
                 None
             },
             role: (*task.role()).try_into().unwrap(),
-            vdaf_verify_key: base64::encode_engine(
-                task.vdaf_verify_keys().first().unwrap().as_ref(),
-                &URL_SAFE_NO_PAD,
-            ),
+            vdaf_verify_key: URL_SAFE_NO_PAD
+                .encode(task.vdaf_verify_keys().first().unwrap().as_ref()),
             max_batch_query_count: task.max_batch_query_count(),
             query_type,
             min_batch_size: task.min_batch_size(),
             max_batch_size,
             time_precision: task.time_precision().as_seconds(),
-            collector_hpke_config: base64::encode_engine(
-                task.collector_hpke_config().get_encoded(),
-                &URL_SAFE_NO_PAD,
-            ),
+            collector_hpke_config: URL_SAFE_NO_PAD
+                .encode(task.collector_hpke_config().get_encoded()),
             task_expiration: task.task_expiration().as_seconds_since_epoch(),
         }
     }
@@ -381,8 +374,6 @@ impl<'d, I: Image> Deref for ContainerLogsDropGuard<'d, I> {
         &self.container
     }
 }
-
-const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
 
 #[cfg(feature = "test-util")]
 pub mod test_util {
