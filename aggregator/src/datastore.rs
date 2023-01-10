@@ -3022,7 +3022,7 @@ ORDER BY id DESC
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
     /// older than a given timestamp which are not included in any report aggregations.
     #[tracing::instrument(skip(self), err)]
-    pub async fn delete_old_client_reports(
+    pub async fn delete_expired_client_reports(
         &self,
         task_id: &TaskId,
         oldest_allowed_report_timestamp: Time,
@@ -3057,10 +3057,10 @@ ORDER BY id DESC
     ///
     /// Only implemented for leader tasks with the time-interval query type.
     ///
-    /// After calling this function, delete_old_client_reports must be called in the same
+    /// After calling this function, delete_expired_client_reports must be called in the same
     /// transaction to avoid re-aggregating client reports.
     #[tracing::instrument(skip(self), err)]
-    pub async fn delete_old_aggregation_artifacts(
+    pub async fn delete_expired_aggregation_artifacts(
         &self,
         task_id: &TaskId,
         oldest_allowed_report_timestamp: Time,
@@ -3121,10 +3121,10 @@ ORDER BY id DESC
     ///
     /// Only implemented for leader tasks with the time-interval query type.
     ///
-    /// After calling this function, delete_old_aggregation_artifacts must be called in the same
+    /// After calling this function, delete_expired_aggregation_artifacts must be called in the same
     /// transaction to avoid re-collecting old aggregations.
     #[tracing::instrument(skip(self), err)]
-    pub async fn delete_old_collect_artifacts(
+    pub async fn delete_expired_collect_artifacts(
         &self,
         task_id: &TaskId,
         oldest_allowed_report_timestamp: Time,
@@ -8907,7 +8907,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_old_client_reports() {
+    async fn delete_expired_client_reports() {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
@@ -8993,7 +8993,7 @@ mod tests {
         // Run.
         ds.run_tx(|tx| {
             Box::pin(async move {
-                tx.delete_old_client_reports(&task_id, OLDEST_ALLOWED_REPORT_TIMESTAMP)
+                tx.delete_expired_client_reports(&task_id, OLDEST_ALLOWED_REPORT_TIMESTAMP)
                     .await
             })
         })
@@ -9026,7 +9026,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_old_aggregation_artifacts() {
+    async fn delete_expired_aggregation_artifacts() {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
@@ -9252,7 +9252,7 @@ mod tests {
         // Run.
         ds.run_tx(|tx| {
             Box::pin(async move {
-                tx.delete_old_aggregation_artifacts(&task_id, OLDEST_ALLOWED_REPORT_TIMESTAMP)
+                tx.delete_expired_aggregation_artifacts(&task_id, OLDEST_ALLOWED_REPORT_TIMESTAMP)
                     .await
             })
         })
@@ -9337,7 +9337,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_old_collect_artifacts() {
+    async fn delete_expired_collect_artifacts() {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
@@ -9495,7 +9495,7 @@ mod tests {
         // Run.
         ds.run_tx(|tx| {
             Box::pin(async move {
-                tx.delete_old_collect_artifacts(&task_id, OLDEST_ALLOWED_REPORT_TIMESTAMP)
+                tx.delete_expired_collect_artifacts(&task_id, OLDEST_ALLOWED_REPORT_TIMESTAMP)
                     .await
             })
         })

@@ -63,15 +63,18 @@ impl<C: Clock> GarbageCollector<C> {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // Find and delete old collect jobs.
-                    tx.delete_old_collect_artifacts(task.id(), oldest_allowed_report_timestamp)
+                    tx.delete_expired_collect_artifacts(task.id(), oldest_allowed_report_timestamp)
                         .await?;
 
                     // Find and delete old aggregation jobs/report aggregations/batch aggregations.
-                    tx.delete_old_aggregation_artifacts(task.id(), oldest_allowed_report_timestamp)
-                        .await?;
+                    tx.delete_expired_aggregation_artifacts(
+                        task.id(),
+                        oldest_allowed_report_timestamp,
+                    )
+                    .await?;
 
                     // Find and delete old client reports.
-                    tx.delete_old_client_reports(task.id(), oldest_allowed_report_timestamp)
+                    tx.delete_expired_client_reports(task.id(), oldest_allowed_report_timestamp)
                         .await?;
 
                     Ok(())
