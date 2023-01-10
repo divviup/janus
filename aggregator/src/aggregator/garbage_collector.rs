@@ -30,11 +30,8 @@ impl<C: Clock> GarbageCollector<C> {
         let tasks = self
             .datastore
             .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
-            .await;
-        let tasks = match tasks {
-            Ok(tasks) => tasks,
-            Err(error) => return Err(error).context("couldn't retrieve tasks"),
-        };
+            .await
+            .context("couldn't retrieve tasks")?;
 
         // Run GC for each task.
         join_all(tasks.into_iter().map(|task| async move {

@@ -247,6 +247,17 @@ impl From<[u8; Self::LEN]> for ReportId {
     }
 }
 
+impl<'a> TryFrom<&'a [u8]> for ReportId {
+    type Error = Error;
+
+    fn try_from(report_id: &[u8]) -> Result<Self, Self::Error> {
+        let report_id: [u8; Self::LEN] = report_id
+            .try_into()
+            .map_err(|_| Error::InvalidParameter("ReportId length incorrect"))?;
+        Ok(Self::from(report_id))
+    }
+}
+
 impl AsRef<[u8; Self::LEN]> for ReportId {
     fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
@@ -1524,6 +1535,17 @@ impl AggregationJobId {
 impl From<[u8; Self::LEN]> for AggregationJobId {
     fn from(aggregation_job_id: [u8; Self::LEN]) -> Self {
         Self(aggregation_job_id)
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for AggregationJobId {
+    type Error = Error;
+
+    fn try_from(aggregation_job_id: &[u8]) -> Result<Self, Self::Error> {
+        let aggregation_job_id: [u8; Self::LEN] = aggregation_job_id
+            .try_into()
+            .map_err(|_| Error::InvalidParameter("AggregationJobId length incorrect"))?;
+        Ok(Self::from(aggregation_job_id))
     }
 }
 
