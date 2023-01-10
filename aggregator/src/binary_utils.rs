@@ -7,10 +7,10 @@ use crate::{
     datastore::{Crypter, Datastore},
     metrics::{install_metrics_exporter, MetricsExporterConfiguration},
     trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
-    STANDARD_NO_PAD,
 };
 use anyhow::{anyhow, Context, Result};
 use backoff::{future::retry, ExponentialBackoff};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use clap::Parser;
 use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
@@ -133,11 +133,12 @@ pub fn datastore<C: Clock>(
         .iter()
         .filter(|k| !k.is_empty())
         .map(|k| {
-            base64::decode_engine(k, &STANDARD_NO_PAD)
+            STANDARD_NO_PAD
+                .decode(k)
                 .context("couldn't base64-decode datastore keys")
                 .and_then(|k| {
                     Ok(LessSafeKey::new(
-                        UnboundKey::new(&AES_128_GCM, &k)
+                        UnboundKey::new(&AES_128_GCM, k.as_ref())
                             .map_err(|_| anyhow!("couldn't parse datastore keys as keys"))?,
                     ))
                 })

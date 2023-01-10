@@ -1,8 +1,5 @@
 use anyhow::{anyhow, Context};
-use base64::{
-    alphabet::URL_SAFE,
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{value_parser, Arg, Command};
 use janus_client::ClientParameters;
 use janus_core::{
@@ -84,7 +81,8 @@ async fn handle_upload_generic<V: prio::vdaf::Client>(
 where
     for<'a> Vec<u8>: From<&'a <V as Vdaf>::AggregateShare>,
 {
-    let task_id_bytes = base64::decode_engine(request.task_id, &URL_SAFE_NO_PAD)
+    let task_id_bytes = URL_SAFE_NO_PAD
+        .decode(request.task_id)
         .context("invalid base64url content in \"task_id\"")?;
     let task_id = TaskId::get_decoded(&task_id_bytes).context("invalid length of TaskId")?;
     let time_precision = Duration::from_seconds(request.time_precision);
@@ -227,8 +225,6 @@ fn app() -> clap::Command {
             .help("Port number to listen on."),
     )
 }
-
-const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
