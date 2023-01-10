@@ -1,9 +1,5 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use base64::{
-    alphabet::URL_SAFE,
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
 use std::future::Future;
 use tokio::task::JoinHandle;
 
@@ -39,5 +35,3 @@ impl Runtime for TokioRuntime {
         tokio::task::spawn(future)
     }
 }
-
-const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);

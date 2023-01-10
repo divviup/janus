@@ -1,7 +1,4 @@
-use base64::{
-    alphabet::URL_SAFE,
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{
     builder::{NonEmptyStringValueParser, StringValueParser, TypedValueParser},
     error::ErrorKind,
@@ -83,7 +80,8 @@ impl TypedValueParser for TaskIdValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let task_id_bytes: [u8; TaskId::LEN] = base64::decode_engine(input, &URL_SAFE_NO_PAD)
+        let task_id_bytes: [u8; TaskId::LEN] = URL_SAFE_NO_PAD
+            .decode(input)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
             .try_into()
             .map_err(|_| {
@@ -116,7 +114,8 @@ impl TypedValueParser for BatchIdValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let batch_id_bytes: [u8; BatchId::LEN] = base64::decode_engine(input, &URL_SAFE_NO_PAD)
+        let batch_id_bytes: [u8; BatchId::LEN] = URL_SAFE_NO_PAD
+            .decode(input)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?
             .try_into()
             .map_err(|_| {
@@ -153,7 +152,8 @@ impl TypedValueParser for HpkeConfigValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let bytes = base64::decode_engine(input, &URL_SAFE_NO_PAD)
+        let bytes = URL_SAFE_NO_PAD
+            .decode(input)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?;
         HpkeConfig::get_decoded(&bytes)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))
@@ -183,7 +183,8 @@ impl TypedValueParser for PrivateKeyValueParser {
         value: &std::ffi::OsStr,
     ) -> Result<Self::Value, clap::Error> {
         let input = self.inner.parse_ref(cmd, arg, value)?;
-        let bytes = base64::decode_engine(input, &URL_SAFE_NO_PAD)
+        let bytes = URL_SAFE_NO_PAD
+            .decode(input)
             .map_err(|err| clap::Error::raw(ErrorKind::ValueValidation, err))?;
         Ok(HpkePrivateKey::new(bytes))
     }
@@ -476,8 +477,6 @@ fn install_tracing_subscriber() -> anyhow::Result<()> {
     Ok(())
 }
 
-const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);
-
 trait QueryTypeExt: QueryType {
     const IS_PARTIAL_BATCH_SELECTOR_TRIVIAL: bool;
 
@@ -499,14 +498,15 @@ impl QueryTypeExt for FixedSize {
     fn format_partial_batch_selector(
         partial_batch_selector: &PartialBatchSelector<Self>,
     ) -> String {
-        base64::encode_engine(partial_batch_selector.batch_id().as_ref(), &URL_SAFE_NO_PAD)
+        URL_SAFE_NO_PAD.encode(partial_batch_selector.batch_id().as_ref())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{run, Error, Options, VdafType, URL_SAFE_NO_PAD};
+    use crate::{run, Error, Options, VdafType};
     use assert_matches::assert_matches;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use clap::{error::ErrorKind, CommandFactory, Parser};
     use janus_core::{
         hpke::test_util::generate_test_hpke_config_and_private_key, task::AuthenticationToken,
@@ -524,10 +524,8 @@ mod tests {
     #[tokio::test]
     async fn argument_handling() {
         let hpke_keypair = generate_test_hpke_config_and_private_key();
-        let encoded_hpke_config =
-            base64::encode_engine(hpke_keypair.config().get_encoded(), &URL_SAFE_NO_PAD);
-        let encoded_private_key =
-            base64::encode_engine(hpke_keypair.private_key().as_ref(), &URL_SAFE_NO_PAD);
+        let encoded_hpke_config = URL_SAFE_NO_PAD.encode(hpke_keypair.config().get_encoded());
+        let encoded_private_key = URL_SAFE_NO_PAD.encode(hpke_keypair.private_key().as_ref());
 
         let task_id = random();
         let leader = Url::parse("https://example.com/dap/").unwrap();
@@ -548,7 +546,7 @@ mod tests {
             batch_id: None,
             current_batch: false,
         };
-        let task_id_encoded = base64::encode_engine(task_id.get_encoded(), &URL_SAFE_NO_PAD);
+        let task_id_encoded = URL_SAFE_NO_PAD.encode(task_id.get_encoded());
         let correct_arguments = [
             "collect",
             &format!("--task-id={task_id_encoded}"),
@@ -584,7 +582,7 @@ mod tests {
         );
 
         let mut bad_arguments = correct_arguments.clone();
-        let short_encoded = base64::encode_engine("too short", &URL_SAFE_NO_PAD);
+        let short_encoded = URL_SAFE_NO_PAD.encode("too short");
         let bad_argument = format!("--task-id={short_encoded}");
         bad_arguments[1] = &bad_argument;
         assert_eq!(
@@ -741,7 +739,7 @@ mod tests {
         }
 
         let batch_id: BatchId = random();
-        let batch_id_encoded = base64::encode_engine(batch_id.as_ref(), &URL_SAFE_NO_PAD);
+        let batch_id_encoded = URL_SAFE_NO_PAD.encode(batch_id.as_ref());
         let expected = Options {
             task_id,
             leader: leader.clone(),

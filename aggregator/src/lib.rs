@@ -1,11 +1,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(clippy::too_many_arguments)]
 
-use base64::{
-    alphabet::{STANDARD, URL_SAFE},
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
-
 pub mod aggregator;
 pub mod binary_utils;
 pub mod config;
@@ -32,6 +27,3 @@ impl AsRef<[u8]> for SecretBytes {
         &self.0
     }
 }
-
-const STANDARD_NO_PAD: FastPortable = FastPortable::from(&STANDARD, NO_PAD);
-const URL_SAFE_NO_PAD: FastPortable = FastPortable::from(&URL_SAFE, NO_PAD);

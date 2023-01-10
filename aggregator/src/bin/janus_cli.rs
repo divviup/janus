@@ -1,8 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use base64::{
-    alphabet::STANDARD,
-    engine::fast_portable::{FastPortable, NO_PAD},
-};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use clap::Parser;
 use deadpool_postgres::Pool;
 use janus_aggregator::{
@@ -295,7 +292,7 @@ async fn create_datastore_key(
         .sample_iter(Standard)
         .take(AES_128_GCM.key_len())
         .collect();
-    let secret_content = base64::encode_engine(key_bytes, &STANDARD_NO_PAD);
+    let secret_content = STANDARD_NO_PAD.encode(key_bytes);
 
     // Write the secret.
     secrets_api
@@ -444,12 +441,11 @@ impl BinaryConfig for ConfigFile {
     }
 }
 
-const STANDARD_NO_PAD: FastPortable = FastPortable::from(&STANDARD, NO_PAD);
-
 #[cfg(test)]
 mod tests {
     use super::{fetch_datastore_keys, CommandLineOptions, ConfigFile, KubernetesSecretOptions};
     use crate::STANDARD_NO_PAD;
+    use base64::Engine;
     use clap::CommandFactory;
     use janus_aggregator::{
         binary_utils::CommonBinaryOptions,
@@ -862,7 +858,7 @@ mod tests {
 
         // Verify that the written secret data can be parsed as a comma-separated list of datastore
         // keys.
-        let datastore_key_bytes = base64::decode_engine(&secret_data[0], &STANDARD_NO_PAD).unwrap();
+        let datastore_key_bytes = STANDARD_NO_PAD.decode(&secret_data[0]).unwrap();
         UnboundKey::new(&AES_128_GCM, &datastore_key_bytes).unwrap();
     }
 

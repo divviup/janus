@@ -22,8 +22,9 @@ use crate::{
     },
     messages::TimeExt,
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
-    try_join, URL_SAFE_NO_PAD,
+    try_join,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
@@ -344,7 +345,8 @@ impl<C: Clock> Aggregator<C> {
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
         let task_id_base64 = task_id_base64.ok_or(Error::MissingTaskId)?;
 
-        let task_id_bytes = base64::decode_engine(task_id_base64, &URL_SAFE_NO_PAD)
+        let task_id_bytes = URL_SAFE_NO_PAD
+            .decode(task_id_base64)
             .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
         let task_id = TaskId::get_decoded(&task_id_bytes)
             .map_err(|_| Error::UnrecognizedMessage(None, "task_id"))?;
