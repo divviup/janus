@@ -1486,7 +1486,7 @@ mod tests {
     {
         gather_errors(
             join_all(
-                tx.get_aggregation_jobs_for_task_id::<L, Q, A>(task_id)
+                tx.get_aggregation_jobs_for_task::<L, Q, A>(task_id)
                     .await
                     .unwrap()
                     .into_iter()

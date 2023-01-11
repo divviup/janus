@@ -49,7 +49,7 @@ impl Duration {
     }
 
     /// Get the number of seconds this duration represents.
-    pub fn as_seconds(self) -> u64 {
+    pub fn as_seconds(&self) -> u64 {
         self.0
     }
 }
@@ -240,6 +240,17 @@ impl ReportId {
 impl From<[u8; Self::LEN]> for ReportId {
     fn from(report_id: [u8; Self::LEN]) -> Self {
         Self(report_id)
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for ReportId {
+    type Error = Error;
+
+    fn try_from(report_id: &[u8]) -> Result<Self, Self::Error> {
+        let report_id: [u8; Self::LEN] = report_id
+            .try_into()
+            .map_err(|_| Error::InvalidParameter("ReportId length incorrect"))?;
+        Ok(Self::from(report_id))
     }
 }
 
@@ -1516,6 +1527,23 @@ pub struct AggregationJobId([u8; Self::LEN]);
 impl AggregationJobId {
     /// LEN is the length of an aggregation job ID in bytes.
     pub const LEN: usize = 32;
+}
+
+impl From<[u8; Self::LEN]> for AggregationJobId {
+    fn from(aggregation_job_id: [u8; Self::LEN]) -> Self {
+        Self(aggregation_job_id)
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for AggregationJobId {
+    type Error = Error;
+
+    fn try_from(aggregation_job_id: &[u8]) -> Result<Self, Self::Error> {
+        let aggregation_job_id: [u8; Self::LEN] = aggregation_job_id
+            .try_into()
+            .map_err(|_| Error::InvalidParameter("AggregationJobId length incorrect"))?;
+        Ok(Self::from(aggregation_job_id))
+    }
 }
 
 impl AsRef<[u8; Self::LEN]> for AggregationJobId {

@@ -134,6 +134,7 @@ async fn handle_add_task(
         Vec::from([verify_key]),
         request.max_batch_query_count,
         Time::from_seconds_since_epoch(request.task_expiration),
+        None,
         request.min_batch_size,
         time_precision,
         // We can be strict about clock skew since this executable is only intended for use with
