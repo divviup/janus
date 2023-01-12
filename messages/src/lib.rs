@@ -284,7 +284,8 @@ impl FromStr for ReportId {
     type Err = Box<dyn Debug>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = base64::decode_engine(s, &URL_SAFE_NO_PAD)
+        let bytes = URL_SAFE_NO_PAD
+            .decode(s)
             .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
         let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| {
             Box::new(format!("decoded base64 {s} has wrong length")) as Box<dyn Debug>
@@ -506,7 +507,8 @@ impl FromStr for TaskId {
     type Err = Box<dyn Debug>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = base64::decode_engine(s, &URL_SAFE_NO_PAD)
+        let bytes = URL_SAFE_NO_PAD
+            .decode(s)
             .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
         let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| {
             Box::new(format!("decoded base64 {s} has wrong length")) as Box<dyn Debug>
@@ -1846,7 +1848,8 @@ impl FromStr for AggregationJobId {
     type Err = Box<dyn Debug>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = base64::decode_engine(s, &URL_SAFE_NO_PAD)
+        let bytes = URL_SAFE_NO_PAD
+            .decode(s)
             .map_err(|e| Box::new(e) as Box<dyn Debug>)?;
         let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| {
             Box::new(format!("decoded base64 {s} has wrong length")) as Box<dyn Debug>

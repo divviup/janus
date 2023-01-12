@@ -219,10 +219,10 @@ impl CollectorParameters {
     }
 
     /// URL for collect requests.
-    fn collections_resource_uri(&self) -> Result<Url, Error> {
+    fn collect_jobs_resource_uri(&self) -> Result<Url, Error> {
         Ok(self
             .leader_endpoint
-            .join(&format!("tasks/{}/collections", self.task_id))?)
+            .join(&format!("tasks/{}/collect_jobs", self.task_id))?)
     }
 }
 
@@ -384,7 +384,7 @@ where
         aggregation_parameter: &V::AggregationParam,
     ) -> Result<CollectJob<V::AggregationParam, Q>, Error> {
         let collect_request = CollectReq::new(query.clone(), aggregation_parameter.get_encoded());
-        let url = self.parameters.collections_resource_uri()?;
+        let url = self.parameters.collect_jobs_resource_uri()?;
 
         let response_res = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
@@ -827,10 +827,10 @@ mod tests {
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
-        let collections_path = format!("/tasks/{}/collections", collector.parameters.task_id);
+        let collect_jobs_path = format!("/tasks/{}/collect_jobs", collector.parameters.task_id);
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mocked_collect_start_error = mock("PUT", collections_path.as_str())
+        let mocked_collect_start_error = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -838,7 +838,7 @@ mod tests {
             .with_status(500)
             .expect(3)
             .create();
-        let mocked_collect_start_success = mock("PUT", collections_path.as_str())
+        let mocked_collect_start_success = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -904,9 +904,9 @@ mod tests {
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
-        let collections_path = format!("/tasks/{}/collections", collector.parameters.task_id);
+        let collect_jobs_path = format!("/tasks/{}/collect_jobs", collector.parameters.task_id);
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mocked_collect_start_success = mock("PUT", collections_path.as_str())
+        let mocked_collect_start_success = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -958,10 +958,10 @@ mod tests {
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
-        let collections_path = format!("/tasks/{}/collections", collector.parameters.task_id);
+        let collect_jobs_path = format!("/tasks/{}/collect_jobs", collector.parameters.task_id);
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mocked_collect_start_success = mock("PUT", collections_path.as_str())
+        let mocked_collect_start_success = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1013,10 +1013,10 @@ mod tests {
         let collect_resp =
             build_collect_response_fixed(&transcript, &collector.parameters, batch_id);
 
-        let collections_path = format!("/tasks/{}/collections", collector.parameters.task_id);
+        let collect_jobs_path = format!("/tasks/{}/collect_jobs", collector.parameters.task_id);
 
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mocked_collect_start_success = mock("PUT", collections_path.as_str())
+        let mocked_collect_start_success = mock("PUT", collect_jobs_path.as_str())
             .match_header(CONTENT_TYPE.as_str(), CollectReq::<FixedSize>::MEDIA_TYPE)
             .with_status(303)
             .with_header(LOCATION.as_str(), &collect_job_url)
@@ -1059,9 +1059,9 @@ mod tests {
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let collector = setup_collector(vdaf);
 
-        let collections_path = format!("/tasks/{}/collections", collector.parameters.task_id);
+        let collect_jobs_path = format!("/tasks/{}/collect_jobs", collector.parameters.task_id);
 
-        let mock_server_error = mock("PUT", collections_path.as_str())
+        let mock_server_error = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1086,7 +1086,7 @@ mod tests {
 
         mock_server_error.assert();
 
-        let mock_server_error_details = mock("PUT", collections_path.as_str())
+        let mock_server_error_details = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1109,7 +1109,7 @@ mod tests {
 
         mock_server_error_details.assert();
 
-        let mock_server_no_location = mock("PUT", collections_path.as_str())
+        let mock_server_no_location = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1126,7 +1126,7 @@ mod tests {
 
         mock_server_no_location.assert();
 
-        let mock_bad_request = mock("PUT", collections_path.as_str())
+        let mock_bad_request = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1163,9 +1163,9 @@ mod tests {
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let collector = setup_collector(vdaf);
 
-        let collections_path = format!("/tasks/{}/collections", collector.parameters.task_id);
+        let collect_jobs_path = format!("/tasks/{}/collect_jobs", collector.parameters.task_id);
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mock_collect_start = mock("PUT", collections_path.as_str())
+        let mock_collect_start = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1411,9 +1411,9 @@ mod tests {
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let collector = setup_collector(vdaf);
 
-        let collections_path = format!("/tasks/{}/collections", collector.parameters.task_id);
+        let collect_jobs_path = format!("/tasks/{}/collect_jobs", collector.parameters.task_id);
         let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mock_collect_start = mock("PUT", collections_path.as_str())
+        let mock_collect_start = mock("PUT", collect_jobs_path.as_str())
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
