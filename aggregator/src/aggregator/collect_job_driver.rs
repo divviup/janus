@@ -612,7 +612,7 @@ mod tests {
         Runtime,
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregationJobRound, AggregateShareReq, AggregateShareResp,
+        query_type::TimeInterval, AggregateShareReq, AggregateShareResp, AggregationJobRound,
         BatchSelector, Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
     use mockito::mock;

@@ -3471,14 +3471,14 @@ mod tests {
         field::Field64,
         vdaf::{
             self,
-            prio3::{Prio3, Prio3Aes128Count},
+            prio3::{Prio3, Prio3Aes128Count, Prio3PrepareMessage, Prio3PrepareState},
             AggregateShare, Aggregator as _, Client as VdafClient, PrepareTransition,
         },
     };
     use rand::random;
     use reqwest::Client;
     use serde_json::json;
-    use std::{collections::HashMap, io::Cursor, sync::Arc};
+    use std::{collections::HashMap, io::Cursor, iter, sync::Arc};
     use url::Url;
     use uuid::Uuid;
     use warp::{
@@ -5348,6 +5348,294 @@ mod tests {
                 )
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn aggregate_continue_round_recovery() {
+        // Prepare datastore & request.
+        install_test_trace_subscriber();
+
+        let aggregation_job_id = random();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count,
+            Role::Helper,
+        )
+        .build();
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
+
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
+        let hpke_key = current_hpke_key(task.hpke_keys());
+
+        #[derive(Clone)]
+        struct ReportTranscript {
+            report_share: ReportShare,
+            report_metadata: ReportMetadata,
+            prep_state: Prio3PrepareState<Field64, PRIO3_AES128_VERIFY_KEY_LENGTH>,
+            prep_msg: Prio3PrepareMessage<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        }
+
+        let mut report_factory = iter::repeat_with(|| {
+            let report_metadata = ReportMetadata::new(
+                random(),
+                clock
+                    .now()
+                    .to_batch_interval_start(task.time_precision())
+                    .unwrap(),
+            );
+            let transcript = run_vdaf(
+                vdaf.as_ref(),
+                verify_key.as_bytes(),
+                &(),
+                report_metadata.id(),
+                &0,
+            );
+            let prep_state = assert_matches!(
+                &transcript.prepare_transitions[1][0],
+                PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _)
+                => prep_state.clone()
+            );
+            let prep_msg = transcript.prepare_messages[0].clone();
+            let report_share = generate_helper_report_share::<Prio3Aes128Count>(
+                *task.id(),
+                report_metadata.clone(),
+                hpke_key.config(),
+                &transcript.public_share,
+                Vec::new(),
+                &transcript.input_shares[1],
+            );
+
+            ReportTranscript {
+                report_share,
+                report_metadata,
+                prep_state,
+                prep_msg,
+            }
+        });
+
+        let (report, unrelated_report) = (
+            report_factory.next().unwrap(),
+            report_factory.next().unwrap(),
+        );
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                let report = report.clone();
+                let unrelated_report = unrelated_report.clone();
+
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+
+                    tx.put_report_share(task.id(), &report.report_share).await?;
+                    tx.put_report_share(task.id(), &unrelated_report.report_share)
+                        .await?;
+
+                    tx.put_aggregation_job(&models::AggregationJob::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        None,
+                        (),
+                        AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
+                    ))
+                    .await?;
+
+                    tx.put_report_aggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &ReportAggregation::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            *report.report_metadata.id(),
+                            *report.report_metadata.time(),
+                            0,
+                            ReportAggregationState::Waiting(report.prep_state.clone(), None),
+                        ),
+                    )
+                    .await?;
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let request = AggregationJob::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                *report.report_metadata.id(),
+                PrepareStepState::Continued(report.prep_msg.get_encoded()),
+            )]),
+        );
+
+        // Create aggregator filter, send request, and parse response.
+        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
+
+        let aggregate_resp =
+            post_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
+
+        // Validate response.
+        assert_eq!(
+            aggregate_resp,
+            AggregationJob::new(
+                AggregationJobRound::from(1),
+                Vec::from([PrepareStep::new(
+                    *report.report_metadata.id(),
+                    PrepareStepState::Finished
+                ),])
+            )
+        );
+
+        // Re-send the request, simulating the leader crashing and losing the helper's response. The
+        // helper should send back the exact same response.
+        let second_aggregate_resp =
+            post_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
+        assert_eq!(aggregate_resp, second_aggregate_resp);
+
+        // Send another continue request for the same aggregation job, but with a different report
+        // ID. This should fail because the request doesn't match what was previously seen by the
+        // helper for this (aggregation job ID, round).
+        let modified_request = AggregationJob::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                *unrelated_report.report_metadata.id(),
+                PrepareStepState::Continued(unrelated_report.prep_msg.get_encoded()),
+            )]),
+        );
+
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &modified_request,
+            &filter,
+            400,
+            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "The message type for a response was incorrect or the payload was malformed.",
+        )
+        .await;
+
+        // Send another request for a round that the helper is past. Should fail.
+        let past_round_request = AggregationJob::new(
+            AggregationJobRound::from(0),
+            Vec::from([PrepareStep::new(
+                *report.report_metadata.id(),
+                PrepareStepState::Continued(report.prep_msg.get_encoded()),
+            )]),
+        );
+
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &past_round_request,
+            &filter,
+            400,
+            "urn:ietf:params:ppm:dap:error:roundMismatch",
+            "The message type for a response was incorrect or the payload was malformed.",
+        )
+        .await;
+
+        // Send another request for a round too far past the helper's round. Should fail because the
+        // helper isn't on that round.
+        let future_round_request = AggregationJob::new(
+            AggregationJobRound::from(2),
+            Vec::from([PrepareStep::new(
+                *report.report_metadata.id(),
+                PrepareStepState::Continued(report.prep_msg.get_encoded()),
+            )]),
+        );
+
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &future_round_request,
+            &filter,
+            400,
+            "urn:ietf:params:ppm:dap:error:roundMismatch",
+            "The message type for a response was incorrect or the payload was malformed.",
+        )
+        .await;
+    }
+
+    async fn post_aggregation_job(
+        task: &Task,
+        aggregation_job_id: &AggregationJobId,
+        request: &AggregationJob,
+        filter: &BoxedFilter<(impl Reply + 'static,)>,
+    ) -> AggregationJob {
+        let mut response = warp::test::request()
+            .method("POST")
+            .path(&format!(
+                "/tasks/{}/aggregation_jobs/{aggregation_job_id}",
+                task.id()
+            ))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, AggregationJob::MEDIA_TYPE)
+            .body(request.get_encoded())
+            .filter(filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            AggregationJob::MEDIA_TYPE
+        );
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
+        AggregationJob::get_decoded(&body_bytes).unwrap()
+    }
+
+    async fn post_aggregation_job_expecting_error(
+        task: &Task,
+        aggregation_job_id: &AggregationJobId,
+        request: &AggregationJob,
+        filter: &BoxedFilter<(impl Reply + 'static,)>,
+        want_status: u16,
+        want_error_type: &str,
+        want_error_title: &str,
+    ) {
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path(&format!(
+                "/tasks/{}/aggregation_jobs/{aggregation_job_id}",
+                task.id()
+            ))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .header(
+                CONTENT_TYPE,
+                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .body(request.get_encoded())
+            .filter(filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": want_status,
+                "type": want_error_type,
+                "title": want_error_title,
+                "taskid": format!("{}", task.id()),
+            })
+        );
+        assert_eq!(want_status, parts.status.as_u16());
     }
 
     #[tokio::test]

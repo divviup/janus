@@ -564,7 +564,6 @@ impl AggregationJobDriver {
         A::PrepareMessage: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
     {
-        // TODO(timg) test this case
         if helper_round != leader_aggregation_job.round() {
             return Err(anyhow!(
                 "round mismatch: leader is on round {} but helper is on {}",
@@ -607,7 +606,7 @@ impl AggregationJobDriver {
                     {
                         let leader_prep_state = leader_prep_state.clone();
                         let helper_prep_share =
-                            A::PrepareShare::get_decoded_with_param(&leader_prep_state, &payload)
+                            A::PrepareShare::get_decoded_with_param(&leader_prep_state, payload)
                                 .context("couldn't decode helper's prepare message");
                         let prep_msg = helper_prep_share.and_then(|helper_prep_share| {
                             vdaf.prepare_preprocess([leader_prep_share.clone(), helper_prep_share])
@@ -691,15 +690,22 @@ impl AggregationJobDriver {
         let aggregation_job_is_finished = report_aggregations_to_write
             .iter()
             .all(|ra| !matches!(ra.state(), ReportAggregationState::Waiting(_, _)));
-        // Advance self to next VDAF preparation round
-        // TODO(timg): handling round and state separately is awkward. Should see if I can put the
-        // round in AggregationJobState::InProgress.
-        let aggregation_job_to_write = if aggregation_job_is_finished {
-            leader_aggregation_job.with_state(AggregationJobState::Finished)
+
+        let (next_round, next_state) = if aggregation_job_is_finished {
+            (
+                leader_aggregation_job.round(),
+                AggregationJobState::Finished,
+            )
         } else {
-            let next_round = leader_aggregation_job.round().increment();
-            leader_aggregation_job.with_round(next_round)
+            (
+                // Advance self to next VDAF preparation round
+                leader_aggregation_job.round().increment(),
+                AggregationJobState::InProgress,
+            )
         };
+        let aggregation_job_to_write = leader_aggregation_job
+            .with_round(next_round)
+            .with_state(next_state);
         let report_aggregations_to_write = Arc::new(report_aggregations_to_write);
         let aggregation_job_to_write = Arc::new(aggregation_job_to_write);
         let accumulator = Arc::new(accumulator);
@@ -1663,6 +1669,147 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn step_aggregation_job_init_helper_responds_with_wrong_round() {
+        // Setup: insert a client report and add it to a new aggregation job.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
+
+        let task = TaskBuilder::new(
+            QueryType::FixedSize { max_batch_size: 10 },
+            VdafInstance::Prio3Aes128Count,
+            Role::Leader,
+        )
+        .with_aggregator_endpoints(Vec::from([
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ]))
+        .build();
+
+        let report_id = random();
+        let time = clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
+
+        let transcript = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), &report_id, &0);
+
+        let agg_auth_token = task.primary_aggregator_auth_token();
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            task.id(),
+            &report_id,
+            time,
+            helper_hpke_keypair.config(),
+            (),
+            Vec::new(),
+            transcript.input_shares,
+        );
+        let batch_id = random();
+        let aggregation_job_id = random();
+
+        let lease = ds
+            .run_tx(|tx| {
+                let (task, report) = (task.clone(), report.clone());
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+                    tx.put_client_report(&report).await?;
+
+                    tx.put_aggregation_job(&models::AggregationJob::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        FixedSize,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        Some(batch_id),
+                        (),
+                        AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
+                    ))
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        *report.id(),
+                        *report.time(),
+                        0,
+                        ReportAggregationState::Start,
+                    ))
+                    .await?;
+
+                    Ok(tx
+                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .await?
+                        .remove(0))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(lease.leased().task_id(), task.id());
+        assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+
+        // Setup: prepare mocked HTTP response.
+        let leader_request = AggregationJobInitializeReq::new(
+            ().get_encoded(),
+            PartialBatchSelector::new_fixed_size(batch_id),
+            Vec::from([ReportShare::new(
+                ReportMetadata::new(*report.id(), *report.time()),
+                report.public_share().get_encoded(),
+                report.helper_encrypted_input_share().clone(),
+            )]),
+        );
+        let helper_vdaf_msg = assert_matches!(
+            &transcript.prepare_transitions[Role::Helper.index().unwrap()][0],
+            PrepareTransition::Continue(_, prep_share) => prep_share);
+        let helper_response = AggregationJob::new(
+            AggregationJobRound::from(17), // helper round does not match leader
+            Vec::from([PrepareStep::new(
+                *report.id(),
+                PrepareStepState::Continued(helper_vdaf_msg.get_encoded()),
+            )]),
+        );
+
+        let mocked_aggregate_success = mock(
+            "PUT",
+            format!("/tasks/{}/aggregation_jobs/{aggregation_job_id}", task.id()).as_str(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(
+            CONTENT_TYPE.as_str(),
+            AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        )
+        .match_body(leader_request.get_encoded())
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), AggregationJob::MEDIA_TYPE)
+        .with_body(helper_response.get_encoded())
+        .create();
+
+        // Run: create an aggregation job driver & try to step the aggregation we've created, which
+        // should fail because the helper is on an unrecognized round.
+        let meter = meter("aggregation_job_driver");
+        let aggregation_job_driver =
+            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter);
+        aggregation_job_driver
+            .step_aggregation_job(ds.clone(), Arc::new(lease))
+            .await
+            .unwrap_err();
+
+        // Verify.
+        mocked_aggregate_success.assert();
+    }
+
+    #[tokio::test]
     async fn step_time_interval_aggregation_job_continue() {
         // Setup: insert a client report and add it to an aggregation job whose state has already
         // been stepped once.
@@ -2147,6 +2294,146 @@ mod tests {
         assert_eq!(want_aggregation_job, got_aggregation_job);
         assert_eq!(want_report_aggregation, got_report_aggregation);
         assert_eq!(want_batch_aggregations, got_batch_aggregations);
+    }
+
+    #[tokio::test]
+    async fn step_aggregation_job_continue_helper_responds_with_wrong_round() {
+        // Setup: insert a client report and add it to an aggregation job whose state has already
+        // been stepped once.
+        install_test_trace_subscriber();
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
+
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count,
+            Role::Leader,
+        )
+        .with_aggregator_endpoints(Vec::from([
+            Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
+            Url::parse(&mockito::server_url()).unwrap(),
+        ]))
+        .build();
+        let report_id: ReportId = random();
+        let time = clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
+
+        let transcript = run_vdaf(vdaf.as_ref(), verify_key.as_bytes(), &(), &report_id, &0);
+
+        let agg_auth_token = task.primary_aggregator_auth_token();
+        let helper_hpke_keypair = generate_test_hpke_config_and_private_key();
+        let report = generate_report::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+            task.id(),
+            &report_id,
+            time,
+            helper_hpke_keypair.config(),
+            (),
+            Vec::new(),
+            transcript.input_shares,
+        );
+        let aggregation_job_id = random();
+        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
+
+        let leader_prep_state = assert_matches!(
+            &transcript.prepare_transitions[Role::Leader.index().unwrap()][0],
+            PrepareTransition::Continue(prep_state, _) => prep_state);
+        let prep_msg = &transcript.prepare_messages[0];
+
+        let lease = ds
+            .run_tx(|tx| {
+                let (task, report, leader_prep_state, prep_msg) = (
+                    task.clone(),
+                    report.clone(),
+                    leader_prep_state.clone(),
+                    prep_msg.clone(),
+                );
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+                    tx.put_client_report(&report).await?;
+
+                    tx.put_aggregation_job(&models::AggregationJob::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        Some(batch_interval),
+                        (),
+                        AggregationJobState::InProgress,
+                        AggregationJobRound::from(1),
+                    ))
+                    .await?;
+                    tx.put_report_aggregation(&ReportAggregation::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        *report.id(),
+                        *report.time(),
+                        0,
+                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                    ))
+                    .await?;
+
+                    Ok(tx
+                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .await?
+                        .remove(0))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(lease.leased().task_id(), task.id());
+        assert_eq!(lease.leased().aggregation_job_id(), &aggregation_job_id);
+
+        // Setup: prepare mocked HTTP responses.
+        let leader_request = AggregationJob::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                *report.id(),
+                PrepareStepState::Continued(prep_msg.get_encoded()),
+            )]),
+        );
+        let helper_response = AggregationJob::new(
+            AggregationJobRound::from(17), // incorrect round in helper response
+            Vec::from([PrepareStep::new(*report.id(), PrepareStepState::Finished)]),
+        );
+        let mocked_aggregate_success = mock(
+            "POST",
+            format!("/tasks/{}/aggregation_jobs/{aggregation_job_id}", task.id()).as_str(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), AggregationJob::MEDIA_TYPE)
+        .match_body(leader_request.get_encoded())
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), AggregationJob::MEDIA_TYPE)
+        .with_body(helper_response.get_encoded())
+        .create();
+
+        // Run: create an aggregation job driver & try to step the aggregation we've created. It
+        // should fail because the helper reports an unrecognized round.
+        let meter = meter("aggregation_job_driver");
+        let aggregation_job_driver =
+            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter);
+
+        aggregation_job_driver
+            .step_aggregation_job(ds.clone(), Arc::new(lease))
+            .await
+            .unwrap_err();
+
+        // Verify.
+        mocked_aggregate_success.assert();
     }
 
     #[tokio::test]

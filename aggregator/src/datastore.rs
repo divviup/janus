@@ -3231,7 +3231,7 @@ pub mod models {
     use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance};
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        AggregationJobRound, AggregationJobId, BatchId, Duration, Extension, HpkeCiphertext,
+        AggregationJobId, AggregationJobRound, BatchId, Duration, Extension, HpkeCiphertext,
         Interval, ReportId, ReportIdChecksum, ReportShareError, Role, TaskId, Time,
     };
     use postgres_protocol::types::{
@@ -4876,7 +4876,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        AggregationJobRound, AggregateShareAad, BatchSelector, Duration, Extension, ExtensionType,
+        AggregateShareAad, AggregationJobRound, BatchSelector, Duration, Extension, ExtensionType,
         HpkeCiphertext, HpkeConfigId, Interval, ReportId, ReportIdChecksum, ReportMetadata,
         ReportShare, ReportShareError, Role, TaskId, Time,
     };

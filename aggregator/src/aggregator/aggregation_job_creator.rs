@@ -697,7 +697,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregationJobRound, AggregationJobId, Interval, ReportId, Role, TaskId, Time,
+        AggregationJobId, AggregationJobRound, Interval, ReportId, Role, TaskId, Time,
     };
     use prio::{
         codec::ParameterizedDecode,
