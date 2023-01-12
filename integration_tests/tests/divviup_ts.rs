@@ -1,5 +1,6 @@
 //! These tests check interoperation between the divviup-ts client and Janus aggregators.
 
+use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 use janus_core::{
     task::VdafInstance,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
@@ -12,8 +13,6 @@ use janus_interop_binaries::test_util::generate_network_name;
 use testcontainers::clients::Cli;
 
 mod common;
-
-use common::{submit_measurements_and_verify_aggregate, test_task_builders};
 
 async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInstance) {
     let (collector_private_key, leader_task, helper_task) =
@@ -38,7 +37,6 @@ async fn run_divviup_ts_integration_test(container_client: &Cli, vdaf: VdafInsta
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore] // TODO(#799): re-enable once divviup-ts has been updated for DAP-03
 async fn janus_divviup_ts_count() {
     install_test_trace_subscriber();
 
@@ -46,7 +44,6 @@ async fn janus_divviup_ts_count() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore] // TODO(#799): re-enable once divviup-ts has been updated for DAP-03
 async fn janus_divviup_ts_sum() {
     install_test_trace_subscriber();
 
@@ -58,7 +55,6 @@ async fn janus_divviup_ts_sum() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore] // TODO(#799): re-enable once divviup-ts has been updated for DAP-03
 async fn janus_divviup_ts_histogram() {
     install_test_trace_subscriber();
 
