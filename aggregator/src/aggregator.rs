@@ -2742,12 +2742,10 @@ impl DapProblemTypeExt for DapProblemType {
     /// Returns the HTTP status code that should be used in responses whose body is a problem
     /// document of this type.
     fn http_status(&self) -> StatusCode {
-        match self {
-            // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
-            Self::UnrecognizedTask => StatusCode::NOT_FOUND,
-            // So far, 400 Bad Request seems to be the appropriate choice for most problem types.
-            _ => StatusCode::BAD_REQUEST,
-        }
+        // Per the errors section of the protocol, error responses should use "HTTP status code 400
+        // Bad Request unless explicitly specified otherwise."
+        // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#name-errors
+        StatusCode::BAD_REQUEST
     }
 }
 
@@ -3415,13 +3413,13 @@ mod tests {
             .into_response();
         // Expected status and problem type should be per the protocol
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.1
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": 404u16,
+                "status": 400u16,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "taskid": format!("{unknown_task_id}"),
@@ -3852,7 +3850,7 @@ mod tests {
         assert_eq!(
             problem_details,
             json!({
-                "status": 404,
+                "status": 400,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "taskid": format!("{}", task.id()),
@@ -4146,7 +4144,7 @@ mod tests {
         assert_eq!(
             problem_details,
             json!({
-                "status": 404,
+                "status": 400,
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "taskid": format!("{}", task.id()),
@@ -6444,13 +6442,13 @@ mod tests {
             .into_response()
             .into_parts();
 
-        assert_eq!(parts.status, StatusCode::NOT_FOUND);
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::NOT_FOUND.as_u16(),
+                "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "taskid": format!("{}", task.id()),
@@ -7394,13 +7392,13 @@ mod tests {
             .into_response()
             .into_parts();
 
-        assert_eq!(parts.status, StatusCode::NOT_FOUND);
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
         assert_eq!(
             problem_details,
             json!({
-                "status": StatusCode::NOT_FOUND.as_u16(),
+                "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
                 "taskid": format!("{}", task.id()),
