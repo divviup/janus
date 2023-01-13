@@ -1956,6 +1956,8 @@ impl VdafOps {
         for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
+        // TODO(timg): verify that the current leader request matches the previously seen one
+
         let mut response_prep_steps = Vec::new();
 
         for report_aggregation in report_aggregations {
