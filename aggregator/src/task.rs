@@ -93,6 +93,9 @@ pub struct Task {
     max_batch_query_count: u64,
     /// The time after which the task is considered invalid.
     task_expiration: Time,
+    /// The age after which a report is considered to be "expired" and will be considered a
+    /// candidate for garbage collection.
+    report_expiry_age: Option<Duration>,
     /// The minimum number of reports in a batch to allow it to be collected.
     min_batch_size: u64,
     /// The duration to which clients should round their reported timestamps to. For time-interval
@@ -124,6 +127,7 @@ impl Task {
         vdaf_verify_keys: Vec<SecretBytes>,
         max_batch_query_count: u64,
         task_expiration: Time,
+        report_expiry_age: Option<Duration>,
         min_batch_size: u64,
         time_precision: Duration,
         tolerable_clock_skew: Duration,
@@ -154,6 +158,7 @@ impl Task {
             vdaf_verify_keys,
             max_batch_query_count,
             task_expiration,
+            report_expiry_age,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
@@ -229,6 +234,11 @@ impl Task {
     /// Retrieves the task expiration associated with this task.
     pub fn task_expiration(&self) -> &Time {
         &self.task_expiration
+    }
+
+    /// Retrieves the report expiry age associated with this task.
+    pub fn report_expiry_age(&self) -> Option<&Duration> {
+        self.report_expiry_age.as_ref()
     }
 
     /// Retrieves the min batch size parameter associated with this task.
@@ -353,6 +363,7 @@ pub struct SerializedTask {
     vdaf_verify_keys: Vec<String>, // in unpadded base64url
     max_batch_query_count: u64,
     task_expiration: Time,
+    report_expiry_age: Option<Duration>,
     min_batch_size: u64,
     time_precision: Duration,
     tolerable_clock_skew: Duration,
@@ -445,6 +456,7 @@ impl Serialize for Task {
             vdaf_verify_keys,
             max_batch_query_count: self.max_batch_query_count,
             task_expiration: self.task_expiration,
+            report_expiry_age: self.report_expiry_age,
             min_batch_size: self.min_batch_size,
             time_precision: self.time_precision,
             tolerable_clock_skew: self.tolerable_clock_skew,
@@ -496,6 +508,7 @@ impl TryFrom<SerializedTask> for Task {
             vdaf_verify_keys,
             serialized_task.max_batch_query_count,
             serialized_task.task_expiration,
+            serialized_task.report_expiry_age,
             serialized_task.min_batch_size,
             serialized_task.time_precision,
             serialized_task.tolerable_clock_skew,
@@ -511,7 +524,6 @@ impl<'de> Deserialize<'de> for Task {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // Deserialize into intermediate representation.
         let serialized_task = SerializedTask::deserialize(deserializer)?;
-
         Task::try_from(serialized_task).map_err(D::Error::custom)
     }
 }
@@ -593,6 +605,7 @@ pub mod test_util {
                     Vec::from([vdaf_verify_key]),
                     1,
                     Time::distant_future(),
+                    None,
                     0,
                     Duration::from_hours(8).unwrap(),
                     Duration::from_minutes(10).unwrap(),
@@ -698,6 +711,14 @@ pub mod test_util {
             })
         }
 
+        /// Sets the report expiry age.
+        pub fn with_report_expiry_age(self, report_expiry_age: Option<Duration>) -> Self {
+            Self(Task {
+                report_expiry_age,
+                ..self.0
+            })
+        }
+
         /// Sets the task query type
         pub fn with_query_type(self, query_type: QueryType) -> Self {
             Self(Task {
@@ -772,6 +793,7 @@ mod tests {
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
+            None,
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
@@ -795,6 +817,7 @@ mod tests {
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
+            None,
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
@@ -818,6 +841,7 @@ mod tests {
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
+            None,
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
@@ -841,6 +865,7 @@ mod tests {
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
+            None,
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
@@ -866,6 +891,7 @@ mod tests {
             Vec::from([SecretBytes::new([0; PRIO3_AES128_VERIFY_KEY_LENGTH].into())]),
             0,
             Time::from_seconds_since_epoch(u64::MAX),
+            None,
             0,
             Duration::from_hours(8).unwrap(),
             Duration::from_minutes(10).unwrap(),
@@ -900,6 +926,7 @@ mod tests {
                 Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
                 1,
                 Time::distant_future(),
+                None,
                 10,
                 Duration::from_seconds(3600),
                 Duration::from_seconds(60),
@@ -927,7 +954,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedTask",
-                    len: 15,
+                    len: 16,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -961,6 +988,8 @@ mod tests {
                 Token::Str("task_expiration"),
                 Token::NewtypeStruct { name: "Time" },
                 Token::U64(9000000000),
+                Token::Str("report_expiry_age"),
+                Token::None,
                 Token::Str("min_batch_size"),
                 Token::U64(10),
                 Token::Str("time_precision"),
@@ -1060,6 +1089,7 @@ mod tests {
                 Vec::from([SecretBytes::new(b"1234567812345678".to_vec())]),
                 1,
                 Time::distant_future(),
+                Some(Duration::from_seconds(1800)),
                 10,
                 Duration::from_seconds(3600),
                 Duration::from_seconds(60),
@@ -1087,7 +1117,7 @@ mod tests {
             &[
                 Token::Struct {
                     name: "SerializedTask",
-                    len: 15,
+                    len: 16,
                 },
                 Token::Str("task_id"),
                 Token::Some,
@@ -1129,6 +1159,10 @@ mod tests {
                 Token::Str("task_expiration"),
                 Token::NewtypeStruct { name: "Time" },
                 Token::U64(9000000000),
+                Token::Str("report_expiry_age"),
+                Token::Some,
+                Token::NewtypeStruct { name: "Duration" },
+                Token::U64(1800),
                 Token::Str("min_batch_size"),
                 Token::U64(10),
                 Token::Str("time_precision"),
