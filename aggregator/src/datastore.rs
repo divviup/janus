@@ -3,7 +3,7 @@
 use self::models::{
     AcquiredAggregationJob, AcquiredCollectJob, AggregateShareJob, AggregationJob, AggregatorRole,
     BatchAggregation, CollectJob, CollectJobState, CollectJobStateCode, LeaderStoredReport, Lease,
-    LeaseToken, OutstandingBatch, ReportAggregation, ReportAggregationState,
+    LeaseToken, OutstandingBatch, PrepareMessageOrShare, ReportAggregation, ReportAggregationState,
     ReportAggregationStateCode, SqlInterval,
 };
 #[cfg(test)]
@@ -1660,9 +1660,21 @@ impl<C: Clock> Transaction<'_, C> {
                         )
                     })?,
                 )?;
-                let prep_msg = prep_msg_bytes
-                    .map(|bytes| A::PrepareMessage::get_decoded_with_param(&prep_state, &bytes))
-                    .transpose()?;
+                let prep_msg_bytes = prep_msg_bytes.ok_or_else(|| {
+                    Error::DbState(
+                        "report aggregation in state WAITING but prep_msg is NULL".to_string(),
+                    )
+                })?;
+                let prep_msg = match role {
+                    Role::Leader => PrepareMessageOrShare::Leader(
+                        A::PrepareMessage::get_decoded_with_param(&prep_state, &prep_msg_bytes)?,
+                    ),
+                    Role::Helper => PrepareMessageOrShare::Helper(
+                        A::PrepareShare::get_decoded_with_param(&prep_state, &prep_msg_bytes)?,
+                    ),
+                    _ => return Err(Error::DbState(format!("unexpected role {role}"))),
+                };
+
                 ReportAggregationState::Waiting(prep_state, prep_msg)
             }
             ReportAggregationStateCode::Finished => ReportAggregationState::Finished(
@@ -3834,6 +3846,7 @@ pub mod models {
     impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for ReportAggregation<L, A>
     where
         A::PrepareState: PartialEq,
+        A::PrepareShare: PartialEq,
         A::PrepareMessage: PartialEq,
         A::OutputShare: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -3851,9 +3864,78 @@ pub mod models {
     impl<const L: usize, A: vdaf::Aggregator<L>> Eq for ReportAggregation<L, A>
     where
         A::PrepareState: Eq,
+        A::PrepareShare: Eq,
         A::PrepareMessage: Eq,
         A::OutputShare: Eq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+    }
+
+    #[derive(Clone, Derivative)]
+    #[derivative(Debug)]
+    pub enum PrepareMessageOrShare<const L: usize, A: vdaf::Aggregator<L>>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        /// The helper stores a prepare message share
+        Helper(#[derivative(Debug = "ignore")] A::PrepareShare),
+        /// The leader stores a combined prepare message
+        Leader(#[derivative(Debug = "ignore")] A::PrepareMessage),
+    }
+
+    impl<const L: usize, A: vdaf::Aggregator<L>> PrepareMessageOrShare<L, A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        pub(crate) fn get_leader_prepare_message(&self) -> Result<&A::PrepareMessage, Error>
+        where
+            A::PrepareMessage: Encode,
+        {
+            if let Self::Leader(prep_msg) = self {
+                Ok(prep_msg)
+            } else {
+                Err(Error::InvalidParameter(
+                    "does not contain a prepare message",
+                ))
+            }
+        }
+
+        pub(crate) fn get_helper_prepare_share(&self) -> Result<&A::PrepareShare, Error>
+        where
+            A::PrepareShare: Encode,
+        {
+            if let Self::Helper(prep_share) = self {
+                Ok(prep_share)
+            } else {
+                Err(Error::InvalidParameter("does not contain a prepare share"))
+            }
+        }
+    }
+
+    impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for PrepareMessageOrShare<L, A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::PrepareShare: PartialEq,
+        A::PrepareMessage: PartialEq,
+    {
+        fn eq(&self, other: &Self) -> bool {
+            match (self, other) {
+                (Self::Helper(self_prep_share), Self::Helper(other_prep_share)) => {
+                    self_prep_share.eq(other_prep_share)
+                }
+                (Self::Leader(self_prep_msg), Self::Leader(other_prep_msg)) => {
+                    self_prep_msg.eq(other_prep_msg)
+                }
+                _ => false,
+            }
+        }
+    }
+
+    impl<const L: usize, A: vdaf::Aggregator<L>> Eq for PrepareMessageOrShare<L, A>
+    where
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::PrepareShare: Eq,
+        A::PrepareMessage: Eq,
     {
     }
 
@@ -3868,7 +3950,7 @@ pub mod models {
         Start,
         Waiting(
             #[derivative(Debug = "ignore")] A::PrepareState,
-            #[derivative(Debug = "ignore")] Option<A::PrepareMessage>,
+            PrepareMessageOrShare<L, A>,
         ),
         Finished(#[derivative(Debug = "ignore")] A::OutputShare),
         Failed(ReportShareError),
@@ -3900,12 +3982,18 @@ pub mod models {
         {
             let (prep_state, prep_msg, output_share, report_share_err) = match self {
                 ReportAggregationState::Start => (None, None, None, None),
-                ReportAggregationState::Waiting(prep_state, prep_msg) => (
-                    Some(prep_state.get_encoded()),
-                    prep_msg.as_ref().map(|msg| msg.get_encoded()),
-                    None,
-                    None,
-                ),
+                ReportAggregationState::Waiting(prep_state, prep_msg) => {
+                    let encoded_msg = match prep_msg {
+                        PrepareMessageOrShare::Leader(prep_msg) => prep_msg.get_encoded(),
+                        PrepareMessageOrShare::Helper(prep_share) => prep_share.get_encoded(),
+                    };
+                    (
+                        Some(prep_state.get_encoded()),
+                        Some(encoded_msg),
+                        None,
+                        None,
+                    )
+                }
                 ReportAggregationState::Finished(output_share) => {
                     (None, None, Some(output_share.into()), None)
                 }
@@ -3953,6 +4041,7 @@ pub mod models {
     where
         A::PrepareState: PartialEq,
         A::PrepareMessage: PartialEq,
+        A::PrepareShare: PartialEq,
         A::OutputShare: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
@@ -3977,6 +4066,7 @@ pub mod models {
     where
         A::PrepareState: Eq,
         A::PrepareMessage: Eq,
+        A::PrepareShare: PartialEq,
         A::OutputShare: Eq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
@@ -4870,7 +4960,7 @@ mod tests {
         task::VdafInstance,
         test_util::{
             dummy_vdaf::{self, AggregateShare, AggregationParam},
-            install_test_trace_subscriber,
+            install_test_trace_subscriber, run_vdaf,
         },
         time::{Clock, MockClock, TimeExt as CoreTimeExt},
     };
@@ -4883,7 +4973,6 @@ mod tests {
     use prio::{
         codec::{Decode, Encode},
         vdaf::{
-            self,
             prio3::{Prio3, Prio3Aes128Count},
             PrepareTransition,
         },
@@ -4897,7 +4986,10 @@ mod tests {
     };
     use uuid::Uuid;
 
-    use super::{models::AcquiredCollectJob, Datastore};
+    use super::{
+        models::{AcquiredCollectJob, PrepareMessageOrShare},
+        Datastore,
+    };
 
     #[tokio::test]
     async fn roundtrip_task() {
@@ -6322,16 +6414,53 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
+        let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let (prep_state, prep_msg, output_share) = generate_vdaf_values(vdaf.as_ref(), (), 0);
+        let verify_key: [u8; PRIO3_AES128_VERIFY_KEY_LENGTH] = random();
+        let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
 
-        for (ord, state) in [
-            ReportAggregationState::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::Start,
-            ReportAggregationState::Waiting(prep_state.clone(), None),
-            ReportAggregationState::Waiting(prep_state, Some(prep_msg)),
-            ReportAggregationState::Finished(output_share),
-            ReportAggregationState::Failed(ReportShareError::VdafPrepError),
-            ReportAggregationState::Invalid,
+        let (helper_prep_state, helper_prep_share) = assert_matches!(
+            &vdaf_transcript.prepare_transitions[1][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+        );
+        let leader_prep_state = assert_matches!(
+            &vdaf_transcript.prepare_transitions[0][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH,
+            >::Continue(prep_state, _) => prep_state.clone()
+        );
+        for (ord, (role, state)) in [
+            (
+                Role::Leader,
+                ReportAggregationState::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::Start,
+            ),
+            (
+                Role::Helper,
+                ReportAggregationState::Waiting(
+                    helper_prep_state.clone(),
+                    PrepareMessageOrShare::Helper(helper_prep_share),
+                ),
+            ),
+            (
+                Role::Leader,
+                ReportAggregationState::Waiting(
+                    leader_prep_state,
+                    PrepareMessageOrShare::Leader(vdaf_transcript.prepare_messages[0].clone()),
+                ),
+            ),
+            (
+                Role::Leader,
+                ReportAggregationState::Finished(vdaf_transcript.output_shares[0].clone()),
+            ),
+            (
+                Role::Leader,
+                ReportAggregationState::Failed(ReportShareError::VdafPrepError),
+            ),
+            (Role::Leader, ReportAggregationState::Invalid),
         ]
         .into_iter()
         .enumerate()
@@ -6339,12 +6468,11 @@ mod tests {
             let task = TaskBuilder::new(
                 task::QueryType::TimeInterval,
                 VdafInstance::Prio3Aes128Count,
-                Role::Leader,
+                role,
             )
             .build();
             let aggregation_job_id = random();
             let time = Time::from_seconds_since_epoch(12345);
-            let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
             let interval = Interval::new(
                 time.to_batch_interval_start(task.time_precision()).unwrap(),
                 *task.time_precision(),
@@ -6404,7 +6532,7 @@ mod tests {
                     Box::pin(async move {
                         tx.get_report_aggregation(
                             vdaf.as_ref(),
-                            &Role::Leader,
+                            &role,
                             task.id(),
                             &aggregation_job_id,
                             &report_id,
@@ -6437,7 +6565,7 @@ mod tests {
                     Box::pin(async move {
                         tx.get_report_aggregation(
                             vdaf.as_ref(),
-                            &Role::Leader,
+                            &role,
                             task.id(),
                             &aggregation_job_id,
                             &report_id,
@@ -6499,8 +6627,20 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
+        let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let (prep_state, prep_msg, output_share) = generate_vdaf_values(vdaf.as_ref(), (), 0);
+        let verify_key: [u8; PRIO3_AES128_VERIFY_KEY_LENGTH] = random();
+        let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
+
+        let leader_prep_state = assert_matches!(
+            &vdaf_transcript.prepare_transitions[0][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH,
+            >::Continue(prep_state, _) => prep_state.clone()
+        );
+
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -6518,11 +6658,11 @@ mod tests {
 
         let report_aggregations = ds
             .run_tx(|tx| {
-                let (task, prep_msg, prep_state, output_share) = (
+                let (task, leader_prep_msg, prep_state, output_share) = (
                     task.clone(),
-                    prep_msg.clone(),
-                    prep_state.clone(),
-                    output_share.clone(),
+                    vdaf_transcript.prepare_messages[0].clone(),
+                    leader_prep_state.clone(),
+                    vdaf_transcript.output_shares[0].clone(),
                 );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
@@ -6547,8 +6687,10 @@ mod tests {
                                 PRIO3_AES128_VERIFY_KEY_LENGTH,
                                 Prio3Aes128Count,
                             >::Start,
-                            ReportAggregationState::Waiting(prep_state.clone(), None),
-                            ReportAggregationState::Waiting(prep_state, Some(prep_msg)),
+                            ReportAggregationState::Waiting(
+                                prep_state,
+                                PrepareMessageOrShare::Leader(leader_prep_msg),
+                            ),
                             ReportAggregationState::Finished(output_share),
                             ReportAggregationState::Failed(ReportShareError::VdafPrepError),
                             ReportAggregationState::Invalid,
@@ -8499,7 +8641,7 @@ mod tests {
                         random(),
                         clock.now(),
                         1,
-                        ReportAggregationState::Waiting((), Some(())), // Counted among max_size.
+                        ReportAggregationState::Waiting((), PrepareMessageOrShare::Leader(())), // Counted among max_size.
                     );
                     let report_aggregation_0_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -8639,55 +8781,6 @@ mod tests {
             .await
             .unwrap();
         assert!(outstanding_batches.is_empty());
-    }
-
-    /// generate_vdaf_values generates some arbitrary VDAF values for use in testing. It is cribbed
-    /// heavily from `libprio-rs`' `run_vdaf`. The resulting values are guaranteed to be associated
-    /// with the same aggregator.
-    ///
-    /// generate_vdaf_values assumes that the VDAF in use is one-round.
-    fn generate_vdaf_values<const L: usize, A: vdaf::Aggregator<L> + vdaf::Client>(
-        vdaf: &A,
-        agg_param: A::AggregationParam,
-        measurement: A::Measurement,
-    ) -> (A::PrepareState, A::PrepareMessage, A::OutputShare)
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
-        let (public_share, input_shares) = vdaf.shard(&measurement).unwrap();
-        let verify_key: [u8; L] = random();
-
-        let (mut prep_states, prep_shares): (Vec<_>, Vec<_>) = input_shares
-            .iter()
-            .enumerate()
-            .map(|(agg_id, input_share)| {
-                vdaf.prepare_init(
-                    &verify_key,
-                    agg_id,
-                    &agg_param,
-                    b"nonce",
-                    &public_share,
-                    input_share,
-                )
-                .unwrap()
-            })
-            .unzip();
-        let prep_msg = vdaf.prepare_preprocess(prep_shares).unwrap();
-        let mut output_shares: Vec<A::OutputShare> = prep_states
-            .iter()
-            .map(|prep_state| {
-                if let PrepareTransition::Finish(output_share) = vdaf
-                    .prepare_step(prep_state.clone(), prep_msg.clone())
-                    .unwrap()
-                {
-                    output_share
-                } else {
-                    panic!("generate_vdaf_values: VDAF returned something other than Finish")
-                }
-            })
-            .collect();
-
-        (prep_states.remove(0), prep_msg, output_shares.remove(0))
     }
 
     #[tokio::test]

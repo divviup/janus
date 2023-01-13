@@ -16,9 +16,9 @@ use crate::{
         self,
         models::{
             self, AggregateShareJob, AggregationJobState, CollectJob, CollectJobState,
-            LeaderStoredReport, ReportAggregation, ReportAggregationState,
+            LeaderStoredReport, PrepareMessageOrShare, ReportAggregation, ReportAggregationState,
         },
-        Datastore,
+        Datastore, Transaction,
     },
     messages::TimeExt,
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
@@ -1482,6 +1482,7 @@ impl VdafOps {
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
@@ -1626,7 +1627,10 @@ impl VdafOps {
                     ReportShareData {
                         report_share: report_share.clone(),
                         prep_result: PrepareStepState::Continued(prep_share.get_encoded()),
-                        agg_state: ReportAggregationState::<L, A>::Waiting(prep_state, None),
+                        agg_state: ReportAggregationState::Waiting(
+                            prep_state,
+                            PrepareMessageOrShare::Helper(prep_share),
+                        ),
                     }
                 }
 
@@ -1745,6 +1749,255 @@ impl VdafOps {
         Ok(AggregationJob::new(aggregation_job.round(), prep_steps))
     }
 
+    async fn step_aggregation_job<const L: usize, C, Q, A>(
+        tx: &Transaction<'_, C>,
+        task: &Arc<Task>,
+        vdaf: &Arc<A>,
+        helper_aggregation_job: models::AggregationJob<L, Q, A>,
+        report_aggregations: Vec<ReportAggregation<L, A>>,
+        leader_aggregation_job: &Arc<AggregationJob>,
+        aggregate_step_failure_counter: &Counter<u64>,
+    ) -> Result<AggregationJob, datastore::Error>
+    where
+        C: Clock,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<L> + 'static + Send + Sync,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
+        for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+    {
+        // Handle each transition in the request.
+        let mut report_aggregations = report_aggregations.into_iter();
+        let (mut saw_continue, mut saw_finish) = (false, false);
+        let mut response_prep_steps = Vec::new();
+        let mut accumulator = Accumulator::<L, Q, A>::new(
+            Arc::clone(task),
+            helper_aggregation_job.aggregation_parameter().clone(),
+        );
+
+        for prep_step in leader_aggregation_job.prepare_steps() {
+            // Match preparation step received from leader to stored report aggregation, and extract
+            // the stored preparation step.
+            let report_aggregation = loop {
+                let report_agg = report_aggregations.next().ok_or_else(|| {
+                    datastore::Error::User(
+                        Error::UnrecognizedMessage(
+                            Some(*task.id()),
+                            "leader sent unexpected, duplicate, or out-of-order prepare steps",
+                        )
+                        .into(),
+                    )
+                })?;
+                if report_agg.report_id() != prep_step.report_id() {
+                    // This report was omitted by the leader because of a prior failure. Note that
+                    // the report was dropped (if it's not already in an error state) and continue.
+                    if matches!(report_agg.state(), ReportAggregationState::Waiting(_, _)) {
+                        tx.update_report_aggregation(&report_agg.with_state(
+                            ReportAggregationState::Failed(ReportShareError::ReportDropped),
+                        ))
+                        .await?;
+                    }
+                    continue;
+                }
+                break report_agg;
+            };
+
+            // Make sure this report isn't in an interval that has already started collection.
+            let conflicting_aggregate_share_jobs = tx
+                .get_aggregate_share_jobs_including_time::<L, A>(
+                    task.id(),
+                    report_aggregation.time(),
+                )
+                .await?;
+            if !conflicting_aggregate_share_jobs.is_empty() {
+                response_prep_steps.push(PrepareStep::new(
+                    *prep_step.report_id(),
+                    PrepareStepState::Failed(ReportShareError::BatchCollected),
+                ));
+                tx.update_report_aggregation(&report_aggregation.with_state(
+                    ReportAggregationState::Failed(ReportShareError::BatchCollected),
+                ))
+                .await?;
+                continue;
+            }
+
+            let prep_state = match report_aggregation.state() {
+                ReportAggregationState::Waiting(prep_state, _) => prep_state,
+                _ => {
+                    return Err(datastore::Error::User(
+                        Error::UnrecognizedMessage(
+                            Some(*task.id()),
+                            "leader sent prepare step for non-WAITING report aggregation",
+                        )
+                        .into(),
+                    ));
+                }
+            };
+
+            // Parse preparation message out of prepare step received from leader.
+            let prep_msg = match prep_step.state() {
+                PrepareStepState::Continued(payload) => A::PrepareMessage::decode_with_param(
+                    prep_state,
+                    &mut Cursor::new(payload.as_ref()),
+                )?,
+                _ => {
+                    return Err(datastore::Error::User(
+                        Error::UnrecognizedMessage(
+                            Some(*task.id()),
+                            "leader sent non-Continued prepare step",
+                        )
+                        .into(),
+                    ));
+                }
+            };
+
+            // Compute the next transition, prepare to respond & update DB.
+            let next_state = match vdaf.prepare_step(prep_state.clone(), prep_msg) {
+                Ok(PrepareTransition::Continue(prep_state, prep_share)) => {
+                    saw_continue = true;
+                    response_prep_steps.push(PrepareStep::new(
+                        *prep_step.report_id(),
+                        PrepareStepState::Continued(prep_share.get_encoded()),
+                    ));
+                    ReportAggregationState::Waiting(
+                        prep_state,
+                        PrepareMessageOrShare::Helper(prep_share),
+                    )
+                }
+
+                Ok(PrepareTransition::Finish(output_share)) => {
+                    saw_finish = true;
+                    accumulator.update(
+                        helper_aggregation_job.partial_batch_identifier()?,
+                        prep_step.report_id(),
+                        report_aggregation.time(),
+                        &output_share,
+                    )?;
+                    response_prep_steps.push(PrepareStep::new(
+                        *prep_step.report_id(),
+                        PrepareStepState::Finished,
+                    ));
+                    ReportAggregationState::Finished(output_share)
+                }
+
+                Err(error) => {
+                    info!(
+                        task_id = %task.id(),
+                        job_id = %helper_aggregation_job.id(),
+                        report_id = %prep_step.report_id(),
+                        ?error, "Prepare step failed",
+                    );
+                    aggregate_step_failure_counter.add(
+                        &Context::current(),
+                        1,
+                        &[KeyValue::new("type", "prepare_step_failure")],
+                    );
+                    response_prep_steps.push(PrepareStep::new(
+                        *prep_step.report_id(),
+                        PrepareStepState::Failed(ReportShareError::VdafPrepError),
+                    ));
+                    ReportAggregationState::Failed(ReportShareError::VdafPrepError)
+                }
+            };
+
+            tx.update_report_aggregation(&report_aggregation.with_state(next_state))
+                .await?;
+        }
+
+        for report_agg in report_aggregations {
+            // This report was omitted by the leader because of a prior failure. Note that the
+            // report was dropped (if it's not already in an error state) and continue.
+            if matches!(report_agg.state(), ReportAggregationState::Waiting(_, _)) {
+                tx.update_report_aggregation(&report_agg.with_state(
+                    ReportAggregationState::Failed(ReportShareError::ReportDropped),
+                ))
+                .await?;
+            }
+        }
+
+        let helper_aggregation_job = helper_aggregation_job
+            // Advance the job to the leader's round
+            .with_round(leader_aggregation_job.round())
+            .with_state(match (saw_continue, saw_finish) {
+                (false, false) => AggregationJobState::Finished, // everything failed, or there were no reports
+                (true, false) => AggregationJobState::InProgress,
+                (false, true) => AggregationJobState::Finished,
+                (true, true) => {
+                    return Err(datastore::Error::User(
+                        Error::Internal(
+                            "VDAF took an inconsistent number of rounds to reach Finish state"
+                                .to_string(),
+                        )
+                        .into(),
+                    ))
+                }
+            });
+        tx.update_aggregation_job(&helper_aggregation_job).await?;
+
+        accumulator.flush_to_datastore(tx).await?;
+
+        Ok(AggregationJob::new(
+            helper_aggregation_job.round(),
+            response_prep_steps,
+        ))
+    }
+
+    fn replay_aggregation_job_round<C, const L: usize, Q, A>(
+        helper_aggregation_job: models::AggregationJob<L, Q, A>,
+        report_aggregations: Vec<ReportAggregation<L, A>>,
+    ) -> Result<AggregationJob, datastore::Error>
+    where
+        C: Clock,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<L> + 'static + Send + Sync,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        for<'a> A::PrepareState: Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
+        for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+    {
+        let mut response_prep_steps = Vec::new();
+
+        for report_aggregation in report_aggregations {
+            let prepare_step_state = match report_aggregation.state() {
+                ReportAggregationState::Start => {
+                    return Err(datastore::Error::User(
+                        Error::Internal(format!(
+                            "report aggregation {} unexpectedly in state Start",
+                            report_aggregation.report_id()
+                        ))
+                        .into(),
+                    ));
+                }
+                ReportAggregationState::Waiting(_, prep_msg) => {
+                    PrepareStepState::Continued(prep_msg.get_helper_prepare_share()?.get_encoded())
+                }
+                ReportAggregationState::Finished(_) => PrepareStepState::Finished,
+                ReportAggregationState::Failed(report_share_error) => {
+                    PrepareStepState::Failed(*report_share_error)
+                }
+                ReportAggregationState::Invalid => {
+                    // Not certain if a helper report aggregation can ever be in this state
+                    warn!(
+                        report_id = %report_aggregation.report_id(),
+                        "encountered report aggregation in invalid state",
+                    );
+                    continue;
+                }
+            };
+
+            response_prep_steps.push(PrepareStep::new(
+                *report_aggregation.report_id(),
+                prepare_step_state,
+            ));
+        }
+
+        Ok(AggregationJob::new(
+            helper_aggregation_job.round(),
+            response_prep_steps,
+        ))
+    }
+
     async fn handle_aggregate_continue_generic<
         const L: usize,
         Q: AccumulableQueryType,
@@ -1774,8 +2027,19 @@ impl VdafOps {
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
             .run_tx(|tx| {
-                let (vdaf, aggregate_step_failure_counter, task, aggregation_job_id, leader_aggregation_job) =
-                    (Arc::clone(&vdaf), aggregate_step_failure_counter.clone(), Arc::clone(&task), *aggregation_job_id, Arc::clone(&leader_aggregation_job));
+                let (
+                    vdaf,
+                    aggregate_step_failure_counter,
+                    task,
+                    aggregation_job_id,
+                    leader_aggregation_job,
+                ) = (
+                    Arc::clone(&vdaf),
+                    aggregate_step_failure_counter.clone(),
+                    Arc::clone(&task),
+                    *aggregation_job_id,
+                    Arc::clone(&leader_aggregation_job),
+                );
 
                 Box::pin(async move {
                     // Read existing state.
@@ -1789,7 +2053,10 @@ impl VdafOps {
                         ),
                     )?;
                     let helper_aggregation_job = helper_aggregation_job.ok_or_else(|| {
-                        datastore::Error::User(Error::UnrecognizedAggregationJob(*task.id(), aggregation_job_id).into())
+                        datastore::Error::User(
+                            Error::UnrecognizedAggregationJob(*task.id(), aggregation_job_id)
+                                .into(),
+                        )
                     })?;
 
                     // If the leader's request is on the same round as our stored aggregation job,
@@ -1799,155 +2066,36 @@ impl VdafOps {
                     // TODO(timg): wire up metrics for this so we can see how often the leader
                     // repeats aggregation job reqs
                     if helper_aggregation_job.round() == leader_aggregation_job.round() {
-                        todo!("serve previously computed prepare steps");
-                    } else if helper_aggregation_job.round().increment() != leader_aggregation_job.round() {
-                        return Err(datastore::Error::User(Error::RoundMismatch { task_id: *task.id(), aggregation_job_id, expected_round: helper_aggregation_job.round().increment(), got_round: leader_aggregation_job.round() }.into()));
+                        return Self::replay_aggregation_job_round::<C, L, Q, A>(
+                            helper_aggregation_job,
+                            report_aggregations,
+                        );
+                    } else if helper_aggregation_job.round().increment()
+                        != leader_aggregation_job.round()
+                    {
+                        return Err(datastore::Error::User(
+                            Error::RoundMismatch {
+                                task_id: *task.id(),
+                                aggregation_job_id,
+                                expected_round: helper_aggregation_job.round().increment(),
+                                got_round: leader_aggregation_job.round(),
+                            }
+                            .into(),
+                        ));
                     }
 
-                    // Handle each transition in the request.
-                    let mut report_aggregations = report_aggregations.into_iter();
-                    let (mut saw_continue, mut saw_finish) = (false, false);
-                    let mut response_prep_steps = Vec::new();
-                    let mut accumulator = Accumulator::<L, Q, A>::new(Arc::clone(&task), helper_aggregation_job.aggregation_parameter().clone());
-
-                    for prep_step in leader_aggregation_job.prepare_steps().iter() {
-                        // Match preparation step received from leader to stored report aggregation,
-                        // and extract the stored preparation step.
-                        let report_aggregation = loop {
-                            let report_agg = report_aggregations.next().ok_or_else(|| {
-                                datastore::Error::User(Error::UnrecognizedMessage(
-                                    Some(*task.id()),
-                                    "leader sent unexpected, duplicate, or out-of-order prepare steps",
-                                ).into())
-                            })?;
-                            if report_agg.report_id() != prep_step.report_id() {
-                                // This report was omitted by the leader because of a prior failure.
-                                // Note that the report was dropped (if it's not already in an error
-                                // state) and continue.
-                                if matches!(report_agg.state(), ReportAggregationState::Waiting(_, _)) {
-                                    tx.update_report_aggregation(&report_agg.with_state(ReportAggregationState::Failed(ReportShareError::ReportDropped))).await?;
-                                }
-                                continue;
-                            }
-                            break report_agg;
-                        };
-
-                        // Make sure this report isn't in an interval that has already started
-                        // collection.
-                        let conflicting_aggregate_share_jobs = tx.get_aggregate_share_jobs_including_time::<L, A>(task.id(), report_aggregation.time()).await?;
-                        if !conflicting_aggregate_share_jobs.is_empty() {
-                            response_prep_steps.push(PrepareStep::new(
-                                *prep_step.report_id(),
-                                PrepareStepState::Failed(ReportShareError::BatchCollected),
-                            ));
-                            tx.update_report_aggregation(&report_aggregation.with_state(ReportAggregationState::Failed(ReportShareError::BatchCollected))).await?;
-                            continue;
-                        }
-
-                        let prep_state =
-                            match report_aggregation.state() {
-                                ReportAggregationState::Waiting(prep_state, _) => prep_state,
-                                _ => {
-                                    return Err(datastore::Error::User(
-                                        Error::UnrecognizedMessage(
-                                            Some(*task.id()),
-                                            "leader sent prepare step for non-WAITING report aggregation",
-                                        ).into()
-                                    ));
-                                },
-                            };
-
-                        // Parse preparation message out of prepare step received from leader.
-                        let prep_msg = match prep_step.state() {
-                            PrepareStepState::Continued(payload) => {
-                                A::PrepareMessage::decode_with_param(
-                                    prep_state,
-                                    &mut Cursor::new(payload.as_ref()),
-                                )?
-                            }
-                            _ => {
-                                return Err(datastore::Error::User(
-                                    Error::UnrecognizedMessage(
-                                        Some(*task.id()),
-                                        "leader sent non-Continued prepare step",
-                                    ).into()
-                                ));
-                            }
-                        };
-
-                        // Compute the next transition, prepare to respond & update DB.
-                        let next_state = match vdaf.prepare_step(prep_state.clone(), prep_msg) {
-                            Ok(PrepareTransition::Continue(prep_state, prep_share))=> {
-                                saw_continue = true;
-                                response_prep_steps.push(PrepareStep::new(
-                                    *prep_step.report_id(),
-                                    PrepareStepState::Continued(prep_share.get_encoded()),
-                                ));
-                                ReportAggregationState::Waiting(prep_state, None)
-                            }
-
-                            Ok(PrepareTransition::Finish(output_share)) => {
-                                saw_finish = true;
-                                accumulator.update(
-                                    helper_aggregation_job.partial_batch_identifier()?,
-                                    prep_step.report_id(),
-                                    report_aggregation.time(),
-                                    &output_share,
-                                )?;
-                                response_prep_steps.push(PrepareStep::new(
-                                    *prep_step.report_id(),
-                                    PrepareStepState::Finished,
-                                ));
-                                ReportAggregationState::Finished(output_share)
-                            }
-
-                            Err(error) => {
-                                info!(
-                                    task_id = %task.id(),
-                                    job_id = %aggregation_job_id,
-                                    report_id = %prep_step.report_id(),
-                                    ?error, "Prepare step failed",
-                                );
-                                aggregate_step_failure_counter.add(&Context::current(), 1, &[KeyValue::new("type", "prepare_step_failure")]);
-                                response_prep_steps.push(PrepareStep::new(
-                                    *prep_step.report_id(),
-                                    PrepareStepState::Failed(ReportShareError::VdafPrepError),
-                                ));
-                                ReportAggregationState::Failed(ReportShareError::VdafPrepError)
-                            }
-                        };
-
-                        tx.update_report_aggregation(&report_aggregation.with_state(next_state)).await?;
-                    }
-
-                    for report_agg in report_aggregations {
-                        // This report was omitted by the leader because of a prior failure.
-                        // Note that the report was dropped (if it's not already in an error state)
-                        // and continue.
-                        if matches!(report_agg.state(), ReportAggregationState::Waiting(_, _)) {
-                            tx.update_report_aggregation(&report_agg.with_state(ReportAggregationState::Failed(ReportShareError::ReportDropped))).await?;
-                        }
-                    }
-
-                    let helper_aggregation_job = helper_aggregation_job
-                        // Advance the job to the leader's round
-                        .with_round(leader_aggregation_job.round())
-                        .with_state(match (saw_continue, saw_finish) {
-                        (false, false) => AggregationJobState::Finished, // everything failed, or there were no reports
-                        (true, false) => AggregationJobState::InProgress,
-                        (false, true) => AggregationJobState::Finished,
-                        (true, true) => {
-                            return Err(datastore::Error::User(Error::Internal(
-                                "VDAF took an inconsistent number of rounds to reach Finish state"
-                                    .to_string(),
-                            ).into()))
-                        }
-                    });
-                    tx.update_aggregation_job(&helper_aggregation_job).await?;
-
-                    accumulator.flush_to_datastore(tx).await?;
-
-                    Ok(AggregationJob::new(helper_aggregation_job.round(), response_prep_steps))
+                    // The leader is advancing us to the next round. Step the aggregation job to
+                    // compute the next round of prepare messages and state.
+                    return Self::step_aggregation_job(
+                        tx,
+                        &task,
+                        &vdaf,
+                        helper_aggregation_job,
+                        report_aggregations,
+                        &leader_aggregation_job,
+                        &aggregate_step_failure_counter,
+                    )
+                    .await;
                 })
             })
             .await?)
@@ -3429,7 +3577,7 @@ mod tests {
         datastore::{
             models::{
                 self, AggregateShareJob, AggregationJobState, BatchAggregation, CollectJob,
-                CollectJobState, ReportAggregation, ReportAggregationState,
+                CollectJobState, PrepareMessageOrShare, ReportAggregation, ReportAggregationState,
             },
             test_util::{ephemeral_datastore, DbHandle},
             Datastore,
@@ -3471,14 +3619,16 @@ mod tests {
         field::Field64,
         vdaf::{
             self,
-            prio3::{Prio3, Prio3Aes128Count},
+            prio3::{
+                Prio3, Prio3Aes128Count, Prio3PrepareMessage, Prio3PrepareShare, Prio3PrepareState,
+            },
             AggregateShare, Aggregator as _, Client as VdafClient, PrepareTransition,
         },
     };
     use rand::random;
     use reqwest::Client;
     use serde_json::json;
-    use std::{collections::HashMap, io::Cursor, sync::Arc};
+    use std::{collections::HashMap, io::Cursor, iter, sync::Arc};
     use url::Url;
     use uuid::Uuid;
     use warp::{
@@ -5059,10 +5209,12 @@ mod tests {
             report_metadata_0.id(),
             &0,
         );
-        let prep_state_0 = assert_matches!(
+        let (prep_state_0, prep_share_0) = assert_matches!(
             &transcript_0.prepare_transitions[1][0],
-            PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _)
-            => prep_state.clone()
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
         );
         let out_share_0 = assert_matches!(
             &transcript_0.prepare_transitions[1][1],
@@ -5094,7 +5246,13 @@ mod tests {
             report_metadata_1.id(),
             &0,
         );
-        let prep_state_1 = assert_matches!(&transcript_1.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
+        let (prep_state_1, prep_share_1) = assert_matches!(
+            &transcript_1.prepare_transitions[1][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+        );
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
             report_metadata_1.clone(),
@@ -5122,7 +5280,13 @@ mod tests {
             report_metadata_2.id(),
             &0,
         );
-        let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
+        let (prep_state_2, prep_share_2) = assert_matches!(
+            &transcript_2.prepare_transitions[1][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+        );
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
             *task.id(),
@@ -5140,6 +5304,11 @@ mod tests {
                     report_share_0.clone(),
                     report_share_1.clone(),
                     report_share_2.clone(),
+                );
+                let (prep_share_0, prep_share_1, prep_share_2) = (
+                    prep_share_0.clone(),
+                    prep_share_1.clone(),
+                    prep_share_2.clone(),
                 );
                 let (prep_state_0, prep_state_1, prep_state_2) = (
                     prep_state_0.clone(),
@@ -5180,7 +5349,7 @@ mod tests {
                             *report_metadata_0.id(),
                             *report_metadata_0.time(),
                             0,
-                            ReportAggregationState::Waiting(prep_state_0, None),
+                            ReportAggregationState::Waiting(prep_state_0, PrepareMessageOrShare::Helper(prep_share_0)),
                         ),
                     )
                     .await?;
@@ -5191,7 +5360,7 @@ mod tests {
                             *report_metadata_1.id(),
                             *report_metadata_1.time(),
                             1,
-                            ReportAggregationState::Waiting(prep_state_1, None),
+                            ReportAggregationState::Waiting(prep_state_1, PrepareMessageOrShare::Helper(prep_share_1)),
                         ),
                     )
                     .await?;
@@ -5202,7 +5371,7 @@ mod tests {
                             *report_metadata_2.id(),
                             *report_metadata_2.time(),
                             2,
-                            ReportAggregationState::Waiting(prep_state_2, None),
+                            ReportAggregationState::Waiting(prep_state_2, PrepareMessageOrShare::Helper(prep_share_2)),
                         ),
                     )
                     .await?;
@@ -5351,6 +5520,316 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn aggregate_continue_round_recovery() {
+        // Prepare datastore & request.
+        install_test_trace_subscriber();
+
+        let aggregation_job_id = random();
+        let task = TaskBuilder::new(
+            QueryType::TimeInterval,
+            VdafInstance::Prio3Aes128Count,
+            Role::Helper,
+        )
+        .build();
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let datastore = Arc::new(datastore);
+
+        let mut report_factory = report_factory(&task, clock.clone());
+
+        let (report, unrelated_report) = (
+            report_factory.next().unwrap(),
+            report_factory.next().unwrap(),
+        );
+
+        datastore
+            .run_tx(|tx| {
+                let task = task.clone();
+                let report = report.clone();
+                let unrelated_report = unrelated_report.clone();
+
+                Box::pin(async move {
+                    tx.put_task(&task).await?;
+
+                    tx.put_report_share(task.id(), &report.report_share).await?;
+                    tx.put_report_share(task.id(), &unrelated_report.report_share)
+                        .await?;
+
+                    tx.put_aggregation_job(&models::AggregationJob::<
+                        PRIO3_AES128_VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        Prio3Aes128Count,
+                    >::new(
+                        *task.id(),
+                        aggregation_job_id,
+                        None,
+                        (),
+                        AggregationJobState::InProgress,
+                        AggregationJobRound::from(0),
+                    ))
+                    .await?;
+
+                    tx.put_report_aggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(
+                        &ReportAggregation::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            *report.report_metadata.id(),
+                            *report.report_metadata.time(),
+                            0,
+                            ReportAggregationState::Waiting(
+                                report.prep_state.clone(),
+                                PrepareMessageOrShare::Helper(report.prep_share.clone()),
+                            ),
+                        ),
+                    )
+                    .await?;
+
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+
+        let request = AggregationJob::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                *report.report_metadata.id(),
+                PrepareStepState::Continued(report.prep_msg.get_encoded()),
+            )]),
+        );
+
+        // Create aggregator filter, send request, and parse response.
+        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
+
+        let aggregate_resp =
+            post_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
+
+        // Validate response.
+        assert_eq!(
+            aggregate_resp,
+            AggregationJob::new(
+                AggregationJobRound::from(1),
+                Vec::from([PrepareStep::new(
+                    *report.report_metadata.id(),
+                    PrepareStepState::Finished
+                ),])
+            )
+        );
+
+        // Re-send the request, simulating the leader crashing and losing the helper's response. The
+        // helper should send back the exact same response.
+        let second_aggregate_resp =
+            post_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
+        assert_eq!(aggregate_resp, second_aggregate_resp);
+
+        // Send another continue request for the same aggregation job, but with a different report
+        // ID. This should fail because the request doesn't match what was previously seen by the
+        // helper for this (aggregation job ID, round).
+        let modified_request = AggregationJob::new(
+            AggregationJobRound::from(1),
+            Vec::from([PrepareStep::new(
+                *unrelated_report.report_metadata.id(),
+                PrepareStepState::Continued(unrelated_report.prep_msg.get_encoded()),
+            )]),
+        );
+
+        tracing::info!("modified request POST");
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &modified_request,
+            &filter,
+            400,
+            "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
+            "The message type for a response was incorrect or the payload was malformed.",
+        )
+        .await;
+
+        // Send another request for a round that the helper is past. Should fail.
+        let past_round_request = AggregationJob::new(
+            AggregationJobRound::from(0),
+            Vec::from([PrepareStep::new(
+                *report.report_metadata.id(),
+                PrepareStepState::Continued(report.prep_msg.get_encoded()),
+            )]),
+        );
+
+        tracing::info!("past roudn request POST");
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &past_round_request,
+            &filter,
+            400,
+            "urn:ietf:params:ppm:dap:error:roundMismatch",
+            "The leader and helper are not on the same round of VDAF preparation.",
+        )
+        .await;
+
+        // Send another request for a round too far past the helper's round. Should fail because the
+        // helper isn't on that round.
+        let future_round_request = AggregationJob::new(
+            AggregationJobRound::from(2),
+            Vec::from([PrepareStep::new(
+                *report.report_metadata.id(),
+                PrepareStepState::Continued(report.prep_msg.get_encoded()),
+            )]),
+        );
+
+        tracing::info!("futue round request POST");
+        post_aggregation_job_expecting_error(
+            &task,
+            &aggregation_job_id,
+            &future_round_request,
+            &filter,
+            400,
+            "urn:ietf:params:ppm:dap:error:roundMismatch",
+            "The leader and helper are not on the same round of VDAF preparation.",
+        )
+        .await;
+    }
+
+    #[derive(Clone)]
+    struct ReportTranscript {
+        report_share: ReportShare,
+        report_metadata: ReportMetadata,
+        prep_state: Prio3PrepareState<Field64, PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        prep_share: Prio3PrepareShare<Field64, PRIO3_AES128_VERIFY_KEY_LENGTH>,
+        prep_msg: Prio3PrepareMessage<PRIO3_AES128_VERIFY_KEY_LENGTH>,
+    }
+
+    fn report_factory<C: Clock>(
+        task: &Task,
+        clock: C,
+    ) -> Box<dyn Iterator<Item = ReportTranscript>> {
+        let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
+        let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
+            task.primary_vdaf_verify_key().unwrap();
+        let hpke_key_config = current_hpke_key(task.hpke_keys()).config().clone();
+        let task_id = *task.id();
+        let time_precision = *task.time_precision();
+
+        let factory = iter::repeat_with(move || {
+            let report_metadata = ReportMetadata::new(
+                random(),
+                clock
+                    .now()
+                    .to_batch_interval_start(&time_precision)
+                    .unwrap(),
+            );
+            let transcript = run_vdaf(
+                vdaf.as_ref(),
+                verify_key.as_bytes(),
+                &(),
+                report_metadata.id(),
+                &0,
+            );
+            let (prep_state, prep_share) = assert_matches!(
+                &transcript.prepare_transitions[1][0],
+                PrepareTransition::<
+                    Prio3Aes128Count,
+                    PRIO3_AES128_VERIFY_KEY_LENGTH
+                >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+            );
+            let prep_msg = transcript.prepare_messages[0].clone();
+            let report_share = generate_helper_report_share::<Prio3Aes128Count>(
+                task_id,
+                report_metadata.clone(),
+                &hpke_key_config,
+                &transcript.public_share,
+                Vec::new(),
+                &transcript.input_shares[1],
+            );
+
+            ReportTranscript {
+                report_share,
+                report_metadata,
+                prep_state,
+                prep_share,
+                prep_msg,
+            }
+        });
+
+        Box::new(factory)
+    }
+
+    async fn post_aggregation_job(
+        task: &Task,
+        aggregation_job_id: &AggregationJobId,
+        request: &AggregationJob,
+        filter: &BoxedFilter<(impl Reply + 'static,)>,
+    ) -> AggregationJob {
+        let mut response = warp::test::request()
+            .method("POST")
+            .path(&format!(
+                "/tasks/{}/aggregation_jobs/{aggregation_job_id}",
+                task.id()
+            ))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, AggregationJob::MEDIA_TYPE)
+            .body(request.get_encoded())
+            .filter(filter)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            AggregationJob::MEDIA_TYPE
+        );
+        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
+        AggregationJob::get_decoded(&body_bytes).unwrap()
+    }
+
+    async fn post_aggregation_job_expecting_error(
+        task: &Task,
+        aggregation_job_id: &AggregationJobId,
+        request: &AggregationJob,
+        filter: &BoxedFilter<(impl Reply + 'static,)>,
+        want_status: u16,
+        want_error_type: &str,
+        want_error_title: &str,
+    ) {
+        let (parts, body) = warp::test::request()
+            .method("POST")
+            .path(&format!(
+                "/tasks/{}/aggregation_jobs/{aggregation_job_id}",
+                task.id()
+            ))
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, AggregationJob::MEDIA_TYPE)
+            .body(request.get_encoded())
+            .filter(filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::from_u16(want_status).unwrap());
+
+        tracing::info!(?parts, ?body, "response");
+
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": want_status,
+                "type": want_error_type,
+                "title": want_error_title,
+                "taskid": format!("{}", task.id()),
+            })
+        );
+        assert_eq!(want_status, parts.status.as_u16());
+    }
+
+    #[tokio::test]
     async fn aggregate_continue_accumulate_batch_aggregation() {
         install_test_trace_subscriber();
 
@@ -5392,7 +5871,13 @@ mod tests {
             report_metadata_0.id(),
             &0,
         );
-        let prep_state_0 = assert_matches!(&transcript_0.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
+        let (prep_state_0, prep_share_0) = assert_matches!(
+            &transcript_0.prepare_transitions[1][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH,
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+        );
         let out_share_0 = assert_matches!(&transcript_0.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -5420,7 +5905,13 @@ mod tests {
             report_metadata_1.id(),
             &0,
         );
-        let prep_state_1 = assert_matches!(&transcript_1.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
+        let (prep_state_1, prep_share_1) = assert_matches!(
+            &transcript_1.prepare_transitions[1][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH,
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+        );
         let out_share_1 = assert_matches!(&transcript_1.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_1 = transcript_1.prepare_messages[0].clone();
         let report_share_1 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -5447,7 +5938,13 @@ mod tests {
             report_metadata_2.id(),
             &0,
         );
-        let prep_state_2 = assert_matches!(&transcript_2.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
+        let (prep_state_2, prep_share_2) = assert_matches!(
+            &transcript_2.prepare_transitions[1][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH,
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+        );
         let out_share_2 = assert_matches!(&transcript_2.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -5466,6 +5963,11 @@ mod tests {
                     report_share_0.clone(),
                     report_share_1.clone(),
                     report_share_2.clone(),
+                );
+                let (prep_share_0, prep_share_1, prep_share_2) = (
+                    prep_share_0.clone(),
+                    prep_share_1.clone(),
+                    prep_share_2.clone(),
                 );
                 let (prep_state_0, prep_state_1, prep_state_2) = (
                     prep_state_0.clone(),
@@ -5508,7 +6010,10 @@ mod tests {
                         *report_metadata_0.id(),
                         *report_metadata_0.time(),
                         0,
-                        ReportAggregationState::Waiting(prep_state_0, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_0,
+                            PrepareMessageOrShare::Helper(prep_share_0),
+                        ),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -5520,7 +6025,10 @@ mod tests {
                         *report_metadata_1.id(),
                         *report_metadata_1.time(),
                         1,
-                        ReportAggregationState::Waiting(prep_state_1, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_1,
+                            PrepareMessageOrShare::Helper(prep_share_1),
+                        ),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -5532,7 +6040,10 @@ mod tests {
                         *report_metadata_2.id(),
                         *report_metadata_2.time(),
                         2,
-                        ReportAggregationState::Waiting(prep_state_2, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_2,
+                            PrepareMessageOrShare::Helper(prep_share_2),
+                        ),
                     ))
                     .await?;
 
@@ -5683,7 +6194,13 @@ mod tests {
             report_metadata_3.id(),
             &0,
         );
-        let prep_state_3 = assert_matches!(&transcript_3.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
+        let (prep_state_3, prep_share_3) = assert_matches!(
+            &transcript_3.prepare_transitions[1][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH,
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+        );
         let out_share_3 = assert_matches!(&transcript_3.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_3 = transcript_3.prepare_messages[0].clone();
         let report_share_3 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -5710,7 +6227,13 @@ mod tests {
             report_metadata_4.id(),
             &0,
         );
-        let prep_state_4 = assert_matches!(&transcript_4.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
+        let (prep_state_4, prep_share_4) = assert_matches!(
+            &transcript_4.prepare_transitions[1][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH,
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+        );
         let out_share_4 = assert_matches!(&transcript_4.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_4 = transcript_4.prepare_messages[0].clone();
         let report_share_4 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -5737,7 +6260,13 @@ mod tests {
             report_metadata_5.id(),
             &0,
         );
-        let prep_state_5 = assert_matches!(&transcript_5.prepare_transitions[1][0], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Continue(prep_state, _) => prep_state.clone());
+        let (prep_state_5, prep_share_5) = assert_matches!(
+            &transcript_5.prepare_transitions[1][0],
+            PrepareTransition::<
+                Prio3Aes128Count,
+                PRIO3_AES128_VERIFY_KEY_LENGTH,
+            >::Continue(prep_state, prep_share) => (prep_state.clone(), prep_share.clone())
+        );
         let out_share_5 = assert_matches!(&transcript_5.prepare_transitions[1][1], PrepareTransition::<Prio3Aes128Count, PRIO3_AES128_VERIFY_KEY_LENGTH>::Finish(out_share) => out_share.clone());
         let prep_msg_5 = transcript_5.prepare_messages[0].clone();
         let report_share_5 = generate_helper_report_share::<Prio3Aes128Count>(
@@ -5756,6 +6285,11 @@ mod tests {
                     report_share_3.clone(),
                     report_share_4.clone(),
                     report_share_5.clone(),
+                );
+                let (prep_share_3, prep_share_4, prep_share_5) = (
+                    prep_share_3.clone(),
+                    prep_share_4.clone(),
+                    prep_share_5.clone(),
                 );
                 let (prep_state_3, prep_state_4, prep_state_5) = (
                     prep_state_3.clone(),
@@ -5796,7 +6330,10 @@ mod tests {
                         *report_metadata_3.id(),
                         *report_metadata_3.time(),
                         3,
-                        ReportAggregationState::Waiting(prep_state_3, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_3,
+                            PrepareMessageOrShare::Helper(prep_share_3),
+                        ),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -5808,7 +6345,10 @@ mod tests {
                         *report_metadata_4.id(),
                         *report_metadata_4.time(),
                         4,
-                        ReportAggregationState::Waiting(prep_state_4, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_4,
+                            PrepareMessageOrShare::Helper(prep_share_4),
+                        ),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -5820,7 +6360,10 @@ mod tests {
                         *report_metadata_5.id(),
                         *report_metadata_5.time(),
                         5,
-                        ReportAggregationState::Waiting(prep_state_5, None),
+                        ReportAggregationState::Waiting(
+                            prep_state_5,
+                            PrepareMessageOrShare::Helper(prep_share_5),
+                        ),
                     ))
                     .await?;
 
@@ -6021,7 +6564,7 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting((), PrepareMessageOrShare::Helper(())),
                     ))
                     .await
                 })
@@ -6136,7 +6679,7 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting((), PrepareMessageOrShare::Helper(())),
                     ))
                     .await
                 })
@@ -6300,7 +6843,7 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting((), PrepareMessageOrShare::Helper(())),
                     ))
                     .await
                 })
@@ -6437,7 +6980,7 @@ mod tests {
                         *report_metadata_0.id(),
                         *report_metadata_0.time(),
                         0,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting((), PrepareMessageOrShare::Helper(())),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -6449,7 +6992,7 @@ mod tests {
                         *report_metadata_1.id(),
                         *report_metadata_1.time(),
                         1,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting((), PrepareMessageOrShare::Helper(())),
                     ))
                     .await
                 })

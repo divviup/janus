@@ -134,7 +134,7 @@ CREATE TABLE report_aggregations(
     ord                 BIGINT NOT NULL,                    -- a value used to specify the ordering of client reports in the aggregation job
     state               REPORT_AGGREGATION_STATE NOT NULL,  -- the current state of this report aggregation
     prep_state          BYTEA,                              -- the current preparation state (opaque VDAF message, only if in state WAITING)
-    prep_msg            BYTEA,                              -- the next preparation message to be sent to the helper (opaque VDAF message, only if in state WAITING if this aggregator is the leader)
+    prep_msg            BYTEA,                              -- the next preparation message to be sent to the helper (opaque VDAF message, only if in state WAITING)
     out_share           BYTEA,                              -- the output share (opaque VDAF message, only if in state FINISHED)
     error_code          SMALLINT,                           -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
 

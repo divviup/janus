@@ -29,6 +29,8 @@ where
     /// The prepare messages broadcast to all aggregators prior to each continuation round of the
     /// VDAF.
     pub prepare_messages: Vec<V::PrepareMessage>,
+    /// The output shares computed by each aggregator.
+    pub output_shares: Vec<V::OutputShare>,
     /// The aggregate shares from each aggregator.
     pub aggregate_shares: Vec<V::AggregateShare>,
 }
@@ -74,12 +76,14 @@ where
         // participants have reached a terminal state (Finish or Fail), we are done.
         let mut prep_shares = Vec::new();
         let mut agg_shares = Vec::new();
+        let mut output_shares = Vec::new();
         for pts in &prep_trans {
             match pts.last().unwrap() {
                 PrepareTransition::<V, L>::Continue(_, prep_share) => {
                     prep_shares.push(prep_share.clone())
                 }
                 PrepareTransition::Finish(output_share) => {
+                    output_shares.push(output_share.clone());
                     agg_shares.push(
                         vdaf.aggregate(aggregation_param, [output_share.clone()].into_iter())
                             .unwrap(),
@@ -93,6 +97,7 @@ where
                 input_shares,
                 prepare_transitions: prep_trans,
                 prepare_messages: prep_msgs,
+                output_shares,
                 aggregate_shares: agg_shares,
             };
         }

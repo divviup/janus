@@ -297,6 +297,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
@@ -404,6 +405,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
@@ -578,6 +580,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         A: vdaf::Aggregator<L> + VdafHasAggregationParameter,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,

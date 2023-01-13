@@ -165,6 +165,7 @@ impl AggregationJobDriver {
         for<'a> A::PrepareState:
             PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
+        A::PrepareShare: PartialEq + Eq + Send + Sync,
         A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
@@ -310,6 +311,7 @@ impl AggregationJobDriver {
         A::OutputShare: PartialEq + Eq + Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
+        A::PrepareShare: PartialEq + Eq + Send + Sync,
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
         A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
@@ -455,6 +457,7 @@ impl AggregationJobDriver {
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::PrepareState: Send + Sync + Encode,
+        A::PrepareShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
     {
         // Visit the report aggregations, ignoring any that have already failed; compute our own
@@ -467,8 +470,8 @@ impl AggregationJobDriver {
                 report_aggregation.state()
             {
                 let prep_msg = prep_msg
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("report aggregation missing prepare message"))?;
+                    .get_leader_prepare_message()
+                    .context("report aggregation missing prepare message")?;
 
                 // Step our own state.
                 let leader_transition = match vdaf
@@ -562,6 +565,7 @@ impl AggregationJobDriver {
         A::OutputShare: Send + Sync,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
     {
         if helper_round != leader_aggregation_job.round() {
@@ -613,9 +617,10 @@ impl AggregationJobDriver {
                                 .context("couldn't preprocess leader & helper prepare shares into prepare message")
                         });
                         match prep_msg {
-                            Ok(prep_msg) => {
-                                ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg))
-                            }
+                            Ok(prep_msg) => ReportAggregationState::Waiting(
+                                leader_prep_state,
+                                models::PrepareMessageOrShare::Leader(prep_msg),
+                            ),
                             Err(error) => {
                                 info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't compute prepare message");
                                 self.aggregate_step_failure_counter.add(
@@ -914,8 +919,8 @@ mod tests {
         binary_utils::job_driver::JobDriver,
         datastore::{
             models::{
-                self, AggregationJobState, BatchAggregation, LeaderStoredReport, ReportAggregation,
-                ReportAggregationState,
+                self, AggregationJobState, BatchAggregation, LeaderStoredReport,
+                PrepareMessageOrShare, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
@@ -1400,7 +1405,10 @@ mod tests {
                 *report.id(),
                 *report.time(),
                 0,
-                ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                ReportAggregationState::Waiting(
+                    leader_prep_state,
+                    PrepareMessageOrShare::Leader(prep_msg),
+                ),
             );
         let want_repeated_extension_report_aggregation =
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
@@ -1633,7 +1641,10 @@ mod tests {
                 *report.id(),
                 *report.time(),
                 0,
-                ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                ReportAggregationState::Waiting(
+                    leader_prep_state,
+                    PrepareMessageOrShare::Leader(prep_msg),
+                ),
             );
 
         let (got_aggregation_job, got_report_aggregation) = ds
@@ -1896,7 +1907,10 @@ mod tests {
                         *report.id(),
                         *report.time(),
                         0,
-                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                        ReportAggregationState::Waiting(
+                            leader_prep_state,
+                            PrepareMessageOrShare::Leader(prep_msg),
+                        ),
                     ))
                     .await?;
 
@@ -2144,7 +2158,10 @@ mod tests {
                         *report.id(),
                         *report.time(),
                         0,
-                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                        ReportAggregationState::Waiting(
+                            leader_prep_state,
+                            PrepareMessageOrShare::Leader(prep_msg),
+                        ),
                     ))
                     .await?;
 
@@ -2379,7 +2396,10 @@ mod tests {
                         *report.id(),
                         *report.time(),
                         0,
-                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                        ReportAggregationState::Waiting(
+                            leader_prep_state,
+                            PrepareMessageOrShare::Leader(prep_msg),
+                        ),
                     ))
                     .await?;
 
