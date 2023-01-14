@@ -5110,7 +5110,7 @@ mod tests {
             report_metadata_0.id(),
             &0,
         );
-        let prep_state_0 = transcript_0.prep_state(0, Role::Helper);
+        let (prep_state_0, _) = transcript_0.helper_prep_state(0);
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Count>(
             *task.id(),
@@ -5136,7 +5136,7 @@ mod tests {
             report_metadata_1.id(),
             &0,
         );
-        let prep_state_1 = transcript_1.prep_state(0, Role::Helper);
+        let (prep_state_1, _) = transcript_1.helper_prep_state(0);
         let report_share_1 = generate_helper_report_share::<Prio3Count>(
             *task.id(),
             report_metadata_1.clone(),
@@ -5164,7 +5164,7 @@ mod tests {
             report_metadata_2.id(),
             &0,
         );
-        let prep_state_2 = transcript_2.prep_state(0, Role::Helper);
+        let (prep_state_2, _) = transcript_2.helper_prep_state(0);
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Count>(
             *task.id(),
@@ -5434,7 +5434,7 @@ mod tests {
             report_metadata_0.id(),
             &0,
         );
-        let prep_state_0 = transcript_0.prep_state(0, Role::Helper);
+        let (prep_state_0, _) = transcript_0.helper_prep_state(0);
         let out_share_0 = transcript_0.output_share(Role::Helper);
         let prep_msg_0 = transcript_0.prepare_messages[0].clone();
         let report_share_0 = generate_helper_report_share::<Prio3Count>(
@@ -5462,7 +5462,7 @@ mod tests {
             report_metadata_1.id(),
             &0,
         );
-        let prep_state_1 = transcript_1.prep_state(0, Role::Helper);
+        let (prep_state_1, _) = transcript_1.helper_prep_state(0);
         let out_share_1 = transcript_1.output_share(Role::Helper);
         let prep_msg_1 = transcript_1.prepare_messages[0].clone();
         let report_share_1 = generate_helper_report_share::<Prio3Count>(
@@ -5489,7 +5489,7 @@ mod tests {
             report_metadata_2.id(),
             &0,
         );
-        let prep_state_2 = transcript_2.prep_state(0, Role::Helper);
+        let (prep_state_2, _) = transcript_2.helper_prep_state(0);
         let out_share_2 = transcript_2.output_share(Role::Helper);
         let prep_msg_2 = transcript_2.prepare_messages[0].clone();
         let report_share_2 = generate_helper_report_share::<Prio3Count>(
@@ -5741,7 +5741,7 @@ mod tests {
             report_metadata_3.id(),
             &0,
         );
-        let prep_state_3 = transcript_3.prep_state(0, Role::Helper);
+        let (prep_state_3, _) = transcript_3.helper_prep_state(0);
         let out_share_3 = transcript_3.output_share(Role::Helper);
         let prep_msg_3 = transcript_3.prepare_messages[0].clone();
         let report_share_3 = generate_helper_report_share::<Prio3Count>(
@@ -5768,7 +5768,7 @@ mod tests {
             report_metadata_4.id(),
             &0,
         );
-        let prep_state_4 = transcript_4.prep_state(0, Role::Helper);
+        let (prep_state_4, _) = transcript_4.helper_prep_state(0);
         let out_share_4 = transcript_4.output_share(Role::Helper);
         let prep_msg_4 = transcript_4.prepare_messages[0].clone();
         let report_share_4 = generate_helper_report_share::<Prio3Count>(
@@ -5795,7 +5795,7 @@ mod tests {
             report_metadata_5.id(),
             &0,
         );
-        let prep_state_5 = transcript_5.prep_state(0, Role::Helper);
+        let (prep_state_5, _) = transcript_5.helper_prep_state(0);
         let out_share_5 = transcript_5.output_share(Role::Helper);
         let prep_msg_5 = transcript_5.prepare_messages[0].clone();
         let report_share_5 = generate_helper_report_share::<Prio3Count>(

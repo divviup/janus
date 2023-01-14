@@ -945,7 +945,7 @@ mod tests {
         .unwrap();
 
         // Setup: prepare mocked HTTP responses.
-        let helper_vdaf_msg = transcript.helper_prep_share(0);
+        let (_, helper_vdaf_msg) = transcript.helper_prep_state(0);
         let helper_responses = Vec::from([
             (
                 "PUT",
@@ -1216,7 +1216,7 @@ mod tests {
                 report.helper_encrypted_input_share().clone(),
             )]),
         );
-        let helper_vdaf_msg = transcript.helper_prep_share(0);
+        let (_, helper_vdaf_msg) = transcript.helper_prep_state(0);
         let helper_response = AggregationJobResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
@@ -1289,7 +1289,7 @@ mod tests {
                     .unwrap(),
                 AggregationJobState::InProgress,
             );
-        let leader_prep_state = transcript.prep_state(0, Role::Leader).clone();
+        let leader_prep_state = transcript.leader_prep_state(0).clone();
         let prep_msg = transcript.prepare_messages[0].clone();
         let want_report_aggregation = ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
             *task.id(),
@@ -1477,7 +1477,7 @@ mod tests {
                 report.helper_encrypted_input_share().clone(),
             )]),
         );
-        let helper_vdaf_msg = transcript.helper_prep_share(0);
+        let (_, helper_vdaf_msg) = transcript.helper_prep_state(0);
         let helper_response = AggregationJobResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
@@ -1557,7 +1557,7 @@ mod tests {
             *report.metadata().time(),
             0,
             ReportAggregationState::Waiting(
-                transcript.prep_state(0, Role::Leader).clone(),
+                transcript.leader_prep_state(0).clone(),
                 Some(transcript.prepare_messages[0].clone()),
             ),
         );
@@ -1643,7 +1643,7 @@ mod tests {
         );
         let aggregation_job_id = random();
 
-        let leader_prep_state = transcript.prep_state(0, Role::Leader);
+        let leader_prep_state = transcript.leader_prep_state(0);
         let leader_aggregate_share = vdaf
             .aggregate(&(), [transcript.output_share(Role::Leader).clone()])
             .unwrap();
@@ -1927,8 +1927,7 @@ mod tests {
         );
         let batch_id = random();
         let aggregation_job_id = random();
-
-        let leader_prep_state = transcript.prep_state(0, Role::Leader);
+        let leader_prep_state = transcript.leader_prep_state(0);
         let leader_aggregate_share = vdaf
             .aggregate(&(), [transcript.output_share(Role::Leader).clone()])
             .unwrap();

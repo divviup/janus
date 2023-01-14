@@ -6645,7 +6645,7 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_count(2).unwrap());
         let verify_key: [u8; PRIO3_VERIFY_KEY_LENGTH] = random();
         let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
-        let prep_state = vdaf_transcript.prep_state(0, Role::Leader);
+        let prep_state = vdaf_transcript.leader_prep_state(0);
 
         for (ord, state) in [
             ReportAggregationState::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::Start,
@@ -6967,7 +6967,7 @@ mod tests {
                 let (task, prep_msg, prep_state, output_share) = (
                     task.clone(),
                     vdaf_transcript.prepare_messages[0].clone(),
-                    vdaf_transcript.prep_state(0, Role::Leader).clone(),
+                    vdaf_transcript.leader_prep_state(0).clone(),
                     vdaf_transcript.output_share(Role::Leader).clone(),
                 );
                 Box::pin(async move {

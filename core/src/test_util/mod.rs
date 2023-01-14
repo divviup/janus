@@ -34,19 +34,19 @@ impl<const L: usize, V> VdafTranscript<L, V>
 where
     V: vdaf::Aggregator<L, 16>,
 {
-    /// Get the VDAF preparation state for the requested round and aggregator.
-    pub fn prep_state(&self, round: usize, role: Role) -> &V::PrepareState {
+    /// Get the leader's preparation state at the requested round.
+    pub fn leader_prep_state(&self, round: usize) -> &V::PrepareState {
         assert_matches!(
-            &self.prepare_transitions[role.index().unwrap()][round],
+            &self.prepare_transitions[Role::Leader.index().unwrap()][round],
             PrepareTransition::<V, L, 16>::Continue(prep_state, _) => prep_state
         )
     }
 
-    /// Get the helper's prepare share at the requested round.
-    pub fn helper_prep_share(&self, round: usize) -> &V::PrepareShare {
+    /// Get the helper's preparation state and prepare share at the requested round.
+    pub fn helper_prep_state(&self, round: usize) -> (&V::PrepareState, &V::PrepareShare) {
         assert_matches!(
             &self.prepare_transitions[Role::Helper.index().unwrap()][round],
-            PrepareTransition::<V, L, 16>::Continue(_, prep_share) => prep_share
+            PrepareTransition::<V, L, 16>::Continue(prep_state, prep_share) => (prep_state, prep_share)
         )
     }
 
