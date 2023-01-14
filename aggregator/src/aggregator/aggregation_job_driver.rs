@@ -9,7 +9,7 @@ use janus_aggregator_core::{
         self,
         models::{
             AcquiredAggregationJob, AggregationJob, AggregationJobState, LeaderStoredReport, Lease,
-            ReportAggregation, ReportAggregationState,
+            PrepareMessageOrShare, ReportAggregation, ReportAggregationState,
         },
         Datastore,
     },
@@ -117,6 +117,7 @@ impl AggregationJobDriver {
         for<'a> A::PrepareState:
             PartialEq + Eq + Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)>,
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
+        A::PrepareShare: PartialEq + Eq + Send + Sync,
         A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
     {
@@ -257,6 +258,7 @@ impl AggregationJobDriver {
         A::AggregateShare: Send + Sync,
         A::OutputShare: PartialEq + Eq + Send + Sync,
         A::PrepareState: PartialEq + Eq + Send + Sync + Encode,
+        A::PrepareShare: PartialEq + Eq + Send + Sync,
         A::PrepareMessage: PartialEq + Eq + Send + Sync,
         A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
@@ -397,6 +399,7 @@ impl AggregationJobDriver {
         A::AggregateShare: Send + Sync,
         A::OutputShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
+        A::PrepareShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
     {
         // Visit the report aggregations, ignoring any that have already failed; compute our own
@@ -409,8 +412,8 @@ impl AggregationJobDriver {
                 report_aggregation.state()
             {
                 let prep_msg = prep_msg
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("report aggregation missing prepare message"))?;
+                    .get_leader_prepare_message()
+                    .context("report aggregation missing prepare message")?;
 
                 // Step our own state.
                 let leader_transition = match vdaf
@@ -495,6 +498,7 @@ impl AggregationJobDriver {
         A::AggregateShare: Send + Sync,
         A::OutputShare: Send + Sync,
         A::PrepareMessage: Send + Sync,
+        A::PrepareShare: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
     {
         // Handle response, computing the new report aggregations to be stored.
@@ -537,9 +541,10 @@ impl AggregationJobDriver {
                                 .context("couldn't preprocess leader & helper prepare shares into prepare message")
                         });
                         match prep_msg {
-                            Ok(prep_msg) => {
-                                ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg))
-                            }
+                            Ok(prep_msg) => ReportAggregationState::Waiting(
+                                leader_prep_state,
+                                PrepareMessageOrShare::Leader(prep_msg),
+                            ),
                             Err(error) => {
                                 info!(report_id = %report_aggregation.report_id(), ?error, "Couldn't compute prepare message");
                                 self.aggregate_step_failure_counter.add(
@@ -815,7 +820,7 @@ mod tests {
         datastore::{
             models::{
                 AggregationJob, AggregationJobState, BatchAggregation, LeaderStoredReport,
-                ReportAggregation, ReportAggregationState,
+                PrepareMessageOrShare, ReportAggregation, ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
@@ -1297,7 +1302,10 @@ mod tests {
             *report.metadata().id(),
             *report.metadata().time(),
             0,
-            ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+            ReportAggregationState::Waiting(
+                leader_prep_state,
+                PrepareMessageOrShare::Leader(prep_msg),
+            ),
         );
         let want_repeated_extension_report_aggregation =
             ReportAggregation::<PRIO3_VERIFY_KEY_LENGTH, Prio3Count>::new(
@@ -1558,7 +1566,7 @@ mod tests {
             0,
             ReportAggregationState::Waiting(
                 transcript.leader_prep_state(0).clone(),
-                Some(transcript.prepare_messages[0].clone()),
+                PrepareMessageOrShare::Leader(transcript.prepare_messages[0].clone()),
             ),
         );
 
@@ -1685,7 +1693,10 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
-                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                        ReportAggregationState::Waiting(
+                            leader_prep_state,
+                            PrepareMessageOrShare::Leader(prep_msg),
+                        ),
                     ))
                     .await?;
 
@@ -1969,7 +1980,10 @@ mod tests {
                         *report.metadata().id(),
                         *report.metadata().time(),
                         0,
-                        ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                        ReportAggregationState::Waiting(
+                            leader_prep_state,
+                            PrepareMessageOrShare::Leader(prep_msg),
+                        ),
                     ))
                     .await?;
 
