@@ -836,7 +836,7 @@ mod tests {
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
             )
             .with_status(500)
-            .expect(3)
+            .expect(1)
             .create();
         let mocked_collect_start_success = mock("POST", "/collect")
             .match_header(
@@ -849,7 +849,7 @@ mod tests {
             .create();
         let mocked_collect_error = mock("GET", "/collect_job/1")
             .with_status(500)
-            .expect(3)
+            .expect(1)
             .create();
         let mocked_collect_accepted = mock("GET", "/collect_job/1")
             .with_status(202)
