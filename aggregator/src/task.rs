@@ -698,14 +698,6 @@ pub mod test_util {
             })
         }
 
-        /// Sets the task query type
-        pub fn with_query_type(self, query_type: QueryType) -> Self {
-            Self(Task {
-                query_type,
-                ..self.0
-            })
-        }
-
         /// Sets the task HPKE keys
         pub fn with_hpke_keys(self, hpke_keys: Vec<HpkeKeypair>) -> Self {
             let hpke_keys = hpke_keys
