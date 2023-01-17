@@ -4884,7 +4884,7 @@ mod tests {
         task::VdafInstance,
         test_util::{
             dummy_vdaf::{self, AggregateShare, AggregationParam},
-            install_test_trace_subscriber,
+            install_test_trace_subscriber, run_vdaf,
         },
         time::{Clock, MockClock, TimeExt as CoreTimeExt},
     };
@@ -4896,11 +4896,7 @@ mod tests {
     };
     use prio::{
         codec::{Decode, Encode},
-        vdaf::{
-            self,
-            prio3::{Prio3, Prio3Aes128Count},
-            PrepareTransition,
-        },
+        vdaf::prio3::{Prio3, Prio3Aes128Count},
     };
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use std::{
@@ -6326,14 +6322,20 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
+        let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let (prep_state, prep_msg, output_share) = generate_vdaf_values(vdaf.as_ref(), (), 0);
+        let verify_key: [u8; PRIO3_AES128_VERIFY_KEY_LENGTH] = random();
+        let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
+        let prep_state = vdaf_transcript.prep_state(0, Role::Leader);
 
         for (ord, state) in [
             ReportAggregationState::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::Start,
             ReportAggregationState::Waiting(prep_state.clone(), None),
-            ReportAggregationState::Waiting(prep_state, Some(prep_msg)),
-            ReportAggregationState::Finished(output_share),
+            ReportAggregationState::Waiting(
+                prep_state.clone(),
+                Some(vdaf_transcript.prepare_messages[0].clone()),
+            ),
+            ReportAggregationState::Finished(vdaf_transcript.output_share(Role::Leader).clone()),
             ReportAggregationState::Failed(ReportShareError::VdafPrepError),
             ReportAggregationState::Invalid,
         ]
@@ -6502,8 +6504,10 @@ mod tests {
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
+        let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
-        let (prep_state, prep_msg, output_share) = generate_vdaf_values(vdaf.as_ref(), (), 0);
+        let verify_key: [u8; PRIO3_AES128_VERIFY_KEY_LENGTH] = random();
+        let vdaf_transcript = run_vdaf(vdaf.as_ref(), &verify_key, &(), &report_id, &0);
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -6523,9 +6527,9 @@ mod tests {
             .run_tx(|tx| {
                 let (task, prep_msg, prep_state, output_share) = (
                     task.clone(),
-                    prep_msg.clone(),
-                    prep_state.clone(),
-                    output_share.clone(),
+                    vdaf_transcript.prepare_messages[0].clone(),
+                    vdaf_transcript.prep_state(0, Role::Leader).clone(),
+                    vdaf_transcript.output_share(Role::Leader).clone(),
                 );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
@@ -8707,55 +8711,6 @@ mod tests {
             .await
             .unwrap();
         assert!(outstanding_batches.is_empty());
-    }
-
-    /// generate_vdaf_values generates some arbitrary VDAF values for use in testing. It is cribbed
-    /// heavily from `libprio-rs`' `run_vdaf`. The resulting values are guaranteed to be associated
-    /// with the same aggregator.
-    ///
-    /// generate_vdaf_values assumes that the VDAF in use is one-round.
-    fn generate_vdaf_values<const L: usize, A: vdaf::Aggregator<L> + vdaf::Client>(
-        vdaf: &A,
-        agg_param: A::AggregationParam,
-        measurement: A::Measurement,
-    ) -> (A::PrepareState, A::PrepareMessage, A::OutputShare)
-    where
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
-        let (public_share, input_shares) = vdaf.shard(&measurement).unwrap();
-        let verify_key: [u8; L] = random();
-
-        let (mut prep_states, prep_shares): (Vec<_>, Vec<_>) = input_shares
-            .iter()
-            .enumerate()
-            .map(|(agg_id, input_share)| {
-                vdaf.prepare_init(
-                    &verify_key,
-                    agg_id,
-                    &agg_param,
-                    b"nonce",
-                    &public_share,
-                    input_share,
-                )
-                .unwrap()
-            })
-            .unzip();
-        let prep_msg = vdaf.prepare_preprocess(prep_shares).unwrap();
-        let mut output_shares: Vec<A::OutputShare> = prep_states
-            .iter()
-            .map(|prep_state| {
-                if let PrepareTransition::Finish(output_share) = vdaf
-                    .prepare_step(prep_state.clone(), prep_msg.clone())
-                    .unwrap()
-                {
-                    output_share
-                } else {
-                    panic!("generate_vdaf_values: VDAF returned something other than Finish")
-                }
-            })
-            .collect();
-
-        (prep_states.remove(0), prep_msg, output_shares.remove(0))
     }
 
     #[tokio::test]
