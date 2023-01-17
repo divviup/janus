@@ -33,50 +33,70 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
     let mut message_buf = Vec::new();
     reader.read_to_end(&mut message_buf)?;
 
-    let decoded = match media_type {
-        MediaType::HpkeConfig => Box::new(HpkeConfig::get_decoded(&message_buf)?) as Box<dyn Debug>,
-        MediaType::Report => Box::new(Report::get_decoded(&message_buf)?) as Box<dyn Debug>,
+    let decoded: Box<dyn Debug> = match media_type {
+        MediaType::HpkeConfig => {
+            let message: HpkeConfig = HpkeConfig::get_decoded(&message_buf)?;
+            Box::new(message)
+        }
+        MediaType::Report => {
+            let message: Report = Report::get_decoded(&message_buf)?;
+            Box::new(message)
+        }
         MediaType::AggregateInitializeReq => {
             if let Ok(decoded) = AggregateInitializeReq::<TimeInterval>::get_decoded(&message_buf) {
-                Box::new(decoded) as Box<dyn Debug>
+                let message: AggregateInitializeReq<TimeInterval> = decoded;
+                Box::new(message)
             } else {
-                Box::new(AggregateInitializeReq::<FixedSize>::get_decoded(
-                    &message_buf,
-                )?) as Box<dyn Debug>
+                let message: AggregateInitializeReq<FixedSize> =
+                    AggregateInitializeReq::<FixedSize>::get_decoded(&message_buf)?;
+                Box::new(message)
             }
         }
         MediaType::AggregateInitializeResp => {
-            Box::new(AggregateInitializeResp::get_decoded(&message_buf)?) as Box<dyn Debug>
+            let message: AggregateInitializeResp =
+                AggregateInitializeResp::get_decoded(&message_buf)?;
+            Box::new(message)
         }
         MediaType::AggregateContinueReq => {
-            Box::new(AggregateContinueReq::get_decoded(&message_buf)?) as Box<dyn Debug>
+            let message: AggregateContinueReq = AggregateContinueReq::get_decoded(&message_buf)?;
+            Box::new(message)
         }
         MediaType::AggregateContinueResp => {
-            Box::new(AggregateContinueResp::get_decoded(&message_buf)?) as Box<dyn Debug>
+            let message: AggregateContinueResp = AggregateContinueResp::get_decoded(&message_buf)?;
+            Box::new(message)
         }
         MediaType::AggregateShareReq => {
             if let Ok(decoded) = AggregateShareReq::<TimeInterval>::get_decoded(&message_buf) {
-                Box::new(decoded) as Box<dyn Debug>
+                let message: AggregateShareReq<TimeInterval> = decoded;
+                Box::new(message)
             } else {
-                Box::new(AggregateShareReq::<FixedSize>::get_decoded(&message_buf)?)
-                    as Box<dyn Debug>
+                let message: AggregateShareReq<FixedSize> =
+                    AggregateShareReq::<FixedSize>::get_decoded(&message_buf)?;
+                Box::new(message)
             }
         }
         MediaType::AggregateShareResp => {
-            Box::new(AggregateShareResp::get_decoded(&message_buf)?) as Box<dyn Debug>
+            let message: AggregateShareResp = AggregateShareResp::get_decoded(&message_buf)?;
+            Box::new(message)
         }
         MediaType::CollectReq => {
             if let Ok(decoded) = CollectReq::<TimeInterval>::get_decoded(&message_buf) {
-                Box::new(decoded) as Box<dyn Debug>
+                let message: CollectReq<TimeInterval> = decoded;
+                Box::new(message)
             } else {
-                Box::new(CollectReq::<FixedSize>::get_decoded(&message_buf)?) as Box<dyn Debug>
+                let message: CollectReq<FixedSize> =
+                    CollectReq::<FixedSize>::get_decoded(&message_buf)?;
+                Box::new(message)
             }
         }
         MediaType::CollectResp => {
             if let Ok(decoded) = CollectResp::<TimeInterval>::get_decoded(&message_buf) {
-                Box::new(decoded) as Box<dyn Debug>
+                let message: CollectResp<TimeInterval> = decoded;
+                Box::new(message)
             } else {
-                Box::new(CollectResp::<FixedSize>::get_decoded(&message_buf)?) as Box<dyn Debug>
+                let message: CollectResp<FixedSize> =
+                    CollectResp::<FixedSize>::get_decoded(&message_buf)?;
+                Box::new(message)
             }
         }
     };
