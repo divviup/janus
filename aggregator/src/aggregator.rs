@@ -1056,7 +1056,7 @@ impl VdafOps {
 
             #[cfg(feature = "test-util")]
             (task::QueryType::FixedSize { .. }, VdafOps::Fake(vdaf)) => {
-                Self::handle_aggregate_init_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                Self::handle_aggregate_init_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
                     datastore,
                     vdaf,
                     aggregate_step_failure_counter,

@@ -58,7 +58,7 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
             if let Ok(decoded) = AggregateShareReq::<TimeInterval>::get_decoded(&message_buf) {
                 Box::new(decoded) as Box<dyn Debug>
             } else {
-                Box::new(AggregateShareReq::<FixedSize>::get_decoded(&message_buf))
+                Box::new(AggregateShareReq::<FixedSize>::get_decoded(&message_buf)?)
                     as Box<dyn Debug>
             }
         }
