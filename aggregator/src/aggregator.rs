@@ -1296,6 +1296,18 @@ impl VdafOps {
             ));
         }
 
+        // Reject reports that would be eligible for garbage collection, to prevent replay attacks.
+        if let Some(report_expiry_age) = task.report_expiry_age() {
+            let report_expiry_time = report.metadata().time().add(report_expiry_age)?;
+            if clock.now().is_after(&report_expiry_time) {
+                return Err(Error::ReportRejected(
+                    *report.task_id(),
+                    *report.metadata().id(),
+                    *report.metadata().time(),
+                ));
+            }
+        }
+
         // Decode (and in the case of the leader input share, decrypt) the remaining fields of the
         // report before storing them in the datastore. The spec does not require the /upload
         // handler to do this, but it exercises HPKE decryption, saves us the trouble of storing
@@ -3595,11 +3607,13 @@ mod tests {
     async fn upload_filter() {
         install_test_trace_subscriber();
 
+        const REPORT_EXPIRY_AGE: u64 = 1_000_000;
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
+        .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
         .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -3622,6 +3636,41 @@ mod tests {
         let mut response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
             .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": 400u16,
+                "type": "urn:ietf:params:ppm:dap:error:reportRejected",
+                "title": "Report could not be processed.",
+                "taskid": format!("{}", report.task_id()),
+            })
+        );
+
+        // Verify that reports older than the report expiry age are rejected with the reportRejected
+        // error type.
+        let gc_eligible_report = Report::new(
+            *report.task_id(),
+            ReportMetadata::new(
+                random(),
+                clock
+                    .now()
+                    .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE + 30000))
+                    .unwrap(),
+            ),
+            report.public_share().to_vec(),
+            report.encrypted_input_shares().to_vec(),
+        );
+        let mut response = drive_filter(
+            Method::POST,
+            "/upload",
+            &gc_eligible_report.get_encoded(),
+            &filter,
+        )
+        .await
+        .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
