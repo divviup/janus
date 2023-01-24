@@ -106,7 +106,6 @@ mod tests {
     };
     use rand::random;
     use std::sync::Arc;
-    use uuid::Uuid;
 
     #[tokio::test]
     async fn gc_task_leader_time_interval() {
@@ -181,7 +180,7 @@ mod tests {
 
                     let collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        Uuid::new_v4(),
+                        random(),
                         batch_identifier,
                         AggregationParam(0),
                         CollectJobState::Start,
@@ -485,7 +484,7 @@ mod tests {
 
                     let collect_job = CollectJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
-                        Uuid::new_v4(),
+                        random(),
                         batch_identifier,
                         AggregationParam(0),
                         CollectJobState::Start,

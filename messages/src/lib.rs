@@ -1967,22 +1967,6 @@ impl AsRef<[u8; Self::LEN]> for AggregationJobId {
     }
 }
 
-impl TryFrom<&[u8]> for AggregationJobId {
-    type Error = &'static str;
-
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        Ok(Self(value.try_into().map_err(|_| {
-            "byte slice has incorrect length for AggregationJobId"
-        })?))
-    }
-}
-
-impl From<[u8; Self::LEN]> for AggregationJobId {
-    fn from(aggregation_job_id: [u8; Self::LEN]) -> Self {
-        Self(aggregation_job_id)
-    }
-}
-
 impl FromStr for AggregationJobId {
     type Err = Box<dyn Debug>;
 

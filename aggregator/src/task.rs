@@ -10,7 +10,8 @@ use janus_core::{
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
 };
 use janus_messages::{
-    Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, Role, TaskId, Time,
+    AggregationJobId, CollectionId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
+    HpkeKemId, Role, TaskId, Time,
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
@@ -341,6 +342,57 @@ impl Task {
         // non-empty.
         let secret_bytes = self.vdaf_verify_keys.first().unwrap();
         VerifyKey::try_from(secret_bytes).map_err(|_| Error::AggregatorVerifyKeySize)
+    }
+
+    /// Returns the relative path for tasks, relative to which other API endpoints are defined.
+    fn tasks_path(&self) -> String {
+        format!("/tasks/{}", self.id())
+    }
+
+    /// Returns the relative path relative to which reports may be uploaded for this task.
+    pub fn report_upload_path(&self) -> String {
+        format!("{}/reports", self.tasks_path())
+    }
+
+    /// Returns the URI at which the helper resource for the specified aggregation job ID can be
+    /// accessed.
+    pub fn aggregation_job_url(&self, aggregation_job_id: &AggregationJobId) -> Result<Url, Error> {
+        Ok(self
+            .aggregator_url(&Role::Helper)?
+            .join(&self.aggregation_job_path(aggregation_job_id))?)
+    }
+
+    /// Returns the relative path for the specified aggregation job for this task.
+    pub fn aggregation_job_path(&self, aggregation_job_id: &AggregationJobId) -> String {
+        format!(
+            "{}/aggregation_jobs/{aggregation_job_id}",
+            self.tasks_path()
+        )
+    }
+
+    /// Returns the URI at which the helper aggregate shares resource can be accessed.
+    pub fn aggregate_shares_url(&self) -> Result<Url, Error> {
+        Ok(self
+            .aggregator_url(&Role::Helper)?
+            .join(&self.aggregate_shares_path())?)
+    }
+
+    /// Returns the relative path for aggregate shares for this task.
+    pub fn aggregate_shares_path(&self) -> String {
+        format!("{}/aggregate_shares", self.tasks_path())
+    }
+
+    /// Returns the URI at which the leader resource for the specified collection job ID can be
+    /// accessed.
+    pub fn collection_job_uri(&self, collection_job_id: &CollectionId) -> Result<Url, Error> {
+        Ok(self
+            .aggregator_url(&Role::Leader)?
+            .join(&self.collection_job_path(collection_job_id))?)
+    }
+
+    /// Returns the relative path for the specified collection job for this task.
+    pub fn collection_job_path(&self, collection_job_id: &CollectionId) -> String {
+        format!("{}/collection_jobs/{collection_job_id}", self.tasks_path())
     }
 }
 

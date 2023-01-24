@@ -1,8 +1,10 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
-use super::{aggregate_share::compute_aggregate_share, query_type::CollectableQueryType};
 use crate::{
-    aggregator::{post_to_helper, Error},
+    aggregator::{
+        aggregate_share::compute_aggregate_share, query_type::CollectableQueryType,
+        send_request_to_helper, Error,
+    },
     datastore::{
         self,
         models::AcquiredCollectJob,
@@ -23,7 +25,7 @@ use janus_core::test_util::dummy_vdaf;
 use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    AggregateShareReq, AggregateShareResp, BatchSelector, Role,
+    AggregateShare, AggregateShareReq, BatchSelector,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -41,6 +43,7 @@ use prio::{
         },
     },
 };
+use reqwest::Method;
 use std::{sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -221,7 +224,7 @@ impl CollectJobDriver {
         }
     }
 
-    #[tracing::instrument(skip(self, datastore), err)]
+    //#[tracing::instrument(skip(self, datastore), err)]
     async fn step_collect_job_generic<
         const L: usize,
         C: Clock,
@@ -295,17 +298,16 @@ impl CollectJobDriver {
 
         // Send an aggregate share request to the helper.
         let req = AggregateShareReq::<Q>::new(
-            *task.id(),
             BatchSelector::new(collect_job.batch_identifier().clone()),
             collect_job.aggregation_parameter().get_encoded(),
             report_count,
             checksum,
         );
 
-        let resp_bytes = post_to_helper(
+        let resp_bytes = send_request_to_helper(
             &self.http_client,
-            task.aggregator_url(&Role::Helper)?
-                .join("aggregate_share")?,
+            Method::POST,
+            task.aggregate_shares_url()?,
             AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),
@@ -318,7 +320,7 @@ impl CollectJobDriver {
         let collect_job = Arc::new(
             collect_job.with_state(CollectJobState::Finished {
                 report_count,
-                encrypted_helper_aggregate_share: AggregateShareResp::get_decoded(&resp_bytes)?
+                encrypted_helper_aggregate_share: AggregateShare::get_decoded(&resp_bytes)?
                     .encrypted_aggregate_share()
                     .clone(),
                 leader_aggregate_share,
@@ -708,14 +710,14 @@ mod tests {
             Datastore,
         },
         messages::TimeExt,
-        task::{test_util::TaskBuilder, QueryType},
+        task::{test_util::TaskBuilder, QueryType, Task},
     };
     use assert_matches::assert_matches;
     use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         task::VdafInstance,
         test_util::{
-            dummy_vdaf::{self, AggregateShare, AggregationParam, OutputShare},
+            dummy_vdaf::{self, AggregationParam, OutputShare},
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
         },
@@ -723,7 +725,7 @@ mod tests {
         Runtime,
     };
     use janus_messages::{
-        query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
+        query_type::TimeInterval, AggregateShare, AggregateShareReq, BatchSelector, Duration,
         HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
     use mockito::mock;
@@ -732,13 +734,13 @@ mod tests {
     use rand::random;
     use std::{str, sync::Arc, time::Duration as StdDuration};
     use url::Url;
-    use uuid::Uuid;
 
     async fn setup_collect_job_test_case(
         clock: MockClock,
         datastore: Arc<Datastore<MockClock>>,
         acquire_lease: bool,
     ) -> (
+        Task,
         Option<Lease<AcquiredCollectJob>>,
         CollectJob<0, TimeInterval, dummy_vdaf::Vdaf>,
     ) {
@@ -756,7 +758,7 @@ mod tests {
 
         let collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
             *task.id(),
-            Uuid::new_v4(),
+            random(),
             batch_interval,
             aggregation_param,
             CollectJobState::Start,
@@ -807,7 +809,7 @@ mod tests {
                             *task.id(),
                             Interval::new(clock.now(), time_precision).unwrap(),
                             aggregation_param,
-                            AggregateShare(0),
+                            dummy_vdaf::AggregateShare(0),
                             5,
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                         ),
@@ -822,7 +824,7 @@ mod tests {
                             )
                             .unwrap(),
                             aggregation_param,
-                            AggregateShare(0),
+                            dummy_vdaf::AggregateShare(0),
                             5,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ),
@@ -851,7 +853,7 @@ mod tests {
             .await
             .unwrap();
 
-        (lease, collect_job)
+        (task, lease, collect_job)
     }
 
     #[tokio::test]
@@ -880,7 +882,7 @@ mod tests {
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
-                    let collect_job_id = Uuid::new_v4();
+                    let collect_job_id = random();
                     tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         collect_job_id,
@@ -961,7 +963,7 @@ mod tests {
                         *task.id(),
                         Interval::new(clock.now(), time_precision).unwrap(),
                         aggregation_param,
-                        AggregateShare(0),
+                        dummy_vdaf::AggregateShare(0),
                         5,
                         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                     ),
@@ -977,7 +979,7 @@ mod tests {
                         )
                         .unwrap(),
                         aggregation_param,
-                        AggregateShare(0),
+                        dummy_vdaf::AggregateShare(0),
                         5,
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ),
@@ -991,7 +993,6 @@ mod tests {
         .unwrap();
 
         let leader_request = AggregateShareReq::new(
-            *task.id(),
             BatchSelector::new_time_interval(batch_interval),
             aggregation_param.get_encoded(),
             10,
@@ -999,7 +1000,7 @@ mod tests {
         );
 
         // Simulate helper failing to service the aggregate share request.
-        let mocked_failed_aggregate_share = mock("POST", "/aggregate_share")
+        let mocked_failed_aggregate_share = mock("POST", task.aggregate_shares_path().as_str())
             .match_header(
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
@@ -1046,13 +1047,13 @@ mod tests {
         .unwrap();
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
-        let helper_response = AggregateShareResp::new(HpkeCiphertext::new(
+        let helper_response = AggregateShare::new(HpkeCiphertext::new(
             HpkeConfigId::from(100),
             Vec::new(),
             Vec::new(),
         ));
 
-        let mocked_aggregate_share = mock("POST", "/aggregate_share")
+        let mocked_aggregate_share = mock("POST", task.aggregate_shares_path().as_str())
             .match_header(
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
@@ -1063,7 +1064,7 @@ mod tests {
             )
             .match_body(leader_request.get_encoded())
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
+            .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
             .with_body(helper_response.get_encoded())
             .create();
 
@@ -1109,7 +1110,8 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
-        let (lease, collect_job) = setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
+        let (_, lease, collect_job) =
+            setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
 
         let collect_job_driver = CollectJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
@@ -1161,7 +1163,7 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
-        let (_, collect_job) =
+        let (task, _, collect_job) =
             setup_collect_job_test_case(clock.clone(), Arc::clone(&ds), false).await;
 
         // Set up the collect job driver
@@ -1184,14 +1186,14 @@ mod tests {
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
-        let failure_mock = mock("POST", "/aggregate_share")
+        let failure_mock = mock("POST", task.aggregate_shares_path().as_str())
             .with_status(500)
             .expect(3)
             .create();
         // Set up an extra response that should never be used, to make sure the job driver doesn't
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
-        let no_more_requests_mock = mock("POST", "/aggregate_share")
+        let no_more_requests_mock = mock("POST", task.aggregate_shares_path().as_str())
             .with_status(500)
             .expect(1)
             .create();
@@ -1246,7 +1248,8 @@ mod tests {
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
-        let (lease, collect_job) = setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
+        let (task, lease, collect_job) =
+            setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
 
         // Delete the collect job
         let collect_job = collect_job.with_state(CollectJobState::Deleted);
@@ -1262,15 +1265,15 @@ mod tests {
         .unwrap();
 
         // Helper aggregate share is opaque to the leader, so no need to construct a real one
-        let helper_response = AggregateShareResp::new(HpkeCiphertext::new(
+        let helper_response = AggregateShare::new(HpkeCiphertext::new(
             HpkeConfigId::from(100),
             Vec::new(),
             Vec::new(),
         ));
 
-        let mocked_aggregate_share = mock("POST", "/aggregate_share")
+        let mocked_aggregate_share = mock("POST", task.aggregate_shares_path().as_str())
             .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
+            .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
             .with_body(helper_response.get_encoded())
             .create();
 

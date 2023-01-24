@@ -800,6 +800,7 @@ mod tests {
             Aggregator, Vdaf,
         },
     };
+    use rand::random;
     use std::{
         collections::{HashMap, HashSet},
         iter,
@@ -807,7 +808,6 @@ mod tests {
         time::Duration,
     };
     use tokio::{task, time};
-    use uuid::Uuid;
 
     #[tokio::test]
     async fn aggregation_job_creator() {
@@ -1343,7 +1343,7 @@ mod tests {
                     // This will encompass the members of batch_2_reports.
                     tx.put_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&CollectJob::new(
                         *task.id(),
-                        Uuid::new_v4(),
+                        random(),
                         Interval::new(report_time, *task.time_precision()).unwrap(),
                         AggregationParam(7),
                         CollectJobState::Start,
@@ -1352,7 +1352,7 @@ mod tests {
                     // This will encompass the members of both batch_1_reports and batch_2_reports.
                     tx.put_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&CollectJob::new(
                         *task.id(),
-                        Uuid::new_v4(),
+                        random(),
                         Interval::new(
                             report_time,
                             janus_messages::Duration::from_seconds(
