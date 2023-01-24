@@ -118,10 +118,11 @@ impl ClientParameters {
         Ok(self.aggregator_endpoint(role)?.join("hpke_config")?)
     }
 
-    /// URL to which reports may be uploaded by clients per draft-gpew-priv-ppm
-    /// §4.3.2
-    fn upload_endpoint(&self) -> Result<Url, Error> {
-        Ok(self.aggregator_endpoint(&Role::Leader)?.join("upload")?)
+    // URI to which reports may be uploaded for the provided task.
+    fn reports_resource_uri(&self, task_id: &TaskId) -> Result<Url, Error> {
+        Ok(self
+            .aggregator_endpoint(&Role::Leader)?
+            .join(&format!("tasks/{task_id}/reports"))?)
     }
 }
 
@@ -257,7 +258,6 @@ where
         .collect::<Result<_, Error>>()?;
 
         Ok(Report::new(
-            self.parameters.task_id,
             report_metadata,
             encoded_public_share,
             encrypted_input_shares,
@@ -270,12 +270,14 @@ where
     #[tracing::instrument(skip(measurement), err)]
     pub async fn upload(&self, measurement: &V::Measurement) -> Result<(), Error> {
         let report = self.prepare_report(measurement)?;
-        let upload_endpoint = self.parameters.upload_endpoint()?;
+        let upload_endpoint = self
+            .parameters
+            .reports_resource_uri(&self.parameters.task_id)?;
         let upload_response = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
             || async {
                 self.http_client
-                    .post(upload_endpoint.clone())
+                    .put(upload_endpoint.clone())
                     .header(CONTENT_TYPE, Report::MEDIA_TYPE)
                     .body(report.get_encoded())
                     .send()
@@ -354,13 +356,18 @@ mod tests {
     #[tokio::test]
     async fn upload_prio3_count() {
         install_test_trace_subscriber();
-        let mocked_upload = mock("POST", "/upload")
-            .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
-            .with_status(200)
-            .expect(1)
-            .create();
 
         let client = setup_client(Prio3::new_aes128_count(2).unwrap());
+
+        let mocked_upload = mock(
+            "PUT",
+            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+        .with_status(200)
+        .expect(1)
+        .create();
+
         client.upload(&1).await.unwrap();
 
         mocked_upload.assert();
@@ -382,13 +389,17 @@ mod tests {
     async fn upload_prio3_http_status_code() {
         install_test_trace_subscriber();
 
-        let mocked_upload = mock("POST", "/upload")
-            .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
-            .with_status(501)
-            .expect(1)
-            .create();
-
         let client = setup_client(Prio3::new_aes128_count(2).unwrap());
+
+        let mocked_upload = mock(
+            "PUT",
+            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+        .with_status(501)
+        .expect(1)
+        .create();
+
         assert_matches!(
             client.upload(&1).await,
             Err(Error::Http(problem)) => {
@@ -403,7 +414,9 @@ mod tests {
     async fn upload_problem_details() {
         install_test_trace_subscriber();
 
-        let mocked_upload = mock("POST", "/upload")
+        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
+
+        let mocked_upload = mock("PUT", format!("/tasks/{}/reports", client.parameters.task_id).as_str())
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
@@ -416,7 +429,6 @@ mod tests {
             .expect(1)
             .create();
 
-        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
         assert_matches!(
             client.upload(&1).await,
             Err(Error::Http(problem)) => {
