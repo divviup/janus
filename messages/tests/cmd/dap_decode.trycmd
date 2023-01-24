@@ -8,7 +8,7 @@ Arguments:
   <MESSAGE_FILE>  Path to file containing message to decode. Pass "-" to read from stdin
 
 Options:
-  -t, --media-type <MEDIA_TYPE>  Media type of the message to decode [possible values: hpke-config, report, aggregate-initialize-req, aggregate-initialize-resp, aggregate-continue-req, aggregate-continue-resp, aggregate-share-req, aggregate-share-resp, collect-req, collect-resp]
+  -t, --media-type <MEDIA_TYPE>  Media type of the message to decode [possible values: hpke-config, report, aggregation-job-init-req, aggregation-job, aggregate-share-req, aggregate-share, collect-req, collection]
   -h, --help                     Print help
   -V, --version                  Print version
 
