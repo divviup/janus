@@ -186,6 +186,16 @@ impl From<[u8; Self::LEN]> for BatchId {
     }
 }
 
+impl<'a> TryFrom<&'a [u8]> for BatchId {
+    type Error = &'static str;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(value.try_into().map_err(|_| {
+            "byte slice has incorrect length for BatchId"
+        })?))
+    }
+}
+
 impl AsRef<[u8; Self::LEN]> for BatchId {
     fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
@@ -243,6 +253,16 @@ impl From<[u8; Self::LEN]> for ReportId {
     }
 }
 
+impl<'a> TryFrom<&'a [u8]> for ReportId {
+    type Error = &'static str;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(value.try_into().map_err(|_| {
+            "byte slice has incorrect length for ReportId"
+        })?))
+    }
+}
+
 impl AsRef<[u8; Self::LEN]> for ReportId {
     fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
@@ -297,6 +317,16 @@ impl ReportIdChecksum {
 impl From<[u8; Self::LEN]> for ReportIdChecksum {
     fn from(checksum: [u8; Self::LEN]) -> Self {
         Self(checksum)
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for ReportIdChecksum {
+    type Error = &'static str;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(value.try_into().map_err(|_| {
+            "byte slice has incorrect length for ReportIdChecksum"
+        })?))
     }
 }
 
@@ -488,8 +518,18 @@ impl Decode for TaskId {
 }
 
 impl From<[u8; Self::LEN]> for TaskId {
-    fn from(task_id: [u8; TaskId::LEN]) -> Self {
+    fn from(task_id: [u8; Self::LEN]) -> Self {
         Self(task_id)
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for TaskId {
+    type Error = &'static str;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self(value.try_into().map_err(|_| {
+            "byte slice has incorrect length for TaskId"
+        })?))
     }
 }
 
@@ -534,10 +574,8 @@ impl<'de> Visitor<'de> for TaskIdVisitor {
         let decoded = URL_SAFE_NO_PAD
             .decode(value)
             .map_err(|_| E::custom("invalid base64url value"))?;
-        let byte_array: [u8; TaskId::LEN] = decoded
-            .try_into()
-            .map_err(|_| E::custom("incorrect TaskId length"))?;
-        Ok(TaskId::from(byte_array))
+
+        TaskId::try_from(decoded.as_slice()).map_err(|e| E::custom(e))
     }
 }
 
@@ -4062,11 +4100,11 @@ mod tests {
         );
         assert_de_tokens_error::<TaskId>(
             &[Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
-            "incorrect TaskId length",
+            "byte slice has incorrect length for TaskId",
         );
         assert_de_tokens_error::<TaskId>(
             &[Token::Str("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")],
-            "incorrect TaskId length",
+            "byte slice has incorrect length for TaskId",
         );
     }
 

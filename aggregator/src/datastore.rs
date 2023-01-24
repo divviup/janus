@@ -937,13 +937,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         rows.into_iter()
             .map(|row| {
-                let report_id_bytes: [u8; ReportId::LEN] = row
-                    .get::<_, Vec<u8>>("report_id")
-                    .try_into()
-                    .map_err(|err| {
-                        Error::DbState(format!("couldn't convert report_id value: {err:?}"))
-                    })?;
-                let report_id = ReportId::from(report_id_bytes);
+                let report_id = row.get_bytea_and_convert::<ReportId>("report_id")?;
                 let time = Time::from_naive_date_time(&row.get("client_timestamp"));
                 Ok((report_id, time))
             })
@@ -999,13 +993,7 @@ impl<C: Clock> Transaction<'_, C> {
 
         rows.into_iter()
             .map(|row| {
-                let report_id_bytes: [u8; ReportId::LEN] = row
-                    .get::<_, Vec<u8>>("report_id")
-                    .try_into()
-                    .map_err(|err| {
-                        Error::DbState(format!("couldn't convert report_id value: {0:?}", err))
-                    })?;
-                let report_id = ReportId::from(report_id_bytes);
+                let report_id = row.get_bytea_and_convert::<ReportId>("report_id")?;
                 let time = Time::from_naive_date_time(&row.get("client_timestamp"));
                 let agg_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
                 Ok((report_id, time, agg_param))
@@ -1342,11 +1330,7 @@ impl<C: Clock> Transaction<'_, C> {
                     AggregationJobId::get_decoded(row.get("aggregation_job_id"))?;
                 let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-                let lease_token_bytes: [u8; LeaseToken::LEN] = row
-                    .get::<_, Vec<u8>>("lease_token")
-                    .try_into()
-                    .map_err(|err| Error::DbState(format!("lease_token invalid: {:?}", err)))?;
-                let lease_token = LeaseToken::from(lease_token_bytes);
+                let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
                 let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
                 Ok(Lease::new(
                     AcquiredAggregationJob::new(task_id, aggregation_job_id, query_type, vdaf),
@@ -1585,13 +1569,7 @@ impl<C: Clock> Transaction<'_, C> {
             .await?
             .into_iter()
             .map(|row| {
-                let report_id_bytes: [u8; ReportId::LEN] = row
-                    .get::<_, Vec<u8>>("report_id")
-                    .try_into()
-                    .map_err(|err| {
-                        Error::DbState(format!("couldn't convert report_id value: {err:?}"))
-                    })?;
-                let report_id = ReportId::from(report_id_bytes);
+                let report_id = row.get_bytea_and_convert::<ReportId>("report_id")?;
                 Self::report_aggregation_from_row(
                     vdaf,
                     role,
@@ -2190,11 +2168,7 @@ ORDER BY id DESC
                 let collect_job_id = row.get("collect_job_id");
                 let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-                let lease_token_bytes: [u8; LeaseToken::LEN] = row
-                    .get::<_, Vec<u8>>("lease_token")
-                    .try_into()
-                    .map_err(|err| Error::DbState(format!("lease_token invalid: {:?}", err)))?;
-                let lease_token = LeaseToken::from(lease_token_bytes);
+                let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
                 let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
                 Ok(Lease::new(
                     AcquiredCollectJob::new(task_id, collect_job_id, query_type, vdaf),
@@ -2274,11 +2248,7 @@ ORDER BY id DESC
                 let collect_job_id = row.get("collect_job_id");
                 let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-                let lease_token_bytes: [u8; LeaseToken::LEN] = row
-                    .get::<_, Vec<u8>>("lease_token")
-                    .try_into()
-                    .map_err(|err| Error::DbState(format!("lease_token invalid: {:?}", err)))?;
-                let lease_token = LeaseToken::from(lease_token_bytes);
+                let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
                 let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
                 Ok(Lease::new(
                     AcquiredCollectJob::new(task_id, collect_job_id, query_type, vdaf),
@@ -3599,9 +3569,13 @@ pub mod models {
         }
     }
 
-    impl From<[u8; Self::LEN]> for LeaseToken {
-        fn from(lease_token: [u8; Self::LEN]) -> Self {
-            Self(lease_token)
+    impl<'a> TryFrom<&'a [u8]> for LeaseToken {
+        type Error = &'static str;
+
+        fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+            Ok(Self(value.try_into().map_err(|_| {
+                "byte slice has incorrect length for LeaseToken"
+            })?))
         }
     }
 
