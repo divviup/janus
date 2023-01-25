@@ -17,7 +17,7 @@ COPY db /src/db
 COPY integration_tests /src/integration_tests
 COPY interop_binaries /src/interop_binaries
 COPY messages /src/messages
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --profile $PROFILE -p janus_interop_binaries --bin $BINARY && cp /src/target/$PROFILE/$BINARY /$BINARY
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --features fpvec_bounded_l2 --profile $PROFILE -p janus_interop_binaries --bin $BINARY && cp /src/target/$PROFILE/$BINARY /$BINARY
 
 FROM alpine:3.17.1
 ARG BINARY

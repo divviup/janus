@@ -9,7 +9,7 @@ Arguments:
 
 Options:
   -t, --media-type <MEDIA_TYPE>  Media type of the message to decode [possible values: hpke-config, report, aggregate-initialize-req, aggregate-initialize-resp, aggregate-continue-req, aggregate-continue-resp, aggregate-share-req, aggregate-share-resp, collect-req, collect-resp]
-  -h, --help                     Print help information
-  -V, --version                  Print version information
+  -h, --help                     Print help
+  -V, --version                  Print version
 
 ```
