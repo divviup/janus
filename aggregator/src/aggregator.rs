@@ -10,8 +10,8 @@ use crate::{
     datastore::{
         self,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, CollectJob, CollectJobState,
-            LeaderStoredReport, ReportAggregation, ReportAggregationState,
+            AggregateShareJob, AggregationJob, AggregationJobState, CollectionJob,
+            CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
         Datastore,
     },
@@ -35,11 +35,12 @@ use janus_core::{
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{FixedSize, TimeInterval},
-    AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJob as AggregationJobMessage,
-    AggregationJobId, AggregationJobInitializeReq, BatchSelector, Collection, CollectionId,
-    CollectionReq, Duration, HpkeCiphertext, HpkeConfigId, HpkeConfigList, InputShareAad, Interval,
-    PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Report, ReportId,
-    ReportIdChecksum, ReportShare, ReportShareError, Role, TaskId, Time,
+    AggregateShare, AggregateShareAad, AggregateShareReq, AggregationJobContinueReq,
+    AggregationJobId, AggregationJobInitializeReq, AggregationJobResp, BatchSelector, Collection,
+    CollectionJobId, CollectionReq, Duration, HpkeCiphertext, HpkeConfigId, HpkeConfigList,
+    InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep,
+    PrepareStepResult, Report, ReportId, ReportIdChecksum, ReportShare, ReportShareError, Role,
+    TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -58,6 +59,7 @@ use prio::{
         PrepareTransition, VdafError,
     },
 };
+use regex::Regex;
 use reqwest::Client;
 use std::{
     collections::{HashMap, HashSet},
@@ -87,7 +89,7 @@ pub mod accumulator;
 pub mod aggregate_share;
 pub mod aggregation_job_creator;
 pub mod aggregation_job_driver;
-pub mod collect_job_driver;
+pub mod collection_job_driver;
 pub mod garbage_collector;
 pub mod query_type;
 pub mod report_writer;
@@ -123,12 +125,12 @@ pub enum Error {
     /// An attempt was made to act on an unknown aggregation job.
     #[error("task {0}: unrecognized aggregation job: {1}")]
     UnrecognizedAggregationJob(TaskId, AggregationJobId),
-    /// An attempt was made to act on an unknown collect job.
-    #[error("unrecognized collect job: {0}")]
-    UnrecognizedCollectJob(CollectionId),
-    /// An attempt was made to act on a known but deleted collect job.
-    #[error("deleted collect job: {0}")]
-    DeletedCollectJob(CollectionId),
+    /// An attempt was made to act on an unknown collection job.
+    #[error("unrecognized collection job: {0}")]
+    UnrecognizedCollectionJob(CollectionJobId),
+    /// An attempt was made to act on a known but deleted collection job.
+    #[error("deleted collection job: {0}")]
+    DeletedCollectionJob(CollectionJobId),
     /// Corresponds to `outdatedHpkeConfig`, §3.2
     #[error("task {0}: outdated HPKE config: {1}")]
     OutdatedHpkeConfig(TaskId, HpkeConfigId),
@@ -187,6 +189,12 @@ pub enum Error {
     /// conditions.
     #[error("internal aggregator error: {0}")]
     Internal(String),
+    /// A client attempted to mutate an immutable object.
+    #[error("forbidden mutation of {resource_type} {identifier}")]
+    ForbiddenMutation {
+        resource_type: &'static str,
+        identifier: String,
+    },
 }
 
 impl Error {
@@ -202,8 +210,8 @@ impl Error {
             Error::UnrecognizedTask(_) => "unrecognized_task",
             Error::MissingTaskId => "missing_task_id",
             Error::UnrecognizedAggregationJob(_, _) => "unrecognized_aggregation_job",
-            Error::DeletedCollectJob(_) => "deleted_collect_job",
-            Error::UnrecognizedCollectJob(_) => "unrecognized_collect_job",
+            Error::DeletedCollectionJob(_) => "deleted_collection_job",
+            Error::UnrecognizedCollectionJob(_) => "unrecognized_collection_job",
             Error::OutdatedHpkeConfig(_, _) => "outdated_hpke_config",
             Error::UnauthorizedRequest(_) => "unauthorized_request",
             Error::Datastore(_) => "datastore",
@@ -221,6 +229,7 @@ impl Error {
             Error::AggregateShareRequestRejected(_, _) => "aggregate_share_request_rejected",
             Error::EmptyAggregation(_) => "empty_aggregation",
             Error::Internal(_) => "internal",
+            Error::ForbiddenMutation { .. } => "forbidden_mutation",
         }
     }
 }
@@ -467,7 +476,7 @@ impl<C: Clock> Aggregator<C> {
             return Err(Error::UnauthorizedRequest(*task_id));
         }
 
-        let req = AggregationJobMessage::get_decoded(req_bytes)?;
+        let req = AggregationJobContinueReq::get_decoded(req_bytes)?;
 
         Ok(task_aggregator
             .handle_aggregate_continue(
@@ -480,13 +489,12 @@ impl<C: Clock> Aggregator<C> {
             .get_encoded())
     }
 
-    /// Handle a collect request. Only supported by the leader. `req_bytes` is an encoded
-    /// [`CollectReq`]. Returns the URL at which a collector may poll for status of the collect job
-    /// corresponding to the `CollectReq`.
-    async fn handle_collect(
+    /// Handle a collection job creation request. Only supported by the leader. `req_bytes` is an
+    /// encoded [`CollectionReq`].
+    async fn handle_create_collection_job(
         &self,
         task_id: &TaskId,
-        collection_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
         auth_token: Option<String>,
     ) -> Result<(), Error> {
@@ -506,18 +514,18 @@ impl<C: Clock> Aggregator<C> {
         }
 
         task_aggregator
-            .handle_collect(&self.datastore, collection_id, req_bytes)
+            .handle_create_collection_job(&self.datastore, collection_job_id, req_bytes)
             .await
     }
 
-    /// Handle a GET request for a collect job. `collect_job_id` is the unique identifier for the
-    /// collect job parsed out of the request URI. Returns an encoded [`CollectResp`] if the collect
-    /// job has been run to completion, `None` if the collect job has not yet run, or an error
+    /// Handle a GET request for a collection job. `collection_job_id` is the unique identifier for the
+    /// collection job parsed out of the request URI. Returns an encoded [`Collection`] if the collect
+    /// job has been run to completion, `None` if the collection job has not yet run, or an error
     /// otherwise.
-    async fn handle_get_collect_job(
+    async fn handle_get_collection_job(
         &self,
         task_id: &TaskId,
-        collection_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
         auth_token: Option<String>,
     ) -> Result<Option<Vec<u8>>, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
@@ -536,15 +544,15 @@ impl<C: Clock> Aggregator<C> {
         }
 
         task_aggregator
-            .handle_get_collect_job(&self.datastore, collection_id)
+            .handle_get_collection_job(&self.datastore, collection_job_id)
             .await
     }
 
-    /// Handle a DELETE request for a collect job.
-    async fn handle_delete_collect_job(
+    /// Handle a DELETE request for a collection job.
+    async fn handle_delete_collection_job(
         &self,
         task_id: &TaskId,
-        collection_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
         auth_token: Option<String>,
     ) -> Result<Response, Error> {
         let task_aggregator = self.task_aggregator_for(task_id).await?;
@@ -563,15 +571,14 @@ impl<C: Clock> Aggregator<C> {
         }
 
         task_aggregator
-            .handle_delete_collect_job(&self.datastore, collection_id)
+            .handle_delete_collection_job(&self.datastore, collection_job_id)
             .await?;
 
         Ok(StatusCode::NO_CONTENT.into_response())
     }
 
     /// Handle an aggregate share request. Only supported by the helper. `req_bytes` is an encoded,
-    /// authenticated [`AggregateShareReq`]. Returns an encoded, authenticated
-    /// [`AggregateShareResp`].
+    /// authenticated [`AggregateShareReq`]. Returns an encoded, authenticated [`AggregateShare`].
     async fn handle_aggregate_share(
         &self,
         task_id: &TaskId,
@@ -767,7 +774,7 @@ impl<C: Clock> TaskAggregator<C> {
         aggregate_step_failure_counter: &Counter<u64>,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
-    ) -> Result<AggregationJobMessage, Error> {
+    ) -> Result<AggregationJobResp, Error> {
         self.vdaf_ops
             .handle_aggregate_init(
                 datastore,
@@ -784,8 +791,8 @@ impl<C: Clock> TaskAggregator<C> {
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
         aggregation_job_id: &AggregationJobId,
-        req: AggregationJobMessage,
-    ) -> Result<AggregationJobMessage, Error> {
+        req: AggregationJobContinueReq,
+    ) -> Result<AggregationJobResp, Error> {
         self.vdaf_ops
             .handle_aggregate_continue(
                 datastore,
@@ -797,34 +804,39 @@ impl<C: Clock> TaskAggregator<C> {
             .await
     }
 
-    async fn handle_collect(
+    async fn handle_create_collection_job(
         &self,
         datastore: &Datastore<C>,
-        collection_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
     ) -> Result<(), Error> {
         self.vdaf_ops
-            .handle_collect(datastore, Arc::clone(&self.task), collection_id, req_bytes)
+            .handle_create_collection_job(
+                datastore,
+                Arc::clone(&self.task),
+                collection_job_id,
+                req_bytes,
+            )
             .await
     }
 
-    async fn handle_get_collect_job(
+    async fn handle_get_collection_job(
         &self,
         datastore: &Datastore<C>,
-        collect_job_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
     ) -> Result<Option<Vec<u8>>, Error> {
         self.vdaf_ops
-            .handle_get_collect_job(datastore, Arc::clone(&self.task), collect_job_id)
+            .handle_get_collection_job(datastore, Arc::clone(&self.task), collection_job_id)
             .await
     }
 
-    async fn handle_delete_collect_job(
+    async fn handle_delete_collection_job(
         &self,
         datastore: &Datastore<C>,
-        collect_job_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
     ) -> Result<(), Error> {
         self.vdaf_ops
-            .handle_delete_collect_job(datastore, Arc::clone(&self.task), collect_job_id)
+            .handle_delete_collection_job(datastore, Arc::clone(&self.task), collection_job_id)
             .await
     }
 
@@ -1193,7 +1205,7 @@ impl VdafOps {
         task: Arc<Task>,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
-    ) -> Result<AggregationJobMessage, Error> {
+    ) -> Result<AggregationJobResp, Error> {
         match (task.query_type(), self) {
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(vdaf, verify_key)) => {
                 Self::handle_aggregate_init_generic::<
@@ -1507,8 +1519,8 @@ impl VdafOps {
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
         aggregation_job_id: &AggregationJobId,
-        req: Arc<AggregationJobMessage>,
-    ) -> Result<AggregationJobMessage, Error> {
+        req: Arc<AggregationJobContinueReq>,
+    ) -> Result<AggregationJobResp, Error> {
         match (task.query_type(), self) {
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(vdaf, _)) => {
                 Self::handle_aggregate_continue_generic::<
@@ -1979,7 +1991,7 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
         verify_key: &VerifyKey<L>,
         req_bytes: &[u8],
-    ) -> Result<AggregationJobMessage, Error>
+    ) -> Result<AggregationJobResp, Error>
     where
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
@@ -2262,7 +2274,7 @@ impl VdafOps {
             .await?;
 
         // Construct response and return.
-        Ok(AggregationJobMessage::new(prep_steps))
+        Ok(AggregationJobResp::new(prep_steps))
     }
 
     async fn handle_aggregate_continue_generic<
@@ -2276,8 +2288,8 @@ impl VdafOps {
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
         aggregation_job_id: &AggregationJobId,
-        req: Arc<AggregationJobMessage>,
-    ) -> Result<AggregationJobMessage, Error>
+        req: Arc<AggregationJobContinueReq>,
+    ) -> Result<AggregationJobResp, Error>
     where
         A: 'static + Send + Sync,
         A::AggregationParam: Send + Sync,
@@ -2445,58 +2457,58 @@ impl VdafOps {
 
                     accumulator.flush_to_datastore(tx).await?;
 
-                    Ok(AggregationJobMessage::new(response_prep_steps))
+                    Ok(AggregationJobResp::new(response_prep_steps))
                 })
             })
             .await?)
     }
 
-    /// Handle requests to the leader `/collect` endpoint (§4.5).
-    async fn handle_collect<C: Clock>(
+    /// Handle requests to the leader to create a collection job.
+    async fn handle_create_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        collection_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
         collect_req_bytes: &[u8],
     ) -> Result<(), Error> {
         match (task.query_type(), self) {
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Count,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
@@ -2505,12 +2517,12 @@ impl VdafOps {
                 task::QueryType::TimeInterval,
                 VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
@@ -2519,12 +2531,12 @@ impl VdafOps {
                 task::QueryType::TimeInterval,
                 VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
@@ -2533,63 +2545,63 @@ impl VdafOps {
                 task::QueryType::TimeInterval,
                 VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
             #[cfg(feature = "test-util")]
             (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
-                Self::handle_collect_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                Self::handle_create_collection_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
-                    collection_id,
+                    collection_job_id,
                     collect_req_bytes,
                 )
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128Count,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
@@ -2598,12 +2610,12 @@ impl VdafOps {
                 task::QueryType::FixedSize { .. },
                 VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
@@ -2612,12 +2624,12 @@ impl VdafOps {
                 task::QueryType::FixedSize { .. },
                 VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
@@ -2626,21 +2638,21 @@ impl VdafOps {
                 task::QueryType::FixedSize { .. },
                 VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_collect_generic::<
+                Self::handle_create_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
                     _,
-                >(datastore, task, collection_id, collect_req_bytes)
+                >(datastore, task, collection_job_id, collect_req_bytes)
                 .await
             }
 
             #[cfg(feature = "test-util")]
             (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
-                Self::handle_collect_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
+                Self::handle_create_collection_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
-                    collection_id,
+                    collection_job_id,
                     collect_req_bytes,
                 )
                 .await
@@ -2649,7 +2661,7 @@ impl VdafOps {
     }
 
     #[tracing::instrument(skip(datastore, task, req_bytes), fields(task_id = ?task.id()), err)]
-    async fn handle_collect_generic<
+    async fn handle_create_collection_job_generic<
         const L: usize,
         Q: CollectableQueryType,
         A: vdaf::Aggregator<L>,
@@ -2657,7 +2669,7 @@ impl VdafOps {
     >(
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        collection_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
         req_bytes: &[u8],
     ) -> Result<(), Error>
     where
@@ -2673,9 +2685,9 @@ impl VdafOps {
 
         Ok(datastore
             .run_tx_with_name("collect", move |tx| {
-                let (task, collection_id, req, aggregation_param) = (
+                let (task, collection_job_id, req, aggregation_param) = (
                     Arc::clone(&task),
-                    *collection_id,
+                    *collection_job_id,
                     Arc::clone(&req),
                     Arc::clone(&aggregation_param),
                 );
@@ -2700,33 +2712,38 @@ impl VdafOps {
                         ));
                     }
 
-                    // Check if this collect job already exists, ensuring that all parameters match.
-                    if let Some(collect_job) = tx.get_collect_job::<L, Q, A>(&collection_id).await?
+                    // Check if this collection job already exists, ensuring that all parameters match.
+                    if let Some(collection_job) =
+                        tx.get_collection_job::<L, Q, A>(&collection_job_id).await?
                     {
-                        if collect_job.batch_identifier() == &batch_identifier
-                            && collect_job.aggregation_parameter() == aggregation_param.as_ref()
+                        if collection_job.batch_identifier() == &batch_identifier
+                            && collection_job.aggregation_parameter() == aggregation_param.as_ref()
                         {
                             debug!(
-                                collection_id = %collection_id,
+                                collection_job_id = %collection_job_id,
                                 collect_request = ?req,
-                                "Collect job already exists"
+                                "collection job already exists"
                             );
                             return Ok(());
                         } else {
                             return Err(datastore::Error::User(
-                                Error::UnrecognizedCollectJob(collection_id).into(),
+                                Error::ForbiddenMutation {
+                                    resource_type: "collection job",
+                                    identifier: collection_job_id.to_string(),
+                                }
+                                .into(),
                             ));
                         }
                     }
 
-                    debug!(collect_request = ?req, "Cache miss, creating new collect job");
+                    debug!(collect_request = ?req, "Cache miss, creating new collection job");
                     let (_, report_count) = try_join!(
                         Q::validate_query_count::<L, C, A>(tx, &task, &batch_identifier),
                         Q::count_client_reports(tx, &task, &batch_identifier),
                     )?;
 
                     // Batch size must be validated while handling CollectReq and hence before
-                    // creating a collect job.
+                    // creating a collection job.
                     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
                     if !task.validate_batch_size(report_count) {
                         return Err(datastore::Error::User(
@@ -2734,12 +2751,12 @@ impl VdafOps {
                         ));
                     }
 
-                    tx.put_collect_job(&CollectJob::<L, Q, A>::new(
+                    tx.put_collection_job(&CollectionJob::<L, Q, A>::new(
                         *task.id(),
-                        collection_id,
+                        collection_job_id,
                         batch_identifier,
                         aggregation_param.as_ref().clone(),
-                        CollectJobState::<L, A>::Start,
+                        CollectionJobState::<L, A>::Start,
                     ))
                     .await?;
 
@@ -2749,53 +2766,53 @@ impl VdafOps {
             .await?)
     }
 
-    /// Handle GET requests to a collect job URI obtained from the leader's `/collect` endpoint.
+    /// Handle GET requests to a collection job URI obtained from the leader's `/collect` endpoint.
     /// The return value is an encoded `CollectResp<Q>`.
     /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.1
-    async fn handle_get_collect_job<C: Clock>(
+    async fn handle_get_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        collect_job_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
     ) -> Result<Option<Vec<u8>>, Error> {
         match (task.query_type(), self) {
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Count,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -2804,12 +2821,12 @@ impl VdafOps {
                 task::QueryType::TimeInterval,
                 VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -2818,12 +2835,12 @@ impl VdafOps {
                 task::QueryType::TimeInterval,
                 VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -2832,62 +2849,62 @@ impl VdafOps {
                 task::QueryType::TimeInterval,
                 VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             #[cfg(feature = "test-util")]
             (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
-                Self::handle_get_collect_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                Self::handle_get_collection_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
-                    collect_job_id,
+                    collection_job_id,
                 )
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128Count,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -2896,12 +2913,12 @@ impl VdafOps {
                 task::QueryType::FixedSize { .. },
                 VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -2910,12 +2927,12 @@ impl VdafOps {
                 task::QueryType::FixedSize { .. },
                 VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -2924,21 +2941,21 @@ impl VdafOps {
                 task::QueryType::FixedSize { .. },
                 VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_get_collect_job_generic::<
+                Self::handle_get_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             #[cfg(feature = "test-util")]
             (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
-                Self::handle_get_collect_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
+                Self::handle_get_collection_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
-                    collect_job_id,
+                    collection_job_id,
                 )
                 .await
             }
@@ -2946,7 +2963,7 @@ impl VdafOps {
     }
 
     // return value is an encoded CollectResp<Q>
-    async fn handle_get_collect_job_generic<
+    async fn handle_get_collection_job_generic<
         const L: usize,
         Q: CollectableQueryType,
         A: vdaf::Aggregator<L>,
@@ -2954,7 +2971,7 @@ impl VdafOps {
     >(
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        collect_job_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
     ) -> Result<Option<Vec<u8>>, Error>
     where
         A::AggregationParam: Send + Sync,
@@ -2962,39 +2979,39 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     {
-        let collect_job = datastore
-            .run_tx_with_name("get_collect_job", |tx| {
-                let (task, collect_job_id) = (Arc::clone(&task), *collect_job_id);
+        let collection_job = datastore
+            .run_tx_with_name("get_collection_job", |tx| {
+                let (task, collection_job_id) = (Arc::clone(&task), *collection_job_id);
                 Box::pin(async move {
-                    let collect_job = tx
-                        .get_collect_job::<L, Q, A>(&collect_job_id)
+                    let collection_job = tx
+                        .get_collection_job::<L, Q, A>(&collection_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
-                                Error::UnrecognizedCollectJob(collect_job_id).into(),
+                                Error::UnrecognizedCollectionJob(collection_job_id).into(),
                             )
                         })?;
-                    Q::acknowledge_collection(tx, task.id(), collect_job.batch_identifier())
+                    Q::acknowledge_collection(tx, task.id(), collection_job.batch_identifier())
                         .await?;
-                    Ok(collect_job)
+                    Ok(collection_job)
                 })
             })
             .await?;
 
-        match collect_job.state() {
-            CollectJobState::Start => {
-                debug!(%collect_job_id, task_id = %task.id(), "Collect job has not run yet");
+        match collection_job.state() {
+            CollectionJobState::Start => {
+                debug!(%collection_job_id, task_id = %task.id(), "collection job has not run yet");
                 Ok(None)
             }
 
-            CollectJobState::Finished {
+            CollectionJobState::Finished {
                 report_count,
                 encrypted_helper_aggregate_share,
                 leader_aggregate_share,
             } => {
                 // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store the leader
                 // aggregate share *unencrypted* in the datastore so that we can encrypt cached
-                // results to the collector HPKE config valid when the current collect job request
+                // results to the collector HPKE config valid when the current collection job request
                 // was made, and not whatever was valid at the time the aggregate share was first
                 // computed.
                 // However we store the helper's *encrypted* share.
@@ -3003,9 +3020,9 @@ impl VdafOps {
                 // been long enough since the encrypted helper share was cached -- tricky thing is
                 // deciding what "long enough" is.
                 debug!(
-                    %collect_job_id,
+                    %collection_job_id,
                     task_id = %task.id(),
-                    "Serving cached collect job response"
+                    "Serving cached collection job response"
                 );
                 let encrypted_leader_aggregate_share = hpke::seal(
                     task.collector_hpke_config(),
@@ -3016,8 +3033,8 @@ impl VdafOps {
                     ),
                     &<Vec<u8>>::from(leader_aggregate_share),
                     &AggregateShareAad::new(
-                        *collect_job.task_id(),
-                        BatchSelector::<Q>::new(collect_job.batch_identifier().clone()),
+                        *collection_job.task_id(),
+                        BatchSelector::<Q>::new(collection_job.batch_identifier().clone()),
                     )
                     .get_encoded(),
                 )?;
@@ -3025,7 +3042,7 @@ impl VdafOps {
                 Ok(Some(
                     Collection::<Q>::new(
                         PartialBatchSelector::new(
-                            Q::partial_batch_identifier(collect_job.batch_identifier()).clone(),
+                            Q::partial_batch_identifier(collection_job.batch_identifier()).clone(),
                         ),
                         *report_count,
                         Vec::<HpkeCiphertext>::from([
@@ -3037,64 +3054,64 @@ impl VdafOps {
                 ))
             }
 
-            CollectJobState::Abandoned => {
-                // TODO(#248): decide how to respond for abandoned collect jobs.
+            CollectionJobState::Abandoned => {
+                // TODO(#248): decide how to respond for abandoned collection jobs.
                 warn!(
-                    %collect_job_id,
+                    %collection_job_id,
                     task_id = %task.id(),
-                    "Attempting to collect abandoned collect job"
+                    "Attempting to collect abandoned collection job"
                 );
                 Ok(None)
             }
 
-            CollectJobState::Deleted => Err(Error::DeletedCollectJob(*collect_job_id)),
+            CollectionJobState::Deleted => Err(Error::DeletedCollectionJob(*collection_job_id)),
         }
     }
 
-    async fn handle_delete_collect_job<C: Clock>(
+    async fn handle_delete_collection_job<C: Clock>(
         &self,
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        collect_job_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
     ) -> Result<(), Error> {
         match (task.query_type(), self) {
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Count,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -3103,12 +3120,12 @@ impl VdafOps {
                 task::QueryType::TimeInterval,
                 VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -3117,12 +3134,12 @@ impl VdafOps {
                 task::QueryType::TimeInterval,
                 VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -3131,62 +3148,62 @@ impl VdafOps {
                 task::QueryType::TimeInterval,
                 VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             #[cfg(feature = "test-util")]
             (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
-                Self::handle_delete_collect_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                Self::handle_delete_collection_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
-                    collect_job_id,
+                    collection_job_id,
                 )
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128Count,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -3195,12 +3212,12 @@ impl VdafOps {
                 task::QueryType::FixedSize { .. },
                 VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -3209,12 +3226,12 @@ impl VdafOps {
                 task::QueryType::FixedSize { .. },
                 VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
@@ -3223,28 +3240,28 @@ impl VdafOps {
                 task::QueryType::FixedSize { .. },
                 VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
             ) => {
-                Self::handle_delete_collect_job_generic::<
+                Self::handle_delete_collection_job_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
                     _,
-                >(datastore, task, collect_job_id)
+                >(datastore, task, collection_job_id)
                 .await
             }
 
             #[cfg(feature = "test-util")]
             (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
-                Self::handle_delete_collect_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
+                Self::handle_delete_collection_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
                     datastore,
                     task,
-                    collect_job_id,
+                    collection_job_id,
                 )
                 .await
             }
         }
     }
 
-    async fn handle_delete_collect_job_generic<
+    async fn handle_delete_collection_job_generic<
         const L: usize,
         Q: CollectableQueryType,
         A: vdaf::Aggregator<L>,
@@ -3252,7 +3269,7 @@ impl VdafOps {
     >(
         datastore: &Datastore<C>,
         task: Arc<Task>,
-        collection_id: &CollectionId,
+        collection_job_id: &CollectionJobId,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Send + Sync,
@@ -3261,22 +3278,22 @@ impl VdafOps {
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     {
         datastore
-            .run_tx_with_name("delete_collect_job", move |tx| {
-                let (task, collection_id) = (Arc::clone(&task), *collection_id);
+            .run_tx_with_name("delete_collection_job", move |tx| {
+                let (task, collection_job_id) = (Arc::clone(&task), *collection_job_id);
                 Box::pin(async move {
-                    let collect_job = tx
-                        .get_collect_job::<L, Q, A>(&collection_id)
+                    let collection_job = tx
+                        .get_collection_job::<L, Q, A>(&collection_job_id)
                         .await?
                         .ok_or_else(|| {
                             datastore::Error::User(
-                                Error::UnrecognizedCollectJob(collection_id).into(),
+                                Error::UnrecognizedCollectionJob(collection_job_id).into(),
                             )
                         })?;
-                    Q::acknowledge_collection(tx, task.id(), collect_job.batch_identifier())
+                    Q::acknowledge_collection(tx, task.id(), collection_job.batch_identifier())
                         .await?;
-                    if collect_job.state() != &CollectJobState::Deleted {
-                        tx.update_collect_job::<L, Q, A>(
-                            &collect_job.with_state(CollectJobState::Deleted),
+                    if collection_job.state() != &CollectionJobState::Deleted {
+                        tx.update_collection_job::<L, Q, A>(
+                            &collection_job.with_state(CollectionJobState::Deleted),
                         )
                         .await?;
                     }
@@ -3769,8 +3786,10 @@ where
                                 Some(*task_id),
                             )
                         }
-                        Error::DeletedCollectJob(_) => StatusCode::NO_CONTENT.into_response(),
-                        Error::UnrecognizedCollectJob(_) => StatusCode::NOT_FOUND.into_response(),
+                        Error::DeletedCollectionJob(_) => StatusCode::NO_CONTENT.into_response(),
+                        Error::UnrecognizedCollectionJob(_) => {
+                            StatusCode::NOT_FOUND.into_response()
+                        }
                         Error::OutdatedHpkeConfig(task_id, _) => build_problem_details_response(
                             DapProblemType::OutdatedConfig,
                             Some(*task_id),
@@ -3823,6 +3842,7 @@ where
                         Error::TaskParameters(_) => {
                             StatusCode::INTERNAL_SERVER_ERROR.into_response()
                         }
+                        Error::ForbiddenMutation { .. } => StatusCode::CONFLICT.into_response(),
                     },
                 }
             })
@@ -3878,33 +3898,45 @@ where
         .boxed()
 }
 
-fn compose_common_wrappers_hack<F, T>(
-    filter: F,
-    cors: Cors,
-    response_time_histogram: Histogram<f64>,
-    name: &'static str,
-) -> BoxedFilter<(impl Reply,)>
-where
-    F: Filter<Extract = (Result<T, Arc<Error>>,), Error = Rejection>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-    T: Reply + 'static,
-{
-    filter
-        .with(warp::wrap_fn(error_handler(response_time_histogram, name)))
-        .with(cors)
-        .with(trace::named(name))
-        .boxed()
-}
-
 /// The number of seconds we send in the Access-Control-Max-Age header. This determines for how
 /// long clients will cache the results of CORS preflight requests. Of popular browsers, Mozilla
 /// Firefox has the highest Max-Age cap, at 24 hours, so we use that. Our CORS preflight handlers
 /// are tightly scoped to relevant endpoints, and our CORS settings are unlikely to change.
 /// See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Max-Age
 const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
+
+/// Constructs a Warp filter that matches the request path for tasks, as well as whatever regex is
+/// provided, but without consuming the path or any values encoded into it, such that later filters
+/// can still extract path components.
+fn path_matching_filter(trailing_fragment_regex: &str) -> Result<BoxedFilter<()>, Error> {
+    let regex = Regex::new(&format!(
+        // Task ID is 32 bytes, hence 43 bytes of Base64URL
+        "tasks/[A-Za-z0-9-_]{{43}}/{trailing_fragment_regex}"
+    ))
+    .map_err(|e| Error::Internal(format!("error compiling regex: {e}")))?;
+
+    let filter = warp::path::peek()
+        .and_then(move |peek: warp::path::Peek| {
+            let regex = regex.clone();
+            async move {
+                if regex.is_match(peek.as_str()) {
+                    Ok(())
+                } else {
+                    Err(warp::reject::reject())
+                }
+            }
+        })
+        .untuple_one()
+        .boxed();
+
+    Ok(filter)
+}
+
+/// AggregationJobId is 16 bytes, hence 22 bytes of Base64URL
+const AGGREGATION_JOB_PATH_REGEX: &str = "aggregation_jobs/[A-Za-z0-9-_]{22}";
+
+/// CollectionId is 16 bytes, hence 22 bytes of Base64URL
+const COLLECTION_JOB_PATH_REGEX: &str = "collection_jobs/[A-Za-z0-9-_]{22}";
 
 /// Constructs a Warp filter with endpoints common to all aggregators.
 pub fn aggregator_filter<C: Clock>(
@@ -3921,7 +3953,6 @@ pub fn aggregator_filter<C: Clock>(
 
     let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg));
 
-    let hpke_config_routing = warp::path("hpke_config");
     let hpke_config_responding = warp::get()
         .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::query::<HashMap<String, String>>())
@@ -3940,8 +3971,9 @@ pub fn aggregator_filter<C: Clock>(
                     })
             },
         );
+
     let hpke_config_endpoint = compose_common_wrappers(
-        hpke_config_routing,
+        warp::path("hpke_config"),
         hpke_config_responding,
         warp::cors()
             .allow_any_origin()
@@ -3952,23 +3984,26 @@ pub fn aggregator_filter<C: Clock>(
         "hpke_config",
     );
 
-    let upload_endpoint = compose_common_wrappers_hack(
-        warp::put()
-            .and(warp::path!("tasks" / TaskId / "reports"))
-            .and(warp::header::exact(
-                CONTENT_TYPE.as_str(),
-                Report::MEDIA_TYPE,
-            ))
-            .and(with_cloned_value(Arc::clone(&aggregator)))
-            .and(warp::body::bytes())
-            .then(
-                |task_id: TaskId, aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
-                    aggregator
-                        .handle_upload(&task_id, &body)
-                        .await
-                        .map(|_| StatusCode::OK)
-                },
-            ),
+    let upload_responding = warp::put()
+        .and(warp::path!("tasks" / TaskId / "reports"))
+        .and(warp::header::exact(
+            CONTENT_TYPE.as_str(),
+            Report::MEDIA_TYPE,
+        ))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
+        .and(warp::body::bytes())
+        .then(
+            |task_id: TaskId, aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
+                aggregator
+                    .handle_upload(&task_id, &body)
+                    .await
+                    .map(|_| StatusCode::OK)
+            },
+        );
+
+    let upload_endpoint = compose_common_wrappers(
+        path_matching_filter("reports")?,
+        upload_responding,
         warp::cors()
             .allow_any_origin()
             .allow_method("PUT")
@@ -3979,200 +4014,212 @@ pub fn aggregator_filter<C: Clock>(
         "upload",
     );
 
-    let aggregation_jobs_put_endpoint = compose_common_wrappers_hack(
-        warp::put()
-            .and(warp::path!(
-                "tasks" / TaskId / "aggregation_jobs" / AggregationJobId
-            ))
-            .and(warp::header::exact(
-                CONTENT_TYPE.as_str(),
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            ))
-            .and(with_cloned_value(Arc::clone(&aggregator)))
-            .and(warp::body::bytes())
-            .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-            .then(
-                |task_id: TaskId,
-                 aggregation_job_id: AggregationJobId,
-                 aggregator: Arc<Aggregator<C>>,
-                 body: Bytes,
-                 auth_token: Option<String>| async move {
-                    http::Response::builder()
-                        .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
-                        .body(
-                            aggregator
-                                .handle_aggregate_init(
-                                    &task_id,
-                                    &aggregation_job_id,
-                                    &body,
-                                    auth_token,
-                                )
-                                .await
-                                .map_err(Arc::new)?,
-                        )
-                        .map_err(|err| {
-                            Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
-                        })
-                },
-            ),
+    let aggregation_jobs_put_responding = warp::put()
+        .and(warp::path!(
+            "tasks" / TaskId / "aggregation_jobs" / AggregationJobId
+        ))
+        .and(warp::header::exact(
+            CONTENT_TYPE.as_str(),
+            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+        ))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
+        .and(warp::body::bytes())
+        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+        .then(
+            |task_id: TaskId,
+             aggregation_job_id: AggregationJobId,
+             aggregator: Arc<Aggregator<C>>,
+             body: Bytes,
+             auth_token: Option<String>| async move {
+                http::Response::builder()
+                    .header(CONTENT_TYPE, AggregationJobResp::MEDIA_TYPE)
+                    .body(
+                        aggregator
+                            .handle_aggregate_init(&task_id, &aggregation_job_id, &body, auth_token)
+                            .await
+                            .map_err(Arc::new)?,
+                    )
+                    .map_err(|err| {
+                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
+                    })
+            },
+        );
+
+    let aggregation_jobs_put_endpoint = compose_common_wrappers(
+        path_matching_filter(AGGREGATION_JOB_PATH_REGEX)?,
+        aggregation_jobs_put_responding,
         warp::cors().build(),
         response_time_histogram.clone(),
         "aggregation_job_put",
     );
 
-    let aggregation_jobs_post_endpoint = compose_common_wrappers_hack(
-        warp::post()
-            .and(warp::path!(
-                "tasks" / TaskId / "aggregation_jobs" / AggregationJobId
-            ))
-            .and(warp::header::exact(
-                CONTENT_TYPE.as_str(),
-                AggregationJobMessage::MEDIA_TYPE,
-            ))
-            .and(with_cloned_value(Arc::clone(&aggregator)))
-            .and(warp::body::bytes())
-            .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-            .then(
-                |task_id: TaskId,
-                 aggregation_job_id: AggregationJobId,
-                 aggregator: Arc<Aggregator<C>>,
-                 body: Bytes,
-                 auth_token: Option<String>| async move {
-                    http::Response::builder()
-                        .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
-                        .body(
-                            aggregator
-                                .handle_aggregate_continue(
-                                    &task_id,
-                                    &aggregation_job_id,
-                                    &body,
-                                    auth_token,
-                                )
-                                .await
-                                .map_err(Arc::new)?,
-                        )
-                        .map_err(|err| {
-                            Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
-                        })
-                },
-            ),
+    let aggregation_jobs_post_responding = warp::post()
+        .and(warp::path!(
+            "tasks" / TaskId / "aggregation_jobs" / AggregationJobId
+        ))
+        .and(warp::header::exact(
+            CONTENT_TYPE.as_str(),
+            AggregationJobContinueReq::MEDIA_TYPE,
+        ))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
+        .and(warp::body::bytes())
+        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+        .then(
+            |task_id: TaskId,
+             aggregation_job_id: AggregationJobId,
+             aggregator: Arc<Aggregator<C>>,
+             body: Bytes,
+             auth_token: Option<String>| async move {
+                http::Response::builder()
+                    .header(CONTENT_TYPE, AggregationJobResp::MEDIA_TYPE)
+                    .body(
+                        aggregator
+                            .handle_aggregate_continue(
+                                &task_id,
+                                &aggregation_job_id,
+                                &body,
+                                auth_token,
+                            )
+                            .await
+                            .map_err(Arc::new)?,
+                    )
+                    .map_err(|err| {
+                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
+                    })
+            },
+        );
+
+    let aggregation_jobs_post_endpoint = compose_common_wrappers(
+        path_matching_filter(AGGREGATION_JOB_PATH_REGEX)?,
+        aggregation_jobs_post_responding,
         warp::cors().build(),
         response_time_histogram.clone(),
         "aggregation_job_post",
     );
 
-    let collections_endpoint = compose_common_wrappers_hack(
-        warp::put()
-            .and(warp::path!(
-                "tasks" / TaskId / "collection_jobs" / CollectionId
-            ))
-            .and(warp::header::exact(
-                CONTENT_TYPE.as_str(),
-                CollectionReq::<TimeInterval>::MEDIA_TYPE,
-            ))
-            .and(with_cloned_value(Arc::clone(&aggregator)))
-            .and(warp::body::bytes())
-            .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-            .then(
-                |task_id: TaskId,
-                 collection_id: CollectionId,
-                 aggregator: Arc<Aggregator<C>>,
-                 body: Bytes,
-                 auth_token: Option<String>| async move {
-                    aggregator
-                        .handle_collect(&task_id, &collection_id, &body, auth_token)
-                        .await?;
-                    Ok(warp::reply::with_status(warp::reply(), StatusCode::CREATED))
-                },
-            ),
+    let collection_jobs_put_responding = warp::put()
+        .and(warp::path!(
+            "tasks" / TaskId / "collection_jobs" / CollectionJobId
+        ))
+        .and(warp::header::exact(
+            CONTENT_TYPE.as_str(),
+            CollectionReq::<TimeInterval>::MEDIA_TYPE,
+        ))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
+        .and(warp::body::bytes())
+        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+        .then(
+            |task_id: TaskId,
+             collection_job_id: CollectionJobId,
+             aggregator: Arc<Aggregator<C>>,
+             body: Bytes,
+             auth_token: Option<String>| async move {
+                aggregator
+                    .handle_create_collection_job(&task_id, &collection_job_id, &body, auth_token)
+                    .await?;
+                Ok(warp::reply::with_status(warp::reply(), StatusCode::CREATED))
+            },
+        );
+
+    let collection_jobs_put_endpoint = compose_common_wrappers(
+        path_matching_filter(COLLECTION_JOB_PATH_REGEX)?,
+        collection_jobs_put_responding,
         warp::cors().build(),
         response_time_histogram.clone(),
         "collections_put",
     );
 
-    let collection_post_endpoint = compose_common_wrappers_hack(
-        warp::post()
-            .and(warp::path!(
-                "tasks" / TaskId / "collection_jobs" / CollectionId
-            ))
-            .and(with_cloned_value(Arc::clone(&aggregator)))
-            .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-            .then(
-                |task_id: TaskId,
-                 collect_job_id: CollectionId,
-                 aggregator: Arc<Aggregator<C>>,
-                 auth_token: Option<String>| async move {
-                    let resp_bytes = aggregator
-                        .handle_get_collect_job(&task_id, &collect_job_id, auth_token)
-                        .await?;
-                    match resp_bytes {
-                        Some(resp_bytes) => http::Response::builder()
-                            .header(CONTENT_TYPE, Collection::<TimeInterval>::MEDIA_TYPE)
-                            .body(resp_bytes),
-                        None => http::Response::builder()
-                            .status(StatusCode::ACCEPTED)
-                            .body(Vec::new()),
-                    }
-                    .map_err(|err| {
-                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
-                    })
-                },
-            ),
+    let collection_jobs_post_responding = warp::post()
+        .and(warp::path!(
+            "tasks" / TaskId / "collection_jobs" / CollectionJobId
+        ))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
+        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+        .then(
+            |task_id: TaskId,
+             collection_job_id: CollectionJobId,
+             aggregator: Arc<Aggregator<C>>,
+             auth_token: Option<String>| async move {
+                let resp_bytes = aggregator
+                    .handle_get_collection_job(&task_id, &collection_job_id, auth_token)
+                    .await?;
+                match resp_bytes {
+                    Some(resp_bytes) => http::Response::builder()
+                        .header(CONTENT_TYPE, Collection::<TimeInterval>::MEDIA_TYPE)
+                        .body(resp_bytes),
+                    None => http::Response::builder()
+                        .status(StatusCode::ACCEPTED)
+                        .body(Vec::new()),
+                }
+                .map_err(|err| {
+                    Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
+                })
+            },
+        );
+
+    let collection_jobs_post_endpoint = compose_common_wrappers(
+        path_matching_filter(COLLECTION_JOB_PATH_REGEX)?,
+        collection_jobs_post_responding,
         warp::cors().build(),
         response_time_histogram.clone(),
         "collections_post",
     );
 
-    let collection_delete_endpoint = compose_common_wrappers_hack(
-        warp::delete()
-            .and(warp::path!(
-                "tasks" / TaskId / "collection_jobs" / CollectionId
-            ))
-            .and(with_cloned_value(Arc::clone(&aggregator)))
-            .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-            .then(
-                |task_id: TaskId,
-                 collect_job_id: CollectionId,
-                 aggregator: Arc<Aggregator<C>>,
-                 auth_token: Option<String>| async move {
-                    aggregator
-                        .handle_delete_collect_job(&task_id, &collect_job_id, auth_token)
-                        .await
-                        .map_err(Arc::new)
-                },
-            ),
+    let collection_jobs_delete_responding = warp::delete()
+        .and(warp::path!(
+            "tasks" / TaskId / "collection_jobs" / CollectionJobId
+        ))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
+        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+        .then(
+            |task_id: TaskId,
+             collection_job_id: CollectionJobId,
+             aggregator: Arc<Aggregator<C>>,
+             auth_token: Option<String>| async move {
+                aggregator
+                    .handle_delete_collection_job(&task_id, &collection_job_id, auth_token)
+                    .await
+                    .map_err(Arc::new)
+            },
+        );
+
+    let collection_jobs_delete_endpoint = compose_common_wrappers(
+        path_matching_filter(COLLECTION_JOB_PATH_REGEX)?,
+        collection_jobs_delete_responding,
         warp::cors().build(),
         response_time_histogram.clone(),
         "collections_delete",
     );
 
-    let aggregate_shares_endpoint = compose_common_wrappers_hack(
-        warp::post()
-            .and(warp::path!("tasks" / TaskId / "aggregate_shares"))
-            .and(warp::header::exact(
-                CONTENT_TYPE.as_str(),
-                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-            ))
-            .and(with_cloned_value(Arc::clone(&aggregator)))
-            .and(warp::body::bytes())
-            .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
-            .then(
-                |task_id: TaskId,
-                 aggregator: Arc<Aggregator<C>>,
-                 body: Bytes,
-                 auth_token: Option<String>| async move {
-                    let resp_bytes = aggregator
-                        .handle_aggregate_share(&task_id, &body, auth_token)
-                        .await
-                        .map_err(Arc::new)?;
-                    http::Response::builder()
-                        .header(CONTENT_TYPE, AggregateShare::MEDIA_TYPE)
-                        .body(resp_bytes)
-                        .map_err(|err| {
-                            Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
-                        })
-                },
-            ),
+    let aggregate_shares_responding = warp::post()
+        .and(warp::path!("tasks" / TaskId / "aggregate_shares"))
+        .and(warp::header::exact(
+            CONTENT_TYPE.as_str(),
+            AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+        ))
+        .and(with_cloned_value(Arc::clone(&aggregator)))
+        .and(warp::body::bytes())
+        .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
+        .then(
+            |task_id: TaskId,
+             aggregator: Arc<Aggregator<C>>,
+             body: Bytes,
+             auth_token: Option<String>| async move {
+                let resp_bytes = aggregator
+                    .handle_aggregate_share(&task_id, &body, auth_token)
+                    .await
+                    .map_err(Arc::new)?;
+                http::Response::builder()
+                    .header(CONTENT_TYPE, AggregateShare::MEDIA_TYPE)
+                    .body(resp_bytes)
+                    .map_err(|err| {
+                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
+                    })
+            },
+        );
+    let aggregate_shares_endpoint = compose_common_wrappers(
+        path_matching_filter("aggregate_shares")?,
+        aggregate_shares_responding,
         warp::cors().build(),
         response_time_histogram,
         "aggregate_shares",
@@ -4182,9 +4229,9 @@ pub fn aggregator_filter<C: Clock>(
         .or(upload_endpoint)
         .or(aggregation_jobs_put_endpoint)
         .or(aggregation_jobs_post_endpoint)
-        .or(collections_endpoint)
-        .or(collection_post_endpoint)
-        .or(collection_delete_endpoint)
+        .or(collection_jobs_put_endpoint)
+        .or(collection_jobs_post_endpoint)
+        .or(collection_jobs_delete_endpoint)
         .or(aggregate_shares_endpoint)
         .boxed())
 }
@@ -4321,7 +4368,7 @@ mod tests {
         datastore::{
             models::{
                 AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-                CollectJob, CollectJobState, ReportAggregation, ReportAggregationState,
+                CollectionJob, CollectionJobState, ReportAggregation, ReportAggregationState,
             },
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
@@ -4352,12 +4399,12 @@ mod tests {
         problem_type::{DapProblemType, DapProblemTypeParseError},
         query_type::TimeInterval,
         AggregateShare as AggregateShareMessage, AggregateShareAad, AggregateShareReq,
-        AggregationJob as AggregationJobMessage, AggregationJobId, AggregationJobInitializeReq,
-        BatchSelector, Collection, CollectionId, CollectionReq, Duration, Extension, ExtensionType,
-        HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeConfigList, InputShareAad, Interval,
-        PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report,
-        ReportId, ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
-        Time,
+        AggregationJobContinueReq, AggregationJobId, AggregationJobInitializeReq,
+        AggregationJobResp, BatchSelector, Collection, CollectionJobId, CollectionReq, Duration,
+        Extension, ExtensionType, HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeConfigList,
+        InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep,
+        PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
+        ReportShareError, Role, TaskId, Time,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -4637,7 +4684,7 @@ mod tests {
 
         let response = drive_filter(
             Method::PUT,
-            &task.report_upload_path(),
+            task.report_upload_uri().unwrap().path(),
             &report.get_encoded(),
             &filter,
         )
@@ -4653,7 +4700,7 @@ mod tests {
         // Verify that we reject duplicate reports with the reportRejected type.
         let mut response = drive_filter(
             Method::PUT,
-            &task.report_upload_path(),
+            task.report_upload_uri().unwrap().path(),
             &report.get_encoded(),
             &filter,
         )
@@ -4687,7 +4734,7 @@ mod tests {
         );
         let mut response = drive_filter(
             Method::PUT,
-            &task.report_upload_path(),
+            task.report_upload_uri().unwrap().path(),
             &gc_eligible_report.get_encoded(),
             &filter,
         )
@@ -4714,7 +4761,7 @@ mod tests {
         );
         let mut response = drive_filter(
             Method::PUT,
-            &task.report_upload_path(),
+            task.report_upload_uri().unwrap().path(),
             &bad_report.get_encoded(),
             &filter,
         )
@@ -4755,7 +4802,7 @@ mod tests {
         );
         let mut response = drive_filter(
             Method::PUT,
-            &task.report_upload_path(),
+            task.report_upload_uri().unwrap().path(),
             &bad_report.get_encoded(),
             &filter,
         )
@@ -4788,7 +4835,7 @@ mod tests {
         );
         let mut response = drive_filter(
             Method::PUT,
-            &task.report_upload_path(),
+            task.report_upload_uri().unwrap().path(),
             &bad_report.get_encoded(),
             &filter,
         )
@@ -4822,7 +4869,7 @@ mod tests {
         );
         let mut response = drive_filter(
             Method::PUT,
-            &task_expire_soon.report_upload_path(),
+            task_expire_soon.report_upload_uri().unwrap().path(),
             &report_2.get_encoded(),
             &filter,
         )
@@ -4844,7 +4891,7 @@ mod tests {
         // Check for appropriate CORS headers in response to a preflight request.
         let response = warp::test::request()
             .method("OPTIONS")
-            .path(&task.report_upload_path())
+            .path(task.report_upload_uri().unwrap().path())
             .header("origin", "https://example.com/")
             .header("access-control-request-method", "PUT")
             .header("access-control-request-headers", "content-type")
@@ -4868,7 +4915,7 @@ mod tests {
         // Check for appropriate CORS headers in response to the main request.
         let response = warp::test::request()
             .method("PUT")
-            .path(&task.report_upload_path())
+            .path(task.report_upload_uri().unwrap().path())
             .header("origin", "https://example.com/")
             .header(CONTENT_TYPE, Report::MEDIA_TYPE)
             .body(
@@ -4921,7 +4968,7 @@ mod tests {
 
         let (part, body) = warp::test::request()
             .method("PUT")
-            .path(&task.report_upload_path())
+            .path(task.report_upload_uri().unwrap().path())
             .header(CONTENT_TYPE, Report::MEDIA_TYPE)
             .body(report.get_encoded())
             .filter(&filter)
@@ -5193,7 +5240,7 @@ mod tests {
             setup_upload_test(Config::default()).await;
         let report = create_report(&task, clock.now());
 
-        // Insert a collect job for the batch interval including our report.
+        // Insert a collection job for the batch interval including our report.
         let batch_interval = Interval::new(
             report
                 .metadata()
@@ -5207,7 +5254,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.put_collect_job(&CollectJob::<
+                    tx.put_collection_job(&CollectionJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
@@ -5216,7 +5263,7 @@ mod tests {
                         random(),
                         batch_interval,
                         (),
-                        CollectJobState::Start,
+                        CollectionJobState::Start,
                     ))
                     .await
                 })
@@ -5259,7 +5306,11 @@ mod tests {
 
         let (part, body) = warp::test::request()
             .method("PUT")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -5305,9 +5356,13 @@ mod tests {
 
         let result = warp::test::request()
             .method("OPTIONS")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header("origin", "https://example.com/")
-            .header("access-control-request-method", "POST")
+            .header("access-control-request-method", "PUT")
             .filter(&filter)
             .await
             .map(Reply::into_response);
@@ -5341,7 +5396,11 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("PUT")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
             .header(
                 CONTENT_TYPE,
@@ -5370,7 +5429,11 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("PUT")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 CONTENT_TYPE,
                 AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -5645,7 +5708,11 @@ mod tests {
 
         let mut response = warp::test::request()
             .method("PUT")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -5662,10 +5729,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobMessage::MEDIA_TYPE
+            AggregationJobResp::MEDIA_TYPE
         );
         let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp = AggregationJobMessage::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.prepare_steps().len(), 8);
@@ -5799,7 +5866,11 @@ mod tests {
 
         let mut response = warp::test::request()
             .method("PUT")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -5816,10 +5887,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobMessage::MEDIA_TYPE
+            AggregationJobResp::MEDIA_TYPE
         );
         let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp = AggregationJobMessage::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
@@ -5876,7 +5947,11 @@ mod tests {
 
         let mut response = warp::test::request()
             .method("PUT")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -5893,10 +5968,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobMessage::MEDIA_TYPE
+            AggregationJobResp::MEDIA_TYPE
         );
         let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp = AggregationJobMessage::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
@@ -5950,7 +6025,11 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("PUT")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -6176,7 +6255,7 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobMessage::new(Vec::from([
+        let request = AggregationJobContinueReq::new(Vec::from([
             PrepareStep::new(
                 *report_metadata_0.id(),
                 PrepareStepResult::Continued(prep_msg_0.get_encoded()),
@@ -6192,12 +6271,16 @@ mod tests {
 
         let mut response = warp::test::request()
             .method("POST")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
             )
-            .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
+            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
             .await
@@ -6206,15 +6289,15 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobMessage::MEDIA_TYPE
+            AggregationJobResp::MEDIA_TYPE
         );
         let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp = AggregationJobMessage::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         // Validate response.
         assert_eq!(
             aggregate_resp,
-            AggregationJobMessage::new(Vec::from([
+            AggregationJobResp::new(Vec::from([
                 PrepareStep::new(*report_metadata_0.id(), PrepareStepResult::Finished),
                 PrepareStep::new(
                     *report_metadata_2.id(),
@@ -6486,7 +6569,7 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobMessage::new(Vec::from([
+        let request = AggregationJobContinueReq::new(Vec::from([
             PrepareStep::new(
                 *report_metadata_0.id(),
                 PrepareStepResult::Continued(prep_msg_0.get_encoded()),
@@ -6522,7 +6605,7 @@ mod tests {
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
             )
-            .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
+            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
             .await
@@ -6531,7 +6614,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobMessage::MEDIA_TYPE
+            AggregationJobResp::MEDIA_TYPE
         );
 
         let batch_aggregations = datastore
@@ -6779,7 +6862,7 @@ mod tests {
             .await
             .unwrap();
 
-        let request = AggregationJobMessage::new(Vec::from([
+        let request = AggregationJobContinueReq::new(Vec::from([
             PrepareStep::new(
                 *report_metadata_3.id(),
                 PrepareStepResult::Continued(prep_msg_3.get_encoded()),
@@ -6804,12 +6887,16 @@ mod tests {
 
         let response = warp::test::request()
             .method("POST")
-            .path(&task.aggregation_job_path(&aggregation_job_id_1))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id_1)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
             )
-            .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
+            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
             .await
@@ -6818,7 +6905,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobMessage::MEDIA_TYPE
+            AggregationJobResp::MEDIA_TYPE
         );
 
         let batch_aggregations = datastore
@@ -6985,7 +7072,7 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobMessage::new(Vec::from([PrepareStep::new(
+        let request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
             *report_metadata.id(),
             PrepareStepResult::Finished,
         )]));
@@ -6994,12 +7081,16 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("POST")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
             )
-            .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
+            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
             .await
@@ -7095,7 +7186,7 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobMessage::new(Vec::from([PrepareStep::new(
+        let request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
             *report_metadata.id(),
             PrepareStepResult::Continued(Vec::new()),
         )]));
@@ -7104,12 +7195,16 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("POST")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
             )
-            .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
+            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
             .await
@@ -7121,13 +7216,13 @@ mod tests {
         assert_eq!(parts.status, StatusCode::OK);
         assert_eq!(
             parts.headers.get(CONTENT_TYPE).unwrap(),
-            AggregationJobMessage::MEDIA_TYPE
+            AggregationJobResp::MEDIA_TYPE
         );
         let body_bytes = body::to_bytes(body).await.unwrap();
-        let aggregate_resp = AggregationJobMessage::get_decoded(&body_bytes).unwrap();
+        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
         assert_eq!(
             aggregate_resp,
-            AggregationJobMessage::new(Vec::from([PrepareStep::new(
+            AggregationJobResp::new(Vec::from([PrepareStep::new(
                 *report_metadata.id(),
                 PrepareStepResult::Failed(ReportShareError::VdafPrepError),
             )]),)
@@ -7253,7 +7348,7 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobMessage::new(Vec::from([PrepareStep::new(
+        let request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
             ReportId::from(
                 [16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // not the same as above
             ),
@@ -7264,12 +7359,16 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("POST")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
             )
-            .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
+            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
             .await
@@ -7398,7 +7497,7 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobMessage::new(Vec::from([
+        let request = AggregationJobContinueReq::new(Vec::from([
             // Report IDs are in opposite order to what was stored in the datastore.
             PrepareStep::new(
                 *report_metadata_1.id(),
@@ -7414,12 +7513,16 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("POST")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
             )
-            .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
+            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
             .await
@@ -7511,7 +7614,7 @@ mod tests {
             .unwrap();
 
         // Make request.
-        let request = AggregationJobMessage::new(Vec::from([PrepareStep::new(
+        let request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
             ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             PrepareStepResult::Continued(Vec::new()),
         )]));
@@ -7520,12 +7623,16 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("POST")
-            .path(&task.aggregation_job_path(&aggregation_job_id))
+            .path(
+                task.aggregation_job_uri(&aggregation_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
             )
-            .header(CONTENT_TYPE, AggregationJobMessage::MEDIA_TYPE)
+            .header(CONTENT_TYPE, AggregationJobContinueReq::MEDIA_TYPE)
             .body(request.get_encoded())
             .filter(&filter)
             .await
@@ -7563,7 +7670,7 @@ mod tests {
 
         let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
-        let collection_id: CollectionId = random();
+        let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(
                 Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
@@ -7573,7 +7680,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
             .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
             .body(request.get_encoded())
@@ -7612,7 +7719,7 @@ mod tests {
 
         let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
-        let collection_id: CollectionId = random();
+        let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(
                 Interval::new(
@@ -7627,7 +7734,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -7669,7 +7776,7 @@ mod tests {
 
         let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
-        let collection_id: CollectionId = random();
+        let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(
                 Interval::new(
@@ -7685,7 +7792,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -7728,7 +7835,7 @@ mod tests {
 
         let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
-        let collection_id: CollectionId = random();
+        let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(
                 Interval::new(
@@ -7742,7 +7849,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -7792,13 +7899,13 @@ mod tests {
 
         let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
 
-        let collection_id: CollectionId = random();
+        let collection_job_id: CollectionJobId = random();
         let req = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
 
         // Incorrect authentication token.
         let mut response = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
             .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
             .body(req.get_encoded())
@@ -7824,7 +7931,7 @@ mod tests {
         // Aggregator authentication token.
         let mut response = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -7853,7 +7960,7 @@ mod tests {
         // Missing authentication token.
         let mut response = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
             .body(req.get_encoded())
             .filter(&filter)
@@ -7877,7 +7984,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_request_unauthenticated_collect_jobs() {
+    async fn collect_request_unauthenticated_collection_jobs() {
         install_test_trace_subscriber();
 
         // Prepare parameters.
@@ -7898,12 +8005,12 @@ mod tests {
 
         let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
 
-        let collection_id: CollectionId = random();
+        let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
 
         let response = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -7920,7 +8027,7 @@ mod tests {
         // Incorrect authentication token.
         let mut response = warp::test::request()
             .method("POST")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
             .filter(&filter)
             .await
@@ -7944,7 +8051,7 @@ mod tests {
         // Aggregator authentication token.
         let mut response = warp::test::request()
             .method("POST")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -7971,7 +8078,7 @@ mod tests {
         // Missing authentication token.
         let mut response = warp::test::request()
             .method("POST")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .filter(&filter)
             .await
             .unwrap()
@@ -8019,12 +8126,12 @@ mod tests {
 
         let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
 
-        let collection_id: CollectionId = random();
+        let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
 
         let response = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8038,9 +8145,9 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::CREATED);
 
-        let collect_job_response = warp::test::request()
+        let collection_job_response = warp::test::request()
             .method("POST")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8049,9 +8156,9 @@ mod tests {
             .await
             .unwrap()
             .into_response();
-        assert_eq!(collect_job_response.status(), StatusCode::ACCEPTED);
+        assert_eq!(collection_job_response.status(), StatusCode::ACCEPTED);
 
-        // Update the collect job with the aggregate shares. Collect job should now be complete.
+        // Update the collection job with the aggregate shares. collection job should now be complete.
         datastore
             .run_tx(|tx| {
                 let task = task.clone();
@@ -8070,21 +8177,21 @@ mod tests {
                     )
                     .unwrap();
 
-                    let collect_job = tx
-                        .get_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
-                            &collection_id,
+                    let collection_job = tx
+                        .get_collection_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                            &collection_job_id,
                         )
                         .await
                         .unwrap()
                         .unwrap()
-                        .with_state(CollectJobState::Finished {
+                        .with_state(CollectionJobState::Finished {
                             report_count: 12,
                             encrypted_helper_aggregate_share,
                             leader_aggregate_share,
                         });
 
-                    tx.update_collect_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
-                        &collect_job,
+                    tx.update_collection_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
+                        &collection_job,
                     )
                     .await
                     .unwrap();
@@ -8096,7 +8203,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("POST")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8146,7 +8253,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_such_collect_job() {
+    async fn no_such_collection_job() {
         install_test_trace_subscriber();
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = ephemeral_datastore.datastore(MockClock::default());
@@ -8158,12 +8265,12 @@ mod tests {
             aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
                 .unwrap();
 
-        let no_such_collect_job_id: CollectionId = random();
+        let no_such_collection_job_id: CollectionJobId = random();
 
         let response = warp::test::request()
             .method("POST")
             .path(&format!(
-                "/tasks/{}/collection_jobs/{no_such_collect_job_id}",
+                "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
                 task.id(),
             ))
             .header(
@@ -8226,7 +8333,7 @@ mod tests {
 
         let response = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&random()))
+            .path(task.collection_job_uri(&random()).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8250,7 +8357,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&random()))
+            .path(task.collection_job_uri(&random()).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8331,7 +8438,7 @@ mod tests {
 
         let response = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&random()))
+            .path(task.collection_job_uri(&random()).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8361,7 +8468,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&random()))
+            .path(task.collection_job_uri(&random()).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8388,7 +8495,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_collect_job() {
+    async fn delete_collection_job() {
         install_test_trace_subscriber();
 
         // Prepare parameters.
@@ -8408,12 +8515,12 @@ mod tests {
         datastore.put_task(&task).await.unwrap();
 
         let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
-        let collection_id: CollectionId = random();
+        let collection_job_id: CollectionJobId = random();
 
-        // Try to delete a collect job that doesn't exist
+        // Try to delete a collection job that doesn't exist
         let delete_job_response = warp::test::request()
             .method("DELETE")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8424,12 +8531,12 @@ mod tests {
             .into_response();
         assert_eq!(delete_job_response.status(), StatusCode::NOT_FOUND);
 
-        // Create a collect job
+        // Create a collection job
         let request = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
 
         let collect_response = warp::test::request()
             .method("PUT")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8446,7 +8553,7 @@ mod tests {
         // Cancel the job
         let delete_job_response = warp::test::request()
             .method("DELETE")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8460,7 +8567,7 @@ mod tests {
         // Get the job again
         let get_response = warp::test::request()
             .method("POST")
-            .path(&task.collection_job_path(&collection_id))
+            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8498,7 +8605,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("POST")
-            .path(&task.aggregate_shares_path())
+            .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -8566,7 +8673,7 @@ mod tests {
                 task.primary_aggregator_auth_token().as_bytes(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .path(&task.aggregate_shares_path())
+            .path(task.aggregate_shares_uri().unwrap().path())
             .body(request.get_encoded())
             .filter(&filter)
             .await
@@ -8595,7 +8702,7 @@ mod tests {
                 task.primary_aggregator_auth_token().as_bytes(),
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
-            .path(&task.aggregate_shares_path())
+            .path(task.aggregate_shares_uri().unwrap().path())
             .body(
                 AggregateShareReq::new(
                     BatchSelector::new_time_interval(
@@ -8649,7 +8756,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("POST")
-            .path(&task.aggregate_shares_path())
+            .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -8778,7 +8885,7 @@ mod tests {
         );
         let (parts, body) = warp::test::request()
             .method("POST")
-            .path(&task.aggregate_shares_path())
+            .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -8835,7 +8942,7 @@ mod tests {
         ] {
             let (parts, body) = warp::test::request()
                 .method("POST")
-                .path(&task.aggregate_shares_path())
+                .path(task.aggregate_shares_uri().unwrap().path())
                 .header(
                     "DAP-Auth-Token",
                     task.primary_aggregator_auth_token().as_bytes(),
@@ -8904,7 +9011,7 @@ mod tests {
             for iteration in 0..3 {
                 let (parts, body) = warp::test::request()
                     .method("POST")
-                    .path(&task.aggregate_shares_path())
+                    .path(task.aggregate_shares_uri().unwrap().path())
                     .header(
                         "DAP-Auth-Token",
                         task.primary_aggregator_auth_token().as_bytes(),
@@ -8970,7 +9077,7 @@ mod tests {
         );
         let mut resp = warp::test::request()
             .method("POST")
-            .path(&task.aggregate_shares_path())
+            .path(task.aggregate_shares_uri().unwrap().path())
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -9024,7 +9131,7 @@ mod tests {
         ] {
             let mut resp = warp::test::request()
                 .method("POST")
-                .path(&task.aggregate_shares_path())
+                .path(task.aggregate_shares_uri().unwrap().path())
                 .header(
                     "DAP-Auth-Token",
                     task.primary_aggregator_auth_token().as_bytes(),

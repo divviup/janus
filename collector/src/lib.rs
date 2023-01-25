@@ -66,8 +66,8 @@ use janus_core::{
 use janus_messages::{
     problem_type::DapProblemType,
     query_type::{QueryType, TimeInterval},
-    AggregateShareAad, BatchSelector, Collection as CollectionMessage, CollectionId, CollectionReq,
-    HpkeConfig, PartialBatchSelector, Query, Role, TaskId,
+    AggregateShareAad, BatchSelector, Collection as CollectionMessage, CollectionJobId,
+    CollectionReq, HpkeConfig, PartialBatchSelector, Query, Role, TaskId,
 };
 use prio::{
     codec::{Decode, Encode},
@@ -174,7 +174,7 @@ pub struct CollectorParameters {
     hpke_private_key: HpkePrivateKey,
     /// Parameters to use when retrying HTTP requests.
     http_request_retry_parameters: ExponentialBackoff,
-    /// Parameters to use when waiting for a collect job to be processed.
+    /// Parameters to use when waiting for a collection job to be processed.
     collect_poll_wait_parameters: ExponentialBackoff,
 }
 
@@ -220,9 +220,9 @@ impl CollectorParameters {
     }
 
     /// Construct a URI for a collection.
-    fn collection_job_uri(&self, collection_id: CollectionId) -> Result<Url, Error> {
+    fn collection_job_uri(&self, collection_job_id: CollectionJobId) -> Result<Url, Error> {
         Ok(self.leader_endpoint.join(&format!(
-            "tasks/{}/collection_jobs/{collection_id}",
+            "tasks/{}/collection_jobs/{collection_job_id}",
             self.task_id
         ))?)
     }
@@ -236,16 +236,16 @@ pub fn default_http_client() -> Result<reqwest::Client, Error> {
         .build()?)
 }
 
-/// Collector state related to a collect job that is in progress.
+/// Collector state related to a collection job that is in progress.
 #[derive(Derivative)]
 #[derivative(Debug)]
-struct CollectJob<P, Q>
+struct CollectionJob<P, Q>
 where
     Q: QueryType,
 {
     /// The URL provided by the leader aggregator, where the collect response will be available
     /// upon completion.
-    collect_job_url: Url,
+    collection_job_url: Url,
     /// The collect request's query.
     query: Query<Q>,
     /// The aggregation parameter used in this collect request.
@@ -253,10 +253,14 @@ where
     aggregation_parameter: P,
 }
 
-impl<P, Q: QueryType> CollectJob<P, Q> {
-    fn new(collect_job_url: Url, query: Query<Q>, aggregation_parameter: P) -> CollectJob<P, Q> {
-        CollectJob {
-            collect_job_url,
+impl<P, Q: QueryType> CollectionJob<P, Q> {
+    fn new(
+        collection_job_url: Url,
+        query: Query<Q>,
+        aggregation_parameter: P,
+    ) -> CollectionJob<P, Q> {
+        CollectionJob {
+            collection_job_url,
             query,
             aggregation_parameter,
         }
@@ -384,7 +388,7 @@ where
         &self,
         query: Query<Q>,
         aggregation_parameter: &V::AggregationParam,
-    ) -> Result<CollectJob<V::AggregationParam, Q>, Error> {
+    ) -> Result<CollectionJob<V::AggregationParam, Q>, Error> {
         let collect_request =
             CollectionReq::new(query.clone(), aggregation_parameter.get_encoded());
         let collection_job_url = self.parameters.collection_job_uri(random())?;
@@ -427,7 +431,7 @@ where
             Err(Err(error)) => return Err(Error::HttpClient(error)),
         };
 
-        Ok(CollectJob::new(
+        Ok(CollectionJob::new(
             collection_job_url,
             query,
             aggregation_parameter.clone(),
@@ -439,12 +443,12 @@ where
     #[tracing::instrument(err)]
     async fn poll_once<Q: QueryType>(
         &self,
-        job: &CollectJob<V::AggregationParam, Q>,
+        job: &CollectionJob<V::AggregationParam, Q>,
     ) -> Result<PollResult<V::AggregateResult, Q>, Error> {
         let response_res = retry_http_request(
             self.parameters.http_request_retry_parameters.clone(),
             || async {
-                let mut request = self.http_client.post(job.collect_job_url.clone());
+                let mut request = self.http_client.post(job.collection_job_url.clone());
                 match &self.parameters.authentication {
                     Authentication::DapAuthToken(token) => {
                         request = request.header(DAP_AUTH_HEADER, token.as_bytes())
@@ -548,7 +552,7 @@ where
     /// completes.
     async fn poll_until_complete<Q: QueryType>(
         &self,
-        job: &CollectJob<V::AggregationParam, Q>,
+        job: &CollectionJob<V::AggregationParam, Q>,
     ) -> Result<Collection<V::AggregateResult, Q>, Error> {
         let mut backoff = self.parameters.collect_poll_wait_parameters.clone();
         backoff.reset();
@@ -630,8 +634,8 @@ pub mod test_util {
         let mut job = collector
             .start_collection(query, aggregation_parameter)
             .await?;
-        job.collect_job_url.set_host(Some(host))?;
-        job.collect_job_url.set_port(Some(port)).unwrap();
+        job.collection_job_url.set_host(Some(host))?;
+        job.collection_job_url.set_port(Some(port)).unwrap();
         collector.poll_until_complete(&job).await
     }
 }
@@ -639,7 +643,7 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::{
-        default_http_client, CollectJob, Collection, Collector, CollectorParameters, Error,
+        default_http_client, Collection, CollectionJob, Collector, CollectorParameters, Error,
         PollResult,
     };
     use assert_matches::assert_matches;
@@ -657,9 +661,9 @@ mod tests {
     use janus_messages::{
         problem_type::DapProblemType,
         query_type::{FixedSize, TimeInterval},
-        AggregateShareAad, BatchId, BatchSelector, Collection as CollectionMessage, CollectionId,
-        CollectionReq, Duration, FixedSizeQuery, HpkeCiphertext, Interval, PartialBatchSelector,
-        Query, Role, TaskId, Time,
+        AggregateShareAad, BatchId, BatchSelector, Collection as CollectionMessage,
+        CollectionJobId, CollectionReq, Duration, FixedSizeQuery, HpkeCiphertext, Interval,
+        PartialBatchSelector, Query, Role, TaskId, Time,
     };
     use mockito::{mock, Matcher};
     use prio::{
@@ -696,7 +700,9 @@ mod tests {
     fn collection_uri_regex_matcher(task_id: &TaskId) -> Matcher {
         // Matches on the relative path for a collection job resource. The Base64 URL-safe encoding
         // of a collection ID is always 22 characters.
-        Matcher::Regex(format!("^/tasks/{task_id}/collection_jobs/*{{22}}"))
+        Matcher::Regex(format!(
+            "^/tasks/{task_id}/collection_jobs/[A-Za-z0-9-_]{{22}}$"
+        ))
     }
 
     fn build_collect_response_time<const L: usize, V: vdaf::Aggregator<L>>(
@@ -854,15 +860,15 @@ mod tests {
         mocked_collect_start_error.assert();
         mocked_collect_start_success.assert();
 
-        let mocked_collect_error = mock("POST", job.collect_job_url.path())
+        let mocked_collect_error = mock("POST", job.collection_job_url.path())
             .with_status(500)
             .expect(1)
             .create();
-        let mocked_collect_accepted = mock("POST", job.collect_job_url.path())
+        let mocked_collect_accepted = mock("POST", job.collection_job_url.path())
             .with_status(202)
             .expect(2)
             .create();
-        let mocked_collect_complete = mock("POST", job.collect_job_url.path())
+        let mocked_collect_complete = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -919,7 +925,7 @@ mod tests {
         assert_eq!(job.query.batch_interval(), &batch_interval);
         mocked_collect_start_success.assert();
 
-        let mocked_collect_complete = mock("POST", job.collect_job_url.path())
+        let mocked_collect_complete = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -972,7 +978,7 @@ mod tests {
 
         mocked_collect_start_success.assert();
 
-        let mocked_collect_complete = mock("POST", job.collect_job_url.path())
+        let mocked_collect_complete = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1038,7 +1044,7 @@ mod tests {
 
         mocked_collect_start_success.assert();
 
-        let mocked_collect_complete = mock("POST", job.collect_job_url.path())
+        let mocked_collect_complete = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1097,7 +1103,7 @@ mod tests {
 
         mocked_collect_start_success.assert();
 
-        let mocked_collect_complete = mock("POST", job.collect_job_url.path())
+        let mocked_collect_complete = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1218,7 +1224,7 @@ mod tests {
             .with_status(201)
             .expect(1)
             .create();
-        let mock_collect_job_server_error = mock("POST", matcher)
+        let mock_collection_job_server_error = mock("POST", matcher)
             .with_status(500)
             .expect_at_least(1)
             .create();
@@ -1239,9 +1245,9 @@ mod tests {
         });
 
         mock_collect_start.assert();
-        mock_collect_job_server_error.assert();
+        mock_collection_job_server_error.assert();
 
-        let mock_collect_job_server_error_details = mock("POST", job.collect_job_url.path())
+        let mock_collection_job_server_error_details = mock("POST", job.collection_job_url.path())
             .with_status(500)
             .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"http://example.com/test_server_error\"}")
@@ -1255,9 +1261,9 @@ mod tests {
             assert_eq!(dap_problem_type, None);
         });
 
-        mock_collect_job_server_error_details.assert();
+        mock_collection_job_server_error_details.assert();
 
-        let mock_collect_job_bad_request = mock("POST", job.collect_job_url.path())
+        let mock_collection_job_bad_request = mock("POST", job.collection_job_url.path())
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
             .with_body(concat!(
@@ -1275,9 +1281,9 @@ mod tests {
             assert_eq!(dap_problem_type, Some(DapProblemType::UnrecognizedMessage));
         });
 
-        mock_collect_job_bad_request.assert();
+        mock_collection_job_bad_request.assert();
 
-        let mock_collect_job_bad_message_bytes = mock("POST", job.collect_job_url.path())
+        let mock_collection_job_bad_message_bytes = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1290,9 +1296,9 @@ mod tests {
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::Codec(_));
 
-        mock_collect_job_bad_message_bytes.assert();
+        mock_collection_job_bad_message_bytes.assert();
 
-        let mock_collect_job_bad_share_count = mock("POST", job.collect_job_url.path())
+        let mock_collection_job_bad_share_count = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1308,9 +1314,9 @@ mod tests {
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::AggregateShareCount(0));
 
-        mock_collect_job_bad_share_count.assert();
+        mock_collection_job_bad_share_count.assert();
 
-        let mock_collect_job_bad_ciphertext = mock("POST", job.collect_job_url.path())
+        let mock_collection_job_bad_ciphertext = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1341,7 +1347,7 @@ mod tests {
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::Hpke(_));
 
-        mock_collect_job_bad_ciphertext.assert();
+        mock_collection_job_bad_ciphertext.assert();
 
         let associated_data = AggregateShareAad::new(
             collector.parameters.task_id,
@@ -1375,7 +1381,7 @@ mod tests {
                 .unwrap(),
             ]),
         );
-        let mock_collect_job_bad_shares = mock("POST", job.collect_job_url.path())
+        let mock_collection_job_bad_shares = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1388,7 +1394,7 @@ mod tests {
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::AggregateShareDecode);
 
-        mock_collect_job_bad_shares.assert();
+        mock_collection_job_bad_shares.assert();
 
         let collect_resp = CollectionMessage::new(
             PartialBatchSelector::new_time_interval(),
@@ -1421,7 +1427,7 @@ mod tests {
                 .unwrap(),
             ]),
         );
-        let mock_collect_job_unshard_failure = mock("POST", job.collect_job_url.path())
+        let mock_collection_job_unshard_failure = mock("POST", job.collection_job_url.path())
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1434,9 +1440,9 @@ mod tests {
         let error = collector.poll_once(&job).await.unwrap_err();
         assert_matches!(error, Error::Vdaf(_));
 
-        mock_collect_job_unshard_failure.assert();
+        mock_collection_job_unshard_failure.assert();
 
-        let mock_collect_job_always_fail = mock("POST", job.collect_job_url.path())
+        let mock_collection_job_always_fail = mock("POST", job.collection_job_url.path())
             .with_status(500)
             .expect_at_least(3)
             .create();
@@ -1445,7 +1451,7 @@ mod tests {
             assert_eq!(problem_details.status.unwrap(), StatusCode::INTERNAL_SERVER_ERROR);
             assert_eq!(dap_problem_type, None);
         });
-        mock_collect_job_always_fail.assert();
+        mock_collection_job_always_fail.assert();
     }
 
     #[tokio::test]
@@ -1475,7 +1481,7 @@ mod tests {
             .unwrap();
         mock_collect_start.assert();
 
-        let mock_collect_poll_no_retry_after = mock("POST", job.collect_job_url.path())
+        let mock_collect_poll_no_retry_after = mock("POST", job.collection_job_url.path())
             .with_status(202)
             .expect(1)
             .create();
@@ -1485,7 +1491,7 @@ mod tests {
         );
         mock_collect_poll_no_retry_after.assert();
 
-        let mock_collect_poll_retry_after_60s = mock("POST", job.collect_job_url.path())
+        let mock_collect_poll_retry_after_60s = mock("POST", job.collection_job_url.path())
             .with_status(202)
             .with_header("Retry-After", "60")
             .expect(1)
@@ -1496,7 +1502,7 @@ mod tests {
         );
         mock_collect_poll_retry_after_60s.assert();
 
-        let mock_collect_poll_retry_after_date_time = mock("POST", job.collect_job_url.path())
+        let mock_collect_poll_retry_after_date_time = mock("POST", job.collection_job_url.path())
             .with_status(202)
             .with_header("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")
             .expect(1)
@@ -1523,30 +1529,30 @@ mod tests {
             .collect_poll_wait_parameters
             .max_elapsed_time = Some(std::time::Duration::from_secs(3));
 
-        let collection_id: CollectionId = random();
-        let collect_job_path = format!(
-            "/tasks/{}/collection_jobs/{collection_id}",
+        let collection_job_id: CollectionJobId = random();
+        let collection_job_path = format!(
+            "/tasks/{}/collection_jobs/{collection_job_id}",
             collector.parameters.task_id
         );
 
-        let collect_job_url = format!("{}{collect_job_path}", mockito::server_url());
+        let collection_job_url = format!("{}{collection_job_path}", mockito::server_url());
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
         )
         .unwrap();
-        let job = CollectJob::new(
-            collect_job_url.parse().unwrap(),
+        let job = CollectionJob::new(
+            collection_job_url.parse().unwrap(),
             Query::new_time_interval(batch_interval),
             (),
         );
 
-        let mock_collect_poll_retry_after_1s = mock("POST", collect_job_path.as_str())
+        let mock_collect_poll_retry_after_1s = mock("POST", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "1")
             .expect(1)
             .create();
-        let mock_collect_poll_retry_after_10s = mock("POST", collect_job_path.as_str())
+        let mock_collect_poll_retry_after_10s = mock("POST", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "10")
             .expect(1)
@@ -1561,17 +1567,17 @@ mod tests {
         let near_future =
             Utc::now() + chrono::Duration::from_std(std::time::Duration::from_secs(1)).unwrap();
         let near_future_formatted = near_future.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-        let mock_collect_poll_retry_after_near_future = mock("POST", collect_job_path.as_str())
+        let mock_collect_poll_retry_after_near_future = mock("POST", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", &near_future_formatted)
             .expect(1)
             .create();
-        let mock_collect_poll_retry_after_past = mock("POST", collect_job_path.as_str())
+        let mock_collect_poll_retry_after_past = mock("POST", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "Mon, 01 Jan 1900 00:00:00 GMT")
             .expect(1)
             .create();
-        let mock_collect_poll_retry_after_far_future = mock("POST", collect_job_path.as_str())
+        let mock_collect_poll_retry_after_far_future = mock("POST", collection_job_path.as_str())
             .with_status(202)
             .with_header("Retry-After", "Wed, 01 Jan 3000 00:00:00 GMT")
             .expect(1)
@@ -1593,7 +1599,7 @@ mod tests {
             .parameters
             .collect_poll_wait_parameters
             .initial_interval = std::time::Duration::from_millis(10);
-        let mock_collect_poll_no_retry_after = mock("POST", collect_job_path.as_str())
+        let mock_collect_poll_no_retry_after = mock("POST", collection_job_path.as_str())
             .with_status(202)
             .expect_at_least(1)
             .create();

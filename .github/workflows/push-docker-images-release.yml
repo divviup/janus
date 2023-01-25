@@ -66,11 +66,11 @@ jobs:
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}
     - run: |-
         docker build \
-          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }} \
-          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }} \
-          --build-arg BINARY=collect_job_driver \
+          --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }} \
+          --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }} \
+          --build-arg BINARY=collection_job_driver \
           .
-    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }}
     - run: |-
         docker build \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }} \
@@ -108,7 +108,7 @@ jobs:
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregator:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}
-    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collect_job_driver:${{ steps.get_version.outputs.VERSION }}
+    - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_cli:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_client:${{ steps.get_version.outputs.VERSION }}
     - run: docker push us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_interop_aggregator:${{ steps.get_version.outputs.VERSION }}

@@ -47,7 +47,7 @@ impl UploadableQueryType for TimeInterval {
         // collected.
         // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-17
         let conflicting_collect_jobs = tx
-            .get_collect_jobs_including_time::<L, A>(report.task_id(), report.metadata().time())
+            .get_collection_jobs_including_time::<L, A>(report.task_id(), report.metadata().time())
             .await?;
         if !conflicting_collect_jobs.is_empty() {
             return Err(datastore::Error::User(
@@ -368,7 +368,7 @@ impl CollectableQueryType for TimeInterval {
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
         let intersecting_intervals: Vec<_> = match task.role() {
             Role::Leader => tx
-                .get_collect_jobs_intersecting_interval::<L, A>(task.id(), collect_interval)
+                .get_collection_jobs_intersecting_interval::<L, A>(task.id(), collect_interval)
                 .await?
                 .into_iter()
                 .map(|job| *job.batch_interval())
@@ -520,7 +520,7 @@ impl CollectableQueryType for FixedSize {
     {
         let query_count = match task.role() {
             Role::Leader => tx
-                .get_collect_jobs_by_batch_identifier::<L, FixedSize, A>(task.id(), batch_id)
+                .get_collection_jobs_by_batch_identifier::<L, FixedSize, A>(task.id(), batch_id)
                 .await?
                 .len(),
 

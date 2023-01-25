@@ -76,7 +76,7 @@ impl<'a> Daphne<'a> {
         let dap_bucket_key: [u8; 16] = random();
 
         // The DAP collect ID key is an internal, private key used to map collect requests to a
-        // collect job ID. (It's only used when Daphne is in the Leader role, but we populate it
+        // collection job ID. (It's only used when Daphne is in the Leader role, but we populate it
         // either way.)
         let dap_collect_id_key: [u8; 16] = random();
 

@@ -1392,20 +1392,20 @@ impl<Q: QueryType> Decode for PartialBatchSelector<Q> {
 
 /// DAP protocol message representing an identifier for a collection.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CollectionId([u8; Self::LEN]);
+pub struct CollectionJobId([u8; Self::LEN]);
 
-impl CollectionId {
+impl CollectionJobId {
     /// LEN is the length of a collection ID in bytes.
     pub const LEN: usize = 16;
 }
 
-impl AsRef<[u8; Self::LEN]> for CollectionId {
+impl AsRef<[u8; Self::LEN]> for CollectionJobId {
     fn as_ref(&self) -> &[u8; Self::LEN] {
         &self.0
     }
 }
 
-impl TryFrom<&[u8]> for CollectionId {
+impl TryFrom<&[u8]> for CollectionJobId {
     type Error = &'static str;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
@@ -1415,7 +1415,7 @@ impl TryFrom<&[u8]> for CollectionId {
     }
 }
 
-impl FromStr for CollectionId {
+impl FromStr for CollectionJobId {
     type Err = Box<dyn Debug>;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -1426,7 +1426,7 @@ impl FromStr for CollectionId {
     }
 }
 
-impl Debug for CollectionId {
+impl Debug for CollectionJobId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -1436,15 +1436,15 @@ impl Debug for CollectionId {
     }
 }
 
-impl Display for CollectionId {
+impl Display for CollectionJobId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", Base64Display::new(&self.0, &URL_SAFE_NO_PAD))
     }
 }
 
-impl Distribution<CollectionId> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> CollectionId {
-        CollectionId(rng.gen())
+impl Distribution<CollectionJobId> for Standard {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> CollectionJobId {
+        CollectionJobId(rng.gen())
     }
 }
 
@@ -2066,15 +2066,15 @@ impl<Q: QueryType> Decode for AggregationJobInitializeReq<Q> {
     }
 }
 
-/// DAP protocol message representing an aggregation job.
+/// DAP protocol message representing a request to continue an aggregation job.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AggregationJob {
+pub struct AggregationJobContinueReq {
     prepare_steps: Vec<PrepareStep>,
 }
 
-impl AggregationJob {
+impl AggregationJobContinueReq {
     /// The media type associated with this protocol message.
-    pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job";
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-continue-req";
 
     /// Constructs a new aggregate continuation response from its components.
     pub fn new(prepare_steps: Vec<PrepareStep>) -> Self {
@@ -2087,13 +2087,48 @@ impl AggregationJob {
     }
 }
 
-impl Encode for AggregationJob {
+impl Encode for AggregationJobContinueReq {
     fn encode(&self, bytes: &mut Vec<u8>) {
         encode_u32_items(bytes, &(), &self.prepare_steps);
     }
 }
 
-impl Decode for AggregationJob {
+impl Decode for AggregationJobContinueReq {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        let prepare_steps = decode_u32_items(&(), bytes)?;
+        Ok(Self { prepare_steps })
+    }
+}
+
+/// DAP protocol message representing the response to an aggregation job initialization or
+/// continuation request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AggregationJobResp {
+    prepare_steps: Vec<PrepareStep>,
+}
+
+impl AggregationJobResp {
+    /// The media type associated with this protocol message.
+    pub const MEDIA_TYPE: &'static str = "application/dap-aggregation-job-resp";
+
+    /// Constructs a new aggregate continuation response from its components.
+    pub fn new(prepare_steps: Vec<PrepareStep>) -> Self {
+        Self { prepare_steps }
+    }
+
+    /// Gets the prepare steps associated with this aggregate continuation response.
+    pub fn prepare_steps(&self) -> &[PrepareStep] {
+        &self.prepare_steps
+    }
+}
+
+impl Encode for AggregationJobResp {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        encode_u32_items(bytes, &(), &self.prepare_steps);
+    }
+}
+
+impl Decode for AggregationJobResp {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let prepare_steps = decode_u32_items(&(), bytes)?;
         Ok(Self { prepare_steps })
@@ -2285,7 +2320,15 @@ impl Decode for AggregateShare {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        query_type, AggregateShare, AggregateShareAad, AggregateShareReq,
+        AggregationJobInitializeReq, AggregationJobResp, BatchId, BatchSelector, Collection,
+        CollectionReq, Duration, Extension, ExtensionType, FixedSize, FixedSizeQuery, HpkeAeadId,
+        HpkeCiphertext, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey,
+        InputShareAad, Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep,
+        PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
+        ReportShareError, Role, TaskId, Time, TimeInterval,
+    };
     use assert_matches::assert_matches;
     use prio::codec::{CodecError, Decode, Encode};
     use serde_test::{assert_de_tokens_error, assert_tokens, Token};
@@ -3533,9 +3576,9 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_aggregation_job() {
+    fn roundtrip_aggregation_job_resp() {
         roundtrip_encoding(&[(
-            AggregationJob {
+            AggregationJobResp {
                 prepare_steps: Vec::from([
                     PrepareStep {
                         report_id: ReportId::from([
@@ -3759,7 +3802,7 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_aggregate_share_resp() {
+    fn roundtrip_aggregate_share() {
         roundtrip_encoding(&[
             (
                 AggregateShare {

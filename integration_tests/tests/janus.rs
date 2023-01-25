@@ -73,7 +73,7 @@ impl<'a> JanusPair<'a> {
                 // where "port" is whatever unused port we use with `kubectl port-forward`. But when
                 // the aggregators talk to each other, they do it on the cluster's private network,
                 // and so they need the in-cluster DNS name of the other aggregator. However, since
-                // aggregators use the endpoint URLs in the task to construct collect job URIs, we
+                // aggregators use the endpoint URLs in the task to construct collection job URIs, we
                 // must only fix the _peer_ aggregator's endpoint.
                 let leader_endpoints = {
                     let mut endpoints = leader_task.aggregator_endpoints().to_vec();

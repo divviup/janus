@@ -640,7 +640,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
-    /// Look for combinations of client reports and collect job aggregation parameters that do not
+    /// Look for combinations of client reports and collection job aggregation parameters that do not
     /// yet have a report aggregation, and batch them into new aggregation jobs. This should only
     /// be used with VDAFs that have non-unit type aggregation parameters.
     // This is only used in tests thus far.
@@ -771,7 +771,7 @@ mod tests {
         aggregator::query_type::AccumulableQueryType,
         datastore::{
             gather_errors,
-            models::{AggregationJob, CollectJob, CollectJobState, LeaderStoredReport},
+            models::{AggregationJob, CollectionJob, CollectionJobState, LeaderStoredReport},
             test_util::ephemeral_datastore,
             Transaction,
         },
@@ -1251,7 +1251,7 @@ mod tests {
         const MAX_AGGREGATION_JOB_SIZE: usize = 10;
 
         // Note that the minimum aggregation job size setting has no effect here, because we always
-        // wait for a collect job before scheduling any aggregation jobs, and DAP requires that no
+        // wait for a collection job before scheduling any aggregation jobs, and DAP requires that no
         // more reports are accepted for a time interval after that interval already has a collect
         // job.
 
@@ -1266,8 +1266,8 @@ mod tests {
         );
 
         // Create MAX_AGGREGATION_JOB_SIZE reports in one batch. This should result in one
-        // aggregation job per overlapping collect job for these reports. (and there is one such
-        // collect job)
+        // aggregation job per overlapping collection job for these reports. (and there is one such
+        // collection job)
         let report_time = clock.now().sub(task.time_precision()).unwrap();
         let batch_1_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
@@ -1275,7 +1275,7 @@ mod tests {
                 .collect();
 
         // Create more than MAX_AGGREGATION_JOB_SIZE reports in another batch. This should result in
-        // two aggregation jobs per overlapping collect job. (and there are two such collect jobs)
+        // two aggregation jobs per overlapping collection job. (and there are two such collection jobs)
         let report_time = report_time.sub(task.time_precision()).unwrap();
         let batch_2_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
@@ -1314,7 +1314,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify, there should be no aggregation jobs yet, because there are no collect jobs to
+        // Verify, there should be no aggregation jobs yet, because there are no collection jobs to
         // provide aggregation parameters.
         let agg_jobs = job_creator
             .datastore
@@ -1341,28 +1341,32 @@ mod tests {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // This will encompass the members of batch_2_reports.
-                    tx.put_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&CollectJob::new(
-                        *task.id(),
-                        random(),
-                        Interval::new(report_time, *task.time_precision()).unwrap(),
-                        AggregationParam(7),
-                        CollectJobState::Start,
-                    ))
+                    tx.put_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &CollectionJob::new(
+                            *task.id(),
+                            random(),
+                            Interval::new(report_time, *task.time_precision()).unwrap(),
+                            AggregationParam(7),
+                            CollectionJobState::Start,
+                        ),
+                    )
                     .await?;
                     // This will encompass the members of both batch_1_reports and batch_2_reports.
-                    tx.put_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&CollectJob::new(
-                        *task.id(),
-                        random(),
-                        Interval::new(
-                            report_time,
-                            janus_messages::Duration::from_seconds(
-                                task.time_precision().as_seconds() * 2,
-                            ),
-                        )
-                        .unwrap(),
-                        AggregationParam(11),
-                        CollectJobState::Start,
-                    ))
+                    tx.put_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &CollectionJob::new(
+                            *task.id(),
+                            random(),
+                            Interval::new(
+                                report_time,
+                                janus_messages::Duration::from_seconds(
+                                    task.time_precision().as_seconds() * 2,
+                                ),
+                            )
+                            .unwrap(),
+                            AggregationParam(11),
+                            CollectionJobState::Start,
+                        ),
+                    )
                     .await?;
                     Ok(())
                 })
@@ -1434,7 +1438,7 @@ mod tests {
             .unwrap();
 
         // We should see the same aggregation jobs as before, because the newly created aggregation
-        // jobs should have satisfied all the collect jobs.
+        // jobs should have satisfied all the collection jobs.
         let mut quiescent_check_agg_jobs = job_creator
             .datastore
             .run_tx(|tx| {

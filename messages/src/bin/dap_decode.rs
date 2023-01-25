@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    AggregateShare, AggregateShareReq, AggregationJob, AggregationJobInitializeReq, Collection,
-    CollectionReq, HpkeConfig, Report,
+    AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobInitializeReq,
+    AggregationJobResp, Collection, CollectionReq, HpkeConfig, Report,
 };
 use prio::codec::Decode;
 use std::{
@@ -54,8 +54,13 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
                 Box::new(message)
             }
         }
-        MediaType::AggregationJob => {
-            let message: AggregationJob = AggregationJob::get_decoded(&message_buf)?;
+        MediaType::AggregationJobContinueReq => {
+            let message: AggregationJobContinueReq =
+                AggregationJobContinueReq::get_decoded(&message_buf)?;
+            Box::new(message)
+        }
+        MediaType::AggregationJobResp => {
+            let message: AggregationJobResp = AggregationJobResp::get_decoded(&message_buf)?;
             Box::new(message)
         }
         MediaType::AggregateShareReq => {
@@ -106,8 +111,10 @@ enum MediaType {
     Report,
     #[value(name = "aggregation-job-init-req")]
     AggregationJobInitializeReq,
-    #[value(name = "aggregation-job")]
-    AggregationJob,
+    #[value(name = "aggregation-job-resp")]
+    AggregationJobResp,
+    #[value(name = "aggregation-job-continue-req")]
+    AggregationJobContinueReq,
     #[value(name = "aggregate-share-req")]
     AggregateShareReq,
     #[value(name = "aggregate-share")]

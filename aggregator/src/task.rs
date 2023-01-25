@@ -10,7 +10,7 @@ use janus_core::{
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
 };
 use janus_messages::{
-    AggregationJobId, CollectionId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
+    AggregationJobId, CollectionJobId, Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId,
     HpkeKemId, Role, TaskId, Time,
 };
 use rand::{distributions::Standard, random, thread_rng, Rng};
@@ -346,53 +346,39 @@ impl Task {
 
     /// Returns the relative path for tasks, relative to which other API endpoints are defined.
     fn tasks_path(&self) -> String {
-        format!("/tasks/{}", self.id())
+        format!("tasks/{}", self.id())
     }
 
-    /// Returns the relative path relative to which reports may be uploaded for this task.
-    pub fn report_upload_path(&self) -> String {
-        format!("{}/reports", self.tasks_path())
+    /// Returns the URI at which reports may be uploaded for this task.
+    pub fn report_upload_uri(&self) -> Result<Url, Error> {
+        Ok(self
+            .aggregator_url(&Role::Leader)?
+            .join(&format!("{}/reports", self.tasks_path()))?)
     }
 
     /// Returns the URI at which the helper resource for the specified aggregation job ID can be
     /// accessed.
-    pub fn aggregation_job_url(&self, aggregation_job_id: &AggregationJobId) -> Result<Url, Error> {
-        Ok(self
-            .aggregator_url(&Role::Helper)?
-            .join(&self.aggregation_job_path(aggregation_job_id))?)
-    }
-
-    /// Returns the relative path for the specified aggregation job for this task.
-    pub fn aggregation_job_path(&self, aggregation_job_id: &AggregationJobId) -> String {
-        format!(
+    pub fn aggregation_job_uri(&self, aggregation_job_id: &AggregationJobId) -> Result<Url, Error> {
+        Ok(self.aggregator_url(&Role::Helper)?.join(&format!(
             "{}/aggregation_jobs/{aggregation_job_id}",
             self.tasks_path()
-        )
+        ))?)
     }
 
     /// Returns the URI at which the helper aggregate shares resource can be accessed.
-    pub fn aggregate_shares_url(&self) -> Result<Url, Error> {
+    pub fn aggregate_shares_uri(&self) -> Result<Url, Error> {
         Ok(self
             .aggregator_url(&Role::Helper)?
-            .join(&self.aggregate_shares_path())?)
-    }
-
-    /// Returns the relative path for aggregate shares for this task.
-    pub fn aggregate_shares_path(&self) -> String {
-        format!("{}/aggregate_shares", self.tasks_path())
+            .join(&format!("{}/aggregate_shares", self.tasks_path()))?)
     }
 
     /// Returns the URI at which the leader resource for the specified collection job ID can be
     /// accessed.
-    pub fn collection_job_uri(&self, collection_job_id: &CollectionId) -> Result<Url, Error> {
-        Ok(self
-            .aggregator_url(&Role::Leader)?
-            .join(&self.collection_job_path(collection_job_id))?)
-    }
-
-    /// Returns the relative path for the specified collection job for this task.
-    pub fn collection_job_path(&self, collection_job_id: &CollectionId) -> String {
-        format!("{}/collection_jobs/{collection_job_id}", self.tasks_path())
+    pub fn collection_job_uri(&self, collection_job_id: &CollectionJobId) -> Result<Url, Error> {
+        Ok(self.aggregator_url(&Role::Leader)?.join(&format!(
+            "{}/collection_jobs/{collection_job_id}",
+            self.tasks_path()
+        ))?)
     }
 }
 
@@ -828,6 +814,7 @@ mod tests {
     };
     use rand::random;
     use serde_test::{assert_tokens, Token};
+    use url::Url;
 
     #[test]
     fn task_serialization() {
@@ -972,6 +959,51 @@ mod tests {
                 "http://helper_endpoint/".parse().unwrap()
             ])
         );
+    }
+
+    #[test]
+    fn aggregator_request_paths() {
+        for (prefix, task) in [
+            (
+                "",
+                TaskBuilder::new(
+                    QueryType::TimeInterval,
+                    VdafInstance::Prio3Aes128Count,
+                    Role::Leader,
+                )
+                .build(),
+            ),
+            (
+                "/prefix",
+                TaskBuilder::new(
+                    QueryType::TimeInterval,
+                    VdafInstance::Prio3Aes128Count,
+                    Role::Leader,
+                )
+                .with_aggregator_endpoints(Vec::from([
+                    Url::parse("https://leader.com/prefix/").unwrap(),
+                    Url::parse("https://helper.com/prefix/").unwrap(),
+                ]))
+                .build(),
+            ),
+        ] {
+            let prefix = format!("{prefix}/tasks");
+
+            for uri in [
+                task.report_upload_uri().unwrap(),
+                task.aggregation_job_uri(&random()).unwrap(),
+                task.collection_job_uri(&random()).unwrap(),
+                task.aggregate_shares_uri().unwrap(),
+            ] {
+                // Check that path starts with / so it is suitable for use with mockito and that any
+                // path components in the aggregator endpoint are still present.
+                assert!(
+                    uri.path().starts_with(&prefix),
+                    "request path {} lacks prefix {prefix}",
+                    uri.path()
+                );
+            }
+        }
     }
 
     #[test]

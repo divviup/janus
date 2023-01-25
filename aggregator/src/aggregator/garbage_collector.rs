@@ -51,7 +51,7 @@ impl<C: Clock> GarbageCollector<C> {
             .run_tx(|tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
-                    // Find and delete old collect jobs.
+                    // Find and delete old collection jobs.
                     tx.delete_expired_collection_artifacts(
                         task.id(),
                         oldest_allowed_report_timestamp,
@@ -84,7 +84,7 @@ mod tests {
         datastore::{
             models::{
                 AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-                CollectJob, CollectJobState, LeaderStoredReport, ReportAggregation,
+                CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
                 ReportAggregationState,
             },
             test_util::ephemeral_datastore,
@@ -178,14 +178,14 @@ mod tests {
                     .await
                     .unwrap();
 
-                    let collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                    let collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
                         batch_identifier,
                         AggregationParam(0),
-                        CollectJobState::Start,
+                        CollectionJobState::Start,
                     );
-                    tx.put_collect_job(&collect_job).await.unwrap();
+                    tx.put_collection_job(&collection_job).await.unwrap();
 
                     Ok(task)
                 })
@@ -206,7 +206,7 @@ mod tests {
             aggregation_jobs,
             report_aggregations,
             batch_aggregations,
-            collect_jobs,
+            collection_jobs,
         ) = ds
             .run_tx(|tx| {
                 let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
@@ -231,8 +231,10 @@ mod tests {
                             task.id(),
                         )
                         .await?;
-                    let collect_jobs = tx
-                        .get_collect_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(task.id())
+                    let collection_jobs = tx
+                        .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            task.id(),
+                        )
                         .await?;
 
                     Ok((
@@ -240,7 +242,7 @@ mod tests {
                         aggregation_jobs,
                         report_aggregations,
                         batch_aggregations,
-                        collect_jobs,
+                        collection_jobs,
                     ))
                 })
             })
@@ -250,7 +252,7 @@ mod tests {
         assert!(aggregation_jobs.is_empty());
         assert!(report_aggregations.is_empty());
         assert!(batch_aggregations.is_empty());
-        assert!(collect_jobs.is_empty());
+        assert!(collection_jobs.is_empty());
     }
 
     #[tokio::test]
@@ -482,14 +484,14 @@ mod tests {
                         .await
                         .unwrap();
 
-                    let collect_job = CollectJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    let collection_job = CollectionJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
                         batch_identifier,
                         AggregationParam(0),
-                        CollectJobState::Start,
+                        CollectionJobState::Start,
                     );
-                    tx.put_collect_job(&collect_job).await.unwrap();
+                    tx.put_collection_job(&collection_job).await.unwrap();
 
                     tx.put_outstanding_batch(task.id(), &batch_identifier)
                         .await
@@ -514,7 +516,7 @@ mod tests {
             aggregation_jobs,
             report_aggregations,
             batch_aggregations,
-            collect_jobs,
+            collection_jobs,
             outstanding_batches,
         ) = ds
             .run_tx(|tx| {
@@ -538,8 +540,8 @@ mod tests {
                             task.id(),
                         )
                         .await?;
-                    let collect_jobs = tx
-                        .get_collect_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(task.id())
+                    let collection_jobs = tx
+                        .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(task.id())
                         .await?;
                     let outstanding_batches =
                         tx.get_outstanding_batches_for_task(task.id()).await?;
@@ -549,7 +551,7 @@ mod tests {
                         aggregation_jobs,
                         report_aggregations,
                         batch_aggregations,
-                        collect_jobs,
+                        collection_jobs,
                         outstanding_batches,
                     ))
                 })
@@ -560,7 +562,7 @@ mod tests {
         assert!(aggregation_jobs.is_empty());
         assert!(report_aggregations.is_empty());
         assert!(batch_aggregations.is_empty());
-        assert!(collect_jobs.is_empty());
+        assert!(collection_jobs.is_empty());
         assert!(outstanding_batches.is_empty());
     }
 
