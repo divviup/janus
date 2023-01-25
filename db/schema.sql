@@ -100,7 +100,7 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 CREATE TABLE aggregation_jobs(
     id                        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                   BIGINT NOT NULL,                 -- ID of related task
-    aggregation_job_id        BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
+    aggregation_job_id        BYTEA NOT NULL,                  -- 16-byte AggregationJobID as defined by the DAP specification
     aggregation_param         BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     batch_id                  BYTEA NOT NULL,                  -- batch ID (fixed-size only; corresponds to identifier in BatchSelector)
     client_timestamp_interval TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
@@ -174,7 +174,7 @@ CREATE TYPE COLLECT_JOB_STATE AS ENUM(
 -- The leader's view of collect requests from the Collector.
 CREATE TABLE collect_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    collect_job_id          UUID NOT NULL,               -- UUID used by collector to refer to this job
+    collect_job_id          BYTEA NOT NULL,              -- 16 byte identifier used by collector to refer to this job
     task_id                 BIGINT NOT NULL,             -- the task ID being collected
     batch_identifier        BYTEA NOT NULL,              -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
     batch_interval          TSRANGE,                     -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
