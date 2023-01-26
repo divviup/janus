@@ -99,7 +99,7 @@ async fn handle_add_task(
     .context("error constructing task")?;
 
     datastore
-        .run_tx(move |tx| {
+        .run_tx("add_task", move |tx| {
             let task = task.clone();
             Box::pin(async move { tx.put_task(&task).await })
         })

@@ -138,7 +138,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             let start = Instant::now();
             let tasks = self
                 .datastore
-                .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+                .run_tx("aggregation_job_creator_get_tasks", |tx| {
+                    Box::pin(async move { tx.get_tasks().await })
+                })
                 .await;
             let tasks = match tasks {
                 Ok(tasks) => tasks
@@ -349,7 +351,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     {
         Ok(self
             .datastore
-            .run_tx(|tx| {
+            .run_tx("aggregation_job_creator_time_no_param", |tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
                     let current_batch_start = this
@@ -459,7 +461,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         );
         Ok(self
             .datastore
-            .run_tx(|tx| {
+            .run_tx("aggregation_job_creator_fixed_no_param", |tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
                     // Find unaggregated client reports & existing unfilled batches.
@@ -630,7 +632,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         let max_aggregation_job_size = self.max_aggregation_job_size;
 
         self.datastore
-            .run_tx(|tx| {
+            .run_tx("aggregation_job_creator_time_with_param", |tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // Find some client reports that are covered by a collect request, but haven't
@@ -792,7 +794,7 @@ mod tests {
         .build();
         let helper_report = LeaderStoredReport::new_dummy(*helper_task.id(), report_time);
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
             let (leader_report, helper_report) = (leader_report.clone(), helper_report.clone());
             Box::pin(async move {
@@ -827,7 +829,7 @@ mod tests {
         // Inspect database state to verify that the expected aggregation jobs were created.
         let (leader_agg_jobs, helper_agg_jobs) = job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
                 Box::pin(async move {
                     let leader_agg_jobs = read_aggregate_jobs_for_task_prio3_count::<
@@ -930,7 +932,7 @@ mod tests {
             .map(|report| *report.metadata().id())
             .collect();
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let task = task.clone();
             let (cur_batch_reports, small_batch_reports, big_batch_reports) = (
                 cur_batch_reports.clone(),
@@ -969,7 +971,7 @@ mod tests {
         // Verify.
         let agg_jobs = job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     Ok(
@@ -1028,7 +1030,7 @@ mod tests {
         let first_report = LeaderStoredReport::new_dummy(*task.id(), clock.now());
         let second_report = LeaderStoredReport::new_dummy(*task.id(), clock.now());
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (task, first_report) = (Arc::clone(&task), first_report.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
@@ -1055,7 +1057,7 @@ mod tests {
         // Verify -- we haven't received enough reports yet, so we don't create anything.
         let agg_jobs = job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     Ok(
@@ -1074,7 +1076,7 @@ mod tests {
         // Setup again -- add another report.
         job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let second_report = second_report.clone();
                 Box::pin(async move { tx.put_client_report(&second_report).await })
             })
@@ -1090,7 +1092,7 @@ mod tests {
         // Verify -- the additional report we wrote allows an aggregation job to be created.
         let agg_jobs = job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     Ok(
@@ -1170,7 +1172,7 @@ mod tests {
             .map(|report| *report.metadata().id())
             .collect();
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (task, reports) = (task.clone(), reports.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
@@ -1200,7 +1202,7 @@ mod tests {
         // Verify.
         let (outstanding_batches, agg_jobs) = job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     Ok((
@@ -1291,7 +1293,7 @@ mod tests {
                 .take(MAX_AGGREGATION_JOB_SIZE + 1)
                 .collect();
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (task, batch_1_reports, batch_2_reports) = (
                 Arc::clone(&task),
                 batch_1_reports.clone(),
@@ -1328,7 +1330,7 @@ mod tests {
         // provide aggregation parameters.
         let agg_jobs = job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
                 Box::pin(async move {
                     Ok(read_aggregate_jobs_for_task_generic::<
@@ -1347,7 +1349,7 @@ mod tests {
 
         job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // This will encompass the members of batch_2_reports.
@@ -1389,7 +1391,7 @@ mod tests {
         // Verify.
         let mut agg_jobs = job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
                 Box::pin(async move {
                     Ok(read_aggregate_jobs_for_task_generic::<
@@ -1454,7 +1456,7 @@ mod tests {
         // jobs should have satisfied all the collect jobs.
         let mut quiescent_check_agg_jobs = job_creator
             .datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
                 Box::pin(async move {
                     Ok(read_aggregate_jobs_for_task_generic::<

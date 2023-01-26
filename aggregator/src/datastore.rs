@@ -175,7 +175,7 @@ impl<C: Clock> Datastore<C> {
     /// rolling back & retrying with a new transaction, so the given function should support being
     /// called multiple times. Values read from the transaction should not be considered as
     /// "finalized" until the transaction is committed, i.e. after `run_tx` is run to completion.
-    pub async fn run_tx<F, T>(&self, f: F) -> Result<T, Error>
+    pub async fn run_tx<F, T>(&self, name: &'static str, f: F) -> Result<T, Error>
     where
         for<'a> F:
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
@@ -186,25 +186,37 @@ impl<C: Clock> Datastore<C> {
                 Ok(_) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
-                    &[KeyValue::new("status", "success")],
+                    &[
+                        KeyValue::new("status", "success"),
+                        KeyValue::new("tx", name),
+                    ],
                 ),
                 Err(err) if err.is_serialization_failure() => {
                     self.transaction_status_counter.add(
                         &Context::current(),
                         1,
-                        &[KeyValue::new("status", "error_conflict")],
+                        &[
+                            KeyValue::new("status", "error_conflict"),
+                            KeyValue::new("tx", name),
+                        ],
                     );
                     continue;
                 }
                 Err(Error::Db(_)) | Err(Error::Pool(_)) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
-                    &[KeyValue::new("status", "error_db")],
+                    &[
+                        KeyValue::new("status", "error_db"),
+                        KeyValue::new("tx", name),
+                    ],
                 ),
                 Err(_) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
-                    &[KeyValue::new("status", "error_other")],
+                    &[
+                        KeyValue::new("status", "error_other"),
+                        KeyValue::new("tx", name),
+                    ],
                 ),
             }
             return rslt;
@@ -261,7 +273,7 @@ impl<C: Clock> Datastore<C> {
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
-        self.run_tx(|tx| {
+        self.run_tx("test", |tx| {
             let task = task.clone();
             Box::pin(async move { tx.put_task(&task).await })
         })
@@ -4921,7 +4933,7 @@ mod tests {
             want_tasks.insert(*task.id(), task.clone());
 
             let err = ds
-                .run_tx(|tx| {
+                .run_tx("test", |tx| {
                     let task = task.clone();
                     Box::pin(async move { tx.delete_task(task.id()).await })
                 })
@@ -4930,7 +4942,7 @@ mod tests {
             assert_matches!(err, Error::MutationTargetNotFound);
 
             let retrieved_task = ds
-                .run_tx(|tx| {
+                .run_tx("test", |tx| {
                     let task = task.clone();
                     Box::pin(async move { tx.get_task(task.id()).await })
                 })
@@ -4941,7 +4953,7 @@ mod tests {
             ds.put_task(&task).await.unwrap();
 
             let retrieved_task = ds
-                .run_tx(|tx| {
+                .run_tx("test", |tx| {
                     let task = task.clone();
                     Box::pin(async move { tx.get_task(task.id()).await })
                 })
@@ -4949,7 +4961,7 @@ mod tests {
                 .unwrap();
             assert_eq!(Some(&task), retrieved_task.as_ref());
 
-            ds.run_tx(|tx| {
+            ds.run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move { tx.delete_task(task.id()).await })
             })
@@ -4957,7 +4969,7 @@ mod tests {
             .unwrap();
 
             let retrieved_task = ds
-                .run_tx(|tx| {
+                .run_tx("test", |tx| {
                     let task = task.clone();
                     Box::pin(async move { tx.get_task(task.id()).await })
                 })
@@ -4966,7 +4978,7 @@ mod tests {
             assert_eq!(None, retrieved_task);
 
             let err = ds
-                .run_tx(|tx| {
+                .run_tx("test", |tx| {
                     let task = task.clone();
                     Box::pin(async move { tx.delete_task(task.id()).await })
                 })
@@ -4980,7 +4992,7 @@ mod tests {
             ds.put_task(&task).await.unwrap();
 
             let retrieved_task = ds
-                .run_tx(|tx| {
+                .run_tx("test", |tx| {
                     let task = task.clone();
                     Box::pin(async move { tx.get_task(task.id()).await })
                 })
@@ -4990,7 +5002,7 @@ mod tests {
         }
 
         let got_tasks: HashMap<TaskId, Task> = ds
-            .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .run_tx("test", |tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap()
             .into_iter()
@@ -5031,7 +5043,7 @@ mod tests {
             ),
         );
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (task, report) = (task.clone(), report.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
@@ -5042,7 +5054,7 @@ mod tests {
         .unwrap();
 
         let retrieved_report = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task_id = *report.task_id();
                 let report_id = *report.metadata().id();
                 Box::pin(async move {
@@ -5068,7 +5080,7 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let rslt = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     tx.get_client_report(
                         &dummy_vdaf::Vdaf::new(),
@@ -5115,7 +5127,7 @@ mod tests {
         let unrelated_report = LeaderStoredReport::new_dummy(*unrelated_task.id(), when);
 
         // Set up state.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (
                 task,
                 unrelated_task,
@@ -5176,7 +5188,7 @@ mod tests {
 
         // Run query & verify results.
         let got_reports = HashSet::from_iter(
-            ds.run_tx(|tx| {
+            ds.run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.get_unaggregated_client_report_ids_for_task(task.id())
@@ -5232,7 +5244,7 @@ mod tests {
         );
 
         // Set up state.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (
                 task,
                 unrelated_task,
@@ -5280,7 +5292,7 @@ mod tests {
         // Run query & verify results. None should be returned yet, as there are no relevant
         // collect requests.
         let got_reports = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.get_unaggregated_client_report_ids_by_collect_for_task::<0, dummy_vdaf::Vdaf>(task.id())
@@ -5292,7 +5304,7 @@ mod tests {
         assert!(got_reports.is_empty());
 
         // Add collect jobs, and mark one report as having already been aggregated once.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (task, aggregated_report_id, aggregated_report_time) = (
                 task.clone(),
                 *aggregated_report.metadata().id(),
@@ -5371,7 +5383,7 @@ mod tests {
         // Run query & verify results. We should have two unaggregated reports with one parameter,
         // and three with another.
         let mut got_reports = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.get_unaggregated_client_report_ids_by_collect_for_task::<0, dummy_vdaf::Vdaf>(task.id())
@@ -5414,7 +5426,7 @@ mod tests {
 
         // Add overlapping collect jobs with repeated aggregation parameters. Make sure we don't
         // repeat result tuples, which could lead to double counting in batch aggregations.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let task = task.clone();
             Box::pin(async move {
                 tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -5449,7 +5461,7 @@ mod tests {
 
         // Verify that we get the same result.
         let mut got_reports = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.get_unaggregated_client_report_ids_by_collect_for_task::<0, dummy_vdaf::Vdaf>(task.id())
@@ -5499,7 +5511,7 @@ mod tests {
         );
 
         // Set up state.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (
                 task,
                 unrelated_task,
@@ -5535,7 +5547,7 @@ mod tests {
         .unwrap();
 
         let (report_count, no_reports_task_report_count) = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (task, no_reports_task) = (task.clone(), no_reports_task.clone());
                 Box::pin(async move {
                     let report_count = tx
@@ -5590,7 +5602,7 @@ mod tests {
 
         // Set up state.
         let batch_id = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (task, unrelated_task) = (task.clone(), unrelated_task.clone());
 
                 Box::pin(async move {
@@ -5683,7 +5695,7 @@ mod tests {
             .unwrap();
 
         let report_count = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task_id = *task.id();
                 Box::pin(async move {
                     tx.count_client_reports_for_batch_id(&task_id, &batch_id)
@@ -5720,7 +5732,7 @@ mod tests {
         );
 
         let got_report_share_exists = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (task, report_share) = (task.clone(), report_share.clone());
                 Box::pin(async move {
                     tx.put_task(&task).await?;
@@ -5742,7 +5754,7 @@ mod tests {
             got_leader_input_share,
             got_helper_input_share,
         ) = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (task, report_share_metadata) = (task.clone(), report_share.metadata().clone());
                 Box::pin(async move {
                     let report_share_exists = tx
@@ -5823,7 +5835,7 @@ mod tests {
             AggregationJobState::InProgress,
         );
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (task, leader_aggregation_job, helper_aggregation_job) = (
                 task.clone(),
                 leader_aggregation_job.clone(),
@@ -5839,7 +5851,7 @@ mod tests {
         .unwrap();
 
         let (got_leader_aggregation_job, got_helper_aggregation_job) = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (leader_aggregation_job, helper_aggregation_job) = (
                     leader_aggregation_job.clone(),
                     helper_aggregation_job.clone(),
@@ -5873,7 +5885,7 @@ mod tests {
         let new_aggregation_job = leader_aggregation_job
             .clone()
             .with_state(AggregationJobState::Finished);
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let new_aggregation_job = new_aggregation_job.clone();
             Box::pin(async move { tx.update_aggregation_job(&new_aggregation_job).await })
         })
@@ -5881,7 +5893,7 @@ mod tests {
         .unwrap();
 
         let got_aggregation_job = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let leader_aggregation_job = leader_aggregation_job.clone();
                 Box::pin(async move {
                     tx.get_aggregation_job(
@@ -5917,7 +5929,7 @@ mod tests {
         aggregation_job_ids.sort();
         let interval = Interval::new(clock.now(), Duration::from_seconds(100)).unwrap();
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (task, aggregation_job_ids) = (task.clone(), aggregation_job_ids.clone());
             Box::pin(async move {
                 // Write a few aggregation jobs we expect to be able to retrieve with
@@ -5997,7 +6009,7 @@ mod tests {
         let results = gather_errors(
             join_all(
                 iter::repeat_with(|| {
-                    ds.run_tx(|tx| {
+                    ds.run_tx("test", |tx| {
                         Box::pin(async move {
                             tx.acquire_incomplete_aggregation_jobs(
                                 &LEASE_DURATION,
@@ -6063,7 +6075,7 @@ mod tests {
             .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
             .collect();
         jobs_to_release.sort();
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let leases_to_release = leases_to_release.clone();
             Box::pin(async move {
                 for lease in leases_to_release {
@@ -6076,7 +6088,7 @@ mod tests {
         .unwrap();
 
         let mut got_aggregation_jobs: Vec<_> = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     tx.acquire_incomplete_aggregation_jobs(&LEASE_DURATION, MAXIMUM_ACQUIRE_COUNT)
                         .await
@@ -6114,7 +6126,7 @@ mod tests {
             })
             .collect();
         let mut got_aggregation_jobs: Vec<_> = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     // This time, we just acquire all jobs in a single go for simplicity -- we've
                     // already tested the maximum acquire count functionality above.
@@ -6142,7 +6154,7 @@ mod tests {
         // fails.
         clock.advance(LEASE_DURATION);
         let lease = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     Ok(tx
                         .acquire_incomplete_aggregation_jobs(&LEASE_DURATION, 1)
@@ -6158,7 +6170,7 @@ mod tests {
             random(),
             lease.lease_attempts(),
         );
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let lease_with_random_token = lease_with_random_token.clone();
             Box::pin(async move { tx.release_aggregation_job(&lease_with_random_token).await })
         })
@@ -6167,7 +6179,7 @@ mod tests {
 
         // Replace the original lease token and verify that we can release successfully with it in
         // place.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let lease = lease.clone();
             Box::pin(async move { tx.release_aggregation_job(&lease).await })
         })
@@ -6181,7 +6193,7 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
         let rslt = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     tx.get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         &random(),
@@ -6195,7 +6207,7 @@ mod tests {
         assert_eq!(rslt, None);
 
         let rslt = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     tx.update_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
                         &AggregationJob::new(
@@ -6242,7 +6254,7 @@ mod tests {
             AggregationJobState::InProgress,
         );
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (task, first_aggregation_job, second_aggregation_job) = (
                 task.clone(),
                 first_aggregation_job.clone(),
@@ -6279,7 +6291,7 @@ mod tests {
         let mut want_agg_jobs = Vec::from([first_aggregation_job, second_aggregation_job]);
         want_agg_jobs.sort_by_key(|agg_job| *agg_job.id());
         let mut got_agg_jobs = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move { tx.get_aggregation_jobs_for_task_id(task.id()).await })
             })
@@ -6332,7 +6344,7 @@ mod tests {
             .unwrap();
 
             let report_aggregation = ds
-                .run_tx(|tx| {
+                .run_tx("test", |tx| {
                     let (task, state) = (task.clone(), state.clone());
                     Box::pin(async move {
                         tx.put_task(&task).await?;
@@ -6378,7 +6390,7 @@ mod tests {
                 .unwrap();
 
             let got_report_aggregation = ds
-                .run_tx(|tx| {
+                .run_tx("test", |tx| {
                     let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
                     Box::pin(async move {
                         tx.get_report_aggregation(
@@ -6403,7 +6415,7 @@ mod tests {
                 report_aggregation.ord() + 10,
                 report_aggregation.state().clone(),
             );
-            ds.run_tx(|tx| {
+            ds.run_tx("test", |tx| {
                 let new_report_aggregation = new_report_aggregation.clone();
                 Box::pin(async move { tx.update_report_aggregation(&new_report_aggregation).await })
             })
@@ -6411,7 +6423,7 @@ mod tests {
             .unwrap();
 
             let got_report_aggregation = ds
-                .run_tx(|tx| {
+                .run_tx("test", |tx| {
                     let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
                     Box::pin(async move {
                         tx.get_report_aggregation(
@@ -6438,7 +6450,7 @@ mod tests {
         let vdaf = Arc::new(dummy_vdaf::Vdaf::default());
 
         let rslt = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let vdaf = Arc::clone(&vdaf);
                 Box::pin(async move {
                     tx.get_report_aggregation(
@@ -6456,7 +6468,7 @@ mod tests {
         assert_eq!(rslt, None);
 
         let rslt = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     tx.update_report_aggregation::<0, dummy_vdaf::Vdaf>(&ReportAggregation::new(
                         random(),
@@ -6498,7 +6510,7 @@ mod tests {
         .unwrap();
 
         let report_aggregations = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (task, prep_msg, prep_state, output_share) = (
                     task.clone(),
                     vdaf_transcript.prepare_messages[0].clone(),
@@ -6569,7 +6581,7 @@ mod tests {
             .unwrap();
 
         let got_report_aggregations = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (vdaf, task) = (Arc::clone(&vdaf), task.clone());
                 Box::pin(async move {
                     tx.get_report_aggregations_for_aggregation_job(
@@ -6651,7 +6663,7 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let task = task.clone();
             Box::pin(async move { tx.put_task(&task).await })
         })
@@ -6659,7 +6671,7 @@ mod tests {
         .unwrap();
 
         let collect_job_id = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.get_collect_job_id::<0, TimeInterval, dummy_vdaf::Vdaf>(
@@ -6675,7 +6687,7 @@ mod tests {
         assert!(collect_job_id.is_none());
 
         let collect_job_id = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     let collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -6693,7 +6705,7 @@ mod tests {
             .unwrap();
 
         let same_collect_job_id = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.get_collect_job_id::<0, TimeInterval, dummy_vdaf::Vdaf>(
@@ -6713,7 +6725,7 @@ mod tests {
 
         // Check that we can find the collect job by timestamp or batch identifier.
         let (collect_jobs_by_time, collect_jobs_by_interval, collect_jobs_by_batch_identifier) = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     let collect_jobs_by_time = tx
@@ -6758,7 +6770,7 @@ mod tests {
         assert_eq!(collect_jobs_by_batch_identifier, want_collect_jobs);
 
         let rows = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     tx.tx
                         .query("SELECT id FROM collect_jobs", &[])
@@ -6777,7 +6789,7 @@ mod tests {
         )
         .unwrap();
         let different_collect_job_id = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     let collect_job_id = Uuid::new_v4();
@@ -6799,7 +6811,7 @@ mod tests {
         assert!(different_collect_job_id != collect_job_id);
 
         let rows = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     tx.tx
                         .query("SELECT id FROM collect_jobs", &[])
@@ -6815,7 +6827,7 @@ mod tests {
 
         // Check that we can find both collect jobs by timestamp.
         let (mut collect_jobs_by_time, mut collect_jobs_by_interval) = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     let collect_jobs_by_time = tx
@@ -6885,7 +6897,7 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (first_task, second_task) = (first_task.clone(), second_task.clone());
             Box::pin(async move {
                 tx.put_task(&first_task).await.unwrap();
@@ -6963,7 +6975,7 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let task = task.clone();
             Box::pin(async move {
                 tx.put_task(&task).await.unwrap();
@@ -7070,7 +7082,7 @@ mod tests {
         )
         .unwrap();
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let task = task.clone();
             Box::pin(async move {
                 tx.put_task(&task).await?;
@@ -7179,7 +7191,7 @@ mod tests {
         ds: &Datastore<MockClock>,
         test_case: CollectJobAcquireTestCase<Q>,
     ) -> CollectJobAcquireTestCase<Q> {
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let mut test_case = test_case.clone();
             Box::pin(async move {
                 for task_id in &test_case.task_ids {
@@ -7242,7 +7254,7 @@ mod tests {
         let test_case = setup_collect_job_acquire_test_case(ds, test_case).await;
 
         let clock = &ds.clock;
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let test_case = test_case.clone();
             let clock = clock.clone();
             Box::pin(async move {
@@ -7347,7 +7359,7 @@ mod tests {
         .await;
 
         let reacquired_jobs = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let collect_job_leases = collect_job_leases.clone();
                 Box::pin(async move {
                     // Try to re-acquire collect jobs. Nothing should happen because the lease is still
@@ -7395,7 +7407,7 @@ mod tests {
         // Advance time by the lease duration
         clock.advance(Duration::from_seconds(100));
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let reacquired_jobs = reacquired_jobs.clone();
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
@@ -7472,7 +7484,7 @@ mod tests {
         .await;
 
         let reacquired_jobs = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let collect_job_leases = collect_job_leases.clone();
                 Box::pin(async move {
                     // Try to re-acquire collect jobs. Nothing should happen because the lease is still
@@ -7520,7 +7532,7 @@ mod tests {
         // Advance time by the lease duration
         clock.advance(Duration::from_seconds(100));
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let reacquired_jobs = reacquired_jobs.clone();
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
@@ -7933,7 +7945,7 @@ mod tests {
         )
         .await;
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let test_case = test_case.clone();
             let clock = clock.clone();
             Box::pin(async move {
@@ -8094,7 +8106,7 @@ mod tests {
         )
         .await;
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             Box::pin(async move {
                 // No collect jobs should be acquired because none of them are in the START state
                 let acquired_collect_jobs = tx
@@ -8115,7 +8127,7 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             Box::pin(async move {
                 let time_precision = Duration::from_seconds(100);
                 let task = TaskBuilder::new(
@@ -8309,7 +8321,7 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             Box::pin(async move {
                 let task = TaskBuilder::new(
                     task::QueryType::FixedSize { max_batch_size: 10 },
@@ -8404,7 +8416,7 @@ mod tests {
 
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             Box::pin(async move {
                 let task =
                     TaskBuilder::new(task::QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
@@ -8508,7 +8520,7 @@ mod tests {
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         let (task_id, batch_id) = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let clock = clock.clone();
                 Box::pin(async move {
                     let task = TaskBuilder::new(
@@ -8643,7 +8655,7 @@ mod tests {
             .unwrap();
 
         let (outstanding_batches, outstanding_batch_1, outstanding_batch_2, outstanding_batch_3) =
-            ds.run_tx(|tx| {
+            ds.run_tx("test", |tx| {
                 Box::pin(async move {
                     let outstanding_batches = tx.get_outstanding_batches_for_task(&task_id).await?;
                     let outstanding_batch_1 = tx.get_filled_outstanding_batch(&task_id, 1).await?;
@@ -8672,14 +8684,14 @@ mod tests {
         assert_eq!(outstanding_batch_3, None);
 
         // Delete the outstanding batch, then check that it is no longer available.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             Box::pin(async move { tx.delete_outstanding_batch(&task_id, &batch_id).await })
         })
         .await
         .unwrap();
 
         let outstanding_batches = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move { tx.get_outstanding_batches_for_task(&task_id).await })
             })
             .await
@@ -8691,7 +8703,7 @@ mod tests {
     async fn roundtrip_interval_sql() {
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
         datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 Box::pin(async move {
                     let interval = tx
                         .tx

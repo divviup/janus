@@ -243,7 +243,7 @@ impl CollectJobDriver {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
         let (task, collect_job, batch_aggregations) = datastore
-            .run_tx(|tx| {
+            .run_tx("step_collect_job_1", |tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     // TODO(#224): Consider fleshing out `AcquiredCollectJob` to include a `Task`,
@@ -325,7 +325,7 @@ impl CollectJobDriver {
             }),
         );
         datastore
-            .run_tx(|tx| {
+            .run_tx("step_collect_job_2", |tx| {
                 let (lease, collect_job) = (Arc::clone(&lease), Arc::clone(&collect_job));
                 let metrics = self.metrics.clone();
 
@@ -543,7 +543,7 @@ impl CollectJobDriver {
     {
         let lease = Arc::new(lease);
         datastore
-            .run_tx(|tx| {
+            .run_tx("abandon_collect_job", |tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let collect_job = tx
@@ -577,7 +577,7 @@ impl CollectJobDriver {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
                 datastore
-                    .run_tx(|tx| {
+                    .run_tx("acquire_collect_jobs", |tx| {
                         Box::pin(async move {
                             let (time_interval_jobs, fixed_size_jobs) = try_join!(
                                 tx.acquire_incomplete_time_interval_collect_jobs(
@@ -763,7 +763,7 @@ mod tests {
         );
 
         let lease = datastore
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (clock, task, collect_job) = (clock.clone(), task.clone(), collect_job.clone());
                 Box::pin(async move {
                     tx.put_task(&task).await?;
@@ -876,7 +876,7 @@ mod tests {
         let aggregation_param = AggregationParam(0);
 
         let (collect_job_id, lease) = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let (clock, task) = (clock.clone(), task.clone());
                 Box::pin(async move {
                     tx.put_task(&task).await?;
@@ -955,7 +955,7 @@ mod tests {
         });
 
         // Put some batch aggregations in the DB.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let (clock, task) = (clock.clone(), task.clone());
             Box::pin(async move {
                 tx.put_batch_aggregation(
@@ -1033,7 +1033,7 @@ mod tests {
         mocked_failed_aggregate_share.assert();
 
         // Collect job in datastore should be unchanged.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             Box::pin(async move {
                 let collect_job = tx
                     .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collect_job_id)
@@ -1077,7 +1077,7 @@ mod tests {
         mocked_aggregate_share.assert();
 
         // Should now have recorded helper encrypted aggregate share, too.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let helper_aggregate_share = helper_response.encrypted_aggregate_share().clone();
             Box::pin(async move {
                 let collect_job = tx
@@ -1126,7 +1126,7 @@ mod tests {
 
         // Verify: check that the collect job was abandoned, and that it can no longer be acquired.
         let (abandoned_collect_job, leases) = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let collect_job = collect_job.clone();
                 Box::pin(async move {
                     let abandoned_collect_job = tx
@@ -1222,7 +1222,7 @@ mod tests {
 
         // Confirm that the collect job was abandoned.
         let collect_job_after = ds
-            .run_tx(|tx| {
+            .run_tx("test", |tx| {
                 let collect_job = collect_job.clone();
                 Box::pin(async move {
                     tx.get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
@@ -1253,7 +1253,7 @@ mod tests {
         // Delete the collect job
         let collect_job = collect_job.with_state(CollectJobState::Deleted);
 
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let collect_job = collect_job.clone();
             Box::pin(async move {
                 tx.update_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collect_job)
@@ -1291,7 +1291,7 @@ mod tests {
         mocked_aggregate_share.assert();
 
         // Verify: check that the collect job was abandoned, and that it can no longer be acquired.
-        ds.run_tx(|tx| {
+        ds.run_tx("test", |tx| {
             let collect_job = collect_job.clone();
             Box::pin(async move {
                 let collect_job = tx
