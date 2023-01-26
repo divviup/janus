@@ -215,7 +215,7 @@ async fn provision_tasks<C: Clock>(
     // Write all tasks requested.
     info!(task_count = %tasks.len(), "Writing tasks");
     let written_tasks = datastore
-        .run_tx("janus_cli", |tx| {
+        .run_tx(|tx| {
             let tasks = Arc::clone(&tasks);
             Box::pin(async move {
                 let mut written_tasks = Vec::new();
@@ -547,7 +547,7 @@ mod tests {
         let ds = db_handle.datastore(RealClock::default());
 
         // Verify that the query we will run later returns an error if there is no database schema written.
-        ds.run_tx("test", |tx| Box::pin(async move { tx.get_tasks().await }))
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap_err();
 
@@ -555,7 +555,7 @@ mod tests {
         super::write_schema(&db_handle.pool(), false).await.unwrap();
 
         // Verify that the schema was written (by running a query that would fail if it weren't).
-        ds.run_tx("test", |tx| Box::pin(async move { tx.get_tasks().await }))
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap();
     }
@@ -565,14 +565,14 @@ mod tests {
         let db_handle = ephemeral_db_handle();
         let ds = db_handle.datastore(RealClock::default());
 
-        ds.run_tx("test", |tx| Box::pin(async move { tx.get_tasks().await }))
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap_err();
 
         super::write_schema(&db_handle.pool(), true).await.unwrap();
 
         // Verify that no schema was written (by running a query that would fail if it weren't).
-        ds.run_tx("test", |tx| Box::pin(async move { tx.get_tasks().await }))
+        ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap_err();
     }
@@ -624,7 +624,7 @@ mod tests {
         let want_tasks = task_hashmap_from_slice(tasks);
         let written_tasks = task_hashmap_from_slice(written_tasks);
         let got_tasks = task_hashmap_from_slice(
-            ds.run_tx("test", |tx| Box::pin(async move { tx.get_tasks().await }))
+            ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
                 .await
                 .unwrap(),
         );
@@ -649,7 +649,7 @@ mod tests {
         let written_tasks = task_hashmap_from_slice(written_tasks);
         assert_eq!(want_tasks, written_tasks);
         let got_tasks = task_hashmap_from_slice(
-            ds.run_tx("test", |tx| Box::pin(async move { tx.get_tasks().await }))
+            ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
                 .await
                 .unwrap(),
         );
@@ -713,7 +713,7 @@ mod tests {
 
         // Verify that the expected tasks were written.
         let got_tasks = task_hashmap_from_slice(
-            ds.run_tx("test", |tx| Box::pin(async move { tx.get_tasks().await }))
+            ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
                 .await
                 .unwrap(),
         );
@@ -811,7 +811,7 @@ mod tests {
 
         // Verify that the expected tasks were written.
         let got_tasks = ds
-            .run_tx("test", |tx| Box::pin(async move { tx.get_tasks().await }))
+            .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap();
 

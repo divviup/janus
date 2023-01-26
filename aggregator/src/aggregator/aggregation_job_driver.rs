@@ -233,7 +233,7 @@ impl AggregationJobDriver {
     {
         // Read all information about the aggregation job.
         let (task, aggregation_job, report_aggregations, client_reports, verify_key) = datastore
-            .run_tx("step_aggregation_job_1", |tx| {
+            .run_tx_with_name("step_aggregation_job_1", |tx| {
                 let (lease, vdaf) = (Arc::clone(&lease), Arc::clone(&vdaf));
                 Box::pin(async move {
                     let task = tx
@@ -743,7 +743,7 @@ impl AggregationJobDriver {
         let aggregation_job_to_write = Arc::new(aggregation_job_to_write);
         let accumulator = Arc::new(accumulator);
         datastore
-            .run_tx("step_aggregation_job_2", |tx| {
+            .run_tx_with_name("step_aggregation_job_2", |tx| {
                 let (report_aggregations_to_write, aggregation_job_to_write, accumulator, lease) = (
                     Arc::clone(&report_aggregations_to_write),
                     Arc::clone(&aggregation_job_to_write),
@@ -883,7 +883,7 @@ impl AggregationJobDriver {
     {
         let lease = Arc::new(lease);
         datastore
-            .run_tx("cancel_aggregation_job", |tx| {
+            .run_tx_with_name("cancel_aggregation_job", |tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let aggregation_job = tx
@@ -929,7 +929,7 @@ impl AggregationJobDriver {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
                 datastore
-                    .run_tx("acquire_aggregation_jobs", |tx| {
+                    .run_tx_with_name("acquire_aggregation_jobs", |tx| {
                         Box::pin(async move {
                             tx.acquire_incomplete_aggregation_jobs(
                                 &lease_duration,
@@ -1083,7 +1083,7 @@ mod tests {
         let aggregation_job_id = random();
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
-        ds.run_tx("test", |tx| {
+        ds.run_tx(|tx| {
             let (task, report) = (task.clone(), report.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
@@ -1210,7 +1210,7 @@ mod tests {
             );
 
         let (got_aggregation_job, got_report_aggregation) = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (vdaf, task, report_id) =
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
@@ -1303,7 +1303,7 @@ mod tests {
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         let lease = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (task, report, repeated_extension_report) = (
                     task.clone(),
                     report.clone(),
@@ -1456,7 +1456,7 @@ mod tests {
             );
 
         let (got_aggregation_job, got_report_aggregation, got_repeated_extension_report_aggregation) = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (vdaf, task, report_id, repeated_extension_report_id) =
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id(), *repeated_extension_report.metadata().id());
                 Box::pin(async move {
@@ -1544,7 +1544,7 @@ mod tests {
         let aggregation_job_id = random();
 
         let lease = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (task, report) = (task.clone(), report.clone());
                 Box::pin(async move {
                     tx.put_task(&task).await?;
@@ -1672,7 +1672,7 @@ mod tests {
             );
 
         let (got_aggregation_job, got_report_aggregation) = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (vdaf, task, report_id) =
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
@@ -1759,7 +1759,7 @@ mod tests {
         let prep_msg = &transcript.prepare_messages[0];
 
         let lease = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (task, report, leader_prep_state, prep_msg) = (
                     task.clone(),
                     report.clone(),
@@ -1899,7 +1899,7 @@ mod tests {
         )]);
 
         let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (vdaf, task, report_metadata) = (Arc::clone(&vdaf), task.clone(), report.metadata().clone());
                 Box::pin(async move {
                     let aggregation_job = tx
@@ -1996,7 +1996,7 @@ mod tests {
         let prep_msg = &transcript.prepare_messages[0];
 
         let lease = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (task, report, leader_prep_state, prep_msg) = (
                     task.clone(),
                     report.clone(),
@@ -2132,7 +2132,7 @@ mod tests {
         )]);
 
         let (got_aggregation_job, got_report_aggregation, got_batch_aggregations) = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (vdaf, task, report_metadata) = (Arc::clone(&vdaf), task.clone(), report.metadata().clone());
                 Box::pin(async move {
                     let aggregation_job = tx
@@ -2235,7 +2235,7 @@ mod tests {
             );
 
         let lease = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (task, report, aggregation_job, report_aggregation) = (
                     task.clone(),
                     report.clone(),
@@ -2275,7 +2275,7 @@ mod tests {
         let want_report_aggregation = report_aggregation;
 
         let (got_aggregation_job, got_report_aggregation, got_leases) = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let (vdaf, task, report_id) =
                     (Arc::clone(&vdaf), task.clone(), *report.metadata().id());
                 Box::pin(async move {
@@ -2399,7 +2399,7 @@ mod tests {
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         // Set up fixtures in the database.
-        ds.run_tx("test", |tx| {
+        ds.run_tx(|tx| {
             let task = task.clone();
             let report = report.clone();
             Box::pin(async move {
@@ -2513,7 +2513,7 @@ mod tests {
 
         // Confirm in the database that the job was abandoned.
         let aggregation_job_after = ds
-            .run_tx("test", |tx| {
+            .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
                     tx.get_aggregation_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
