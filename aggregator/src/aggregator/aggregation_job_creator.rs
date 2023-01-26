@@ -3,6 +3,7 @@ use crate::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
     datastore::{self, gather_errors, models::OutstandingBatch, Datastore},
+    messages::{DurationExt as _, TimeExt as _},
     task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     try_join,
 };
@@ -11,11 +12,11 @@ use futures::{future::join_all, FutureExt};
 use itertools::Itertools;
 use janus_core::{
     task::VdafInstance,
-    time::{Clock, TimeExt},
+    time::{Clock, TimeExt as _},
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    Interval, Role, TaskId,
+    Duration as DurationMsg, Interval, Role, TaskId,
 };
 use opentelemetry::{
     metrics::{Histogram, Unit},
@@ -31,7 +32,13 @@ use prio::{
 };
 use rand::{random, thread_rng, Rng};
 use std::{
-    collections::HashMap, convert::Infallible, iter, ops::RangeInclusive, sync::Arc, time::Duration,
+    cmp::{max, min},
+    collections::HashMap,
+    convert::Infallible,
+    iter,
+    ops::RangeInclusive,
+    sync::Arc,
+    time::Duration,
 };
 use tokio::{
     select,
@@ -346,11 +353,24 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 report_count = %agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
+
+                            let min_client_timestamp =
+                                agg_job_reports.iter().map(|(_, time)| time).min().unwrap(); // unwrap safety: agg_job_reports is non-empty
+                            let max_client_timestamp =
+                                agg_job_reports.iter().map(|(_, time)| time).max().unwrap(); // unwrap safety: agg_job_reports is non-empty
+                            let client_timestamp_interval = Interval::new(
+                                *min_client_timestamp,
+                                max_client_timestamp
+                                    .difference(min_client_timestamp)?
+                                    .add(&DurationMsg::from_seconds(1))?,
+                            )?;
+
                             agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
                                 Some(batch_interval),
                                 (),
+                                client_timestamp_interval,
                                 AggregationJobState::InProgress,
                             ));
 
@@ -500,18 +520,23 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             report_count = aggregation_job_size,
                             "Creating aggregation job"
                         );
-                        aggregation_jobs.push(AggregationJob::new(
-                            *task.id(),
-                            aggregation_job_id,
-                            Some(*batch.id()),
-                            (),
-                            AggregationJobState::InProgress,
-                        ));
+
+                        let mut min_client_timestamp = None;
+                        let mut max_client_timestamp = None;
                         report_aggregations.extend(
                             unaggregated_report_ids
                                 .drain(..aggregation_job_size)
                                 .enumerate()
                                 .map(|(ord, (report_id, client_timestamp))| {
+                                    min_client_timestamp =
+                                        Some(min_client_timestamp.map_or(client_timestamp, |ts| {
+                                            min(ts, client_timestamp)
+                                        }));
+                                    max_client_timestamp =
+                                        Some(max_client_timestamp.map_or(client_timestamp, |ts| {
+                                            max(ts, client_timestamp)
+                                        }));
+
                                     ReportAggregation::new(
                                         *task.id(),
                                         aggregation_job_id,
@@ -522,6 +547,23 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                     )
                                 }),
                         );
+
+                        let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
+                        let max_client_timestamp = max_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
+                        let client_timestamp_interval = Interval::new(
+                            min_client_timestamp,
+                            max_client_timestamp
+                                .difference(&min_client_timestamp)?
+                                .add(&DurationMsg::from_seconds(1))?,
+                        )?;
+                        aggregation_jobs.push(AggregationJob::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            Some(*batch.id()),
+                            (),
+                            client_timestamp_interval,
+                            AggregationJobState::InProgress,
+                        ));
 
                         if is_batch_new {
                             new_batches.push(*batch.id())
@@ -619,11 +661,24 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 report_count = %agg_job_reports.len(),
                                 "Creating aggregation job"
                             );
+
+                            let min_client_timestamp =
+                                agg_job_reports.iter().map(|(_, time)| time).min().unwrap(); // unwrap safety: agg_job_reports is non-empty
+                            let max_client_timestamp =
+                                agg_job_reports.iter().map(|(_, time)| time).max().unwrap(); // unwrap safety: agg_job_reports is non-empty
+                            let client_timestamp_interval = Interval::new(
+                                *min_client_timestamp,
+                                max_client_timestamp
+                                    .difference(min_client_timestamp)?
+                                    .add(&DurationMsg::from_seconds(1))?,
+                            )?;
+
                             agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
                                 Some(batch_interval),
                                 aggregation_param.clone(),
+                                client_timestamp_interval,
                                 AggregationJobState::InProgress,
                             ));
 

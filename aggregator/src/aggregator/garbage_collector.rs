@@ -1,8 +1,7 @@
 use crate::{datastore::Datastore, messages::TimeExt, task::Task};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use futures::future::join_all;
 use janus_core::time::Clock;
-use janus_messages::Role;
 use std::sync::Arc;
 use tracing::error;
 
@@ -42,12 +41,6 @@ impl<C: Clock> GarbageCollector<C> {
     async fn gc_task(&self, task: Arc<Task>) -> Result<()> {
         let oldest_allowed_report_timestamp =
             if let Some(report_expiry_age) = task.report_expiry_age() {
-                // XXX: handle helper tasks
-                if task.role() != &Role::Leader {
-                    return Err(anyhow!(
-                        "garbage collection is implemented only for leader tasks"
-                    ));
-                }
                 self.clock.now().sub(report_expiry_age)?
             } else {
                 // No configured report expiry age -- nothing to GC.
@@ -59,8 +52,11 @@ impl<C: Clock> GarbageCollector<C> {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // Find and delete old collect jobs.
-                    tx.delete_expired_collect_artifacts(task.id(), oldest_allowed_report_timestamp)
-                        .await?;
+                    tx.delete_expired_collection_artifacts(
+                        task.id(),
+                        oldest_allowed_report_timestamp,
+                    )
+                    .await?;
 
                     // Find and delete old aggregation jobs/report aggregations/batch aggregations.
                     tx.delete_expired_aggregation_artifacts(
@@ -87,8 +83,9 @@ mod tests {
     use crate::{
         datastore::{
             models::{
-                AggregationJob, AggregationJobState, CollectJob, CollectJobState,
-                LeaderStoredReport, ReportAggregation, ReportAggregationState,
+                AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
+                CollectJob, CollectJobState, LeaderStoredReport, ReportAggregation,
+                ReportAggregationState,
             },
             test_util::ephemeral_datastore,
         },
@@ -98,21 +95,21 @@ mod tests {
     use janus_core::{
         task::VdafInstance,
         test_util::{
-            dummy_vdaf::{self, AggregationParam},
+            dummy_vdaf::{self, AggregateShare, AggregationParam},
             install_test_trace_subscriber,
         },
         time::{Clock, MockClock},
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        Duration, Interval, Role,
+        Duration, HpkeCiphertext, HpkeConfigId, Interval, ReportMetadata, ReportShare, Role,
     };
     use rand::random;
     use std::sync::Arc;
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn gc_task_time_interval() {
+    async fn gc_task_leader_time_interval() {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
@@ -151,6 +148,7 @@ mod tests {
                         random(),
                         Some(batch_identifier),
                         AggregationParam(0),
+                        Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
                         AggregationJobState::InProgress,
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
@@ -166,6 +164,20 @@ mod tests {
                     tx.put_report_aggregation(&report_aggregation)
                         .await
                         .unwrap();
+
+                    let batch_aggregation = BatchAggregation::new(
+                        *task.id(),
+                        batch_identifier,
+                        AggregationParam(0),
+                        AggregateShare(11),
+                        1,
+                        random(),
+                    );
+                    tx.put_batch_aggregation::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &batch_aggregation,
+                    )
+                    .await
+                    .unwrap();
 
                     let collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -190,7 +202,13 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (client_reports, aggregation_jobs, report_aggregations, collect_jobs) = ds
+        let (
+            client_reports,
+            aggregation_jobs,
+            report_aggregations,
+            batch_aggregations,
+            collect_jobs,
+        ) = ds
             .run_tx(|tx| {
                 let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
                 Box::pin(async move {
@@ -209,6 +227,11 @@ mod tests {
                             task.id(),
                         )
                         .await?;
+                    let batch_aggregations = tx
+                        .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            task.id(),
+                        )
+                        .await?;
                     let collect_jobs = tx
                         .get_collect_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(task.id())
                         .await?;
@@ -217,6 +240,7 @@ mod tests {
                         client_reports,
                         aggregation_jobs,
                         report_aggregations,
+                        batch_aggregations,
                         collect_jobs,
                     ))
                 })
@@ -226,11 +250,173 @@ mod tests {
         assert!(client_reports.is_empty());
         assert!(aggregation_jobs.is_empty());
         assert!(report_aggregations.is_empty());
+        assert!(batch_aggregations.is_empty());
         assert!(collect_jobs.is_empty());
     }
 
     #[tokio::test]
-    async fn gc_task_fixed_size() {
+    async fn gc_task_helper_time_interval() {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
+        let vdaf = dummy_vdaf::Vdaf::new();
+
+        // Setup.
+        let task = ds
+            .run_tx(|tx| {
+                let clock = clock.clone();
+                Box::pin(async move {
+                    const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
+                    let task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Helper,
+                    )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .build();
+                    tx.put_task(&task).await?;
+
+                    let client_timestamp = clock
+                        .now()
+                        .sub(&REPORT_EXPIRY_AGE)
+                        .unwrap()
+                        .sub(&Duration::from_seconds(1))
+                        .unwrap();
+                    let report_share = ReportShare::new(
+                        ReportMetadata::new(random(), client_timestamp),
+                        Vec::new(),
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(13),
+                            Vec::from("encapsulated_context_0"),
+                            Vec::from("payload_0"),
+                        ),
+                    );
+                    tx.put_report_share(task.id(), &report_share).await.unwrap();
+
+                    let batch_identifier =
+                        Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap();
+                    let aggregation_job = AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        random(),
+                        Some(batch_identifier),
+                        AggregationParam(0),
+                        Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
+                        AggregationJobState::InProgress,
+                    );
+                    tx.put_aggregation_job(&aggregation_job).await.unwrap();
+
+                    let report_aggregation = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job.id(),
+                        *report_share.metadata().id(),
+                        client_timestamp,
+                        0,
+                        ReportAggregationState::Start,
+                    );
+                    tx.put_report_aggregation(&report_aggregation)
+                        .await
+                        .unwrap();
+
+                    let batch_aggregation = BatchAggregation::new(
+                        *task.id(),
+                        batch_identifier,
+                        AggregationParam(0),
+                        AggregateShare(11),
+                        1,
+                        random(),
+                    );
+                    tx.put_batch_aggregation::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &batch_aggregation,
+                    )
+                    .await
+                    .unwrap();
+
+                    let aggregate_share_job = AggregateShareJob::new(
+                        *task.id(),
+                        batch_identifier,
+                        AggregationParam(0),
+                        AggregateShare(11),
+                        1,
+                        random(),
+                    );
+                    tx.put_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &aggregate_share_job,
+                    )
+                    .await
+                    .unwrap();
+
+                    Ok(task)
+                })
+            })
+            .await
+            .unwrap();
+
+        // Run.
+        let task = Arc::new(task);
+        GarbageCollector::new(Arc::clone(&ds), clock.clone())
+            .gc_task(Arc::clone(&task))
+            .await
+            .unwrap();
+
+        // Verify.
+        let (
+            client_reports,
+            aggregation_jobs,
+            report_aggregations,
+            batch_aggregations,
+            aggregate_share_jobs,
+        ) = ds
+            .run_tx(|tx| {
+                let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
+                Box::pin(async move {
+                    let client_reports = tx
+                        .get_client_reports_for_task::<0, dummy_vdaf::Vdaf>(&vdaf, task.id())
+                        .await?;
+                    let aggregation_jobs = tx
+                        .get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            task.id(),
+                        )
+                        .await?;
+                    let report_aggregations = tx
+                        .get_report_aggregations_for_task::<0, dummy_vdaf::Vdaf>(
+                            &vdaf,
+                            &Role::Leader,
+                            task.id(),
+                        )
+                        .await?;
+                    let batch_aggregations = tx
+                        .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            task.id(),
+                        )
+                        .await?;
+                    let aggregate_share_jobs = tx
+                        .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            task.id(),
+                        )
+                        .await?;
+
+                    Ok((
+                        client_reports,
+                        aggregation_jobs,
+                        report_aggregations,
+                        batch_aggregations,
+                        aggregate_share_jobs,
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+        assert!(client_reports.is_empty());
+        assert!(aggregation_jobs.is_empty());
+        assert!(report_aggregations.is_empty());
+        assert!(batch_aggregations.is_empty());
+        assert!(aggregate_share_jobs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn gc_task_leader_fixed_size() {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
@@ -268,6 +454,7 @@ mod tests {
                         random(),
                         Some(batch_identifier),
                         AggregationParam(0),
+                        Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
                         AggregationJobState::InProgress,
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
@@ -284,6 +471,18 @@ mod tests {
                         .await
                         .unwrap();
 
+                    let batch_aggregation = BatchAggregation::new(
+                        *task.id(),
+                        batch_identifier,
+                        AggregationParam(0),
+                        AggregateShare(11),
+                        1,
+                        random(),
+                    );
+                    tx.put_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(&batch_aggregation)
+                        .await
+                        .unwrap();
+
                     let collect_job = CollectJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         Uuid::new_v4(),
@@ -292,6 +491,10 @@ mod tests {
                         CollectJobState::Start,
                     );
                     tx.put_collect_job(&collect_job).await.unwrap();
+
+                    tx.put_outstanding_batch(task.id(), &batch_identifier)
+                        .await
+                        .unwrap();
 
                     Ok(task)
                 })
@@ -307,7 +510,14 @@ mod tests {
             .unwrap();
 
         // Verify.
-        let (client_reports, aggregation_jobs, report_aggregations, collect_jobs) = ds
+        let (
+            client_reports,
+            aggregation_jobs,
+            report_aggregations,
+            batch_aggregations,
+            collect_jobs,
+            outstanding_batches,
+        ) = ds
             .run_tx(|tx| {
                 let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
                 Box::pin(async move {
@@ -324,15 +534,24 @@ mod tests {
                             task.id(),
                         )
                         .await?;
+                    let batch_aggregations = tx
+                        .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            task.id(),
+                        )
+                        .await?;
                     let collect_jobs = tx
                         .get_collect_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(task.id())
                         .await?;
+                    let outstanding_batches =
+                        tx.get_outstanding_batches_for_task(task.id()).await?;
 
                     Ok((
                         client_reports,
                         aggregation_jobs,
                         report_aggregations,
+                        batch_aggregations,
                         collect_jobs,
+                        outstanding_batches,
                     ))
                 })
             })
@@ -341,6 +560,164 @@ mod tests {
         assert!(client_reports.is_empty());
         assert!(aggregation_jobs.is_empty());
         assert!(report_aggregations.is_empty());
+        assert!(batch_aggregations.is_empty());
         assert!(collect_jobs.is_empty());
+        assert!(outstanding_batches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn gc_task_helper_fixed_size() {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ds = Arc::new(ds);
+        let vdaf = dummy_vdaf::Vdaf::new();
+
+        // Setup.
+        let task = ds
+            .run_tx(|tx| {
+                let clock = clock.clone();
+                Box::pin(async move {
+                    const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
+                    let task = TaskBuilder::new(
+                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        VdafInstance::Fake,
+                        Role::Helper,
+                    )
+                    .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+                    .build();
+                    tx.put_task(&task).await?;
+
+                    let client_timestamp = clock
+                        .now()
+                        .sub(&REPORT_EXPIRY_AGE)
+                        .unwrap()
+                        .sub(&Duration::from_seconds(1))
+                        .unwrap();
+                    let report_share = ReportShare::new(
+                        ReportMetadata::new(random(), client_timestamp),
+                        Vec::new(),
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(13),
+                            Vec::from("encapsulated_context_0"),
+                            Vec::from("payload_0"),
+                        ),
+                    );
+                    tx.put_report_share(task.id(), &report_share).await.unwrap();
+
+                    let batch_identifier = random();
+                    let aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        random(),
+                        Some(batch_identifier),
+                        AggregationParam(0),
+                        Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
+                        AggregationJobState::InProgress,
+                    );
+                    tx.put_aggregation_job(&aggregation_job).await.unwrap();
+
+                    let report_aggregation = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        *aggregation_job.id(),
+                        *report_share.metadata().id(),
+                        client_timestamp,
+                        0,
+                        ReportAggregationState::Start,
+                    );
+                    tx.put_report_aggregation(&report_aggregation)
+                        .await
+                        .unwrap();
+
+                    let batch_aggregation = BatchAggregation::new(
+                        *task.id(),
+                        batch_identifier,
+                        AggregationParam(0),
+                        AggregateShare(11),
+                        1,
+                        random(),
+                    );
+                    tx.put_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(&batch_aggregation)
+                        .await
+                        .unwrap();
+
+                    let aggregate_share_job = AggregateShareJob::new(
+                        *task.id(),
+                        batch_identifier,
+                        AggregationParam(0),
+                        AggregateShare(11),
+                        1,
+                        random(),
+                    );
+                    tx.put_aggregate_share_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &aggregate_share_job,
+                    )
+                    .await
+                    .unwrap();
+
+                    Ok(task)
+                })
+            })
+            .await
+            .unwrap();
+
+        // Run.
+        let task = Arc::new(task);
+        GarbageCollector::new(Arc::clone(&ds), clock.clone())
+            .gc_task(Arc::clone(&task))
+            .await
+            .unwrap();
+
+        // Verify.
+        let (
+            client_reports,
+            aggregation_jobs,
+            report_aggregations,
+            batch_aggregations,
+            aggregate_share_jobs,
+        ) = ds
+            .run_tx(|tx| {
+                let (vdaf, task) = (vdaf.clone(), Arc::clone(&task));
+                Box::pin(async move {
+                    let client_reports = tx
+                        .get_client_reports_for_task::<0, dummy_vdaf::Vdaf>(&vdaf, task.id())
+                        .await?;
+                    let aggregation_jobs = tx
+                        .get_aggregation_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(task.id())
+                        .await?;
+                    let report_aggregations = tx
+                        .get_report_aggregations_for_task::<0, dummy_vdaf::Vdaf>(
+                            &vdaf,
+                            &Role::Leader,
+                            task.id(),
+                        )
+                        .await?;
+                    let batch_aggregations = tx
+                        .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            task.id(),
+                        )
+                        .await?;
+                    let aggregate_share_jobs = tx
+                        .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            task.id(),
+                        )
+                        .await?;
+
+                    Ok((
+                        client_reports,
+                        aggregation_jobs,
+                        report_aggregations,
+                        batch_aggregations,
+                        aggregate_share_jobs,
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+        assert!(client_reports.is_empty());
+        assert!(aggregation_jobs.is_empty());
+        assert!(report_aggregations.is_empty());
+        assert!(batch_aggregations.is_empty());
+        assert!(aggregate_share_jobs.is_empty());
     }
 }

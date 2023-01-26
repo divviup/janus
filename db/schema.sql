@@ -96,13 +96,14 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 
 -- An aggregation job, representing the aggregation of a number of client reports.
 CREATE TABLE aggregation_jobs(
-    id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id                  BIGINT NOT NULL,                 -- ID of related task
-    aggregation_job_id       BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
-    batch_identifier         BYTEA,                           -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector; present for leader tasks and fixed size tasks, NULL otherwise)
-    batch_interval           TSRANGE,                         -- batch interval, as a TSRANGE, populated only for leader time-interval tasks. (will match batch_identifier when present)
-    aggregation_param        BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
-    state                    AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
+    id                        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
+    task_id                   BIGINT NOT NULL,                 -- ID of related task
+    aggregation_job_id        BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
+    batch_identifier          BYTEA,                           -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector; present for leader tasks and fixed size tasks, NULL otherwise)
+    batch_interval            TSRANGE,                         -- batch interval, as a TSRANGE, populated only for leader time-interval tasks. (will match batch_identifier when present)
+    aggregation_param         BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
+    client_timestamp_interval TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
+    state                     AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
 
     lease_expiry             TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this aggregation job expires; -infinity implies no current lease
     lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
@@ -114,6 +115,7 @@ CREATE TABLE aggregation_jobs(
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
 CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, batch_identifier);
 CREATE INDEX aggregation_jobs_task_and_batch_interval ON aggregation_jobs USING gist (task_id, batch_interval) WHERE batch_interval IS NOT NULL;
+CREATE INDEX aggregation_jobs_task_and_client_timestamp_interval ON aggregation_jobs USING gist (task_id, client_timestamp_interval);
 
 -- Specifies the possible state of aggregating a single report.
 CREATE TYPE REPORT_AGGREGATION_STATE AS ENUM(
@@ -151,6 +153,7 @@ CREATE TABLE batch_aggregations(
     id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id               BIGINT NOT NULL,     -- the task ID
     batch_identifier      BYTEA NOT NULL,      -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
+    batch_interval        TSRANGE,             -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
     aggregation_param     BYTEA NOT NULL,      -- the aggregation parameter (opaque VDAF message)
     aggregate_share       BYTEA NOT NULL,      -- the (possibly-incremental) aggregate share
     report_count          BIGINT NOT NULL,     -- the (possibly-incremental) client report count

@@ -346,6 +346,13 @@ impl Decode for ReportIdChecksum {
     }
 }
 
+#[cfg(feature = "test-util")]
+impl Distribution<ReportIdChecksum> for Standard {
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> ReportIdChecksum {
+        ReportIdChecksum(rng.gen())
+    }
+}
+
 /// DAP protocol message representing the different roles that participants can adopt.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]

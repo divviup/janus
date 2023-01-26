@@ -610,7 +610,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
-        HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
+        HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role, Time,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -664,6 +664,11 @@ mod tests {
                             aggregation_job_id,
                             Some(batch_interval),
                             aggregation_param,
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
+                            .unwrap(),
                             AggregationJobState::Finished,
                         ),
                     )
@@ -784,6 +789,11 @@ mod tests {
                             aggregation_job_id,
                             Some(batch_interval),
                             aggregation_param,
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
+                            .unwrap(),
                             AggregationJobState::Finished,
                         ),
                     )
