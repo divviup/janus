@@ -482,7 +482,9 @@ impl<C: Clock> Aggregator<C> {
     ) -> Result<Option<Vec<u8>>, Error> {
         let task_id = self
             .datastore
-            .run_tx(|tx| Box::pin(async move { tx.get_collect_job_task_id(&collect_job_id).await }))
+            .run_tx_with_name("get_collect_job_get_task", |tx| {
+                Box::pin(async move { tx.get_collect_job_task_id(&collect_job_id).await })
+            })
             .await?
             .ok_or(Error::UnrecognizedCollectJob(collect_job_id))?;
 
@@ -514,7 +516,9 @@ impl<C: Clock> Aggregator<C> {
     ) -> Result<Response, Error> {
         let task_id = self
             .datastore
-            .run_tx(|tx| Box::pin(async move { tx.get_collect_job_task_id(&collect_job_id).await }))
+            .run_tx_with_name("delete_collect_job_get_task", |tx| {
+                Box::pin(async move { tx.get_collect_job_task_id(&collect_job_id).await })
+            })
             .await?
             .ok_or(Error::UnrecognizedCollectJob(collect_job_id))?;
 
@@ -588,7 +592,7 @@ impl<C: Clock> Aggregator<C> {
         // Slow path: retrieve task, create a task aggregator, store it to the cache, then return it.
         let task = self
             .datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("task_aggregator_get_task", |tx| {
                 let task_id = *task_id;
                 Box::pin(async move { tx.get_task(&task_id).await })
             })
@@ -1383,7 +1387,7 @@ impl VdafOps {
         );
 
         datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("upload", |tx| {
                 let (vdaf, stored_report) = (vdaf.clone(), stored_report.clone());
                 Box::pin(async move {
                     let (existing_client_report, conflicting_collect_jobs) = try_join!(
@@ -1613,7 +1617,7 @@ impl VdafOps {
         ));
         let report_share_data = Arc::new(report_share_data);
         let prep_steps = datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("aggregate_init", |tx| {
                 let (task, req, aggregation_job, report_share_data) = (
                     Arc::clone(&task),
                     Arc::clone(&req),
@@ -1728,7 +1732,7 @@ impl VdafOps {
         // TODO(#224): don't hold DB transaction open while computing VDAF updates?
         // TODO(#224): don't do O(n) network round-trips (where n is the number of prepare steps)
         Ok(datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("aggregate_continue", |tx| {
                 let (vdaf, aggregate_step_failure_counter, task, req) =
                     (Arc::clone(&vdaf), aggregate_step_failure_counter.clone(), Arc::clone(&task), Arc::clone(&req));
 
@@ -2031,7 +2035,7 @@ impl VdafOps {
         }
 
         Ok(datastore
-            .run_tx(move |tx| {
+            .run_tx_with_name("collect", move |tx| {
                 let aggregation_param = aggregation_param.clone();
                 let task = task.clone();
                 let req = req.clone();
@@ -2212,7 +2216,7 @@ impl VdafOps {
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         let collect_job = datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("get_collect_job", |tx| {
                 let collect_job_id = Arc::clone(&collect_job_id);
                 Box::pin(async move {
                     tx.get_collect_job::<L, Q, A>(&collect_job_id)
@@ -2419,7 +2423,7 @@ impl VdafOps {
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         datastore
-            .run_tx(move |tx| {
+            .run_tx_with_name("delete_collect_job", move |tx| {
                 Box::pin(async move {
                     let collect_job = tx
                         .get_collect_job::<L, Q, A>(&collect_job_id)
@@ -2585,7 +2589,7 @@ impl VdafOps {
         }
 
         let aggregate_share_job = datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("aggregate_share", |tx| {
                 let (task, aggregate_share_req) =
                     (Arc::clone(&task), Arc::clone(&aggregate_share_req));
                 Box::pin(async move {

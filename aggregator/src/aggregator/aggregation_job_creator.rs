@@ -130,7 +130,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             let start = Instant::now();
             let tasks = self
                 .datastore
-                .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+                .run_tx_with_name("aggregation_job_creator_get_tasks", |tx| {
+                    Box::pin(async move { tx.get_tasks().await })
+                })
                 .await;
             let tasks = match tasks {
                 Ok(tasks) => tasks
@@ -303,7 +305,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     {
         Ok(self
             .datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("aggregation_job_creator_time_no_param", |tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
                     let current_batch_start = this
@@ -413,7 +415,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         );
         Ok(self
             .datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("aggregation_job_creator_fixed_no_param", |tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
                     // Find unaggregated client reports & existing unfilled batches.
@@ -584,7 +586,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         let max_aggregation_job_size = self.max_aggregation_job_size;
 
         self.datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("aggregation_job_creator_time_with_param", |tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // Find some client reports that are covered by a collect request, but haven't

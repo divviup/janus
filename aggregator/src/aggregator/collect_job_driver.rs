@@ -183,7 +183,7 @@ impl CollectJobDriver {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
         let (task, collect_job, batch_aggregations) = datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("step_collect_job_1", |tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     // TODO(#224): Consider fleshing out `AcquiredCollectJob` to include a `Task`,
@@ -265,7 +265,7 @@ impl CollectJobDriver {
             }),
         );
         datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("step_collect_job_2", |tx| {
                 let (lease, collect_job) = (Arc::clone(&lease), Arc::clone(&collect_job));
                 let metrics = self.metrics.clone();
 
@@ -429,7 +429,7 @@ impl CollectJobDriver {
     {
         let lease = Arc::new(lease);
         datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("abandon_collect_job", |tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let collect_job = tx
@@ -463,7 +463,7 @@ impl CollectJobDriver {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
                 datastore
-                    .run_tx(|tx| {
+                    .run_tx_with_name("acquire_collect_jobs", |tx| {
                         Box::pin(async move {
                             let (time_interval_jobs, fixed_size_jobs) = try_join!(
                                 tx.acquire_incomplete_time_interval_collect_jobs(
