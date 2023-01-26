@@ -394,7 +394,7 @@ async fn handle_collect_start(
             .await?
         }
 
-        (_, vdaf_instance) => panic!("Unsupported VDAF: {:?}", vdaf_instance),
+        (_, vdaf_instance) => panic!("Unsupported VDAF: {vdaf_instance:?}"),
     };
 
     let mut collect_jobs_guard = collect_jobs.lock().await;
@@ -488,7 +488,7 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
                     },
                     Err(e) => AddTaskResponse {
                         status: ERROR,
-                        error: Some(format!("{:?}", e)),
+                        error: Some(format!("{e:?}")),
                         collector_hpke_config: None,
                     },
                 };
@@ -517,7 +517,7 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
                             },
                             Err(e) => CollectStartResponse {
                                 status: ERROR,
-                                error: Some(format!("{:?}", e)),
+                                error: Some(format!("{e:?}")),
                                 handle: None,
                             },
                         };
@@ -545,7 +545,7 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
                     },
                     Err(e) => CollectPollResponse {
                         status: ERROR,
-                        error: Some(format!("{:?}", e)),
+                        error: Some(format!("{e:?}")),
                         report_count: None,
                         result: None,
                     },

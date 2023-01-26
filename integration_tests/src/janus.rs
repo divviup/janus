@@ -77,7 +77,7 @@ impl<'a> Janus<'a> {
         // Write the given task to the Janus instance we started.
         let http_client = reqwest::Client::default();
         let resp = http_client
-            .post(Url::parse(&format!("http://127.0.0.1:{}/internal/test/add_task", port)).unwrap())
+            .post(Url::parse(&format!("http://127.0.0.1:{port}/internal/test/add_task")).unwrap())
             .json(&AggregatorAddTaskRequest::from(task.clone()))
             .send()
             .await
@@ -92,8 +92,7 @@ impl<'a> Janus<'a> {
         );
 
         let fetch_batch_ids_url = Url::parse(&format!(
-            "http://127.0.0.1:{}/internal/test/fetch_batch_ids",
-            port
+            "http://127.0.0.1:{port}/internal/test/fetch_batch_ids"
         ))
         .unwrap();
         let batch_discovery = Arc::new(JanusContainerBatchFetch {
