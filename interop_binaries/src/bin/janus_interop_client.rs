@@ -265,7 +265,7 @@ async fn handle_upload(
                 )?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
-        _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
+        _ => panic!("Unsupported VDAF: {vdaf_instance:?}"),
     }
     Ok(())
 }
@@ -290,7 +290,7 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
                         },
                         Err(e) => UploadResponse {
                             status: ERROR,
-                            error: Some(format!("{:?}", e)),
+                            error: Some(format!("{e:?}")),
                         },
                     };
                     warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)

@@ -1606,10 +1606,10 @@ impl<C: Clock> Transaction<'_, C> {
         let error_code = match error_code {
             Some(c) => {
                 let c: u8 = c.try_into().map_err(|err| {
-                    Error::DbState(format!("couldn't convert error_code value: {0}", err))
+                    Error::DbState(format!("couldn't convert error_code value: {err}"))
                 })?;
                 Some(c.try_into().map_err(|err| {
-                    Error::DbState(format!("couldn't convert error_code value: {0}", err))
+                    Error::DbState(format!("couldn't convert error_code value: {err}"))
                 })?)
             }
             None => None,
@@ -2030,8 +2030,7 @@ impl<C: Clock> Transaction<'_, C> {
                 )
                 .map_err(|err| {
                     Error::DbState(format!(
-                        "leader_aggregate_share stored in database is invalid: {:?}",
-                        err
+                        "leader_aggregate_share stored in database is invalid: {err:?}"
                     ))
                 })?;
                 CollectJobState::Finished {
@@ -2925,8 +2924,7 @@ fn check_single_row_mutation(row_count: u64) -> Result<(), Error> {
         0 => Err(Error::MutationTargetNotFound),
         1 => Ok(()),
         _ => panic!(
-            "update which should have affected at most one row instead affected {} rows",
-            row_count
+            "update which should have affected at most one row instead affected {row_count} rows"
         ),
     }
 }
@@ -3003,7 +3001,7 @@ impl RowExt for Row {
     {
         let encoded: Vec<u8> = self.try_get(idx)?;
         let decoded = T::try_from(&encoded).map_err(|err| {
-            Error::DbState(format!("{} stored in database is invalid: {:?}", idx, err))
+            Error::DbState(format!("{idx} stored in database is invalid: {err:?}"))
         })?;
         Ok(decoded)
     }
@@ -4792,10 +4790,8 @@ pub mod test_util {
         // Compute the Postgres connection string.
         const POSTGRES_DEFAULT_PORT: u16 = 5432;
         let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
-        let connection_string = format!(
-            "postgres://postgres:postgres@127.0.0.1:{}/postgres",
-            port_number,
-        );
+        let connection_string =
+            format!("postgres://postgres:postgres@127.0.0.1:{port_number}/postgres");
         trace!("Postgres container is up with URL {}", connection_string);
 
         // Create a random (ephemeral) key.
@@ -8241,7 +8237,7 @@ mod tests {
                     )
                     .await?;
 
-                assert_eq!(batch_aggregations.len(), 3, "{:#?}", batch_aggregations);
+                assert_eq!(batch_aggregations.len(), 3, "{batch_aggregations:#?}");
                 for batch_aggregation in [
                     &first_batch_aggregation,
                     &second_batch_aggregation,
@@ -8249,8 +8245,7 @@ mod tests {
                 ] {
                     assert!(
                         batch_aggregations.contains(batch_aggregation),
-                        "{:#?}",
-                        batch_aggregations
+                        "{batch_aggregations:#?}"
                     );
                 }
 
@@ -8283,7 +8278,7 @@ mod tests {
                     )
                     .await?;
 
-                assert_eq!(batch_aggregations.len(), 3, "{:#?}", batch_aggregations);
+                assert_eq!(batch_aggregations.len(), 3, "{batch_aggregations:#?}");
                 for batch_aggregation in [
                     &first_batch_aggregation,
                     &second_batch_aggregation,
@@ -8291,8 +8286,7 @@ mod tests {
                 ] {
                     assert!(
                         batch_aggregations.contains(batch_aggregation),
-                        "{:#?}",
-                        batch_aggregations
+                        "{batch_aggregations:#?}"
                     );
                 }
 

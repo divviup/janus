@@ -93,7 +93,7 @@ where
     {
         let number = value
             .parse()
-            .map_err(|err| E::custom(format!("string could not be parsed into number: {}", err)))?;
+            .map_err(|err| E::custom(format!("string could not be parsed into number: {err}")))?;
         Ok(NumberAsString(number))
     }
 }
@@ -162,7 +162,7 @@ impl From<VdafInstance> for VdafObject {
                     length: NumberAsString(length),
                 }
             }
-            _ => panic!("Unsupported VDAF: {:?}", vdaf),
+            _ => panic!("Unsupported VDAF: {vdaf:?}"),
         }
     }
 }
@@ -411,7 +411,7 @@ impl<'d, I: Image> Drop for ContainerLogsDropGuard<'d, I> {
 
             let copy_status = Command::new("docker")
                 .arg("cp")
-                .arg(format!("{}:/logs", id))
+                .arg(format!("{id}:/logs"))
                 .arg(destination)
                 .status()
                 .expect("running `docker cp` failed");
