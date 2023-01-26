@@ -81,7 +81,7 @@ fn json_encode_vdaf(vdaf: &VdafInstance) -> Value {
                 "buckets": buckets,
             })
         }
-        _ => panic!("VDAF {:?} is not yet supported", vdaf),
+        _ => panic!("VDAF {vdaf:?} is not yet supported"),
     }
 }
 
