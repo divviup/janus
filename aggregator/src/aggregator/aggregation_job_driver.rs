@@ -233,7 +233,7 @@ impl AggregationJobDriver {
     {
         // Read all information about the aggregation job.
         let (task, aggregation_job, report_aggregations, client_reports, verify_key) = datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("step_aggregation_job_1", |tx| {
                 let (lease, vdaf) = (Arc::clone(&lease), Arc::clone(&vdaf));
                 Box::pin(async move {
                     let task = tx
@@ -743,7 +743,7 @@ impl AggregationJobDriver {
         let aggregation_job_to_write = Arc::new(aggregation_job_to_write);
         let accumulator = Arc::new(accumulator);
         datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("step_aggregation_job_2", |tx| {
                 let (report_aggregations_to_write, aggregation_job_to_write, accumulator, lease) = (
                     Arc::clone(&report_aggregations_to_write),
                     Arc::clone(&aggregation_job_to_write),
@@ -883,7 +883,7 @@ impl AggregationJobDriver {
     {
         let lease = Arc::new(lease);
         datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("cancel_aggregation_job", |tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let aggregation_job = tx
@@ -929,7 +929,7 @@ impl AggregationJobDriver {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
                 datastore
-                    .run_tx(|tx| {
+                    .run_tx_with_name("acquire_aggregation_jobs", |tx| {
                         Box::pin(async move {
                             tx.acquire_incomplete_aggregation_jobs(
                                 &lease_duration,

@@ -148,16 +148,6 @@ impl<C: Clock> Datastore<C> {
             ))
             .init();
 
-        // Initialize counters with desired status labels. This causes Prometheus to see the first
-        // non-zero value we record.
-        for status in ["success", "error_conflict", "error_db", "error_other"] {
-            transaction_status_counter.add(
-                &Context::current(),
-                0,
-                &[KeyValue::new("status", status)],
-            );
-        }
-
         Self {
             pool,
             crypter,
@@ -175,7 +165,19 @@ impl<C: Clock> Datastore<C> {
     /// rolling back & retrying with a new transaction, so the given function should support being
     /// called multiple times. Values read from the transaction should not be considered as
     /// "finalized" until the transaction is committed, i.e. after `run_tx` is run to completion.
-    pub async fn run_tx<F, T>(&self, f: F) -> Result<T, Error>
+    pub fn run_tx<'s, F, T>(&'s self, f: F) -> impl Future<Output = Result<T, Error>> + 's
+    where
+        F: 's,
+        T: 's,
+        for<'a> F:
+            Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
+    {
+        self.run_tx_with_name("default", f)
+    }
+
+    /// See [`Datastore::run_tx`]. This method additionally allows specifying a name for the
+    /// transaction, for use in database-related metrics.
+    pub async fn run_tx_with_name<F, T>(&self, name: &'static str, f: F) -> Result<T, Error>
     where
         for<'a> F:
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
@@ -186,25 +188,37 @@ impl<C: Clock> Datastore<C> {
                 Ok(_) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
-                    &[KeyValue::new("status", "success")],
+                    &[
+                        KeyValue::new("status", "success"),
+                        KeyValue::new("tx", name),
+                    ],
                 ),
                 Err(err) if err.is_serialization_failure() => {
                     self.transaction_status_counter.add(
                         &Context::current(),
                         1,
-                        &[KeyValue::new("status", "error_conflict")],
+                        &[
+                            KeyValue::new("status", "error_conflict"),
+                            KeyValue::new("tx", name),
+                        ],
                     );
                     continue;
                 }
                 Err(Error::Db(_)) | Err(Error::Pool(_)) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
-                    &[KeyValue::new("status", "error_db")],
+                    &[
+                        KeyValue::new("status", "error_db"),
+                        KeyValue::new("tx", name),
+                    ],
                 ),
                 Err(_) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
-                    &[KeyValue::new("status", "error_other")],
+                    &[
+                        KeyValue::new("status", "error_other"),
+                        KeyValue::new("tx", name),
+                    ],
                 ),
             }
             return rslt;
