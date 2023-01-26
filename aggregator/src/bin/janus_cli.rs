@@ -189,9 +189,9 @@ async fn provision_tasks<C: Clock>(
     let tasks: Vec<SerializedTask> = {
         let task_file_contents = fs::read_to_string(tasks_file)
             .await
-            .with_context(|| format!("couldn't read tasks file {:?}", tasks_file))?;
+            .with_context(|| format!("couldn't read tasks file {tasks_file:?}"))?;
         serde_yaml::from_str(&task_file_contents)
-            .with_context(|| format!("couldn't parse tasks file {:?}", tasks_file))?
+            .with_context(|| format!("couldn't parse tasks file {tasks_file:?}"))?
     };
 
     let tasks: Vec<Task> = tasks

@@ -128,7 +128,7 @@ impl ClientParameters {
 fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
     let mut list = f.debug_list();
     for url in urls {
-        list.entry(&format!("{}", url));
+        list.entry(&format!("{url}"));
     }
     list.finish()
 }

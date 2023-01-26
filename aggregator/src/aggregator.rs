@@ -2477,7 +2477,7 @@ impl VdafOps {
                     // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.1
                     if !Q::validate_collect_identifier(&task, &batch_identifier) {
                         return Err(datastore::Error::User(
-                            Error::BatchInvalid(*task.id(), format!("{}", batch_identifier)).into(),
+                            Error::BatchInvalid(*task.id(), format!("{batch_identifier}")).into(),
                         ));
                     }
 
@@ -3651,7 +3651,7 @@ pub fn aggregator_filter<C: Clock>(
                     .header(CACHE_CONTROL, "max-age=86400")
                     .header(CONTENT_TYPE, HpkeConfigList::MEDIA_TYPE)
                     .body(hpke_config_bytes)
-                    .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+                    .map_err(|err| Error::Internal(format!("couldn't produce response: {err}")))
             },
         );
     let hpke_config_endpoint = compose_common_wrappers(
@@ -3717,7 +3717,7 @@ pub fn aggregator_filter<C: Clock>(
                         .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
                         .body(Vec::new()),
                 }
-                .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+                .map_err(|err| Error::Internal(format!("couldn't produce response: {err}")))
             },
         );
     let aggregate_endpoint = compose_common_wrappers(
@@ -3775,7 +3775,7 @@ pub fn aggregator_filter<C: Clock>(
                             .status(StatusCode::ACCEPTED)
                             .body(Vec::new()),
                     }
-                    .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+                    .map_err(|err| Error::Internal(format!("couldn't produce response: {err}")))
                 },
             );
     let collect_jobs_get_endpoint = compose_common_wrappers(
@@ -3824,7 +3824,7 @@ pub fn aggregator_filter<C: Clock>(
                 http::Response::builder()
                     .header(CONTENT_TYPE, AggregateShareResp::MEDIA_TYPE)
                     .body(resp_bytes)
-                    .map_err(|err| Error::Internal(format!("couldn't produce response: {}", err)))
+                    .map_err(|err| Error::Internal(format!("couldn't produce response: {err}")))
             },
         );
     let aggregate_share_endpoint = compose_common_wrappers(
@@ -7464,7 +7464,7 @@ mod tests {
         // Incorrect authentication token.
         let mut response = warp::test::request()
             .method("GET")
-            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .path(&format!("/collect_jobs/{collect_job_id}"))
             .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
             .filter(&filter)
             .await
@@ -7488,7 +7488,7 @@ mod tests {
         // Aggregator authentication token.
         let mut response = warp::test::request()
             .method("GET")
-            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .path(&format!("/collect_jobs/{collect_job_id}"))
             .header(
                 "DAP-Auth-Token",
                 task.primary_aggregator_auth_token().as_bytes(),
@@ -7515,7 +7515,7 @@ mod tests {
         // Missing authentication token.
         let mut response = warp::test::request()
             .method("GET")
-            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .path(&format!("/collect_jobs/{collect_job_id}"))
             .filter(&filter)
             .await
             .unwrap()
@@ -7595,7 +7595,7 @@ mod tests {
 
         let collect_job_response = warp::test::request()
             .method("GET")
-            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .path(&format!("/collect_jobs/{collect_job_id}"))
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -7651,7 +7651,7 @@ mod tests {
 
         let (parts, body) = warp::test::request()
             .method("GET")
-            .path(&format!("/collect_jobs/{}", collect_job_id))
+            .path(&format!("/collect_jobs/{collect_job_id}"))
             .header(
                 "DAP-Auth-Token",
                 task.primary_collector_auth_token().as_bytes(),
@@ -8447,16 +8447,12 @@ mod tests {
                 assert_eq!(
                     parts.status,
                     StatusCode::OK,
-                    "test case: {:?}, iteration: {}",
-                    label,
-                    iteration
+                    "test case: {label:?}, iteration: {iteration}"
                 );
                 assert_eq!(
                     parts.headers.get(CONTENT_TYPE).unwrap(),
                     AggregateShareResp::MEDIA_TYPE,
-                    "test case: {:?}, iteration: {}",
-                    label,
-                    iteration
+                    "test case: {label:?}, iteration: {iteration}"
                 );
                 let body_bytes = body::to_bytes(body).await.unwrap();
                 let aggregate_share_resp = AggregateShareResp::get_decoded(&body_bytes).unwrap();
@@ -8480,8 +8476,7 @@ mod tests {
                     dummy_vdaf::AggregateShare::try_from(aggregate_share.as_ref()).unwrap();
                 assert_eq!(
                     decoded_aggregate_share, expected_result,
-                    "test case: {:?}, iteration: {}",
-                    label, iteration
+                    "test case: {label:?}, iteration: {iteration}"
                 );
             }
         }
