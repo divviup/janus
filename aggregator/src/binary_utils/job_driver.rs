@@ -1,8 +1,8 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
 use crate::datastore::{self, models::Lease};
+use chrono::NaiveDateTime;
 use janus_core::{time::Clock, Runtime};
-use janus_messages::{Duration, Time};
 use opentelemetry::{
     metrics::{Meter, Unit},
     Context, KeyValue,
@@ -12,6 +12,7 @@ use std::{
     fmt::{Debug, Display},
     future::Future,
     sync::Arc,
+    time::Duration,
 };
 use tokio::{
     sync::Semaphore,
@@ -114,7 +115,7 @@ where
 
         loop {
             // Wait out our job discovery delay, if any.
-            time::sleep(time::Duration::from_secs(job_discovery_delay.as_seconds())).await;
+            time::sleep(job_discovery_delay).await;
 
             // Wait until we are able to start at least one worker. (permit will be immediately released)
             //
@@ -230,23 +231,23 @@ where
         // Nonzero delays are doubled, up to the maximum configured delay.
         // (It's OK to use a saturating multiply here because the following min call causes us to
         // get the right answer even in the case we saturate.)
-        let new_delay = Duration::from_seconds(delay.as_seconds().saturating_mul(2));
+        let new_delay = Duration::from_secs(delay.as_secs().saturating_mul(2));
         let new_delay = Duration::min(new_delay, self.max_job_discovery_delay);
-        debug!(%new_delay, "Updating job discovery delay");
+        debug!(?new_delay, "Updating job discovery delay");
         new_delay
     }
 
-    fn effective_lease_duration(&self, lease_expiry: &Time) -> time::Duration {
+    fn effective_lease_duration(&self, lease_expiry: &NaiveDateTime) -> Duration {
         // Lease expiries are expressed as Time values (i.e. an absolute timestamp). Tokio Instant
         // values, unfortunately, can't be created directly from a timestamp. All we can do is
         // create an Instant::now(), then add durations to it. This function computes how long
         // remains until the expiry time, minus the clock skew allowance. All math saturates, since
         // we want to timeout immediately if any of these subtractions would underflow.
-        time::Duration::from_secs(
-            lease_expiry
-                .as_seconds_since_epoch()
+        Duration::from_secs(
+            u64::try_from(lease_expiry.timestamp())
+                .unwrap_or_default()
                 .saturating_sub(self.clock.now().as_seconds_since_epoch())
-                .saturating_sub(self.worker_lease_clock_skew_allowance.as_seconds()),
+                .saturating_sub(self.worker_lease_clock_skew_allowance.as_secs()),
         )
     }
 }
@@ -255,16 +256,17 @@ where
 mod tests {
     use super::JobDriver;
     use crate::datastore::{self, models::Lease};
+    use chrono::NaiveDateTime;
     use janus_core::{
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},
         time::MockClock,
         Runtime,
     };
-    use janus_messages::{AggregationJobId, Duration, TaskId, Time};
+    use janus_messages::{AggregationJobId, TaskId};
     use opentelemetry::global::meter;
     use rand::random;
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
     use tokio::sync::Mutex;
 
     #[tokio::test]
@@ -285,7 +287,7 @@ mod tests {
         struct IncompleteJob {
             task_id: TaskId,
             job_id: AggregationJobId,
-            lease_expiry: Time,
+            lease_expiry: NaiveDateTime,
         }
 
         /// Records a job observed by the job stepper closure.
@@ -314,12 +316,12 @@ mod tests {
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: Time::from_seconds_since_epoch(100),
+                    lease_expiry: NaiveDateTime::from_timestamp_opt(100, 0).unwrap(),
                 },
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: Time::from_seconds_since_epoch(200),
+                    lease_expiry: NaiveDateTime::from_timestamp_opt(200, 0).unwrap(),
                 },
             ]),
             // Second job finder call will be immediately after the first: no more jobs
@@ -331,12 +333,12 @@ mod tests {
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: Time::from_seconds_since_epoch(300),
+                    lease_expiry: NaiveDateTime::from_timestamp_opt(300, 0).unwrap(),
                 },
                 IncompleteJob {
                     task_id: random(),
                     job_id: random(),
-                    lease_expiry: Time::from_seconds_since_epoch(400),
+                    lease_expiry: NaiveDateTime::from_timestamp_opt(400, 0).unwrap(),
                 },
             ]),
         ]));
@@ -346,10 +348,10 @@ mod tests {
             clock,
             runtime_manager.with_label("stepper"),
             meter("job_driver_test"),
-            Duration::from_seconds(1),
-            Duration::from_seconds(1),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
             10,
-            Duration::from_seconds(60),
+            Duration::from_secs(60),
             {
                 let (test_state, incomplete_jobs) =
                     (Arc::clone(&test_state), Arc::clone(&incomplete_jobs));
