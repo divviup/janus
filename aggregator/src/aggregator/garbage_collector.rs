@@ -29,7 +29,9 @@ impl<C: Clock> GarbageCollector<C> {
         // Retrieve tasks.
         let tasks = self
             .datastore
-            .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+            .run_tx_with_name("garbage_collector_get_tasks", |tx| {
+                Box::pin(async move { tx.get_tasks().await })
+            })
             .await
             .context("couldn't retrieve tasks")?;
 
@@ -59,7 +61,7 @@ impl<C: Clock> GarbageCollector<C> {
             };
 
         self.datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("gc_task", |tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // Find and delete old collect jobs.
