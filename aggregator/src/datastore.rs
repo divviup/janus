@@ -26,7 +26,10 @@ use janus_messages::{
     AggregationJobId, BatchId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, ReportId,
     ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
-use opentelemetry::{metrics::Counter, Context, KeyValue};
+use opentelemetry::{
+    metrics::{Counter, Histogram},
+    Context, KeyValue,
+};
 use postgres_types::{Json, ToSql};
 use prio::{
     codec::{decode_u16_items, encode_u16_items, CodecError, Decode, Encode, ParameterizedDecode},
@@ -36,7 +39,7 @@ use rand::random;
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{
     collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
-    ops::RangeInclusive, pin::Pin,
+    ops::RangeInclusive, pin::Pin, time::Instant,
 };
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
@@ -129,6 +132,7 @@ pub struct Datastore<C: Clock> {
     clock: C,
     transaction_status_counter: Counter<u64>,
     rollback_error_counter: Counter<u64>,
+    transaction_duration_histogram: Histogram<f64>,
 }
 
 impl<C: Clock> Datastore<C> {
@@ -147,6 +151,10 @@ impl<C: Clock> Datastore<C> {
                 "with their PostgreSQL error code.",
             ))
             .init();
+        let transaction_duration_histogram = meter
+            .f64_histogram("janus_database_transaction_duration_seconds")
+            .with_description("Duration of database transactions.")
+            .init();
 
         Self {
             pool,
@@ -154,6 +162,7 @@ impl<C: Clock> Datastore<C> {
             clock,
             transaction_status_counter,
             rollback_error_counter,
+            transaction_duration_histogram,
         }
     }
 
@@ -183,7 +192,14 @@ impl<C: Clock> Datastore<C> {
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
         loop {
+            let before = Instant::now();
             let rslt = self.run_tx_once(&f).await;
+            let elapsed = before.elapsed();
+            self.transaction_duration_histogram.record(
+                &Context::current(),
+                elapsed.as_secs_f64(),
+                &[KeyValue::new("tx", name)],
+            );
             match rslt.as_ref() {
                 Ok(_) => self.transaction_status_counter.add(
                     &Context::current(),
