@@ -23,8 +23,7 @@ use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
-    Duration, PartialBatchSelector, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
-    Role,
+    PartialBatchSelector, PrepareStep, PrepareStepResult, ReportShare, ReportShareError, Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -43,7 +42,7 @@ use prio::{
         PrepareTransition,
     },
 };
-use std::{collections::HashSet, fmt, sync::Arc};
+use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
 #[derive(Derivative)]
@@ -1025,7 +1024,7 @@ mod tests {
     };
     use rand::random;
     use reqwest::Url;
-    use std::{str, sync::Arc};
+    use std::{str, sync::Arc, time::Duration as StdDuration};
 
     #[tokio::test]
     async fn aggregation_job_driver() {
@@ -1164,13 +1163,13 @@ mod tests {
             clock,
             runtime_manager.with_label("stepper"),
             meter,
-            Duration::from_seconds(1),
-            Duration::from_seconds(1),
+            StdDuration::from_secs(1),
+            StdDuration::from_secs(1),
             10,
-            Duration::from_seconds(60),
+            StdDuration::from_secs(60),
             aggregation_job_driver.make_incomplete_job_acquirer_callback(
                 Arc::clone(&ds),
-                Duration::from_seconds(600),
+                StdDuration::from_secs(600),
             ),
             aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 5),
         ));
@@ -1352,7 +1351,7 @@ mod tests {
                     .await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -1576,7 +1575,7 @@ mod tests {
                     .await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -1796,7 +1795,7 @@ mod tests {
                     .await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -2033,7 +2032,7 @@ mod tests {
                     .await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -2249,7 +2248,7 @@ mod tests {
                     tx.put_report_aggregation(&report_aggregation).await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -2297,7 +2296,7 @@ mod tests {
                         .await?
                         .unwrap();
                     let leases = tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?;
                     Ok((aggregation_job, report_aggregation, leases))
                 })
@@ -2449,13 +2448,13 @@ mod tests {
             clock.clone(),
             runtime_manager.with_label("stepper"),
             meter,
-            Duration::from_seconds(1),
-            Duration::from_seconds(1),
+            StdDuration::from_secs(1),
+            StdDuration::from_secs(1),
             10,
-            Duration::from_seconds(60),
+            StdDuration::from_secs(60),
             aggregation_job_driver.make_incomplete_job_acquirer_callback(
                 Arc::clone(&ds),
-                Duration::from_seconds(600),
+                StdDuration::from_secs(600),
             ),
             aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
         ));

@@ -15,6 +15,7 @@ use crate::{
     SecretBytes,
 };
 use anyhow::anyhow;
+use chrono::NaiveDateTime;
 use futures::future::join_all;
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
@@ -38,8 +39,15 @@ use prio::{
 use rand::random;
 use ring::aead::{self, LessSafeKey, AES_128_GCM};
 use std::{
-    collections::HashMap, convert::TryFrom, fmt::Display, future::Future, io::Cursor, mem::size_of,
-    ops::RangeInclusive, pin::Pin, time::Instant,
+    collections::HashMap,
+    convert::TryFrom,
+    fmt::Display,
+    future::Future,
+    io::Cursor,
+    mem::size_of,
+    ops::RangeInclusive,
+    pin::Pin,
+    time::{Duration as StdDuration, Instant},
 };
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
@@ -1310,11 +1318,11 @@ impl<C: Clock> Transaction<'_, C> {
     /// returned lease provides the absolute timestamp at which the lease is no longer live.
     pub async fn acquire_incomplete_aggregation_jobs(
         &self,
-        lease_duration: &Duration,
+        lease_duration: &StdDuration,
         maximum_acquire_count: usize,
     ) -> Result<Vec<Lease<AcquiredAggregationJob>>, Error> {
-        let now = self.clock.now();
-        let lease_expiry_time = now.add(lease_duration)?;
+        let now = self.clock.now().as_naive_date_time()?;
+        let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
 
         // TODO(#224): verify that this query is efficient. I am not sure if we would currently
@@ -1347,8 +1355,8 @@ impl<C: Clock> Transaction<'_, C> {
             .query(
                 &stmt,
                 &[
-                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time()?,
-                    /* now */ &now.as_naive_date_time()?,
+                    /* lease_expiry */ &lease_expiry_time,
+                    /* now */ &now,
                     /* limit */ &maximum_acquire_count,
                 ],
             )
@@ -1398,7 +1406,7 @@ impl<C: Clock> Transaction<'_, C> {
                         /* task_id */ &lease.leased().task_id().as_ref(),
                         /* aggregation_job_id */
                         &lease.leased().aggregation_job_id().as_ref(),
-                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time()?,
+                        /* lease_expiry */ &lease.lease_expiry_time(),
                         /* lease_token */ &lease.lease_token().as_ref(),
                     ],
                 )
@@ -2134,11 +2142,11 @@ impl<C: Clock> Transaction<'_, C> {
     /// parameter, and the lease expiration time is returned. Applies only to time-interval tasks.
     pub async fn acquire_incomplete_time_interval_collect_jobs(
         &self,
-        lease_duration: &Duration,
+        lease_duration: &StdDuration,
         maximum_acquire_count: usize,
     ) -> Result<Vec<Lease<AcquiredCollectJob>>, Error> {
-        let now = self.clock.now();
-        let lease_expiry_time = now.add(lease_duration)?;
+        let now = self.clock.now().as_naive_date_time()?;
+        let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
 
         let stmt = self
@@ -2185,8 +2193,8 @@ ORDER BY id DESC
             .query(
                 &stmt,
                 &[
-                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time()?,
-                    /* now */ &now.as_naive_date_time()?,
+                    /* lease_expiry */ &lease_expiry_time,
+                    /* now */ &now,
                     /* limit */ &maximum_acquire_count,
                 ],
             )
@@ -2215,11 +2223,11 @@ ORDER BY id DESC
     /// parameter, and the lease expiration time is returned. Applies only to fixed-size tasks.
     pub async fn acquire_incomplete_fixed_size_collect_jobs(
         &self,
-        lease_duration: &Duration,
+        lease_duration: &StdDuration,
         maximum_acquire_count: usize,
     ) -> Result<Vec<Lease<AcquiredCollectJob>>, Error> {
-        let now = self.clock.now();
-        let lease_expiry_time = now.add(lease_duration)?;
+        let now = self.clock.now().as_naive_date_time()?;
+        let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
 
         let stmt = self
@@ -2265,8 +2273,8 @@ ORDER BY id DESC
             .query(
                 &stmt,
                 &[
-                    /* lease_expiry */ &lease_expiry_time.as_naive_date_time()?,
-                    /* now */ &now.as_naive_date_time()?,
+                    /* lease_expiry */ &lease_expiry_time,
+                    /* now */ &now,
                     /* limit */ &maximum_acquire_count,
                 ],
             )
@@ -2314,7 +2322,7 @@ ORDER BY id DESC
                     &[
                         /* task_id */ &lease.leased().task_id().as_ref(),
                         /* collect_job_id */ &lease.leased().collect_job_id(),
-                        /* lease_expiry */ &lease.lease_expiry_time().as_naive_date_time()?,
+                        /* lease_expiry */ &lease.lease_expiry_time(),
                         /* lease_token */ &lease.lease_token().as_ref(),
                     ],
                 )
@@ -2959,6 +2967,18 @@ fn check_single_row_mutation(row_count: u64) -> Result<(), Error> {
     }
 }
 
+/// Add a [`std::time::Duration`] to a [`chrono::NaiveDateTime`].
+fn add_naive_date_time_duration(
+    time: &NaiveDateTime,
+    duration: &StdDuration,
+) -> Result<NaiveDateTime, Error> {
+    time.checked_add_signed(
+        chrono::Duration::from_std(*duration)
+            .map_err(|_| Error::TimeOverflow("overflow converting duration to signed duration"))?,
+    )
+    .ok_or(Error::TimeOverflow("overflow adding duration to time"))
+}
+
 /// Extensions for [`tokio_postgres::row::Row`]
 trait RowExt {
     /// Get a PostgreSQL `BIGINT` from the row, which is represented in Rust as
@@ -3180,6 +3200,9 @@ pub enum Error {
     /// An invalid parameter was provided.
     #[error("invalid parameter: {0}")]
     InvalidParameter(&'static str),
+    /// An error occurred while manipulating timestamps or durations.
+    #[error("{0}")]
+    TimeOverflow(&'static str),
 }
 
 impl Error {
@@ -3263,6 +3286,7 @@ pub mod models {
         task,
     };
     use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
+    use chrono::NaiveDateTime;
     use derivative::Derivative;
     use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance};
     use janus_messages::{
@@ -3625,7 +3649,7 @@ pub mod models {
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Lease<T> {
         leased: T,
-        lease_expiry_time: Time,
+        lease_expiry_time: NaiveDateTime,
         lease_token: LeaseToken,
         lease_attempts: usize,
     }
@@ -3634,7 +3658,7 @@ pub mod models {
         /// Creates a new [`Lease`].
         pub(super) fn new(
             leased: T,
-            lease_expiry_time: Time,
+            lease_expiry_time: NaiveDateTime,
             lease_token: LeaseToken,
             lease_attempts: usize,
         ) -> Self {
@@ -3649,7 +3673,7 @@ pub mod models {
         /// Create a new artificial lease with a random lease token, acquired for the first time;
         /// intended for use in unit tests.
         #[cfg(test)]
-        pub fn new_dummy(leased: T, lease_expiry_time: Time) -> Self {
+        pub fn new_dummy(leased: T, lease_expiry_time: NaiveDateTime) -> Self {
             use rand::random;
             Self {
                 leased,
@@ -3665,7 +3689,7 @@ pub mod models {
         }
 
         /// Returns the lease expiry time associated with this lease.
-        pub fn lease_expiry_time(&self) -> &Time {
+        pub fn lease_expiry_time(&self) -> &NaiveDateTime {
             &self.lease_expiry_time
         }
 
@@ -4904,6 +4928,7 @@ mod tests {
         iter,
         ops::RangeInclusive,
         sync::Arc,
+        time::Duration as StdDuration,
     };
     use uuid::Uuid;
 
@@ -6008,7 +6033,7 @@ mod tests {
         // concurrently. (We do things concurrently in an attempt to make sure the
         // mutual-exclusivity works properly.)
         const TX_COUNT: usize = 10;
-        const LEASE_DURATION: Duration = Duration::from_seconds(300);
+        const LEASE_DURATION: StdDuration = StdDuration::from_secs(300);
         const MAXIMUM_ACQUIRE_COUNT: usize = 4;
 
         // Sanity check constants: ensure we acquire jobs across multiple calls to exercise the
@@ -6041,7 +6066,8 @@ mod tests {
 
         // Verify: check that we got all of the desired aggregation jobs, with no duplication, and
         // the expected lease expiry.
-        let want_expiry_time = clock.now().add(&LEASE_DURATION).unwrap();
+        let want_expiry_time = clock.now().as_naive_date_time().unwrap()
+            + chrono::Duration::from_std(LEASE_DURATION).unwrap();
         let want_aggregation_jobs: Vec<_> = aggregation_job_ids
             .iter()
             .map(|&agg_job_id| {
@@ -6123,8 +6149,9 @@ mod tests {
 
         // Run: advance time by the lease duration (which implicitly releases the jobs), and attempt
         // to acquire aggregation jobs again.
-        clock.advance(LEASE_DURATION);
-        let want_expiry_time = clock.now().add(&LEASE_DURATION).unwrap();
+        clock.advance(Duration::from_seconds(LEASE_DURATION.as_secs()));
+        let want_expiry_time = clock.now().as_naive_date_time().unwrap()
+            + chrono::Duration::from_std(LEASE_DURATION).unwrap();
         let want_aggregation_jobs: Vec<_> = aggregation_job_ids
             .iter()
             .map(|&job_id| {
@@ -6166,7 +6193,7 @@ mod tests {
         // Run: advance time again to release jobs, acquire a single job, modify its lease token
         // to simulate a previously-held lease, and attempt to release it. Verify that releasing
         // fails.
-        clock.advance(LEASE_DURATION);
+        clock.advance(Duration::from_seconds(LEASE_DURATION.as_secs()));
         let lease = ds
             .run_tx(|tx| {
                 Box::pin(async move {
@@ -7273,10 +7300,10 @@ mod tests {
             let clock = clock.clone();
             Box::pin(async move {
                 let time_interval_leases = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 10)
+                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 10)
                     .await?;
                 let fixed_size_leases = tx
-                    .acquire_incomplete_fixed_size_collect_jobs(&Duration::from_seconds(100), 10)
+                    .acquire_incomplete_fixed_size_collect_jobs(&StdDuration::from_secs(100), 10)
                     .await?;
 
                 let mut leased_collect_jobs: Vec<_> = time_interval_leases
@@ -7298,7 +7325,8 @@ mod tests {
                                 test_case.query_type,
                                 VdafInstance::Fake,
                             ),
-                            clock.now().add(&Duration::from_seconds(100)).unwrap(),
+                            clock.now().as_naive_date_time().unwrap()
+                                + chrono::Duration::seconds(100),
                         )
                     })
                     .collect();
@@ -7380,7 +7408,7 @@ mod tests {
                     // valid.
                     assert!(tx
                         .acquire_incomplete_time_interval_collect_jobs(
-                            &Duration::from_seconds(100),
+                            &StdDuration::from_secs(100),
                             10
                         )
                         .await
@@ -7394,7 +7422,7 @@ mod tests {
 
                     let reacquired_leases = tx
                         .acquire_incomplete_time_interval_collect_jobs(
-                            &Duration::from_seconds(100),
+                            &StdDuration::from_secs(100),
                             10,
                         )
                         .await
@@ -7426,18 +7454,15 @@ mod tests {
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
                 let acquired_jobs = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 10)
+                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 10)
                     .await
                     .unwrap();
 
                 for (acquired_job, reacquired_job) in acquired_jobs.iter().zip(reacquired_jobs) {
                     assert_eq!(acquired_job.leased(), reacquired_job.leased());
                     assert_eq!(
-                        acquired_job.lease_expiry_time(),
-                        &reacquired_job
-                            .lease_expiry_time()
-                            .add(&Duration::from_seconds(100))
-                            .unwrap(),
+                        *acquired_job.lease_expiry_time(),
+                        *reacquired_job.lease_expiry_time() + chrono::Duration::seconds(100),
                     );
                 }
 
@@ -7505,8 +7530,8 @@ mod tests {
                     // valid.
                     assert!(tx
                         .acquire_incomplete_fixed_size_collect_jobs(
-                            &Duration::from_seconds(100),
-                            10
+                            &StdDuration::from_secs(100),
+                            10,
                         )
                         .await
                         .unwrap()
@@ -7519,7 +7544,7 @@ mod tests {
 
                     let reacquired_leases = tx
                         .acquire_incomplete_fixed_size_collect_jobs(
-                            &Duration::from_seconds(100),
+                            &StdDuration::from_secs(100),
                             10,
                         )
                         .await
@@ -7551,18 +7576,15 @@ mod tests {
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
                 let acquired_jobs = tx
-                    .acquire_incomplete_fixed_size_collect_jobs(&Duration::from_seconds(100), 10)
+                    .acquire_incomplete_fixed_size_collect_jobs(&StdDuration::from_secs(100), 10)
                     .await
                     .unwrap();
 
                 for (acquired_job, reacquired_job) in acquired_jobs.iter().zip(reacquired_jobs) {
                     assert_eq!(acquired_job.leased(), reacquired_job.leased());
                     assert_eq!(
-                        acquired_job.lease_expiry_time(),
-                        &reacquired_job
-                            .lease_expiry_time()
-                            .add(&Duration::from_seconds(100))
-                            .unwrap(),
+                        *acquired_job.lease_expiry_time(),
+                        *reacquired_job.lease_expiry_time() + chrono::Duration::seconds(100),
                     );
                 }
 
@@ -7966,13 +7988,13 @@ mod tests {
                 // Acquire a single collect job, twice. Each call should yield one job. We don't
                 // care what order they are acquired in.
                 let mut acquired_collect_jobs = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 1)
+                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 1)
                     .await?;
                 assert_eq!(acquired_collect_jobs.len(), 1);
 
                 acquired_collect_jobs.extend(
                     tx.acquire_incomplete_time_interval_collect_jobs(
-                        &Duration::from_seconds(100),
+                        &StdDuration::from_secs(100),
                         1,
                     )
                     .await?,
@@ -7998,7 +8020,8 @@ mod tests {
                                 task::QueryType::TimeInterval,
                                 VdafInstance::Fake,
                             ),
-                            clock.now().add(&Duration::from_seconds(100)).unwrap(),
+                            clock.now().as_naive_date_time().unwrap()
+                                + chrono::Duration::seconds(100),
                         )
                     })
                     .collect();
@@ -8124,7 +8147,7 @@ mod tests {
             Box::pin(async move {
                 // No collect jobs should be acquired because none of them are in the START state
                 let acquired_collect_jobs = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 10)
+                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 10)
                     .await?;
                 assert!(acquired_collect_jobs.is_empty());
 

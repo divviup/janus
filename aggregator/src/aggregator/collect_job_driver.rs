@@ -23,7 +23,7 @@ use janus_core::test_util::dummy_vdaf;
 use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    AggregateShareReq, AggregateShareResp, BatchSelector, Duration, Role,
+    AggregateShareReq, AggregateShareResp, BatchSelector, Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -41,7 +41,7 @@ use prio::{
         },
     },
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tracing::{info, warn};
 
 /// Drives a collect job.
@@ -730,7 +730,7 @@ mod tests {
     use opentelemetry::global::meter;
     use prio::codec::{Decode, Encode};
     use rand::random;
-    use std::{str, sync::Arc};
+    use std::{str, sync::Arc, time::Duration as StdDuration};
     use url::Url;
     use uuid::Uuid;
 
@@ -833,7 +833,7 @@ mod tests {
                     if acquire_lease {
                         let lease = tx
                             .acquire_incomplete_time_interval_collect_jobs(
-                                &Duration::from_seconds(100),
+                                &StdDuration::from_secs(100),
                                 1,
                             )
                             .await?
@@ -925,7 +925,7 @@ mod tests {
 
                     let lease = Arc::new(
                         tx.acquire_incomplete_time_interval_collect_jobs(
-                            &Duration::from_seconds(100),
+                            &StdDuration::from_secs(100),
                             1,
                         )
                         .await?
@@ -1138,7 +1138,7 @@ mod tests {
 
                     let leases = tx
                         .acquire_incomplete_time_interval_collect_jobs(
-                            &Duration::from_seconds(100),
+                            &StdDuration::from_secs(100),
                             1,
                         )
                         .await?;
@@ -1173,13 +1173,13 @@ mod tests {
             clock.clone(),
             runtime_manager.with_label("stepper"),
             meter,
-            Duration::from_seconds(1),
-            Duration::from_seconds(1),
+            StdDuration::from_secs(1),
+            StdDuration::from_secs(1),
             10,
-            Duration::from_seconds(60),
+            StdDuration::from_secs(60),
             collect_job_driver.make_incomplete_job_acquirer_callback(
                 Arc::clone(&ds),
-                Duration::from_seconds(600),
+                StdDuration::from_secs(600),
             ),
             collect_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
         ));
@@ -1305,7 +1305,7 @@ mod tests {
                 assert_eq!(collect_job.state(), &CollectJobState::Deleted);
 
                 let leases = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 1)
+                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 1)
                     .await
                     .unwrap();
 
