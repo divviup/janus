@@ -38,7 +38,7 @@ anyhow = "1"
 assert_matches = "1"
 base64 = "0.21.0"
 chrono = "0.4"
-clap = { version = "4.0.27", features = ["derive", "env"] }
+clap = { version = "4.1.4", features = ["derive", "env"] }
 janus_collector = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
 mockito = "0.31.1"
