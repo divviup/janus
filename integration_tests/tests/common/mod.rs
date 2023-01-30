@@ -29,12 +29,11 @@ pub fn test_task_builders(
 ) -> (HpkePrivateKey, TaskBuilder, TaskBuilder) {
     let endpoint_random_value = hex::encode(random::<[u8; 4]>());
     let collector_keypair = generate_test_hpke_config_and_private_key();
-    let leader_task = TaskBuilder::new(QueryType::TimeInterval, vdaf, Role::Leader)
+    let leader_task = TaskBuilder::new(query_type, vdaf, Role::Leader)
         .with_aggregator_endpoints(Vec::from([
             Url::parse(&format!("http://leader-{endpoint_random_value}:8080/")).unwrap(),
             Url::parse(&format!("http://helper-{endpoint_random_value}:8080/")).unwrap(),
         ]))
-        .with_query_type(query_type)
         .with_min_batch_size(46)
         .with_collector_hpke_config(collector_keypair.config().clone());
     let helper_task = leader_task

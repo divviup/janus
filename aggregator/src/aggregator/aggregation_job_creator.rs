@@ -8,6 +8,10 @@ use crate::{
     try_join,
 };
 use anyhow::Result;
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::types::extra::{U15, U31, U63};
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::{FixedI16, FixedI32, FixedI64};
 use futures::{future::join_all, FutureExt};
 use itertools::Itertools;
 use janus_core::{
@@ -22,12 +26,16 @@ use opentelemetry::{
     metrics::{Histogram, Unit},
     Context, KeyValue,
 };
+#[cfg(feature = "fpvec_bounded_l2")]
+use prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum;
 use prio::{
     codec::Encode,
-    vdaf::prio3::Prio3Aes128CountVecMultithreaded,
     vdaf::{
         self,
-        prio3::{Prio3Aes128Count, Prio3Aes128Histogram, Prio3Aes128Sum},
+        prio3::{
+            Prio3Aes128Count, Prio3Aes128CountVecMultithreaded, Prio3Aes128Histogram,
+            Prio3Aes128Sum,
+        },
     },
 };
 use rand::{random, thread_rng, Rng};
@@ -137,7 +145,9 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             let start = Instant::now();
             let tasks = self
                 .datastore
-                .run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
+                .run_tx_with_name("aggregation_job_creator_get_tasks", |tx| {
+                    Box::pin(async move { tx.get_tasks().await })
+                })
                 .await;
             let tasks = match tasks {
                 Ok(tasks) => tasks
@@ -259,6 +269,24 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await
             }
 
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { .. }) => {
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(task)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { .. }) => {
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(task)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { .. }) => {
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(task)
+                    .await
+            }
+
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128Count) => {
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task, max_batch_size)
@@ -285,6 +313,26 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     .await
             }
 
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { .. }) => {
+                let max_batch_size = *max_batch_size;
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(task, max_batch_size)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { .. }) => {
+                let max_batch_size = *max_batch_size;
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(task, max_batch_size)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { .. }) => {
+                let max_batch_size = *max_batch_size;
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(task, max_batch_size)
+                    .await
+            }
 
             _ => {
                 error!(vdaf = ?task.vdaf(), "VDAF is not yet supported");
@@ -310,7 +358,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     {
         Ok(self
             .datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("aggregation_job_creator_time_no_param", |tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
                     let current_batch_start = this
@@ -433,7 +481,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         );
         Ok(self
             .datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("aggregation_job_creator_fixed_no_param", |tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
                     // Find unaggregated client reports & existing unfilled batches.
@@ -626,7 +674,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         let max_aggregation_job_size = self.max_aggregation_job_size;
 
         self.datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("aggregation_job_creator_time_with_param", |tx| {
                 let task = Arc::clone(&task);
                 Box::pin(async move {
                     // Find some client reports that are covered by a collect request, but haven't

@@ -39,6 +39,7 @@ fn main() {
                 println!("cargo:rerun-if-changed=../db/schema.sql");
                 println!("cargo:rerun-if-changed=../integration_tests");
                 println!("cargo:rerun-if-changed=../interop_binaries");
+                println!("cargo:rerun-if-changed=../messages");
 
                 // Build containers.
                 // Note: `docker build` has an `--output` flag which writes the output to somewhere, which

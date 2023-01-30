@@ -14,18 +14,23 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use derivative::Derivative;
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::types::extra::{U15, U31, U63};
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::{FixedI16, FixedI32, FixedI64};
 use futures::future::{join_all, BoxFuture, FutureExt};
 use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
-    Duration, PartialBatchSelector, PrepareStep, PrepareStepResult, ReportShare, ReportShareError,
-    Role,
+    PartialBatchSelector, PrepareStep, PrepareStepResult, ReportShare, ReportShareError, Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
     Context, KeyValue,
 };
+#[cfg(feature = "fpvec_bounded_l2")]
+use prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum;
 use prio::{
     codec::{Decode, Encode, ParameterizedDecode},
     vdaf::{
@@ -37,7 +42,7 @@ use prio::{
         PrepareTransition,
     },
 };
-use std::{collections::HashSet, fmt, sync::Arc};
+use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
 #[derive(Derivative)]
@@ -108,6 +113,36 @@ impl AggregationJobDriver {
                     .await
             }
 
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, *length)?);
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(datastore, vdaf, lease)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, *length)?);
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(datastore, vdaf, lease)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::TimeInterval,
+                VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, *length)?);
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(datastore, vdaf, lease)
+                    .await
+            }
+
             (task::QueryType::FixedSize { .. }, VdafInstance::Prio3Aes128Count) => {
                 let vdaf = Arc::new(Prio3::new_aes128_count(2)?);
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Count>(datastore, vdaf, lease)
@@ -129,6 +164,36 @@ impl AggregationJobDriver {
             (task::QueryType::FixedSize { .. }, VdafInstance::Prio3Aes128Histogram { buckets }) => {
                 let vdaf = Arc::new(Prio3::new_aes128_histogram(2, buckets)?);
                 self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Histogram>(datastore, vdaf, lease)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::FixedSize { .. },
+                VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, *length)?);
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(datastore, vdaf, lease)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::FixedSize { .. },
+                VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, *length)?);
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(datastore, vdaf, lease)
+                    .await
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::FixedSize { .. },
+                VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { length },
+            ) => {
+                let vdaf = Arc::new(Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, *length)?);
+                self.step_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(datastore, vdaf, lease)
                     .await
             }
 
@@ -167,7 +232,7 @@ impl AggregationJobDriver {
     {
         // Read all information about the aggregation job.
         let (task, aggregation_job, report_aggregations, client_reports, verify_key) = datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("step_aggregation_job_1", |tx| {
                 let (lease, vdaf) = (Arc::clone(&lease), Arc::clone(&vdaf));
                 Box::pin(async move {
                     let task = tx
@@ -677,7 +742,7 @@ impl AggregationJobDriver {
         let aggregation_job_to_write = Arc::new(aggregation_job_to_write);
         let accumulator = Arc::new(accumulator);
         datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("step_aggregation_job_2", |tx| {
                 let (report_aggregations_to_write, aggregation_job_to_write, accumulator, lease) = (
                     Arc::clone(&report_aggregations_to_write),
                     Arc::clone(&aggregation_job_to_write),
@@ -740,6 +805,24 @@ impl AggregationJobDriver {
                     .await
             }
 
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { .. }) => {
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(datastore, lease)
+                    .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { .. }) => {
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(datastore, lease)
+                    .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { .. }) => {
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(datastore, lease)
+                    .await
+            }
+
             (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128Count) => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Count>(datastore, lease)
                     .await
@@ -757,6 +840,24 @@ impl AggregationJobDriver {
 
             (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Histogram>(datastore, lease)
+                    .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize { .. }, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { .. }) => {
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(datastore, lease)
+                    .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize { .. }, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { .. }) => {
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(datastore, lease)
+                    .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize { .. }, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { .. }) => {
+                self.cancel_aggregation_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(datastore, lease)
                     .await
             }
 
@@ -781,7 +882,7 @@ impl AggregationJobDriver {
     {
         let lease = Arc::new(lease);
         datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("cancel_aggregation_job", |tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let aggregation_job = tx
@@ -827,7 +928,7 @@ impl AggregationJobDriver {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
                 datastore
-                    .run_tx(|tx| {
+                    .run_tx_with_name("acquire_aggregation_jobs", |tx| {
                         Box::pin(async move {
                             tx.acquire_incomplete_aggregation_jobs(
                                 &lease_duration,
@@ -918,12 +1019,12 @@ mod tests {
         vdaf::{
             self,
             prio3::{Prio3, Prio3Aes128Count},
-            Aggregator, PrepareTransition,
+            Aggregator,
         },
     };
     use rand::random;
     use reqwest::Url;
-    use std::{str, sync::Arc};
+    use std::{str, sync::Arc, time::Duration as StdDuration};
 
     #[tokio::test]
     async fn aggregation_job_driver() {
@@ -975,7 +1076,7 @@ mod tests {
             helper_hpke_keypair.config(),
             (),
             Vec::new(),
-            transcript.input_shares,
+            transcript.input_shares.clone(),
         );
 
         let aggregation_job_id = random();
@@ -1019,9 +1120,7 @@ mod tests {
         .unwrap();
 
         // Setup: prepare mocked HTTP responses.
-        let helper_vdaf_msg = assert_matches!(
-            &transcript.prepare_transitions[Role::Helper.index().unwrap()][0],
-            PrepareTransition::Continue(_, prep_share) => prep_share);
+        let helper_vdaf_msg = transcript.helper_prep_share(0);
         let helper_responses = Vec::from([
             (
                 AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
@@ -1066,13 +1165,13 @@ mod tests {
             clock,
             runtime_manager.with_label("stepper"),
             meter,
-            Duration::from_seconds(1),
-            Duration::from_seconds(1),
+            StdDuration::from_secs(1),
+            StdDuration::from_secs(1),
             10,
-            Duration::from_seconds(60),
+            StdDuration::from_secs(60),
             aggregation_job_driver.make_incomplete_job_acquirer_callback(
                 Arc::clone(&ds),
-                Duration::from_seconds(600),
+                StdDuration::from_secs(600),
             ),
             aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 5),
         ));
@@ -1103,9 +1202,6 @@ mod tests {
                     .unwrap(),
                 AggregationJobState::Finished,
             );
-        let leader_output_share = assert_matches!(
-            &transcript.prepare_transitions[Role::Leader.index().unwrap()][1],
-            PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
         let want_report_aggregation =
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
@@ -1113,7 +1209,7 @@ mod tests {
                 *report.metadata().id(),
                 *report.metadata().time(),
                 0,
-                ReportAggregationState::Finished(leader_output_share),
+                ReportAggregationState::Finished(transcript.output_share(Role::Leader).clone()),
             );
 
         let (got_aggregation_job, got_report_aggregation) = ds
@@ -1204,7 +1300,7 @@ mod tests {
                     Extension::new(ExtensionType::Tbd, Vec::new()),
                     Extension::new(ExtensionType::Tbd, Vec::new()),
                 ]),
-                transcript.input_shares,
+                transcript.input_shares.clone(),
             );
         let aggregation_job_id = random();
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
@@ -1261,7 +1357,7 @@ mod tests {
                     .await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -1286,9 +1382,7 @@ mod tests {
                 report.helper_encrypted_input_share().clone(),
             )]),
         );
-        let helper_vdaf_msg = assert_matches!(
-            &transcript.prepare_transitions[Role::Helper.index().unwrap()][0],
-            PrepareTransition::Continue(_, prep_share) => prep_share);
+        let helper_vdaf_msg = transcript.helper_prep_share(0);
         let helper_response = AggregateInitializeResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
@@ -1347,9 +1441,7 @@ mod tests {
                     .unwrap(),
                 AggregationJobState::InProgress,
             );
-        let leader_prep_state = assert_matches!(
-            &transcript.prepare_transitions[Role::Leader.index().unwrap()][0],
-            PrepareTransition::Continue(prep_state, _) => prep_state.clone());
+        let leader_prep_state = transcript.prep_state(0, Role::Leader).clone();
         let prep_msg = transcript.prepare_messages[0].clone();
         let want_report_aggregation =
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
@@ -1453,7 +1545,7 @@ mod tests {
             helper_hpke_keypair.config(),
             (),
             Vec::new(),
-            transcript.input_shares,
+            transcript.input_shares.clone(),
         );
         let batch_id = random();
         let aggregation_job_id = random();
@@ -1493,7 +1585,7 @@ mod tests {
                     .await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -1518,9 +1610,7 @@ mod tests {
                 report.helper_encrypted_input_share().clone(),
             )]),
         );
-        let helper_vdaf_msg = assert_matches!(
-            &transcript.prepare_transitions[Role::Helper.index().unwrap()][0],
-            PrepareTransition::Continue(_, prep_share) => prep_share);
+        let helper_vdaf_msg = transcript.helper_prep_share(0);
         let helper_response = AggregateInitializeResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
@@ -1579,10 +1669,6 @@ mod tests {
                     .unwrap(),
                 AggregationJobState::InProgress,
             );
-        let leader_prep_state = assert_matches!(
-            &transcript.prepare_transitions[Role::Leader.index().unwrap()][0],
-            PrepareTransition::Continue(prep_state, _) => prep_state.clone());
-        let prep_msg = transcript.prepare_messages[0].clone();
         let want_report_aggregation =
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
@@ -1590,7 +1676,10 @@ mod tests {
                 *report.metadata().id(),
                 *report.metadata().time(),
                 0,
-                ReportAggregationState::Waiting(leader_prep_state, Some(prep_msg)),
+                ReportAggregationState::Waiting(
+                    transcript.prep_state(0, Role::Leader).clone(),
+                    Some(transcript.prepare_messages[0].clone()),
+                ),
             );
 
         let (got_aggregation_job, got_report_aggregation) = ds
@@ -1669,18 +1758,15 @@ mod tests {
             helper_hpke_keypair.config(),
             (),
             Vec::new(),
-            transcript.input_shares,
+            transcript.input_shares.clone(),
         );
         let aggregation_job_id = random();
         let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
-        let leader_prep_state = assert_matches!(
-            &transcript.prepare_transitions[Role::Leader.index().unwrap()][0],
-            PrepareTransition::Continue(prep_state, _) => prep_state);
-        let leader_output_share = assert_matches!(
-            &transcript.prepare_transitions[Role::Leader.index().unwrap()].last().unwrap(),
-            PrepareTransition::Finish(out_share) => out_share.clone());
-        let leader_aggregate_share = vdaf.aggregate(&(), [leader_output_share]).unwrap();
+        let leader_prep_state = transcript.prep_state(0, Role::Leader);
+        let leader_aggregate_share = vdaf
+            .aggregate(&(), [transcript.output_share(Role::Leader).clone()])
+            .unwrap();
         let prep_msg = &transcript.prepare_messages[0];
 
         let lease = ds
@@ -1723,7 +1809,7 @@ mod tests {
                     .await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -1800,9 +1886,6 @@ mod tests {
                     .unwrap(),
                 AggregationJobState::Finished,
             );
-        let leader_output_share = assert_matches!(
-            &transcript.prepare_transitions[Role::Leader.index().unwrap()][1],
-            PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
         let want_report_aggregation =
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
@@ -1810,7 +1893,7 @@ mod tests {
                 *report.metadata().id(),
                 *report.metadata().time(),
                 0,
-                ReportAggregationState::Finished(leader_output_share),
+                ReportAggregationState::Finished(transcript.output_share(Role::Leader).clone()),
             );
         let batch_interval_start = report
             .metadata()
@@ -1916,18 +1999,15 @@ mod tests {
             helper_hpke_keypair.config(),
             (),
             Vec::new(),
-            transcript.input_shares,
+            transcript.input_shares.clone(),
         );
         let batch_id = random();
         let aggregation_job_id = random();
 
-        let leader_prep_state = assert_matches!(
-            &transcript.prepare_transitions[Role::Leader.index().unwrap()][0],
-            PrepareTransition::Continue(prep_state, _) => prep_state);
-        let leader_output_share = assert_matches!(
-            &transcript.prepare_transitions[Role::Leader.index().unwrap()].last().unwrap(),
-            PrepareTransition::Finish(out_share) => out_share.clone());
-        let leader_aggregate_share = vdaf.aggregate(&(), [leader_output_share]).unwrap();
+        let leader_prep_state = transcript.prep_state(0, Role::Leader);
+        let leader_aggregate_share = vdaf
+            .aggregate(&(), [transcript.output_share(Role::Leader).clone()])
+            .unwrap();
         let prep_msg = &transcript.prepare_messages[0];
 
         let lease = ds
@@ -1970,7 +2050,7 @@ mod tests {
                     .await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -2047,9 +2127,7 @@ mod tests {
                     .unwrap(),
                 AggregationJobState::Finished,
             );
-        let leader_output_share = assert_matches!(
-            &transcript.prepare_transitions[Role::Leader.index().unwrap()][1],
-            PrepareTransition::Finish(leader_output_share) => leader_output_share.clone());
+        let leader_output_share = transcript.output_share(Role::Leader);
         let want_report_aggregation =
             ReportAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>::new(
                 *task.id(),
@@ -2057,7 +2135,7 @@ mod tests {
                 *report.metadata().id(),
                 *report.metadata().time(),
                 0,
-                ReportAggregationState::Finished(leader_output_share),
+                ReportAggregationState::Finished(leader_output_share.clone()),
             );
         let want_batch_aggregations = Vec::from([BatchAggregation::<
             PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -2192,7 +2270,7 @@ mod tests {
                     tx.put_report_aggregation(&report_aggregation).await?;
 
                     Ok(tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?
                         .remove(0))
                 })
@@ -2240,7 +2318,7 @@ mod tests {
                         .await?
                         .unwrap();
                     let leases = tx
-                        .acquire_incomplete_aggregation_jobs(&Duration::from_seconds(60), 1)
+                        .acquire_incomplete_aggregation_jobs(&StdDuration::from_secs(60), 1)
                         .await?;
                     Ok((aggregation_job, report_aggregation, leases))
                 })
@@ -2394,13 +2472,13 @@ mod tests {
             clock.clone(),
             runtime_manager.with_label("stepper"),
             meter,
-            Duration::from_seconds(1),
-            Duration::from_seconds(1),
+            StdDuration::from_secs(1),
+            StdDuration::from_secs(1),
             10,
-            Duration::from_seconds(60),
+            StdDuration::from_secs(60),
             aggregation_job_driver.make_incomplete_job_acquirer_callback(
                 Arc::clone(&ds),
-                Duration::from_seconds(600),
+                StdDuration::from_secs(600),
             ),
             aggregation_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
         ));

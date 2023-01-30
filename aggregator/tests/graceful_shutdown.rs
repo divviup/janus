@@ -74,7 +74,7 @@ fn forward_stdout_stderr(
                 if count == 0 {
                     break;
                 }
-                print!("{} stdout: {}", process_name, line);
+                print!("{process_name} stdout: {line}");
             }
         }
     });
@@ -91,7 +91,7 @@ fn forward_stdout_stderr(
                 if count == 0 {
                     break;
                 }
-                eprint!("{} stderr: {}", process_name, line);
+                eprint!("{process_name} stderr: {line}");
             }
         }
     });
@@ -120,7 +120,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     config.insert("database".into(), db_config.into());
     config.insert(
         "health_check_listen_address".into(),
-        format!("{}", health_check_listen_address).into(),
+        format!("{health_check_listen_address}").into(),
     );
 
     let task = TaskBuilder::new(
@@ -167,7 +167,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .unwrap();
 
     // Kick off tasks to read from piped stdout/stderr
-    let binary_io_tasks = forward_stdout_stderr(&format!("unshare/{}", binary_name), &mut child);
+    let binary_io_tasks = forward_stdout_stderr(&format!("unshare/{binary_name}"), &mut child);
 
     // Try to connect to the health check HTTP server in a loop, until it is ready.
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
@@ -175,7 +175,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .await
         .expect("could not connect to health check server after starting it");
 
-    let url = Url::parse(&format!("http://{}/healthz", health_check_listen_address)).unwrap();
+    let url = Url::parse(&format!("http://{health_check_listen_address}/healthz")).unwrap();
     assert!(reqwest::get(url).await.unwrap().status().is_success());
 
     // Send SIGTERM to the binary under test, after entering its new namespaces.
@@ -183,9 +183,9 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
     let mut kill = Command::new("nsenter")
         .arg("--preserve-credentials")
         .arg("--user")
-        .arg(format!("--pid=/proc/{}/ns/pid_for_children", unshare_pid))
+        .arg(format!("--pid=/proc/{unshare_pid}/ns/pid_for_children"))
         .arg("--target")
-        .arg(format!("{}", unshare_pid))
+        .arg(format!("{unshare_pid}"))
         .args(["kill", "1"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -215,7 +215,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         match child.kill() {
             Ok(_) => {}
             Err(e) if e.kind() == ErrorKind::InvalidInput => {}
-            Err(e) => panic!("failed to kill unshare: {:?}", e),
+            Err(e) => panic!("failed to kill unshare: {e:?}"),
         }
         child.wait().unwrap();
         binary_io_tasks.await;
@@ -236,7 +236,7 @@ async fn server_shutdown() {
     let mut config = Mapping::new();
     config.insert(
         "listen_address".into(),
-        format!("{}", aggregator_listen_address).into(),
+        format!("{aggregator_listen_address}").into(),
     );
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregator"), config).await;

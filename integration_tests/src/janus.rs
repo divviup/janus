@@ -66,7 +66,7 @@ impl<'a> Janus<'a> {
         // Write the given task to the Janus instance we started.
         let http_client = reqwest::Client::default();
         let resp = http_client
-            .post(Url::parse(&format!("http://127.0.0.1:{}/internal/test/add_task", port)).unwrap())
+            .post(Url::parse(&format!("http://127.0.0.1:{port}/internal/test/add_task")).unwrap())
             .json(&AggregatorAddTaskRequest::from(task.clone()))
             .send()
             .await
@@ -197,7 +197,7 @@ impl<'a> Drop for Janus<'a> {
             }
             if let Some(mut destination_path) = log_export_path() {
                 destination_path.push(format!("{}-{}", role, container.id()));
-                let docker_cp_status = Command::new("docker")
+                if let Ok(docker_cp_status) = Command::new("docker")
                     .args([
                         "cp",
                         &format!("{}:logs/", container.id()),
@@ -207,11 +207,13 @@ impl<'a> Drop for Janus<'a> {
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .status()
-                    .expect("Failed to execute `docker cp`");
-                assert!(
-                    docker_cp_status.success(),
-                    "`docker cp` failed with status {docker_cp_status:?}"
-                );
+                {
+                    if !docker_cp_status.success() {
+                        println!("`docker cp` failed with status {docker_cp_status:?}");
+                    }
+                } else {
+                    println!("Failed to execute `docker cp`");
+                }
             }
         }
     }

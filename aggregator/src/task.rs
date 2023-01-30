@@ -346,7 +346,7 @@ impl Task {
 fn fmt_vector_of_urls(urls: &Vec<Url>, f: &mut Formatter<'_>) -> fmt::Result {
     let mut list = f.debug_list();
     for url in urls {
-        list.entry(&format!("{}", url));
+        list.entry(&format!("{url}"));
     }
     list.finish()
 }
@@ -715,14 +715,6 @@ pub mod test_util {
         pub fn with_report_expiry_age(self, report_expiry_age: Option<Duration>) -> Self {
             Self(Task {
                 report_expiry_age,
-                ..self.0
-            })
-        }
-
-        /// Sets the task query type
-        pub fn with_query_type(self, query_type: QueryType) -> Self {
-            Self(Task {
-                query_type,
                 ..self.0
             })
         }

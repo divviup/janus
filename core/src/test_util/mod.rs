@@ -1,5 +1,5 @@
 use assert_matches::assert_matches;
-use janus_messages::ReportId;
+use janus_messages::{ReportId, Role};
 use prio::{
     codec::Encode,
     vdaf::{self, PrepareTransition, VdafError},
@@ -25,12 +25,41 @@ where
     pub input_shares: Vec<V::InputShare>,
     /// Prepare transitions sent throughout the protocol run. The outer `Vec` is indexed by
     /// aggregator, and the inner `Vec`s are indexed by VDAF round.
-    pub prepare_transitions: Vec<Vec<PrepareTransition<V, L>>>,
+    prepare_transitions: Vec<Vec<PrepareTransition<V, L>>>,
     /// The prepare messages broadcast to all aggregators prior to each continuation round of the
     /// VDAF.
     pub prepare_messages: Vec<V::PrepareMessage>,
+    /// The output shares computed by each aggregator.
+    output_shares: Vec<V::OutputShare>,
     /// The aggregate shares from each aggregator.
     pub aggregate_shares: Vec<V::AggregateShare>,
+}
+
+impl<const L: usize, V> VdafTranscript<L, V>
+where
+    V: vdaf::Aggregator<L>,
+    for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
+{
+    /// Get the VDAF preparation state for the requested round and aggregator.
+    pub fn prep_state(&self, round: usize, role: Role) -> &V::PrepareState {
+        assert_matches!(
+            &self.prepare_transitions[role.index().unwrap()][round],
+            PrepareTransition::<V, L>::Continue(prep_state, _) => prep_state
+        )
+    }
+
+    /// Get the helper's prepare share at the requested round.
+    pub fn helper_prep_share(&self, round: usize) -> &V::PrepareShare {
+        assert_matches!(
+            &self.prepare_transitions[Role::Helper.index().unwrap()][round],
+            PrepareTransition::<V, L>::Continue(_, prep_share) => prep_share
+        )
+    }
+
+    /// Get the output share for the specified aggregator.
+    pub fn output_share(&self, role: Role) -> &V::OutputShare {
+        &self.output_shares[role.index().unwrap()]
+    }
 }
 
 /// run_vdaf runs a VDAF state machine from sharding through to generating an output share,
@@ -74,12 +103,14 @@ where
         // participants have reached a terminal state (Finish or Fail), we are done.
         let mut prep_shares = Vec::new();
         let mut agg_shares = Vec::new();
+        let mut output_shares = Vec::new();
         for pts in &prep_trans {
             match pts.last().unwrap() {
                 PrepareTransition::<V, L>::Continue(_, prep_share) => {
                     prep_shares.push(prep_share.clone())
                 }
                 PrepareTransition::Finish(output_share) => {
+                    output_shares.push(output_share.clone());
                     agg_shares.push(
                         vdaf.aggregate(aggregation_param, [output_share.clone()].into_iter())
                             .unwrap(),
@@ -93,6 +124,7 @@ where
                 input_shares,
                 prepare_transitions: prep_trans,
                 prepare_messages: prep_msgs,
+                output_shares,
                 aggregate_shares: agg_shares,
             };
         }

@@ -150,7 +150,7 @@ fn make_filter(
                     },
                     Err(e) => AddTaskResponse {
                         status: ERROR.to_string(),
-                        error: Some(format!("{:?}", e)),
+                        error: Some(format!("{e:?}")),
                     },
                 };
                 warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)

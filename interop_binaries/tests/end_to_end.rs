@@ -22,6 +22,9 @@ use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
 use testcontainers::RunnableImage;
 
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed_macro::fixed;
+
 const JSON_MEDIA_TYPE: &str = "application/json";
 const TIME_PRECISION: u64 = 3600;
 
@@ -649,6 +652,222 @@ async fn e2e_prio3_count_vec() {
     {
         assert!(element.is_string());
     }
+}
+
+#[tokio::test]
+async fn e2e_prio3_fixed16vec() {
+    let fp16_4_inv = fixed!(0.25: I1F15);
+    let fp16_8_inv = fixed!(0.125: I1F15);
+    let fp16_16_inv = fixed!(0.0625: I1F15);
+    let result = run(
+        QueryKind::TimeInterval,
+        json!({"type": "Prio3Aes128FixedPoint16BitBoundedL2VecSum", "length": "3"}),
+        &[
+            json!({"type": "Fixed16", "vec": [
+                fp16_4_inv.to_string(),
+                fp16_8_inv.to_string(),
+                fp16_8_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed16", "vec":[
+                fp16_16_inv.to_string(),
+                fp16_8_inv.to_string(),
+                fp16_16_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed16", "vec":[
+                fp16_8_inv.to_string(),
+                fp16_8_inv.to_string(),
+                fp16_4_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed16", "vec":[
+                fp16_16_inv.to_string(),
+                fp16_8_inv.to_string(),
+                fp16_4_inv.to_string()
+            ]}),
+        ],
+        b"",
+    )
+    .await;
+    assert_eq!(result, json!(["0.5", "0.5", "0.6875"]));
+}
+
+#[tokio::test]
+async fn e2e_prio3_fixed32vec() {
+    let fp32_4_inv = fixed!(0.25: I1F31);
+    let fp32_8_inv = fixed!(0.125: I1F31);
+    let fp32_16_inv = fixed!(0.0625: I1F31);
+    let result = run(
+        QueryKind::TimeInterval,
+        json!({"type": "Prio3Aes128FixedPoint32BitBoundedL2VecSum", "length": "3"}),
+        &[
+            json!({"type": "Fixed32", "vec": [
+                fp32_4_inv.to_string(),
+                fp32_8_inv.to_string(),
+                fp32_8_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed32", "vec":[
+                fp32_16_inv.to_string(),
+                fp32_8_inv.to_string(),
+                fp32_16_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed32", "vec":[
+                fp32_8_inv.to_string(),
+                fp32_8_inv.to_string(),
+                fp32_4_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed32", "vec":[
+                fp32_16_inv.to_string(),
+                fp32_8_inv.to_string(),
+                fp32_4_inv.to_string()
+            ]}),
+        ],
+        b"",
+    )
+    .await;
+    assert_eq!(result, json!(["0.5", "0.5", "0.6875"]));
+}
+
+#[tokio::test]
+async fn e2e_prio3_fixed64vec() {
+    let fp64_4_inv = fixed!(0.25: I1F63);
+    let fp64_8_inv = fixed!(0.125: I1F63);
+    let fp64_16_inv = fixed!(0.0625: I1F63);
+    let result = run(
+        QueryKind::TimeInterval,
+        json!({"type": "Prio3Aes128FixedPoint64BitBoundedL2VecSum", "length": "3"}),
+        &[
+            json!({"type": "Fixed64", "vec": [
+                fp64_4_inv.to_string(),
+                fp64_8_inv.to_string(),
+                fp64_8_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed64", "vec":[
+                fp64_16_inv.to_string(),
+                fp64_8_inv.to_string(),
+                fp64_16_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed64", "vec":[
+                fp64_8_inv.to_string(),
+                fp64_8_inv.to_string(),
+                fp64_4_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed64", "vec":[
+                fp64_16_inv.to_string(),
+                fp64_8_inv.to_string(),
+                fp64_4_inv.to_string()
+            ]}),
+        ],
+        b"",
+    )
+    .await;
+    assert_eq!(result, json!(["0.5", "0.5", "0.6875"]));
+}
+
+#[tokio::test]
+async fn e2e_prio3_fixed16vec_fixed_size() {
+    let fp16_4_inv = fixed!(0.25: I1F15);
+    let fp16_8_inv = fixed!(0.125: I1F15);
+    let fp16_16_inv = fixed!(0.0625: I1F15);
+    let result = run(
+        QueryKind::FixedSize,
+        json!({"type": "Prio3Aes128FixedPoint16BitBoundedL2VecSum", "length": "3"}),
+        &[
+            json!({"type": "Fixed16", "vec": [
+                fp16_4_inv.to_string(),
+                fp16_8_inv.to_string(),
+                fp16_8_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed16", "vec":[
+                fp16_16_inv.to_string(),
+                fp16_8_inv.to_string(),
+                fp16_16_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed16", "vec":[
+                fp16_8_inv.to_string(),
+                fp16_8_inv.to_string(),
+                fp16_4_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed16", "vec":[
+                fp16_16_inv.to_string(),
+                fp16_8_inv.to_string(),
+                fp16_4_inv.to_string()
+            ]}),
+        ],
+        b"",
+    )
+    .await;
+    assert_eq!(result, json!(["0.5", "0.5", "0.6875"]));
+}
+
+#[tokio::test]
+async fn e2e_prio3_fixed32vec_fixed_size() {
+    let fp32_4_inv = fixed!(0.25: I1F31);
+    let fp32_8_inv = fixed!(0.125: I1F31);
+    let fp32_16_inv = fixed!(0.0625: I1F31);
+    let result = run(
+        QueryKind::FixedSize,
+        json!({"type": "Prio3Aes128FixedPoint32BitBoundedL2VecSum", "length": "3"}),
+        &[
+            json!({"type": "Fixed32", "vec": [
+                fp32_4_inv.to_string(),
+                fp32_8_inv.to_string(),
+                fp32_8_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed32", "vec":[
+                fp32_16_inv.to_string(),
+                fp32_8_inv.to_string(),
+                fp32_16_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed32", "vec":[
+                fp32_8_inv.to_string(),
+                fp32_8_inv.to_string(),
+                fp32_4_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed32", "vec":[
+                fp32_16_inv.to_string(),
+                fp32_8_inv.to_string(),
+                fp32_4_inv.to_string()
+            ]}),
+        ],
+        b"",
+    )
+    .await;
+    assert_eq!(result, json!(["0.5", "0.5", "0.6875"]));
+}
+
+#[tokio::test]
+async fn e2e_prio3_fixed64vec_fixed_size() {
+    let fp64_4_inv = fixed!(0.25: I1F63);
+    let fp64_8_inv = fixed!(0.125: I1F63);
+    let fp64_16_inv = fixed!(0.0625: I1F63);
+    let result = run(
+        QueryKind::FixedSize,
+        json!({"type": "Prio3Aes128FixedPoint64BitBoundedL2VecSum", "length": "3"}),
+        &[
+            json!({"type": "Fixed64", "vec": [
+                fp64_4_inv.to_string(),
+                fp64_8_inv.to_string(),
+                fp64_8_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed64", "vec":[
+                fp64_16_inv.to_string(),
+                fp64_8_inv.to_string(),
+                fp64_16_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed64", "vec":[
+                fp64_8_inv.to_string(),
+                fp64_8_inv.to_string(),
+                fp64_4_inv.to_string()
+            ]}),
+            json!({"type" : "Fixed64", "vec":[
+                fp64_16_inv.to_string(),
+                fp64_8_inv.to_string(),
+                fp64_4_inv.to_string()
+            ]}),
+        ],
+        b"",
+    )
+    .await;
+    assert_eq!(result, json!(["0.5", "0.5", "0.6875"]));
 }
 
 #[tokio::test]

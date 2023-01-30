@@ -8,9 +8,8 @@ use janus_aggregator::{
     config::{BinaryConfig, CommonConfig, JobDriverConfig},
 };
 use janus_core::{time::RealClock, TokioRuntime};
-use janus_messages::Duration;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 use tokio::select;
 
 #[tokio::main]
@@ -33,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
             &meter,
         ));
         let lease_duration =
-            Duration::from_seconds(ctx.config.job_driver_config.worker_lease_duration_secs);
+            Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_secs);
         let shutdown_signal =
             setup_signal_handler().context("failed to register SIGTERM signal handler")?;
 
@@ -42,10 +41,10 @@ async fn main() -> anyhow::Result<()> {
             ctx.clock,
             TokioRuntime,
             meter,
-            Duration::from_seconds(ctx.config.job_driver_config.min_job_discovery_delay_secs),
-            Duration::from_seconds(ctx.config.job_driver_config.max_job_discovery_delay_secs),
+            Duration::from_secs(ctx.config.job_driver_config.min_job_discovery_delay_secs),
+            Duration::from_secs(ctx.config.job_driver_config.max_job_discovery_delay_secs),
             ctx.config.job_driver_config.max_concurrent_job_workers,
-            Duration::from_seconds(
+            Duration::from_secs(
                 ctx.config
                     .job_driver_config
                     .worker_lease_clock_skew_allowance_secs,

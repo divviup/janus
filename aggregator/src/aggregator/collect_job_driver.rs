@@ -13,18 +13,24 @@ use crate::{
     try_join,
 };
 use derivative::Derivative;
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::types::extra::{U15, U31, U63};
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::{FixedI16, FixedI32, FixedI64};
 use futures::future::BoxFuture;
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, QueryType, TimeInterval},
-    AggregateShareReq, AggregateShareResp, BatchSelector, Duration, Role,
+    AggregateShareReq, AggregateShareResp, BatchSelector, Role,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
     Context, KeyValue, Value,
 };
+#[cfg(feature = "fpvec_bounded_l2")]
+use prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum;
 use prio::{
     codec::{Decode, Encode},
     vdaf::{
@@ -35,7 +41,7 @@ use prio::{
         },
     },
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tracing::{info, warn};
 
 /// Drives a collect job.
@@ -106,6 +112,33 @@ impl CollectJobDriver {
                 .await
             }
 
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
             #[cfg(feature = "test-util")]
             (task::QueryType::TimeInterval, VdafInstance::Fake) => {
                 self.step_collect_job_generic::<0, C, TimeInterval, dummy_vdaf::Vdaf>(
@@ -141,6 +174,33 @@ impl CollectJobDriver {
 
             (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128Histogram { .. }) => {
                 self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128Histogram>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { .. }) => {
+                self.step_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(
                     datastore,
                     lease,
                 )
@@ -183,7 +243,7 @@ impl CollectJobDriver {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
         let (task, collect_job, batch_aggregations) = datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("step_collect_job_1", |tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     // TODO(#224): Consider fleshing out `AcquiredCollectJob` to include a `Task`,
@@ -265,7 +325,7 @@ impl CollectJobDriver {
             }),
         );
         datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("step_collect_job_2", |tx| {
                 let (lease, collect_job) = (Arc::clone(&lease), Arc::clone(&collect_job));
                 let metrics = self.metrics.clone();
 
@@ -356,6 +416,33 @@ impl CollectJobDriver {
                 .await
             }
 
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, TimeInterval, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
             #[cfg(feature = "test-util")]
             (task::QueryType::TimeInterval, VdafInstance::Fake) => {
                 self.abandon_collect_job_generic::<0, C, TimeInterval, dummy_vdaf::Vdaf>(
@@ -397,6 +484,33 @@ impl CollectJobDriver {
                 .await
             }
 
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
+#[cfg(feature = "fpvec_bounded_l2")]
+            (task::QueryType::FixedSize{..}, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum{..}) => {
+                self.abandon_collect_job_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, C, FixedSize, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(
+                    datastore,
+                    lease,
+                )
+                .await
+            }
+
             #[cfg(feature = "test-util")]
             (task::QueryType::FixedSize{..}, VdafInstance::Fake) => {
                 self.abandon_collect_job_generic::<0, C, FixedSize, dummy_vdaf::Vdaf>(
@@ -429,7 +543,7 @@ impl CollectJobDriver {
     {
         let lease = Arc::new(lease);
         datastore
-            .run_tx(|tx| {
+            .run_tx_with_name("abandon_collect_job", |tx| {
                 let lease = Arc::clone(&lease);
                 Box::pin(async move {
                     let collect_job = tx
@@ -463,7 +577,7 @@ impl CollectJobDriver {
             let datastore = Arc::clone(&datastore);
             Box::pin(async move {
                 datastore
-                    .run_tx(|tx| {
+                    .run_tx_with_name("acquire_collect_jobs", |tx| {
                         Box::pin(async move {
                             let (time_interval_jobs, fixed_size_jobs) = try_join!(
                                 tx.acquire_incomplete_time_interval_collect_jobs(
@@ -616,7 +730,7 @@ mod tests {
     use opentelemetry::global::meter;
     use prio::codec::{Decode, Encode};
     use rand::random;
-    use std::{str, sync::Arc};
+    use std::{str, sync::Arc, time::Duration as StdDuration};
     use url::Url;
     use uuid::Uuid;
 
@@ -724,7 +838,7 @@ mod tests {
                     if acquire_lease {
                         let lease = tx
                             .acquire_incomplete_time_interval_collect_jobs(
-                                &Duration::from_seconds(100),
+                                &StdDuration::from_secs(100),
                                 1,
                             )
                             .await?
@@ -821,7 +935,7 @@ mod tests {
 
                     let lease = Arc::new(
                         tx.acquire_incomplete_time_interval_collect_jobs(
-                            &Duration::from_seconds(100),
+                            &StdDuration::from_secs(100),
                             1,
                         )
                         .await?
@@ -1034,7 +1148,7 @@ mod tests {
 
                     let leases = tx
                         .acquire_incomplete_time_interval_collect_jobs(
-                            &Duration::from_seconds(100),
+                            &StdDuration::from_secs(100),
                             1,
                         )
                         .await?;
@@ -1069,13 +1183,13 @@ mod tests {
             clock.clone(),
             runtime_manager.with_label("stepper"),
             meter,
-            Duration::from_seconds(1),
-            Duration::from_seconds(1),
+            StdDuration::from_secs(1),
+            StdDuration::from_secs(1),
             10,
-            Duration::from_seconds(60),
+            StdDuration::from_secs(60),
             collect_job_driver.make_incomplete_job_acquirer_callback(
                 Arc::clone(&ds),
-                Duration::from_seconds(600),
+                StdDuration::from_secs(600),
             ),
             collect_job_driver.make_job_stepper_callback(Arc::clone(&ds), 3),
         ));
@@ -1201,7 +1315,7 @@ mod tests {
                 assert_eq!(collect_job.state(), &CollectJobState::Deleted);
 
                 let leases = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&Duration::from_seconds(100), 1)
+                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 1)
                     .await
                     .unwrap();
 

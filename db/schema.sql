@@ -33,7 +33,7 @@ CREATE TABLE task_aggregator_auth_tokens(
     ord BIGINT NOT NULL,      -- a value used to specify the ordering of the authentication tokens
     token BYTEA NOT NULL,     -- bearer token used to authenticate messages to/from the other aggregator (encrypted)
 
-    CONSTRAINT aggregator_auth_token_unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT task_aggregator_auth_tokens_unique_task_id_and_ord UNIQUE(task_id, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -44,7 +44,7 @@ CREATE TABLE task_collector_auth_tokens(
     ord BIGINT NOT NULL,      -- a value used to specify the ordering of the authentication tokens
     token BYTEA NOT NULL,     -- bearer token used to authenticate messages from the collector (encrypted)
 
-    CONSTRAINT collector_auth_token_unique_task_id_and_ord UNIQUE(task_id, ord),
+    CONSTRAINT task_collector_auth_tokens_unique_task_id_and_ord UNIQUE(task_id, ord),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -56,7 +56,7 @@ CREATE TABLE task_hpke_keys(
     config BYTEA NOT NULL,        -- HPKE config, including public key (encoded HpkeConfig message)
     private_key BYTEA NOT NULL,   -- private key (encrypted)
 
-    CONSTRAINT unique_task_id_and_config_id UNIQUE(task_id, config_id),
+    CONSTRAINT task_hpke_keys_unique_task_id_and_config_id UNIQUE(task_id, config_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -67,7 +67,7 @@ CREATE TABLE task_vdaf_verify_keys(
     task_id BIGINT NOT NULL,         -- task ID the verification key is associated with
     vdaf_verify_key BYTEA NOT NULL,  -- the VDAF verification key (encrypted)
 
-    CONSTRAINT vdaf_verify_key_unique_task_id UNIQUE(task_id),
+    CONSTRAINT task_vdaf_verify_keys_unique_task_id UNIQUE(task_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -82,7 +82,7 @@ CREATE TABLE client_reports(
     leader_input_share              BYTEA,               -- encoded, decrypted leader input share (populated for leader only)
     helper_encrypted_input_share    BYTEA,               -- encdoed HpkeCiphertext message containing the helper's input share (populated for leader only)
 
-    CONSTRAINT unique_task_id_and_report_id UNIQUE(task_id, report_id),
+    CONSTRAINT client_reports_unique_task_id_and_report_id UNIQUE(task_id, report_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 CREATE INDEX client_reports_task_and_timestamp_index ON client_reports(task_id, client_timestamp);
@@ -109,7 +109,7 @@ CREATE TABLE aggregation_jobs(
     lease_token              BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts           BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
-    CONSTRAINT unique_aggregation_job_id UNIQUE(aggregation_job_id),
+    CONSTRAINT aggregation_jobs_unique_id UNIQUE(aggregation_job_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
@@ -140,7 +140,7 @@ CREATE TABLE report_aggregations(
     out_share           BYTEA,                              -- the output share (opaque VDAF message, only if in state FINISHED)
     error_code          SMALLINT,                           -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
 
-    CONSTRAINT unique_ord UNIQUE(aggregation_job_id, ord),
+    CONSTRAINT report_aggregations_unique_ord UNIQUE(aggregation_job_id, ord),
     CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id),
     CONSTRAINT fk_client_report_id FOREIGN KEY(client_report_id) REFERENCES client_reports(id)
 );
@@ -159,7 +159,7 @@ CREATE TABLE batch_aggregations(
     report_count          BIGINT NOT NULL,     -- the (possibly-incremental) client report count
     checksum              BYTEA NOT NULL,      -- the (possibly-incremental) checksum
 
-    CONSTRAINT unique_task_id_interval_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
+    CONSTRAINT batch_aggregations_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
@@ -188,7 +188,7 @@ CREATE TABLE collect_jobs(
     lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts          BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
-    CONSTRAINT unique_collect_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
+    CONSTRAINT collect_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 -- TODO(#224): verify that this index is optimal for purposes of acquiring collect jobs.
@@ -206,7 +206,7 @@ CREATE TABLE aggregate_share_jobs(
     report_count            BIGINT NOT NULL,    -- the count of reports included helper_aggregate_share
     checksum                BYTEA NOT NULL,     -- the checksum over the reports included in helper_aggregate_share
 
-    CONSTRAINT unique_aggregate_share_job_task_id_interval_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
+    CONSTRAINT aggregate_share_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 CREATE INDEX aggregate_share_jobs_interval_containment_index ON aggregate_share_jobs USING gist (task_id, batch_interval);
@@ -218,6 +218,6 @@ CREATE TABLE outstanding_batches(
     task_id BIGINT NOT NULL, -- the task ID containing the batch
     batch_id BYTEA NOT NULL, -- 32-byte BatchID as defined by the DAP specification.
 
-    CONSTRAINT unique_task_id_batch_id UNIQUE(task_id, batch_id),
+    CONSTRAINT outstanding_batches_unique_task_id_batch_id UNIQUE(task_id, batch_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );

@@ -14,6 +14,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
+fpvec_bounded_l2 = []
 test-util = [
     "dep:assert_matches",
     "dep:lazy_static",
@@ -33,7 +34,7 @@ backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.21.0"
 chrono = "0.4"
 derivative = "2.2.0"
-futures = "0.3.25"
+futures = "0.3.26"
 hex = "0.4"
 hpke-dispatch = "0.5.0"
 http-api-problem = "0.56.0"
@@ -42,11 +43,11 @@ kube = { workspace = true, optional = true, features = ["rustls-tls"] }
 k8s-openapi = { workspace = true, optional = true }
 prio = { version = "0.10.0", features = ["multithreaded"] }
 rand = "0.8"
-reqwest = { version = "0.11.13", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls", "json"] }
 ring = "0.16.20"
 serde = { version = "1.0.152", features = ["derive"] }
 thiserror = "1.0"
-tokio = { version = "1.24", features = ["macros", "net", "rt"] }
+tokio = { version = "1.25", features = ["macros", "net", "rt"] }
 tracing = "0.1.37"
 
 # Dependencies required only if feature "test-util" is enabled
@@ -60,7 +61,7 @@ tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"],
 
 [dev-dependencies]
 hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
-janus_core = { workspace = true, features = ["test-util"] }
+janus_core = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
 # Enable `kube`'s `openssl-tls` feature (which takes precedence over the
 # `rustls-tls` feature when creating a default client) to work around rustls's
 # lack of support for connecting to servers by IP addresses, which affects many

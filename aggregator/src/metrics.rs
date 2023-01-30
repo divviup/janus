@@ -98,21 +98,29 @@ pub enum MetricsExporterHandle {
 #[derive(Debug)]
 struct CustomAggregatorSelector;
 
+/// These boundaries are copied from the Ruby and Go Prometheus clients. They are well-suited for
+/// HTTP request latencies.
+static DEFAULT_HISTOGRAM_BOUNDARIES: &[f64] = &[
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+];
+/// These boundaries are intended to be used with durations in seconds. They cover a large range, so
+/// that they can accurately capture long-running operations.
+static ALTERNATE_HISTOGRAM_BOUNDARIES: &[f64] =
+    &[0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 90.0, 300.0];
+
 impl AggregatorSelector for CustomAggregatorSelector {
     fn aggregator_for(&self, descriptor: &Descriptor) -> Option<Arc<dyn Aggregator + Send + Sync>> {
         match descriptor.instrument_kind() {
             InstrumentKind::Histogram => match descriptor.name() {
-                "janus_job_acquire_time" => Some(Arc::new(
-                    opentelemetry::sdk::metrics::aggregators::histogram(&[
-                        0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 90.0, 300.0,
-                    ]),
-                )),
-                // The following boundaries are copied from the Ruby and Go Prometheus clients.
-                // They are well-suited for HTTP request latencies.
+                "janus_job_acquire_time" | "janus_database_transaction_duration_seconds" => Some(
+                    Arc::new(opentelemetry::sdk::metrics::aggregators::histogram(
+                        ALTERNATE_HISTOGRAM_BOUNDARIES,
+                    )),
+                ),
                 _ => Some(Arc::new(
-                    opentelemetry::sdk::metrics::aggregators::histogram(&[
-                        0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-                    ]),
+                    opentelemetry::sdk::metrics::aggregators::histogram(
+                        DEFAULT_HISTOGRAM_BOUNDARIES,
+                    ),
                 )),
             },
             InstrumentKind::GaugeObserver => Some(Arc::new(

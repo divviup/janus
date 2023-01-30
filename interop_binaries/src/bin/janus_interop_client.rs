@@ -1,6 +1,10 @@
 use anyhow::{anyhow, Context};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::{value_parser, Arg, Command};
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::types::extra::{U15, U31, U63};
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::{FixedI16, FixedI32, FixedI64};
 use janus_client::ClientParameters;
 use janus_core::{
     task::VdafInstance,
@@ -12,6 +16,8 @@ use janus_interop_binaries::{
     NumberAsString, VdafObject,
 };
 use janus_messages::{Duration, Role, TaskId, Time};
+#[cfg(feature = "fpvec_bounded_l2")]
+use prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum;
 use prio::{
     codec::Decode,
     vdaf::{prio3::Prio3, Vdaf},
@@ -21,11 +27,29 @@ use std::net::{Ipv4Addr, SocketAddr};
 use url::Url;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
+/// Helper enum for tagging a mesurement vector with the fixed point type for deserialization.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+#[cfg(feature = "fpvec_bounded_l2")]
+enum TaggedFixedVec {
+    Fixed16 {
+        vec: Vec<NumberAsString<FixedI16<U15>>>,
+    },
+    Fixed32 {
+        vec: Vec<NumberAsString<FixedI32<U31>>>,
+    },
+    Fixed64 {
+        vec: Vec<NumberAsString<FixedI64<U63>>>,
+    },
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum Measurement {
     Number(NumberAsString<u128>),
     NumberVec(Vec<NumberAsString<u128>>),
+    #[cfg(feature = "fpvec_bounded_l2")]
+    FixedVec(TaggedFixedVec),
 }
 
 impl Measurement {
@@ -48,6 +72,42 @@ impl Measurement {
                 .collect::<anyhow::Result<Vec<_>>>(),
             m => Err(anyhow!(
                 "cannot represent measurement {m:?} as a vector of primitives"
+            )),
+        }
+    }
+
+    #[cfg(feature = "fpvec_bounded_l2")]
+    fn as_fixed16_vec(&self) -> anyhow::Result<Vec<FixedI16<U15>>> {
+        match self {
+            Measurement::FixedVec(TaggedFixedVec::Fixed16 { vec }) => {
+                Ok(vec.iter().map(|item| item.0).collect())
+            }
+            m => Err(anyhow!(
+                "cannot represent measurement {m:?} as a vector of 16 bit fixed point numbers"
+            )),
+        }
+    }
+
+    #[cfg(feature = "fpvec_bounded_l2")]
+    fn as_fixed32_vec(&self) -> anyhow::Result<Vec<FixedI32<U31>>> {
+        match self {
+            Measurement::FixedVec(TaggedFixedVec::Fixed32 { vec }) => {
+                Ok(vec.iter().map(|item| item.0).collect())
+            }
+            m => Err(anyhow!(
+                "cannot represent measurement {m:?} as a vector of 32 bit fixed point numbers"
+            )),
+        }
+    }
+
+    #[cfg(feature = "fpvec_bounded_l2")]
+    fn as_fixed64_vec(&self) -> anyhow::Result<Vec<FixedI64<U63>>> {
+        match self {
+            Measurement::FixedVec(TaggedFixedVec::Fixed64 { vec }) => {
+                Ok(vec.iter().map(|item| item.0).collect())
+            }
+            m => Err(anyhow!(
+                "cannot represent measurement {m:?} as a vector of 64 bit fixed point numbers"
             )),
         }
     }
@@ -176,7 +236,36 @@ async fn handle_upload(
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
-        _ => panic!("Unsupported VDAF: {:?}", vdaf_instance),
+        #[cfg(feature = "fpvec_bounded_l2")]
+        VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { length } => {
+            let measurement = request.measurement.as_fixed16_vec()?;
+            let vdaf_client: Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>> =
+                Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, length).context(
+                    "failed to construct Prio3Aes128FixedPoint16BitBoundedL2VecSum VDAF",
+                )?;
+            handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
+        }
+
+        #[cfg(feature = "fpvec_bounded_l2")]
+        VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { length } => {
+            let measurement = request.measurement.as_fixed32_vec()?;
+            let vdaf_client: Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>> =
+                Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, length).context(
+                    "failed to construct Prio3Aes128FixedPoint32BitBoundedL2VecSum VDAF",
+                )?;
+            handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
+        }
+
+        #[cfg(feature = "fpvec_bounded_l2")]
+        VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { length } => {
+            let measurement = request.measurement.as_fixed64_vec()?;
+            let vdaf_client: Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>> =
+                Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, length).context(
+                    "failed to construct Prio3Aes128FixedPoint64BitBoundedL2VecSum VDAF",
+                )?;
+            handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
+        }
+        _ => panic!("Unsupported VDAF: {vdaf_instance:?}"),
     }
     Ok(())
 }
@@ -201,7 +290,7 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
                         },
                         Err(e) => UploadResponse {
                             status: ERROR,
-                            error: Some(format!("{:?}", e)),
+                            error: Some(format!("{e:?}")),
                         },
                     };
                     warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
