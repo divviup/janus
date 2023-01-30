@@ -26,7 +26,7 @@ anyhow = "1"
 backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.21.0"
 clap = "4.0.27"
-futures = { version = "0.3.25", optional = true }
+futures = { version = "0.3.26", optional = true }
 hex = { version = "0.4", optional = true }
 lazy_static = { version = "1", optional = true }
 janus_aggregator = { path = "../aggregator" }
