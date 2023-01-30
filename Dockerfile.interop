@@ -1,7 +1,7 @@
 ARG BINARY
 ARG PROFILE=release
 
-FROM rust:1.66.1-alpine as builder
+FROM rust:1.67.0-alpine as builder
 ARG BINARY
 ARG PROFILE
 RUN apk add libc-dev protobuf-dev protoc
