@@ -3542,9 +3542,8 @@ impl RowExt for Row {
         for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         let encoded: Vec<u8> = self.try_get(idx)?;
-        T::try_from(&encoded).map_err(|err| {
-            Error::DbState(format!("{} stored in database is invalid: {:?}", idx, err))
-        })
+        T::try_from(&encoded)
+            .map_err(|err| Error::DbState(format!("{idx} stored in database is invalid: {err:?}")))
     }
 }
 
