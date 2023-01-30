@@ -16,7 +16,7 @@ anyhow = "1"
 async-trait = "0.1"
 backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.21.0"
-futures = "0.3.25"
+futures = "0.3.26"
 hex = "0.4"
 janus_aggregator = { path = "../aggregator", features = ["test-util"] }
 janus_client = { path = "../client" }
