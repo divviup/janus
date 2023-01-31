@@ -3267,18 +3267,8 @@ ORDER BY id DESC
             .prepare_cached(
                 r#"WITH aggregation_jobs_to_delete AS (
                     SELECT id FROM aggregation_jobs
-                    JOIN (
-                        SELECT
-                            report_aggregations.aggregation_job_id,
-                            MAX(client_reports.client_timestamp) AS max_timestamp
-                        FROM report_aggregations
-                        JOIN client_reports
-                            ON client_reports.id = report_aggregations.client_report_id
-                        GROUP BY report_aggregations.aggregation_job_id
-                    ) report_max_timestamps
-                        ON report_max_timestamps.aggregation_job_id = aggregation_jobs.id
-                    WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                      AND report_max_timestamps.max_timestamp < $2
+                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      AND UPPER(client_timestamp_interval) <= $2
                       AND NOT EXISTS (
                           SELECT id FROM collect_jobs
                           WHERE aggregation_jobs.task_id = collect_jobs.task_id
@@ -3365,44 +3355,35 @@ ORDER BY id DESC
                     JOIN (
                         SELECT
                             collect_jobs.id AS collect_job_id,
-                            MAX(client_reports.client_timestamp) AS max_timestamp
+                            MAX(UPPER(aggregation_jobs.client_timestamp_interval)) AS max_timestamp
                         FROM collect_jobs
                         JOIN aggregation_jobs
                             ON aggregation_jobs.task_id = collect_jobs.task_id
                             AND (aggregation_jobs.batch_identifier = collect_jobs.batch_identifier
                                 OR aggregation_jobs.batch_interval <@ collect_jobs.batch_interval)
-                        JOIN report_aggregations
-                            ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-                        JOIN client_reports
-                            ON client_reports.id = report_aggregations.client_report_id
                         GROUP BY collect_jobs.id
                     ) report_max_timestamps
                         ON report_max_timestamps.collect_job_id = collect_jobs.id
                     WHERE collect_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                        AND report_max_timestamps.max_timestamp < $2
+                        AND report_max_timestamps.max_timestamp <= $2
                 ),
                 aggregate_share_jobs_to_delete AS (
                     SELECT id FROM aggregate_share_jobs
                     JOIN (
                         SELECT
                             aggregate_share_jobs.id AS aggregate_share_job_id,
-                            MAX(client_reports.client_timestamp) AS max_timestamp
+                            MAX(UPPER(aggregation_jobs.client_timestamp_interval)) AS max_timestamp
                         FROM aggregate_share_jobs
                         JOIN aggregation_jobs
                             ON aggregation_jobs.task_id = aggregate_share_jobs.task_id
                             AND (aggregation_jobs.batch_identifier = aggregate_share_jobs.batch_identifier
                               OR ('"TimeInterval"'::jsonb IN (SELECT query_type FROM tasks WHERE task_id = $1)
                                 AND aggregation_jobs.client_timestamp_interval <@ aggregate_share_jobs.batch_interval))
-                        JOIN report_aggregations
-                            ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-                        JOIN client_reports
-                            ON client_reports.id = report_aggregations.client_report_id
                         GROUP BY aggregate_share_jobs.id
                     ) report_max_timestamps
                         ON report_max_timestamps.aggregate_share_job_id = aggregate_share_jobs.id
                     WHERE aggregate_share_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                      AND (UPPER(aggregate_share_jobs.batch_interval) < $2
-                        OR report_max_timestamps.max_timestamp < $2)
+                      AND report_max_timestamps.max_timestamp <= $2
                 ),
                 deleted_aggregate_share_jobs AS (
                     DELETE FROM aggregate_share_jobs
@@ -3413,20 +3394,16 @@ ORDER BY id DESC
                     JOIN (
                         SELECT
                             outstanding_batches.batch_id,
-                            MAX(client_reports.client_timestamp) AS max_timestamp
+                            MAX(UPPER(aggregation_jobs.client_timestamp_interval)) AS max_timestamp
                         FROM outstanding_batches
                         JOIN aggregation_jobs
                             ON aggregation_jobs.task_id = outstanding_batches.task_id
                            AND aggregation_jobs.batch_identifier = outstanding_batches.batch_id
-                        JOIN report_aggregations
-                            ON report_aggregations.aggregation_job_id = aggregation_jobs.id
-                        JOIN client_reports
-                            ON client_reports.id = report_aggregations.client_report_id
                         GROUP BY outstanding_batches.batch_id
                     ) report_max_timestamps
                         ON report_max_timestamps.batch_id = outstanding_batches.batch_id
                     WHERE outstanding_batches.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                      AND report_max_timestamps.max_timestamp < $2
+                      AND report_max_timestamps.max_timestamp <= $2
                 ),
                 deleted_outstanding_batches AS (
                     DELETE FROM outstanding_batches
@@ -9420,7 +9397,11 @@ mod tests {
                         random(),
                         None,
                         AggregationParam(0),
-                        Interval::new(*attached_report.metadata().time(), Duration::ZERO).unwrap(),
+                        Interval::new(
+                            *attached_report.metadata().time(),
+                            Duration::from_seconds(1),
+                        )
+                        .unwrap(),
                         AggregationJobState::InProgress,
                     );
                     let report_aggregation = ReportAggregation::new(
@@ -10220,7 +10201,7 @@ mod tests {
                     random(),
                     Some(batch_identifier.clone()),
                     AggregationParam(0),
-                    Interval::new(*client_timestamp, Duration::ZERO).unwrap(),
+                    Interval::new(*client_timestamp, Duration::from_seconds(1)).unwrap(),
                     AggregationJobState::InProgress,
                 );
                 tx.put_aggregation_job(&aggregation_job).await.unwrap();
