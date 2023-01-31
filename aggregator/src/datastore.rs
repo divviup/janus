@@ -937,15 +937,15 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT
-                client_reports.report_id,
-                client_reports.client_timestamp,
-                client_reports.extensions,
-                client_reports.public_share,
-                client_reports.leader_input_share,
-                client_reports.helper_encrypted_input_share
-            FROM client_reports
-            JOIN tasks ON tasks.id = client_reports.task_id
-            WHERE tasks.task_id = $1",
+                    client_reports.report_id,
+                    client_reports.client_timestamp,
+                    client_reports.extensions,
+                    client_reports.public_share,
+                    client_reports.leader_input_share,
+                    client_reports.helper_encrypted_input_share
+                FROM client_reports
+                JOIN tasks ON tasks.id = client_reports.task_id
+                WHERE tasks.task_id = $1",
             )
             .await?;
         self.tx
@@ -9615,7 +9615,7 @@ mod tests {
                     let mut batch_identifiers = HashSet::new();
                     let mut all_report_ids = HashSet::new();
 
-                    // Leader, time-interval aggregation job job with old reports [GC'ed].
+                    // Leader, time-interval aggregation job with old reports [GC'ed].
                     write_aggregation_artifacts::<TimeInterval>(
                         tx,
                         leader_time_interval_task.id(),
@@ -9780,7 +9780,7 @@ mod tests {
                     batch_identifiers.insert(batch_identifier.get_encoded());
                     all_report_ids.extend(report_ids);
 
-                    // Leader, fixed-size aggregation job job with old reports [GC'ed].
+                    // Leader, fixed-size aggregation job with old reports [GC'ed].
                     write_aggregation_artifacts::<FixedSize>(
                         tx,
                         leader_fixed_size_task.id(),

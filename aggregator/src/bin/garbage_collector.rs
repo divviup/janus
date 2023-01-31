@@ -20,8 +20,8 @@ async fn main() -> anyhow::Result<()> {
 
 #[derive(Debug, Parser)]
 #[clap(
-    name = "janus-collect-job-driver",
-    about = "Janus collect job driver",
+    name = "janus-garbage-collector",
+    about = "Janus garbage collector",
     rename_all = "kebab-case",
     version = env!("CARGO_PKG_VERSION"),
 )]

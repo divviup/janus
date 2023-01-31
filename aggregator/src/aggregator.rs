@@ -3627,11 +3627,8 @@ where
                     Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::HttpClient(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::Http { .. }) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::AggregateShareRequestRejected(task_id, _)) => {
-                        build_problem_details_response(
-                            DapProblemType::UnrecognizedMessage,
-                            Some(task_id),
-                        )
+                    Err(Error::AggregateShareRequestRejected(_, _)) => {
+                        StatusCode::BAD_REQUEST.into_response()
                     }
                     Err(Error::EmptyAggregation(task_id)) => build_problem_details_response(
                         DapProblemType::UnrecognizedMessage,
@@ -8271,7 +8268,7 @@ mod tests {
         );
 
         // Test that a request for a too-old batch fails.
-        let (parts, body) = warp::test::request()
+        let (parts, _) = warp::test::request()
             .method("POST")
             .header(
                 "DAP-Auth-Token",
@@ -8299,17 +8296,6 @@ mod tests {
             .into_parts();
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(body).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": StatusCode::BAD_REQUEST.as_u16(),
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
-                "title": "The message type for a response was incorrect or the payload was malformed.",
-                "taskid": format!("{}", task.id()),
-            })
-        )
     }
 
     #[tokio::test]
