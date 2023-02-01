@@ -3278,8 +3278,7 @@ ORDER BY id DESC
                           SELECT id FROM aggregate_share_jobs
                           WHERE aggregation_jobs.task_id = aggregate_share_jobs.task_id
                             AND (aggregation_jobs.batch_identifier = aggregate_share_jobs.batch_identifier
-                             OR ('"TimeInterval"'::jsonb IN (SELECT query_type FROM tasks WHERE task_id = $1)
-                                 AND aggregation_jobs.client_timestamp_interval <@ aggregate_share_jobs.batch_interval))
+                             OR aggregation_jobs.client_timestamp_interval <@ aggregate_share_jobs.batch_interval)
                       )
                       AND NOT EXISTS (
                           SELECT id FROM outstanding_batches
@@ -3300,18 +3299,18 @@ ORDER BY id DESC
                             AND NOT EXISTS (
                                 SELECT id FROM collect_jobs
                                 WHERE batch_aggregations.task_id = collect_jobs.task_id
-                                  AND (batch_aggregations.batch_identifier = collect_jobs.batch_identifier
-                                    OR batch_aggregations.batch_interval <@ collect_jobs.batch_interval))
+                                    AND (batch_aggregations.batch_identifier = collect_jobs.batch_identifier
+                                    OR batch_aggregations.batch_interval <@ collect_jobs.batch_interval)) 
                             AND NOT EXISTS (
                                 SELECT id FROM aggregate_share_jobs
                                 WHERE batch_aggregations.task_id = aggregate_share_jobs.task_id
-                                  AND (batch_aggregations.batch_identifier = aggregate_share_jobs.batch_identifier
-                                   OR batch_aggregations.batch_interval <@ aggregate_share_jobs.batch_interval)
+                                    AND (batch_aggregations.batch_identifier = aggregate_share_jobs.batch_identifier
+                                    OR batch_aggregations.batch_interval <@ aggregate_share_jobs.batch_interval)
                             )
                             AND NOT EXISTS (
                                 SELECT id FROM outstanding_batches
                                 WHERE batch_aggregations.task_id = outstanding_batches.task_id
-                                  AND batch_aggregations.batch_identifier = outstanding_batches.batch_id)
+                                    AND batch_aggregations.batch_identifier = outstanding_batches.batch_id)
                         )
                         OR batch_aggregations.batch_identifier IN (
                             SELECT batch_identifier FROM aggregation_jobs
@@ -3360,7 +3359,7 @@ ORDER BY id DESC
                         JOIN aggregation_jobs
                             ON aggregation_jobs.task_id = collect_jobs.task_id
                             AND (aggregation_jobs.batch_identifier = collect_jobs.batch_identifier
-                                OR aggregation_jobs.batch_interval <@ collect_jobs.batch_interval)
+                              OR aggregation_jobs.batch_interval <@ collect_jobs.batch_interval)
                         GROUP BY collect_jobs.id
                     ) report_max_timestamps
                         ON report_max_timestamps.collect_job_id = collect_jobs.id
@@ -3377,8 +3376,7 @@ ORDER BY id DESC
                         JOIN aggregation_jobs
                             ON aggregation_jobs.task_id = aggregate_share_jobs.task_id
                             AND (aggregation_jobs.batch_identifier = aggregate_share_jobs.batch_identifier
-                              OR ('"TimeInterval"'::jsonb IN (SELECT query_type FROM tasks WHERE task_id = $1)
-                                AND aggregation_jobs.client_timestamp_interval <@ aggregate_share_jobs.batch_interval))
+                              OR aggregation_jobs.client_timestamp_interval <@ aggregate_share_jobs.batch_interval)
                         GROUP BY aggregate_share_jobs.id
                     ) report_max_timestamps
                         ON report_max_timestamps.aggregate_share_job_id = aggregate_share_jobs.id
@@ -9285,6 +9283,10 @@ mod tests {
             client_timestamps: &[Time],
         ) -> Self::BatchIdentifier;
 
+        fn shortened_batch_identifier(
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> Self::BatchIdentifier;
+
         async fn write_outstanding_batch(
             tx: &Transaction<MockClock>,
             task_id: &TaskId,
@@ -9312,6 +9314,16 @@ mod tests {
             .unwrap()
         }
 
+        fn shortened_batch_identifier(
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> Self::BatchIdentifier {
+            Interval::new(
+                *batch_identifier.start(),
+                Duration::from_seconds(batch_identifier.duration().as_seconds() / 2),
+            )
+            .unwrap()
+        }
+
         async fn write_outstanding_batch(
             _: &Transaction<MockClock>,
             _: &TaskId,
@@ -9325,6 +9337,12 @@ mod tests {
     impl ExpirationQueryTypeExt for FixedSize {
         fn batch_identifier_for_client_timestamps(_: &[Time]) -> Self::BatchIdentifier {
             random()
+        }
+
+        fn shortened_batch_identifier(
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> Self::BatchIdentifier {
+            *batch_identifier
         }
 
         async fn write_outstanding_batch(
@@ -9476,7 +9494,12 @@ mod tests {
             tx: &Transaction<'_, MockClock>,
             task_id: &TaskId,
             client_timestamps: &[Time],
-        ) -> (AggregationJobId, Q::BatchIdentifier, Vec<ReportId>) {
+        ) -> (
+            Q::BatchIdentifier,
+            AggregationJobId,   // aggregation job ID
+            Q::BatchIdentifier, // batch aggregation ID
+            Vec<ReportId>,      // client report IDs
+        ) {
             let batch_identifier = Q::batch_identifier_for_client_timestamps(client_timestamps);
 
             let mut report_ids_and_timestamps = Vec::new();
@@ -9523,9 +9546,10 @@ mod tests {
                     .unwrap();
             }
 
+            let shortened_batch_identifier = Q::shortened_batch_identifier(&batch_identifier);
             let batch_aggregation = BatchAggregation::<0, Q, dummy_vdaf::Vdaf>::new(
                 *task_id,
-                batch_identifier.clone(),
+                shortened_batch_identifier.clone(),
                 AggregationParam(0),
                 AggregateShare(0),
                 0,
@@ -9534,8 +9558,9 @@ mod tests {
             tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
 
             (
-                *aggregation_job.id(),
                 batch_identifier,
+                *aggregation_job.id(),
+                shortened_batch_identifier,
                 report_ids_and_timestamps
                     .into_iter()
                     .map(|(report_id, _)| report_id)
@@ -9551,7 +9576,7 @@ mod tests {
             helper_fixed_size_task_id,
             other_task_id,
             want_aggregation_job_ids,
-            want_batch_identifiers,
+            want_batch_aggregation_ids,
             want_report_ids,
         ) = ds
             .run_tx(|tx| {
@@ -9593,7 +9618,7 @@ mod tests {
                     tx.put_task(&other_task).await?;
 
                     let mut aggregation_job_ids = HashSet::new();
-                    let mut batch_identifiers = HashSet::new();
+                    let mut batch_aggregation_ids = HashSet::new();
                     let mut all_report_ids = HashSet::new();
 
                     // Leader, time-interval aggregation job with old reports [GC'ed].
@@ -9612,7 +9637,7 @@ mod tests {
                     .await;
 
                     // Leader, time-interval aggregation job with old & new reports [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             leader_time_interval_task.id(),
@@ -9627,11 +9652,11 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Leader, time-interval aggregation job with new reports [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             leader_time_interval_task.id(),
@@ -9646,11 +9671,11 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Leader, time-interval aggregation job with attached collect job [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             leader_time_interval_task.id(),
@@ -9674,7 +9699,7 @@ mod tests {
                     .await
                     .unwrap();
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, time-interval aggregation job with old reports [GC'ed].
@@ -9693,7 +9718,7 @@ mod tests {
                     .await;
 
                     // Helper, time-interval task with old & new reports [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             helper_time_interval_task.id(),
@@ -9708,11 +9733,11 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, time-interval task with new reports [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             helper_time_interval_task.id(),
@@ -9727,11 +9752,11 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, time-interval task with attached aggregate share job [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             helper_time_interval_task.id(),
@@ -9758,7 +9783,7 @@ mod tests {
                     .await
                     .unwrap();
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Leader, fixed-size aggregation job with old reports [GC'ed].
@@ -9777,7 +9802,7 @@ mod tests {
                     .await;
 
                     // Leader, fixed-size aggregation job with old & new reports [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             leader_fixed_size_task.id(),
@@ -9792,11 +9817,11 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Leader, fixed-size aggregation job with new reports [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             leader_fixed_size_task.id(),
@@ -9811,11 +9836,11 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Leader, fixed-size aggregation job with attached collect job [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             leader_fixed_size_task.id(),
@@ -9839,11 +9864,11 @@ mod tests {
                     .await
                     .unwrap();
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Leader, fixed-size aggregation job with attached outstanding batch [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             leader_fixed_size_task.id(),
@@ -9861,7 +9886,7 @@ mod tests {
                         .await
                         .unwrap();
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, fixed-size aggregation job with old reports [GC'ed].
@@ -9880,7 +9905,7 @@ mod tests {
                     .await;
 
                     // Helper, fixed-size aggregation job with old & new reports [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             helper_fixed_size_task.id(),
@@ -9895,11 +9920,11 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, fixed-size aggregation job with new reports [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             helper_fixed_size_task.id(),
@@ -9914,11 +9939,11 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Helper, fixed-size aggregation job with attached aggregate share job [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
                             helper_fixed_size_task.id(),
@@ -9944,13 +9969,12 @@ mod tests {
                     )
                     .await
                     .unwrap();
-
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     // Aggregation job for a different task [not GC'ed].
-                    let (aggregation_job_id, batch_identifier, report_ids) =
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
                             other_task.id(),
@@ -9965,7 +9989,7 @@ mod tests {
                         )
                         .await;
                     aggregation_job_ids.insert(aggregation_job_id);
-                    batch_identifiers.insert(batch_identifier.get_encoded());
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
                     Ok((
@@ -9975,7 +9999,7 @@ mod tests {
                         *helper_fixed_size_task.id(),
                         *other_task.id(),
                         aggregation_job_ids,
-                        batch_identifiers,
+                        batch_aggregation_ids,
                         all_report_ids,
                     ))
                 })
@@ -10013,7 +10037,7 @@ mod tests {
         .unwrap();
 
         // Verify.
-        let (got_aggregation_job_ids, got_batch_identifiers, got_report_ids) = ds
+        let (got_aggregation_job_ids, got_batch_aggregation_ids, got_report_ids) = ds
             .run_tx(|tx| {
                 let vdaf = vdaf.clone();
                 Box::pin(async move {
@@ -10104,7 +10128,7 @@ mod tests {
                         .unwrap()
                         .into_iter()
                         .map(|agg| agg.batch_identifier().get_encoded());
-                    let got_batch_identifiers = leader_time_interval_batch_aggregation_ids
+                    let got_batch_aggregation_ids = leader_time_interval_batch_aggregation_ids
                         .chain(helper_time_interval_batch_aggregation_ids)
                         .chain(leader_fixed_size_batch_aggregation_ids)
                         .chain(helper_fixed_size_batch_aggregation_ids)
@@ -10162,7 +10186,7 @@ mod tests {
 
                     Ok((
                         got_aggregation_job_ids,
-                        got_batch_identifiers,
+                        got_batch_aggregation_ids,
                         got_report_ids,
                     ))
                 })
@@ -10170,7 +10194,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(want_aggregation_job_ids, got_aggregation_job_ids);
-        assert_eq!(want_batch_identifiers, got_batch_identifiers);
+        assert_eq!(want_batch_aggregation_ids, got_batch_aggregation_ids);
         assert_eq!(want_report_ids, got_report_ids);
     }
 
