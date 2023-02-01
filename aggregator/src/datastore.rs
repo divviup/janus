@@ -3300,8 +3300,8 @@ ORDER BY id DESC
                             AND NOT EXISTS (
                                 SELECT id FROM collect_jobs
                                 WHERE batch_aggregations.task_id = collect_jobs.task_id
-                                  AND (batch_aggregations.batch_identifier = batch_aggregations.batch_identifier
-                                    OR batch_aggregations.batch_interval <@ batch_aggregations.batch_interval))
+                                  AND (batch_aggregations.batch_identifier = collect_jobs.batch_identifier
+                                    OR batch_aggregations.batch_interval <@ collect_jobs.batch_interval))
                             AND NOT EXISTS (
                                 SELECT id FROM aggregate_share_jobs
                                 WHERE batch_aggregations.task_id = aggregate_share_jobs.task_id
