@@ -1010,7 +1010,7 @@ mod tests {
         AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
         AggregateInitializeResp, Duration, Extension, ExtensionType, HpkeConfig, InputShareAad,
         Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -1097,6 +1097,8 @@ mod tests {
                     aggregation_job_id,
                     Some(batch_interval),
                     (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
                     AggregationJobState::InProgress,
                 ))
                 .await?;
@@ -1196,6 +1198,8 @@ mod tests {
                 aggregation_job_id,
                 Some(batch_interval),
                 (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             );
         let want_report_aggregation =
@@ -1322,6 +1326,8 @@ mod tests {
                         aggregation_job_id,
                         Some(batch_interval),
                         (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -1431,6 +1437,8 @@ mod tests {
                 aggregation_job_id,
                 Some(batch_interval),
                 (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::InProgress,
             );
         let leader_prep_state = transcript.prep_state(0, Role::Leader).clone();
@@ -1558,6 +1566,8 @@ mod tests {
                         aggregation_job_id,
                         Some(batch_id),
                         (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -1655,6 +1665,8 @@ mod tests {
                 aggregation_job_id,
                 Some(batch_id),
                 (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::InProgress,
             );
         let want_report_aggregation =
@@ -1778,6 +1790,8 @@ mod tests {
                         aggregation_job_id,
                         Some(batch_interval),
                         (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -1868,6 +1882,8 @@ mod tests {
                 aggregation_job_id,
                 Some(batch_interval),
                 (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             );
         let want_report_aggregation =
@@ -2015,6 +2031,8 @@ mod tests {
                         aggregation_job_id,
                         Some(batch_id),
                         (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -2105,6 +2123,8 @@ mod tests {
                 aggregation_job_id,
                 Some(batch_id),
                 (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             );
         let leader_output_share = transcript.output_share(Role::Leader);
@@ -2221,6 +2241,8 @@ mod tests {
                 aggregation_job_id,
                 Some(batch_interval),
                 (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::InProgress,
             );
         let report_aggregation =
@@ -2417,6 +2439,8 @@ mod tests {
                     aggregation_job_id,
                     Some(batch_interval),
                     (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
                     AggregationJobState::InProgress,
                 ))
                 .await?;
@@ -2532,6 +2556,8 @@ mod tests {
                 aggregation_job_id,
                 Some(batch_interval),
                 (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Abandoned,
             ),
         );

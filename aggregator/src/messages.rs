@@ -8,6 +8,9 @@ const USEC_PER_SEC: u64 = 1_000_000;
 
 /// Extension methods on [`Duration`].
 pub trait DurationExt: Sized {
+    /// Add this duration with another duration.
+    fn add(&self, duration: &Duration) -> Result<Self, Error>;
+
     /// Create a duration from a number of microseconds. The time will be rounded down to the next
     /// second.
     fn from_microseconds(microseconds: u64) -> Self;
@@ -24,6 +27,13 @@ pub trait DurationExt: Sized {
 }
 
 impl DurationExt for Duration {
+    fn add(&self, other: &Duration) -> Result<Self, Error> {
+        self.as_seconds()
+            .checked_add(other.as_seconds())
+            .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+            .map(Duration::from_seconds)
+    }
+
     fn from_microseconds(microseconds: u64) -> Self {
         Self::from_seconds(microseconds / USEC_PER_SEC)
     }

@@ -328,10 +328,11 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "INSERT INTO tasks (task_id, aggregator_role, aggregator_endpoints, query_type,
-                    vdaf, max_batch_query_count, task_expiration, min_batch_size, time_precision,
-                    tolerable_clock_skew, collector_hpke_config)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                "INSERT INTO tasks (
+                    task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
+                    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
+                    time_precision, tolerable_clock_skew, collector_hpke_config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             )
             .await?;
         self.tx
@@ -346,6 +347,12 @@ impl<C: Clock> Transaction<'_, C> {
                     /* max_batch_query_count */
                     &i64::try_from(task.max_batch_query_count())?,
                     /* task_expiration */ &task.task_expiration().as_naive_date_time()?,
+                    /* report_expiry_age */
+                    &task
+                        .report_expiry_age()
+                        .map(Duration::as_seconds)
+                        .map(i64::try_from)
+                        .transpose()?,
                     /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
                     /* time_precision */
                     &i64::try_from(task.time_precision().as_seconds())?,
@@ -556,8 +563,8 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT aggregator_role, aggregator_endpoints, query_type, vdaf,
-                    max_batch_query_count, task_expiration, min_batch_size, time_precision,
-                    tolerable_clock_skew, collector_hpke_config
+                    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
+                    time_precision, tolerable_clock_skew, collector_hpke_config
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
@@ -633,8 +640,8 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
-                    max_batch_query_count, task_expiration, min_batch_size, time_precision,
-                    tolerable_clock_skew, collector_hpke_config
+                    max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
+                    time_precision, tolerable_clock_skew, collector_hpke_config
                 FROM tasks",
             )
             .await?;
@@ -776,6 +783,9 @@ impl<C: Clock> Transaction<'_, C> {
         let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
         let max_batch_query_count = row.get_bigint_and_convert("max_batch_query_count")?;
         let task_expiration = Time::from_naive_date_time(&row.get("task_expiration"));
+        let report_expiry_age = row
+            .get_nullable_bigint_and_convert("report_expiry_age")?
+            .map(Duration::from_seconds);
         let min_batch_size = row.get_bigint_and_convert("min_batch_size")?;
         let time_precision = Duration::from_seconds(row.get_bigint_and_convert("time_precision")?);
         let tolerable_clock_skew =
@@ -860,6 +870,7 @@ impl<C: Clock> Transaction<'_, C> {
             vdaf_verify_keys,
             max_batch_query_count,
             task_expiration,
+            report_expiry_age,
             min_batch_size,
             time_precision,
             tolerable_clock_skew,
@@ -872,7 +883,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// get_client_report retrieves a client report by ID.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn get_client_report<const L: usize, A>(
+    pub async fn get_client_report<const L: usize, A>(
         &self,
         vdaf: &A,
         task_id: &TaskId,
@@ -907,37 +918,89 @@ impl<C: Clock> Transaction<'_, C> {
                 ],
             )
             .await?
-            .map(|row| {
-                let time = Time::from_naive_date_time(&row.get("client_timestamp"));
-
-                let encoded_extensions: Vec<u8> = row.get("extensions");
-                let extensions: Vec<Extension> =
-                    decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
-
-                let encoded_public_share: Vec<u8> = row.get("public_share");
-                let public_share =
-                    A::PublicShare::get_decoded_with_param(&vdaf, &encoded_public_share)?;
-
-                let encoded_leader_input_share: Vec<u8> = row.get("leader_input_share");
-                let leader_input_share = A::InputShare::get_decoded_with_param(
-                    &(vdaf, Role::Leader.index().unwrap()),
-                    &encoded_leader_input_share,
-                )?;
-
-                let encoded_helper_input_share: Vec<u8> = row.get("helper_encrypted_input_share");
-                let helper_encrypted_input_share =
-                    HpkeCiphertext::get_decoded(&encoded_helper_input_share)?;
-
-                Ok(LeaderStoredReport::new(
-                    *task_id,
-                    ReportMetadata::new(*report_id, time),
-                    public_share,
-                    extensions,
-                    leader_input_share,
-                    helper_encrypted_input_share,
-                ))
-            })
+            .map(|row| Self::client_report_from_row(vdaf, *task_id, *report_id, row))
             .transpose()
+    }
+
+    #[cfg(feature = "test-util")]
+    pub async fn get_client_reports_for_task<const L: usize, A: vdaf::Aggregator<L>>(
+        &self,
+        vdaf: &A,
+        task_id: &TaskId,
+    ) -> Result<Vec<LeaderStoredReport<L, A>>, Error>
+    where
+        A::InputShare: PartialEq,
+        A::PublicShare: PartialEq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT
+                    client_reports.report_id,
+                    client_reports.client_timestamp,
+                    client_reports.extensions,
+                    client_reports.public_share,
+                    client_reports.leader_input_share,
+                    client_reports.helper_encrypted_input_share
+                FROM client_reports
+                JOIN tasks ON tasks.id = client_reports.task_id
+                WHERE tasks.task_id = $1",
+            )
+            .await?;
+        self.tx
+            .query(&stmt, &[/* task_id */ &task_id.as_ref()])
+            .await?
+            .into_iter()
+            .map(|row| {
+                Self::client_report_from_row(
+                    vdaf,
+                    *task_id,
+                    row.get_bytea_and_convert::<ReportId>("report_id")?,
+                    row,
+                )
+            })
+            .collect()
+    }
+
+    fn client_report_from_row<const L: usize, A: vdaf::Aggregator<L>>(
+        vdaf: &A,
+        task_id: TaskId,
+        report_id: ReportId,
+        row: Row,
+    ) -> Result<LeaderStoredReport<L, A>, Error>
+    where
+        A::InputShare: PartialEq,
+        A::PublicShare: PartialEq,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let time = Time::from_naive_date_time(&row.get("client_timestamp"));
+
+        let encoded_extensions: Vec<u8> = row.get("extensions");
+        let extensions: Vec<Extension> =
+            decode_u16_items(&(), &mut Cursor::new(&encoded_extensions))?;
+
+        let encoded_public_share: Vec<u8> = row.get("public_share");
+        let public_share = A::PublicShare::get_decoded_with_param(&vdaf, &encoded_public_share)?;
+
+        let encoded_leader_input_share: Vec<u8> = row.get("leader_input_share");
+        let leader_input_share = A::InputShare::get_decoded_with_param(
+            &(vdaf, Role::Leader.index().unwrap()),
+            &encoded_leader_input_share,
+        )?;
+
+        let encoded_helper_input_share: Vec<u8> = row.get("helper_encrypted_input_share");
+        let helper_encrypted_input_share =
+            HpkeCiphertext::get_decoded(&encoded_helper_input_share)?;
+
+        Ok(LeaderStoredReport::new(
+            task_id,
+            ReportMetadata::new(report_id, time),
+            public_share,
+            extensions,
+            leader_input_share,
+            helper_encrypted_input_share,
+        ))
     }
 
     /// `get_unaggregated_client_report_ids_for_task` returns some report IDs corresponding to
@@ -1238,7 +1301,7 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT batch_identifier, aggregation_param, state
+                "SELECT batch_identifier, aggregation_param, client_timestamp_interval, state
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1 AND aggregation_jobs.aggregation_job_id = $2",
             )
@@ -1256,11 +1319,11 @@ impl<C: Clock> Transaction<'_, C> {
             .transpose()
     }
 
-    /// get_aggregation_jobs_for_task_id returns all aggregation jobs for a given task ID.
+    /// get_aggregation_jobs_for_task returns all aggregation jobs for a given task ID.
     #[cfg(feature = "test-util")]
     #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_aggregation_jobs_for_task_id<
+    pub async fn get_aggregation_jobs_for_task<
         const L: usize,
         Q: AccumulableQueryType,
         A: vdaf::Aggregator<L>,
@@ -1274,7 +1337,9 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT aggregation_job_id, batch_identifier, aggregation_param, state
+                "SELECT
+                    aggregation_job_id, batch_identifier, aggregation_param,
+                    client_timestamp_interval, state
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1",
             )
@@ -1308,6 +1373,8 @@ impl<C: Clock> Transaction<'_, C> {
                 .map(Q::BatchIdentifier::get_decoded)
                 .transpose()?,
             A::AggregationParam::get_decoded(row.get("aggregation_param"))?,
+            row.get::<_, SqlInterval>("client_timestamp_interval")
+                .as_interval(),
             row.get("state"),
         ))
     }
@@ -1443,9 +1510,10 @@ impl<C: Clock> Transaction<'_, C> {
                     batch_identifier,
                     batch_interval,
                     aggregation_param,
+                    client_timestamp_interval,
                     state
                 )
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)",
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
             )
             .await?;
         self.tx
@@ -1462,6 +1530,8 @@ impl<C: Clock> Transaction<'_, C> {
                     /* batch_interval */ &batch_interval,
                     /* aggregation_param */
                     &aggregation_job.aggregation_parameter().get_encoded(),
+                    /* client_timestamp_interval */
+                    &SqlInterval::from(aggregation_job.client_timestamp_interval()),
                     /* state */ &aggregation_job.state(),
                 ],
             )
@@ -1607,13 +1677,58 @@ impl<C: Clock> Transaction<'_, C> {
             .await?
             .into_iter()
             .map(|row| {
-                let report_id = row.get_bytea_and_convert::<ReportId>("report_id")?;
                 Self::report_aggregation_from_row(
                     vdaf,
                     role,
                     task_id,
                     aggregation_job_id,
-                    &report_id,
+                    &row.get_bytea_and_convert::<ReportId>("report_id")?,
+                    &row,
+                )
+            })
+            .collect()
+    }
+
+    /// get_report_aggregations_for_task retrieves all report aggregations associated with a given
+    /// task.
+    #[cfg(feature = "test-util")]
+    pub async fn get_report_aggregations_for_task<const L: usize, A: vdaf::Aggregator<L>>(
+        &self,
+        vdaf: &A,
+        role: &Role,
+        task_id: &TaskId,
+    ) -> Result<Vec<ReportAggregation<L, A>>, Error>
+    where
+        for<'a> A::PrepareState: ParameterizedDecode<(&'a A, usize)>,
+        A::OutputShare: for<'a> TryFrom<&'a [u8]>,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT
+                    aggregation_jobs.aggregation_job_id, client_reports.report_id,
+                    client_reports.client_timestamp, report_aggregations.ord,
+                    report_aggregations.state, report_aggregations.prep_state,
+                    report_aggregations.prep_msg, report_aggregations.out_share,
+                    report_aggregations.error_code
+                FROM report_aggregations
+                JOIN client_reports ON client_reports.id = report_aggregations.client_report_id
+                JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+        self.tx
+            .query(&stmt, &[/* task_id */ &task_id.as_ref()])
+            .await?
+            .into_iter()
+            .map(|row| {
+                Self::report_aggregation_from_row(
+                    vdaf,
+                    role,
+                    task_id,
+                    &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
+                    &row.get_bytea_and_convert::<ReportId>("report_id")?,
                     &row,
                 )
             })
@@ -1997,15 +2112,15 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT
-                collect_jobs.collect_job_id,
-                collect_jobs.aggregation_param,
-                collect_jobs.state,
-                collect_jobs.report_count,
-                collect_jobs.helper_aggregate_share,
-                collect_jobs.leader_aggregate_share
-            FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
-            WHERE tasks.task_id = $1
-              AND collect_jobs.batch_identifier = $2",
+                    collect_jobs.collect_job_id,
+                    collect_jobs.aggregation_param,
+                    collect_jobs.state,
+                    collect_jobs.report_count,
+                    collect_jobs.helper_aggregate_share,
+                    collect_jobs.leader_aggregate_share
+                FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
+                WHERE tasks.task_id = $1
+                  AND collect_jobs.batch_identifier = $2",
             )
             .await?;
         self.tx
@@ -2021,6 +2136,43 @@ impl<C: Clock> Transaction<'_, C> {
             .map(|row| {
                 let collect_job_id = row.get("collect_job_id");
                 Self::collect_job_from_row(task_id, batch_identifier, &collect_job_id, &row)
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "test-util")]
+    pub async fn get_collect_jobs_for_task<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<CollectJob<L, Q, A>>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT
+                    collect_jobs.collect_job_id,
+                    collect_jobs.batch_identifier,
+                    collect_jobs.aggregation_param,
+                    collect_jobs.state,
+                    collect_jobs.report_count,
+                    collect_jobs.helper_aggregate_share,
+                    collect_jobs.leader_aggregate_share
+                FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
+                WHERE tasks.task_id = $1",
+            )
+            .await?;
+        self.tx
+            .query(&stmt, &[/* task_id */ task_id.as_ref()])
+            .await?
+            .into_iter()
+            .map(|row| {
+                let collect_job_id = row.get("collect_job_id");
+                let batch_identifier =
+                    Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+                Self::collect_job_from_row(task_id, &batch_identifier, &collect_job_id, &row)
             })
             .collect()
     }
@@ -2423,25 +2575,85 @@ ORDER BY id DESC
             )
             .await?
             .map(|row| {
-                let aggregate_share = row.get_bytea_and_convert("aggregate_share")?;
-                let report_count = row.get_bigint_and_convert("report_count")?;
-                let checksum = ReportIdChecksum::get_decoded(row.get("checksum"))?;
-
-                Ok(BatchAggregation::new(
+                Self::batch_aggregation_from_row(
                     *task_id,
                     batch_identifier.clone(),
                     aggregation_parameter.clone(),
-                    aggregate_share,
-                    report_count,
-                    checksum,
-                ))
+                    row,
+                )
             })
             .transpose()
     }
 
+    #[cfg(feature = "test-util")]
+    pub async fn get_batch_aggregations_for_task<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<BatchAggregation<L, Q, A>>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT
+                    batch_identifier, aggregation_param, aggregate_share, report_count, checksum
+                FROM batch_aggregations
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
+            )
+            .await?;
+
+        self.tx
+            .query(&stmt, &[/* task_id */ &task_id.as_ref()])
+            .await?
+            .into_iter()
+            .map(|row| {
+                let batch_identifier =
+                    Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+                let aggregation_param =
+                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+
+                Self::batch_aggregation_from_row(*task_id, batch_identifier, aggregation_param, row)
+            })
+            .collect()
+    }
+
+    fn batch_aggregation_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+        task_id: TaskId,
+        batch_identifier: Q::BatchIdentifier,
+        aggregation_parameter: A::AggregationParam,
+        row: Row,
+    ) -> Result<BatchAggregation<L, Q, A>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let aggregate_share = row.get_bytea_and_convert("aggregate_share")?;
+        let report_count = row.get_bigint_and_convert("report_count")?;
+        let checksum = ReportIdChecksum::get_decoded(row.get("checksum"))?;
+
+        Ok(BatchAggregation::new(
+            task_id,
+            batch_identifier,
+            aggregation_parameter,
+            aggregate_share,
+            report_count,
+            checksum,
+        ))
+    }
+
     /// Store a new `batch_aggregations` row in the datastore.
     #[tracing::instrument(skip(self), err)]
-    pub async fn put_batch_aggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn put_batch_aggregation<
+        const L: usize,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         batch_aggregation: &BatchAggregation<L, Q, A>,
     ) -> Result<(), Error>
@@ -2450,12 +2662,16 @@ ORDER BY id DESC
         A::AggregateShare: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+        let batch_interval =
+            Q::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
+
         let stmt = self
             .tx
             .prepare_cached(
-                "INSERT INTO batch_aggregations (task_id, batch_identifier,
-                aggregation_param, aggregate_share, report_count, checksum)
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)",
+                "INSERT INTO batch_aggregations (
+                    task_id, batch_identifier, batch_interval, aggregation_param, aggregate_share,
+                    report_count, checksum
+                ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
             )
             .await?;
         self.tx
@@ -2465,6 +2681,7 @@ ORDER BY id DESC
                     /* task_id */ &batch_aggregation.task_id().as_ref(),
                     /* batch_identifier */
                     &batch_aggregation.batch_identifier().get_encoded(),
+                    /* batch_interval */ &batch_interval,
                     /* aggregation_param */
                     &batch_aggregation.aggregation_parameter().get_encoded(),
                     /* aggregate_share */ &batch_aggregation.aggregate_share().into(),
@@ -2720,6 +2937,51 @@ ORDER BY id DESC
             .collect()
     }
 
+    #[cfg(feature = "test-util")]
+    pub async fn get_aggregate_share_jobs_for_task<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Vec<AggregateShareJob<L, Q, A>>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "SELECT
+                    aggregate_share_jobs.batch_identifier,
+                    aggregate_share_jobs.aggregation_param,
+                    aggregate_share_jobs.helper_aggregate_share,
+                    aggregate_share_jobs.report_count,
+                    aggregate_share_jobs.checksum
+                FROM aggregate_share_jobs JOIN tasks ON tasks.id = aggregate_share_jobs.task_id
+                WHERE tasks.task_id = $1",
+            )
+            .await?;
+        self.tx
+            .query(&stmt, &[/* task_id */ &task_id.as_ref()])
+            .await?
+            .into_iter()
+            .map(|row| {
+                let batch_identifier =
+                    Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
+                let aggregation_param =
+                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+                Self::aggregate_share_job_from_row(
+                    task_id,
+                    batch_identifier,
+                    aggregation_param,
+                    &row,
+                )
+            })
+            .collect()
+    }
+
     fn aggregate_share_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
         task_id: &TaskId,
         batch_identifier: Q::BatchIdentifier,
@@ -2955,6 +3217,211 @@ ORDER BY id DESC
             .map(|row| Ok(BatchId::get_decoded(row.get("batch_id"))?))
             .transpose()
     }
+
+    /// Deletes old client reports for a given task, that is, client reports whose timestamp is
+    /// older than a given timestamp which are not included in any report aggregations.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn delete_expired_client_reports(
+        &self,
+        task_id: &TaskId,
+        oldest_allowed_report_timestamp: Time,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "DELETE FROM client_reports
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) AND client_timestamp < $2
+                AND NOT EXISTS(
+                    SELECT FROM report_aggregations
+                    WHERE report_aggregations.client_report_id = client_reports.id)",
+            )
+            .await?;
+        self.tx
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.get_encoded(),
+                    /* client_timestamp */
+                    &oldest_allowed_report_timestamp.as_naive_date_time()?,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Deletes old aggregation artifacts (aggregation jobs/report aggregations/batch aggregations)
+    /// for a given task, that is, aggregation artifacts for which all associated client reports
+    /// have timestamps older than a given timestamp, and which are not included in any collection
+    /// artifacts.
+    ///
+    /// After calling this function, delete_expired_client_reports must be called in the same
+    /// transaction to avoid re-aggregating client reports.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn delete_expired_aggregation_artifacts(
+        &self,
+        task_id: &TaskId,
+        oldest_allowed_report_timestamp: Time,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                r#"WITH aggregation_jobs_to_delete AS (
+                    SELECT id FROM aggregation_jobs
+                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      AND UPPER(client_timestamp_interval) <= $2
+                      AND NOT EXISTS (
+                          SELECT id FROM collect_jobs
+                          WHERE aggregation_jobs.task_id = collect_jobs.task_id
+                            AND (aggregation_jobs.batch_identifier = collect_jobs.batch_identifier
+                              OR aggregation_jobs.batch_interval <@ collect_jobs.batch_interval))
+                      AND NOT EXISTS (
+                          SELECT id FROM aggregate_share_jobs
+                          WHERE aggregation_jobs.task_id = aggregate_share_jobs.task_id
+                            AND (aggregation_jobs.batch_identifier = aggregate_share_jobs.batch_identifier
+                             OR aggregation_jobs.client_timestamp_interval <@ aggregate_share_jobs.batch_interval)
+                      )
+                      AND NOT EXISTS (
+                          SELECT id FROM outstanding_batches
+                          WHERE aggregation_jobs.task_id = outstanding_batches.task_id
+                            AND aggregation_jobs.batch_identifier = outstanding_batches.batch_id)
+                ),
+                deleted_report_aggregations AS (
+                    DELETE FROM report_aggregations
+                    WHERE report_aggregations.aggregation_job_id IN (
+                        SELECT id FROM aggregation_jobs_to_delete)
+                ),
+                deleted_batch_aggregations AS (
+                    DELETE FROM batch_aggregations
+                    WHERE
+                        (
+                            batch_aggregations.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                            AND UPPER(batch_aggregations.batch_interval) < $2
+                            AND NOT EXISTS (
+                                SELECT id FROM collect_jobs
+                                WHERE batch_aggregations.task_id = collect_jobs.task_id
+                                    AND (batch_aggregations.batch_identifier = collect_jobs.batch_identifier
+                                    OR batch_aggregations.batch_interval <@ collect_jobs.batch_interval)) 
+                            AND NOT EXISTS (
+                                SELECT id FROM aggregate_share_jobs
+                                WHERE batch_aggregations.task_id = aggregate_share_jobs.task_id
+                                    AND (batch_aggregations.batch_identifier = aggregate_share_jobs.batch_identifier
+                                    OR batch_aggregations.batch_interval <@ aggregate_share_jobs.batch_interval)
+                            )
+                            AND NOT EXISTS (
+                                SELECT id FROM outstanding_batches
+                                WHERE batch_aggregations.task_id = outstanding_batches.task_id
+                                    AND batch_aggregations.batch_identifier = outstanding_batches.batch_id)
+                        )
+                        OR batch_aggregations.batch_identifier IN (
+                            SELECT batch_identifier FROM aggregation_jobs
+                            WHERE aggregation_jobs.id IN (SELECT id FROM aggregation_jobs_to_delete)
+                        )
+                )
+                DELETE FROM aggregation_jobs
+                WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)"#,
+            )
+            .await?;
+        self.tx
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.get_encoded(),
+                    /* client_timestamp */
+                    &oldest_allowed_report_timestamp.as_naive_date_time()?,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Deletes old collection artifacts (collect jobs/aggregate share jobs/outstanding batches) for
+    /// a given task, that is, collection artifacts for which all associated client reports have
+    /// timestamps older than a given timestamp.
+    ///
+    /// After calling this function, delete_expired_aggregation_artifacts must be called in the same
+    /// transaction to avoid re-collecting old aggregations.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn delete_expired_collection_artifacts(
+        &self,
+        task_id: &TaskId,
+        oldest_allowed_report_timestamp: Time,
+    ) -> Result<(), Error> {
+        let stmt = self
+            .tx
+            .prepare_cached(
+                r#"WITH collect_jobs_to_delete AS (
+                    SELECT id FROM collect_jobs
+                    JOIN (
+                        SELECT
+                            collect_jobs.id AS collect_job_id,
+                            MAX(UPPER(aggregation_jobs.client_timestamp_interval)) AS max_timestamp
+                        FROM collect_jobs
+                        JOIN aggregation_jobs
+                            ON aggregation_jobs.task_id = collect_jobs.task_id
+                            AND (aggregation_jobs.batch_identifier = collect_jobs.batch_identifier
+                              OR aggregation_jobs.batch_interval <@ collect_jobs.batch_interval)
+                        GROUP BY collect_jobs.id
+                    ) report_max_timestamps
+                        ON report_max_timestamps.collect_job_id = collect_jobs.id
+                    WHERE collect_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                        AND report_max_timestamps.max_timestamp <= $2
+                ),
+                aggregate_share_jobs_to_delete AS (
+                    SELECT id FROM aggregate_share_jobs
+                    JOIN (
+                        SELECT
+                            aggregate_share_jobs.id AS aggregate_share_job_id,
+                            MAX(UPPER(aggregation_jobs.client_timestamp_interval)) AS max_timestamp
+                        FROM aggregate_share_jobs
+                        JOIN aggregation_jobs
+                            ON aggregation_jobs.task_id = aggregate_share_jobs.task_id
+                            AND (aggregation_jobs.batch_identifier = aggregate_share_jobs.batch_identifier
+                              OR aggregation_jobs.client_timestamp_interval <@ aggregate_share_jobs.batch_interval)
+                        GROUP BY aggregate_share_jobs.id
+                    ) report_max_timestamps
+                        ON report_max_timestamps.aggregate_share_job_id = aggregate_share_jobs.id
+                    WHERE aggregate_share_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      AND report_max_timestamps.max_timestamp <= $2
+                ),
+                deleted_aggregate_share_jobs AS (
+                    DELETE FROM aggregate_share_jobs
+                    WHERE id IN (SELECT id FROM aggregate_share_jobs_to_delete)
+                ),
+                outstanding_batches_to_delete AS (
+                    SELECT id FROM outstanding_batches
+                    JOIN (
+                        SELECT
+                            outstanding_batches.batch_id,
+                            MAX(UPPER(aggregation_jobs.client_timestamp_interval)) AS max_timestamp
+                        FROM outstanding_batches
+                        JOIN aggregation_jobs
+                            ON aggregation_jobs.task_id = outstanding_batches.task_id
+                           AND aggregation_jobs.batch_identifier = outstanding_batches.batch_id
+                        GROUP BY outstanding_batches.batch_id
+                    ) report_max_timestamps
+                        ON report_max_timestamps.batch_id = outstanding_batches.batch_id
+                    WHERE outstanding_batches.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      AND report_max_timestamps.max_timestamp <= $2
+                ),
+                deleted_outstanding_batches AS (
+                    DELETE FROM outstanding_batches
+                    WHERE id IN (SELECT id FROM outstanding_batches_to_delete)
+                )
+                DELETE FROM collect_jobs WHERE id IN (SELECT id FROM collect_jobs_to_delete)"#,
+            )
+            .await?;
+        self.tx
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.get_encoded(),
+                    /* client_timestamp */
+                    &oldest_allowed_report_timestamp.as_naive_date_time()?,
+                ],
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 fn check_single_row_mutation(row_count: u64) -> Result<(), Error> {
@@ -3005,8 +3472,8 @@ trait RowExt {
     /// Get a PostgreSQL `BYTEA` from the row and attempt to convert it to `T`.
     fn get_bytea_and_convert<T>(&self, idx: &'static str) -> Result<T, Error>
     where
-        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
-        for<'a> T: TryFrom<&'a [u8]>;
+        for<'a> T: TryFrom<&'a [u8]>,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Debug;
 }
 
 impl RowExt for Row {
@@ -3046,14 +3513,12 @@ impl RowExt for Row {
 
     fn get_bytea_and_convert<T>(&self, idx: &'static str) -> Result<T, Error>
     where
-        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> T: TryFrom<&'a [u8]>,
+        for<'a> <T as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
     {
         let encoded: Vec<u8> = self.try_get(idx)?;
-        let decoded = T::try_from(&encoded).map_err(|err| {
-            Error::DbState(format!("{idx} stored in database is invalid: {err:?}"))
-        })?;
-        Ok(decoded)
+        T::try_from(&encoded)
+            .map_err(|err| Error::DbState(format!("{idx} stored in database is invalid: {err:?}")))
     }
 }
 
@@ -3473,6 +3938,7 @@ pub mod models {
         batch_identifier: Option<Q::BatchIdentifier>,
         #[derivative(Debug = "ignore")]
         aggregation_parameter: A::AggregationParam,
+        client_timestamp_interval: Interval,
         state: AggregationJobState,
     }
 
@@ -3486,6 +3952,7 @@ pub mod models {
             aggregation_job_id: AggregationJobId,
             batch_identifier: Option<Q::BatchIdentifier>,
             aggregation_parameter: A::AggregationParam,
+            client_timestamp_interval: Interval,
             state: AggregationJobState,
         ) -> Self {
             Self {
@@ -3493,6 +3960,7 @@ pub mod models {
                 aggregation_job_id,
                 batch_identifier,
                 aggregation_parameter,
+                client_timestamp_interval,
                 state,
             }
         }
@@ -3539,6 +4007,12 @@ pub mod models {
             &self.aggregation_parameter
         }
 
+        /// Returns the minimal interval containing all of the client timestamps associated with
+        /// this aggregation job.
+        pub fn client_timestamp_interval(&self) -> &Interval {
+            &self.client_timestamp_interval
+        }
+
         /// Returns the state of the aggregation job.
         pub fn state(&self) -> &AggregationJobState {
             &self.state
@@ -3572,6 +4046,7 @@ pub mod models {
                 && self.aggregation_job_id == other.aggregation_job_id
                 && self.batch_identifier == other.batch_identifier
                 && self.aggregation_parameter == other.aggregation_parameter
+                && self.client_timestamp_interval == other.client_timestamp_interval
                 && self.state == other.state
         }
     }
@@ -4895,12 +5370,13 @@ mod tests {
                 OutstandingBatch, ReportAggregation, ReportAggregationState, SqlInterval,
             },
             test_util::{ephemeral_datastore, generate_aead_key},
-            Crypter, Error,
+            Crypter, Error, Transaction,
         },
         messages::{DurationExt, TimeExt},
         task::{self, test_util::TaskBuilder, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     };
     use assert_matches::assert_matches;
+    use async_trait::async_trait;
     use chrono::NaiveDate;
     use futures::future::join_all;
     use janus_core::{
@@ -4914,9 +5390,9 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        AggregateShareAad, BatchSelector, Duration, Extension, ExtensionType, HpkeCiphertext,
-        HpkeConfigId, Interval, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
-        ReportShareError, Role, TaskId, Time,
+        AggregateShareAad, AggregationJobId, BatchId, BatchSelector, Duration, Extension,
+        ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, ReportId, ReportIdChecksum,
+        ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use prio::{
         codec::{Decode, Encode},
@@ -4968,7 +5444,9 @@ mod tests {
             (VdafInstance::Poplar1 { bits: 8 }, Role::Helper),
             (VdafInstance::Poplar1 { bits: 64 }, Role::Helper),
         ] {
-            let task = TaskBuilder::new(task::QueryType::TimeInterval, vdaf, role).build();
+            let task = TaskBuilder::new(task::QueryType::TimeInterval, vdaf, role)
+                .with_report_expiry_age(Some(Duration::from_seconds(3600)))
+                .build();
             want_tasks.insert(*task.id(), task.clone());
 
             let err = ds
@@ -5202,6 +5680,8 @@ mod tests {
                     aggregation_job_id,
                     Some(batch_interval),
                     (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
                     AggregationJobState::InProgress,
                 ))
                 .await?;
@@ -5402,6 +5882,8 @@ mod tests {
                     aggregation_job_id,
                     Some(batch_interval),
                     AggregationParam(0),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
                     AggregationJobState::InProgress,
                 ))
                 .await?;
@@ -5665,6 +6147,8 @@ mod tests {
                         random(),
                         Some(batch_id),
                         AggregationParam(22),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     );
                     let aggregation_job_0_report_aggregation_0 =
@@ -5691,6 +6175,8 @@ mod tests {
                         random(),
                         Some(batch_id),
                         AggregationParam(23),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     );
                     let aggregation_job_1_report_aggregation_0 =
@@ -5864,6 +6350,11 @@ mod tests {
             random(),
             Some(batch_id),
             dummy_vdaf::AggregationParam(23),
+            Interval::new(
+                Time::from_seconds_since_epoch(5432),
+                Duration::from_seconds(1234),
+            )
+            .unwrap(),
             AggregationJobState::InProgress,
         );
         let helper_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -5871,6 +6362,11 @@ mod tests {
             random(),
             Some(random()),
             dummy_vdaf::AggregationParam(23),
+            Interval::new(
+                Time::from_seconds_since_epoch(1007),
+                Duration::from_seconds(6209),
+            )
+            .unwrap(),
             AggregationJobState::InProgress,
         );
 
@@ -5984,6 +6480,8 @@ mod tests {
                         aggregation_job_id,
                         Some(interval),
                         (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -5999,6 +6497,8 @@ mod tests {
                     random(),
                     Some(interval),
                     (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
                     AggregationJobState::Finished,
                 ))
                 .await?;
@@ -6021,6 +6521,8 @@ mod tests {
                     random(),
                     None,
                     (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
                     AggregationJobState::InProgress,
                 ))
                 .await
@@ -6256,6 +6758,7 @@ mod tests {
                             random(),
                             None,
                             (),
+                            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
                             AggregationJobState::InProgress,
                         ),
                     )
@@ -6267,7 +6770,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_aggregation_jobs_for_task_id() {
+    async fn get_aggregation_jobs_for_task() {
         // Setup.
         install_test_trace_subscriber();
         let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
@@ -6285,6 +6788,7 @@ mod tests {
             random(),
             Some(random()),
             dummy_vdaf::AggregationParam(23),
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             AggregationJobState::InProgress,
         );
         let second_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
@@ -6292,6 +6796,7 @@ mod tests {
             random(),
             Some(random()),
             dummy_vdaf::AggregationParam(42),
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             AggregationJobState::InProgress,
         );
 
@@ -6320,6 +6825,8 @@ mod tests {
                     random(),
                     Some(random()),
                     dummy_vdaf::AggregationParam(82),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
                     AggregationJobState::InProgress,
                 ))
                 .await
@@ -6334,7 +6841,7 @@ mod tests {
         let mut got_agg_jobs = ds
             .run_tx(|tx| {
                 let task = task.clone();
-                Box::pin(async move { tx.get_aggregation_jobs_for_task_id(task.id()).await })
+                Box::pin(async move { tx.get_aggregation_jobs_for_task(task.id()).await })
             })
             .await
             .unwrap();
@@ -6398,6 +6905,11 @@ mod tests {
                             aggregation_job_id,
                             Some(interval),
                             (),
+                            Interval::new(
+                                Time::from_seconds_since_epoch(0),
+                                Duration::from_seconds(1),
+                            )
+                            .unwrap(),
                             AggregationJobState::InProgress,
                         ))
                         .await?;
@@ -6569,6 +7081,8 @@ mod tests {
                         aggregation_job_id,
                         Some(interval),
                         (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -7367,6 +7881,8 @@ mod tests {
                 aggregation_job_id,
                 Some(batch_interval),
                 AggregationParam(0),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             )]);
         let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -7491,6 +8007,7 @@ mod tests {
             aggregation_job_id,
             Some(batch_id),
             AggregationParam(0),
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             AggregationJobState::Finished,
         )]);
         let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -7616,6 +8133,8 @@ mod tests {
                 random(),
                 Some(batch_interval),
                 AggregationParam(0),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             )]);
 
@@ -7666,6 +8185,8 @@ mod tests {
                 Some(batch_interval),
                 // Aggregation job agg param does not match collect job agg param
                 AggregationParam(1),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             )]);
 
@@ -7718,6 +8239,8 @@ mod tests {
                     .unwrap(),
                 ),
                 AggregationParam(0),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             )]);
         let report_aggregations = Vec::from([ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -7779,6 +8302,8 @@ mod tests {
                 aggregation_job_id,
                 Some(batch_interval),
                 AggregationParam(0),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             )]);
 
@@ -7839,6 +8364,8 @@ mod tests {
                 aggregation_job_ids[0],
                 Some(batch_interval),
                 AggregationParam(0),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -7846,6 +8373,8 @@ mod tests {
                 aggregation_job_ids[1],
                 Some(batch_interval),
                 AggregationParam(0),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 // Aggregation job included in collect request is in progress
                 AggregationJobState::InProgress,
             ),
@@ -7916,6 +8445,8 @@ mod tests {
                 aggregation_job_ids[0],
                 Some(batch_interval),
                 AggregationParam(0),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -7923,6 +8454,8 @@ mod tests {
                 aggregation_job_ids[1],
                 Some(batch_interval),
                 AggregationParam(1),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             ),
         ]);
@@ -8059,6 +8592,8 @@ mod tests {
                 aggregation_job_ids[0],
                 Some(batch_interval),
                 AggregationParam(0),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -8066,6 +8601,8 @@ mod tests {
                 aggregation_job_ids[1],
                 Some(batch_interval),
                 AggregationParam(1),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             ),
             AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -8073,6 +8610,8 @@ mod tests {
                 aggregation_job_ids[2],
                 Some(batch_interval),
                 AggregationParam(2),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             ),
         ]);
@@ -8474,7 +9013,7 @@ mod tests {
                 let aggregation_param = AggregationParam(11);
 
                 let aggregate_share_job =
-                    AggregateShareJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                    AggregateShareJob::new(
                         *task.id(),
                         batch_interval,
                         aggregation_param,
@@ -8575,6 +9114,8 @@ mod tests {
                         random(),
                         Some(batch_id),
                         AggregationParam(0),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::Finished,
                     );
                     let report_aggregation_0_0 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -8615,6 +9156,8 @@ mod tests {
                         random(),
                         Some(batch_id),
                         AggregationParam(0),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::Finished,
                     );
                     let report_aggregation_1_0 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
@@ -8732,6 +9275,1466 @@ mod tests {
             .await
             .unwrap();
         assert!(outstanding_batches.is_empty());
+    }
+
+    #[async_trait]
+    trait ExpirationQueryTypeExt: CollectableQueryType {
+        fn batch_identifier_for_client_timestamps(
+            client_timestamps: &[Time],
+        ) -> Self::BatchIdentifier;
+
+        fn shortened_batch_identifier(
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> Self::BatchIdentifier;
+
+        async fn write_outstanding_batch(
+            tx: &Transaction<MockClock>,
+            task_id: &TaskId,
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> Option<(TaskId, BatchId)>;
+    }
+
+    #[async_trait]
+    impl ExpirationQueryTypeExt for TimeInterval {
+        fn batch_identifier_for_client_timestamps(
+            client_timestamps: &[Time],
+        ) -> Self::BatchIdentifier {
+            let min_client_timestamp = *client_timestamps.iter().min().unwrap();
+            let max_client_timestamp = *client_timestamps.iter().max().unwrap();
+            Interval::new(
+                min_client_timestamp,
+                Duration::from_seconds(
+                    max_client_timestamp
+                        .difference(&min_client_timestamp)
+                        .unwrap()
+                        .as_seconds()
+                        + 1,
+                ),
+            )
+            .unwrap()
+        }
+
+        fn shortened_batch_identifier(
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> Self::BatchIdentifier {
+            Interval::new(
+                *batch_identifier.start(),
+                Duration::from_seconds(batch_identifier.duration().as_seconds() / 2),
+            )
+            .unwrap()
+        }
+
+        async fn write_outstanding_batch(
+            _: &Transaction<MockClock>,
+            _: &TaskId,
+            _: &Self::BatchIdentifier,
+        ) -> Option<(TaskId, BatchId)> {
+            None
+        }
+    }
+
+    #[async_trait]
+    impl ExpirationQueryTypeExt for FixedSize {
+        fn batch_identifier_for_client_timestamps(_: &[Time]) -> Self::BatchIdentifier {
+            random()
+        }
+
+        fn shortened_batch_identifier(
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> Self::BatchIdentifier {
+            *batch_identifier
+        }
+
+        async fn write_outstanding_batch(
+            tx: &Transaction<MockClock>,
+            task_id: &TaskId,
+            batch_identifier: &Self::BatchIdentifier,
+        ) -> Option<(TaskId, BatchId)> {
+            tx.put_outstanding_batch(task_id, batch_identifier)
+                .await
+                .unwrap();
+            Some((*task_id, *batch_identifier))
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_expired_client_reports() {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let vdaf = dummy_vdaf::Vdaf::new();
+
+        // Setup.
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        let (task_id, new_report_id, attached_report_id, other_task_id, other_task_report_id) = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
+                    let other_task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
+                    tx.put_task(&task).await?;
+                    tx.put_task(&other_task).await?;
+
+                    let old_report = LeaderStoredReport::new_dummy(
+                        *task.id(),
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP
+                            .sub(&Duration::from_seconds(1))
+                            .unwrap(),
+                    );
+                    let new_report =
+                        LeaderStoredReport::new_dummy(*task.id(), OLDEST_ALLOWED_REPORT_TIMESTAMP);
+                    let attached_report = LeaderStoredReport::new_dummy(
+                        *task.id(),
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP
+                            .sub(&Duration::from_seconds(1))
+                            .unwrap(),
+                    );
+                    let other_task_report = LeaderStoredReport::new_dummy(
+                        *other_task.id(),
+                        OLDEST_ALLOWED_REPORT_TIMESTAMP
+                            .sub(&Duration::from_seconds(1))
+                            .unwrap(),
+                    );
+                    tx.put_client_report(&old_report).await?;
+                    tx.put_client_report(&new_report).await?;
+                    tx.put_client_report(&attached_report).await?;
+                    tx.put_client_report(&other_task_report).await?;
+
+                    let aggregation_job = AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        random(),
+                        None,
+                        AggregationParam(0),
+                        Interval::new(
+                            *attached_report.metadata().time(),
+                            Duration::from_seconds(1),
+                        )
+                        .unwrap(),
+                        AggregationJobState::InProgress,
+                    );
+                    let report_aggregation = ReportAggregation::new(
+                        *task.id(),
+                        *aggregation_job.id(),
+                        *attached_report.metadata().id(),
+                        *attached_report.metadata().time(),
+                        0,
+                        ReportAggregationState::<0, dummy_vdaf::Vdaf>::Start,
+                    );
+
+                    tx.put_aggregation_job(&aggregation_job).await?;
+                    tx.put_report_aggregation(&report_aggregation).await?;
+
+                    Ok((
+                        *task.id(),
+                        *new_report.metadata().id(),
+                        *attached_report.metadata().id(),
+                        *other_task.id(),
+                        *other_task_report.metadata().id(),
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+
+        // Run.
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                tx.delete_expired_client_reports(&task_id, OLDEST_ALLOWED_REPORT_TIMESTAMP)
+                    .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Verify.
+        let want_report_ids =
+            HashSet::from([new_report_id, attached_report_id, other_task_report_id]);
+        let got_report_ids = ds
+            .run_tx(|tx| {
+                let vdaf = vdaf.clone();
+                Box::pin(async move {
+                    let task_client_reports =
+                        tx.get_client_reports_for_task(&vdaf, &task_id).await?;
+                    let other_task_client_reports = tx
+                        .get_client_reports_for_task(&vdaf, &other_task_id)
+                        .await?;
+                    Ok(HashSet::from_iter(
+                        task_client_reports
+                            .into_iter()
+                            .chain(other_task_client_reports)
+                            .map(|report| *report.metadata().id()),
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(want_report_ids, got_report_ids);
+    }
+
+    #[tokio::test]
+    async fn delete_expired_aggregation_artifacts() {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let vdaf = dummy_vdaf::Vdaf::new();
+
+        // Setup.
+        async fn write_aggregation_artifacts<Q: ExpirationQueryTypeExt>(
+            tx: &Transaction<'_, MockClock>,
+            task_id: &TaskId,
+            client_timestamps: &[Time],
+        ) -> (
+            Q::BatchIdentifier,
+            AggregationJobId,   // aggregation job ID
+            Q::BatchIdentifier, // batch aggregation ID
+            Vec<ReportId>,      // client report IDs
+        ) {
+            let batch_identifier = Q::batch_identifier_for_client_timestamps(client_timestamps);
+
+            let mut report_ids_and_timestamps = Vec::new();
+            for client_timestamp in client_timestamps {
+                let report = LeaderStoredReport::new_dummy(*task_id, *client_timestamp);
+                tx.put_client_report(&report).await.unwrap();
+                report_ids_and_timestamps.push((*report.metadata().id(), *client_timestamp));
+            }
+
+            let min_client_timestamp = client_timestamps.iter().min().unwrap();
+            let max_client_timestamp = client_timestamps.iter().max().unwrap();
+            let client_timestamp_interval = Interval::new(
+                *min_client_timestamp,
+                max_client_timestamp
+                    .difference(min_client_timestamp)
+                    .unwrap()
+                    .add(&Duration::from_seconds(1))
+                    .unwrap(),
+            )
+            .unwrap();
+
+            let aggregation_job = AggregationJob::<0, Q, dummy_vdaf::Vdaf>::new(
+                *task_id,
+                random(),
+                Some(batch_identifier.clone()),
+                AggregationParam(0),
+                client_timestamp_interval,
+                AggregationJobState::InProgress,
+            );
+            tx.put_aggregation_job(&aggregation_job).await.unwrap();
+
+            for (ord, (report_id, client_timestamp)) in report_ids_and_timestamps.iter().enumerate()
+            {
+                let report_aggregation = ReportAggregation::new(
+                    *task_id,
+                    *aggregation_job.id(),
+                    *report_id,
+                    *client_timestamp,
+                    ord.try_into().unwrap(),
+                    ReportAggregationState::<0, dummy_vdaf::Vdaf>::Start,
+                );
+                tx.put_report_aggregation(&report_aggregation)
+                    .await
+                    .unwrap();
+            }
+
+            let shortened_batch_identifier = Q::shortened_batch_identifier(&batch_identifier);
+            let batch_aggregation = BatchAggregation::<0, Q, dummy_vdaf::Vdaf>::new(
+                *task_id,
+                shortened_batch_identifier.clone(),
+                AggregationParam(0),
+                AggregateShare(0),
+                0,
+                ReportIdChecksum::default(),
+            );
+            tx.put_batch_aggregation(&batch_aggregation).await.unwrap();
+
+            (
+                batch_identifier,
+                *aggregation_job.id(),
+                shortened_batch_identifier,
+                report_ids_and_timestamps
+                    .into_iter()
+                    .map(|(report_id, _)| report_id)
+                    .collect(),
+            )
+        }
+
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        let (
+            leader_time_interval_task_id,
+            helper_time_interval_task_id,
+            leader_fixed_size_task_id,
+            helper_fixed_size_task_id,
+            other_task_id,
+            want_aggregation_job_ids,
+            want_batch_aggregation_ids,
+            want_report_ids,
+        ) = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let leader_time_interval_task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
+                    let helper_time_interval_task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Helper,
+                    )
+                    .build();
+                    let leader_fixed_size_task = TaskBuilder::new(
+                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
+                    let helper_fixed_size_task = TaskBuilder::new(
+                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        VdafInstance::Fake,
+                        Role::Helper,
+                    )
+                    .build();
+                    let other_task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
+                    tx.put_task(&leader_time_interval_task).await?;
+                    tx.put_task(&helper_time_interval_task).await?;
+                    tx.put_task(&leader_fixed_size_task).await?;
+                    tx.put_task(&helper_fixed_size_task).await?;
+                    tx.put_task(&other_task).await?;
+
+                    let mut aggregation_job_ids = HashSet::new();
+                    let mut batch_aggregation_ids = HashSet::new();
+                    let mut all_report_ids = HashSet::new();
+
+                    // Leader, time-interval aggregation job with old reports [GC'ed].
+                    write_aggregation_artifacts::<TimeInterval>(
+                        tx,
+                        leader_time_interval_task.id(),
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(10))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(9))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
+
+                    // Leader, time-interval aggregation job with old & new reports [not GC'ed].
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<TimeInterval>(
+                            tx,
+                            leader_time_interval_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(5))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(5))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Leader, time-interval aggregation job with new reports [not GC'ed].
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<TimeInterval>(
+                            tx,
+                            leader_time_interval_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(10))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Leader, time-interval aggregation job with attached collect job [not GC'ed].
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<TimeInterval>(
+                            tx,
+                            leader_time_interval_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(8))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *leader_time_interval_task.id(),
+                        Uuid::new_v4(),
+                        batch_identifier,
+                        AggregationParam(0),
+                        CollectJobState::Start,
+                    ))
+                    .await
+                    .unwrap();
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Helper, time-interval aggregation job with old reports [GC'ed].
+                    write_aggregation_artifacts::<TimeInterval>(
+                        tx,
+                        helper_time_interval_task.id(),
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(10))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(9))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
+
+                    // Helper, time-interval task with old & new reports [not GC'ed].
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<TimeInterval>(
+                            tx,
+                            helper_time_interval_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(5))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(5))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Helper, time-interval task with new reports [not GC'ed].
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<TimeInterval>(
+                            tx,
+                            helper_time_interval_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(10))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Helper, time-interval task with attached aggregate share job [not GC'ed].
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<TimeInterval>(
+                            tx,
+                            helper_time_interval_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(8))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    tx.put_aggregate_share_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        &AggregateShareJob::new(
+                            *helper_time_interval_task.id(),
+                            batch_identifier,
+                            AggregationParam(23),
+                            AggregateShare(5),
+                            2,
+                            random(),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Leader, fixed-size aggregation job with old reports [GC'ed].
+                    write_aggregation_artifacts::<FixedSize>(
+                        tx,
+                        leader_fixed_size_task.id(),
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(10))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(9))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
+
+                    // Leader, fixed-size aggregation job with old & new reports [not GC'ed].
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<FixedSize>(
+                            tx,
+                            leader_fixed_size_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(5))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(5))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Leader, fixed-size aggregation job with new reports [not GC'ed].
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<FixedSize>(
+                            tx,
+                            leader_fixed_size_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(10))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Leader, fixed-size aggregation job with attached collect job [not GC'ed].
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<FixedSize>(
+                            tx,
+                            leader_fixed_size_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(8))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    tx.put_collect_job(&CollectJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                        *leader_fixed_size_task.id(),
+                        Uuid::new_v4(),
+                        batch_identifier,
+                        AggregationParam(0),
+                        CollectJobState::Start,
+                    ))
+                    .await
+                    .unwrap();
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Leader, fixed-size aggregation job with attached outstanding batch [not GC'ed].
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<FixedSize>(
+                            tx,
+                            leader_fixed_size_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(8))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    tx.put_outstanding_batch(leader_fixed_size_task.id(), &batch_identifier)
+                        .await
+                        .unwrap();
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Helper, fixed-size aggregation job with old reports [GC'ed].
+                    write_aggregation_artifacts::<FixedSize>(
+                        tx,
+                        helper_fixed_size_task.id(),
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(10))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(9))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
+
+                    // Helper, fixed-size aggregation job with old & new reports [not GC'ed].
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<FixedSize>(
+                            tx,
+                            helper_fixed_size_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(5))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(5))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Helper, fixed-size aggregation job with new reports [not GC'ed].
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<FixedSize>(
+                            tx,
+                            helper_fixed_size_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(10))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Helper, fixed-size aggregation job with attached aggregate share job [not GC'ed].
+                    let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<FixedSize>(
+                            tx,
+                            helper_fixed_size_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(8))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    tx.put_aggregate_share_job::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &AggregateShareJob::new(
+                            *helper_fixed_size_task.id(),
+                            batch_identifier,
+                            AggregationParam(23),
+                            AggregateShare(5),
+                            2,
+                            random(),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    // Aggregation job for a different task [not GC'ed].
+                    let (_, aggregation_job_id, batch_aggregation_id, report_ids) =
+                        write_aggregation_artifacts::<TimeInterval>(
+                            tx,
+                            other_task.id(),
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(8))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(7))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    aggregation_job_ids.insert(aggregation_job_id);
+                    batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
+                    all_report_ids.extend(report_ids);
+
+                    Ok((
+                        *leader_time_interval_task.id(),
+                        *helper_time_interval_task.id(),
+                        *leader_fixed_size_task.id(),
+                        *helper_fixed_size_task.id(),
+                        *other_task.id(),
+                        aggregation_job_ids,
+                        batch_aggregation_ids,
+                        all_report_ids,
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+
+        // Run.
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                tx.delete_expired_aggregation_artifacts(
+                    &leader_time_interval_task_id,
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                )
+                .await?;
+                tx.delete_expired_aggregation_artifacts(
+                    &helper_time_interval_task_id,
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                )
+                .await?;
+                tx.delete_expired_aggregation_artifacts(
+                    &leader_fixed_size_task_id,
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                )
+                .await?;
+                tx.delete_expired_aggregation_artifacts(
+                    &helper_fixed_size_task_id,
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Verify.
+        let (got_aggregation_job_ids, got_batch_aggregation_ids, got_report_ids) = ds
+            .run_tx(|tx| {
+                let vdaf = vdaf.clone();
+                Box::pin(async move {
+                    let leader_time_interval_aggregation_job_ids = tx
+                        .get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &leader_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| *job.id());
+                    let helper_time_interval_aggregation_job_ids = tx
+                        .get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &helper_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| *job.id());
+                    let leader_fixed_size_aggregation_job_ids = tx
+                        .get_aggregation_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &leader_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| *job.id());
+                    let helper_fixed_size_aggregation_job_ids = tx
+                        .get_aggregation_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &helper_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| *job.id());
+                    let other_task_aggregation_job_ids = tx
+                        .get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &other_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| *job.id());
+                    let got_aggregation_job_ids = leader_time_interval_aggregation_job_ids
+                        .chain(helper_time_interval_aggregation_job_ids)
+                        .chain(leader_fixed_size_aggregation_job_ids)
+                        .chain(helper_fixed_size_aggregation_job_ids)
+                        .chain(other_task_aggregation_job_ids)
+                        .collect();
+
+                    let leader_time_interval_batch_aggregation_ids = tx
+                        .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &leader_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|agg| agg.batch_identifier().get_encoded());
+                    let helper_time_interval_batch_aggregation_ids = tx
+                        .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &helper_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|agg| agg.batch_identifier().get_encoded());
+                    let leader_fixed_size_batch_aggregation_ids = tx
+                        .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &leader_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|agg| agg.batch_identifier().get_encoded());
+                    let helper_fixed_size_batch_aggregation_ids = tx
+                        .get_batch_aggregations_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &helper_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|agg| agg.batch_identifier().get_encoded());
+                    let other_task_batch_aggregation_ids = tx
+                        .get_batch_aggregations_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &other_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|agg| agg.batch_identifier().get_encoded());
+                    let got_batch_aggregation_ids = leader_time_interval_batch_aggregation_ids
+                        .chain(helper_time_interval_batch_aggregation_ids)
+                        .chain(leader_fixed_size_batch_aggregation_ids)
+                        .chain(helper_fixed_size_batch_aggregation_ids)
+                        .chain(other_task_batch_aggregation_ids)
+                        .collect();
+
+                    let leader_time_interval_report_aggregations = tx
+                        .get_report_aggregations_for_task::<0, dummy_vdaf::Vdaf>(
+                            &vdaf,
+                            &Role::Leader,
+                            &leader_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap();
+                    let helper_time_interval_report_aggregations = tx
+                        .get_report_aggregations_for_task::<0, dummy_vdaf::Vdaf>(
+                            &vdaf,
+                            &Role::Helper,
+                            &helper_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap();
+                    let leader_fixed_size_report_aggregations = tx
+                        .get_report_aggregations_for_task::<0, dummy_vdaf::Vdaf>(
+                            &vdaf,
+                            &Role::Leader,
+                            &leader_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap();
+                    let helper_fixed_size_report_aggregations = tx
+                        .get_report_aggregations_for_task::<0, dummy_vdaf::Vdaf>(
+                            &vdaf,
+                            &Role::Helper,
+                            &helper_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap();
+                    let other_task_report_aggregations = tx
+                        .get_report_aggregations_for_task::<0, dummy_vdaf::Vdaf>(
+                            &vdaf,
+                            &Role::Leader,
+                            &other_task_id,
+                        )
+                        .await
+                        .unwrap();
+                    let got_report_ids = leader_time_interval_report_aggregations
+                        .into_iter()
+                        .chain(helper_time_interval_report_aggregations)
+                        .chain(leader_fixed_size_report_aggregations)
+                        .chain(helper_fixed_size_report_aggregations)
+                        .chain(other_task_report_aggregations)
+                        .map(|report_aggregation| *report_aggregation.report_id())
+                        .collect();
+
+                    Ok((
+                        got_aggregation_job_ids,
+                        got_batch_aggregation_ids,
+                        got_report_ids,
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(want_aggregation_job_ids, got_aggregation_job_ids);
+        assert_eq!(want_batch_aggregation_ids, got_batch_aggregation_ids);
+        assert_eq!(want_report_ids, got_report_ids);
+    }
+
+    #[tokio::test]
+    async fn delete_expired_collection_artifacts() {
+        install_test_trace_subscriber();
+
+        let clock = MockClock::default();
+        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
+        // Setup.
+        async fn write_collect_artifacts<Q: ExpirationQueryTypeExt>(
+            tx: &Transaction<'_, MockClock>,
+            task: &Task,
+            client_timestamps: &[Time],
+        ) -> (
+            Option<Uuid>,              // collect job ID
+            Option<(TaskId, Vec<u8>)>, // aggregate share job ID (task ID, encoded batch identifier)
+            Option<(TaskId, BatchId)>, // outstanding batch ID
+        ) {
+            let batch_identifier = Q::batch_identifier_for_client_timestamps(client_timestamps);
+            for client_timestamp in client_timestamps {
+                let report = LeaderStoredReport::new_dummy(*task.id(), *client_timestamp);
+                tx.put_client_report(&report).await.unwrap();
+
+                let aggregation_job = AggregationJob::<0, Q, dummy_vdaf::Vdaf>::new(
+                    *task.id(),
+                    random(),
+                    Some(batch_identifier.clone()),
+                    AggregationParam(0),
+                    Interval::new(*client_timestamp, Duration::from_seconds(1)).unwrap(),
+                    AggregationJobState::InProgress,
+                );
+                tx.put_aggregation_job(&aggregation_job).await.unwrap();
+
+                let report_aggregation = ReportAggregation::new(
+                    *task.id(),
+                    *aggregation_job.id(),
+                    *report.metadata().id(),
+                    *client_timestamp,
+                    0,
+                    ReportAggregationState::<0, dummy_vdaf::Vdaf>::Start,
+                );
+                tx.put_report_aggregation(&report_aggregation)
+                    .await
+                    .unwrap();
+            }
+
+            if task.role() == &Role::Leader {
+                let collect_job = CollectJob::<0, Q, dummy_vdaf::Vdaf>::new(
+                    *task.id(),
+                    Uuid::new_v4(),
+                    batch_identifier.clone(),
+                    AggregationParam(0),
+                    CollectJobState::Start,
+                );
+                tx.put_collect_job(&collect_job).await.unwrap();
+
+                let outstanding_batch_id =
+                    Q::write_outstanding_batch(tx, task.id(), &batch_identifier).await;
+
+                return (
+                    Some(*collect_job.collect_job_id()),
+                    None,
+                    outstanding_batch_id,
+                );
+            } else {
+                let aggregate_share_job = AggregateShareJob::new(
+                    *task.id(),
+                    batch_identifier.clone(),
+                    AggregationParam(23),
+                    AggregateShare(11),
+                    client_timestamps.len().try_into().unwrap(),
+                    random(),
+                );
+                tx.put_aggregate_share_job::<0, Q, dummy_vdaf::Vdaf>(&aggregate_share_job)
+                    .await
+                    .unwrap();
+
+                return (
+                    None,
+                    Some((*task.id(), batch_identifier.get_encoded())),
+                    None,
+                );
+            }
+        }
+
+        const OLDEST_ALLOWED_REPORT_TIMESTAMP: Time = Time::from_seconds_since_epoch(1000);
+        let (
+            leader_time_interval_task_id,
+            helper_time_interval_task_id,
+            leader_fixed_size_task_id,
+            helper_fixed_size_task_id,
+            other_task_id,
+            want_collect_job_ids,
+            want_aggregate_share_job_ids,
+            want_outstanding_batch_ids,
+        ) = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let leader_time_interval_task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
+                    let helper_time_interval_task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Helper,
+                    )
+                    .build();
+                    let leader_fixed_size_task = TaskBuilder::new(
+                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
+                    let helper_fixed_size_task = TaskBuilder::new(
+                        task::QueryType::FixedSize { max_batch_size: 10 },
+                        VdafInstance::Fake,
+                        Role::Helper,
+                    )
+                    .build();
+                    let other_task = TaskBuilder::new(
+                        task::QueryType::TimeInterval,
+                        VdafInstance::Fake,
+                        Role::Leader,
+                    )
+                    .build();
+                    tx.put_task(&leader_time_interval_task).await?;
+                    tx.put_task(&helper_time_interval_task).await?;
+                    tx.put_task(&leader_fixed_size_task).await?;
+                    tx.put_task(&helper_fixed_size_task).await?;
+                    tx.put_task(&other_task).await?;
+
+                    let mut collect_job_ids = HashSet::new();
+                    let mut aggregate_share_job_ids = HashSet::new();
+                    let mut outstanding_batch_ids = HashSet::new();
+
+                    // Leader, time-interval collection artifacts with old reports. [GC'ed]
+                    write_collect_artifacts::<TimeInterval>(
+                        tx,
+                        &leader_time_interval_task,
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(10))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(9))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
+
+                    // Leader, time-interval collection artifacts with old & new reports. [not GC'ed]
+                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                        write_collect_artifacts::<TimeInterval>(
+                            tx,
+                            &leader_time_interval_task,
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(5))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(5))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    collect_job_ids.extend(collect_job_id);
+                    aggregate_share_job_ids.extend(aggregate_share_job_id);
+                    outstanding_batch_ids.extend(outstanding_batch_id);
+
+                    // Leader, time-interval collection artifacts with new reports. [not GC'ed]
+                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                        write_collect_artifacts::<TimeInterval>(
+                            tx,
+                            &leader_time_interval_task,
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(10))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    collect_job_ids.extend(collect_job_id);
+                    aggregate_share_job_ids.extend(aggregate_share_job_id);
+                    outstanding_batch_ids.extend(outstanding_batch_id);
+
+                    // Helper, time-interval collection artifacts with old reports. [GC'ed]
+                    write_collect_artifacts::<TimeInterval>(
+                        tx,
+                        &helper_time_interval_task,
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(10))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(9))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
+
+                    // Helper, time-interval collection artifacts with old & new reports. [not GC'ed]
+                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                        write_collect_artifacts::<TimeInterval>(
+                            tx,
+                            &helper_time_interval_task,
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(5))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(5))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    collect_job_ids.extend(collect_job_id);
+                    aggregate_share_job_ids.extend(aggregate_share_job_id);
+                    outstanding_batch_ids.extend(outstanding_batch_id);
+
+                    // Helper, time-interval collection artifacts with new reports. [not GC'ed]
+                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                        write_collect_artifacts::<TimeInterval>(
+                            tx,
+                            &helper_time_interval_task,
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(10))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    collect_job_ids.extend(collect_job_id);
+                    aggregate_share_job_ids.extend(aggregate_share_job_id);
+                    outstanding_batch_ids.extend(outstanding_batch_id);
+
+                    // Leader, fixed-size collection artifacts with old reports. [GC'ed]
+                    write_collect_artifacts::<FixedSize>(
+                        tx,
+                        &leader_fixed_size_task,
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(10))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(9))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
+
+                    // Leader, fixed-size collection artifacts with old & new reports. [not GC'ed]
+                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                        write_collect_artifacts::<FixedSize>(
+                            tx,
+                            &leader_fixed_size_task,
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(5))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(5))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    collect_job_ids.extend(collect_job_id);
+                    aggregate_share_job_ids.extend(aggregate_share_job_id);
+                    outstanding_batch_ids.extend(outstanding_batch_id);
+
+                    // Leader, fixed-size collection artifacts with new reports. [not GC'ed]
+                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                        write_collect_artifacts::<FixedSize>(tx, &leader_fixed_size_task, &[])
+                            .await;
+                    collect_job_ids.extend(collect_job_id);
+                    aggregate_share_job_ids.extend(aggregate_share_job_id);
+                    outstanding_batch_ids.extend(outstanding_batch_id);
+
+                    // Helper, fixed-size collection artifacts with old reports. [GC'ed]
+                    write_collect_artifacts::<FixedSize>(
+                        tx,
+                        &helper_fixed_size_task,
+                        &[
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(10))
+                                .unwrap(),
+                            OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                .sub(&Duration::from_seconds(9))
+                                .unwrap(),
+                        ],
+                    )
+                    .await;
+
+                    // Helper, fixed-size collection artifacts with old & new reports. [not GC'ed]
+                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                        write_collect_artifacts::<FixedSize>(
+                            tx,
+                            &helper_fixed_size_task,
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(5))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .add(&Duration::from_seconds(5))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    collect_job_ids.extend(collect_job_id);
+                    aggregate_share_job_ids.extend(aggregate_share_job_id);
+                    outstanding_batch_ids.extend(outstanding_batch_id);
+
+                    // Helper, fixed-size collection artifacts with new reports. [not GC'ed]
+                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                        write_collect_artifacts::<FixedSize>(tx, &helper_fixed_size_task, &[])
+                            .await;
+                    collect_job_ids.extend(collect_job_id);
+                    aggregate_share_job_ids.extend(aggregate_share_job_id);
+                    outstanding_batch_ids.extend(outstanding_batch_id);
+
+                    // Collection artifacts for different task. [not GC'ed]
+                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                        write_collect_artifacts::<TimeInterval>(
+                            tx,
+                            &other_task,
+                            &[
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(9))
+                                    .unwrap(),
+                                OLDEST_ALLOWED_REPORT_TIMESTAMP
+                                    .sub(&Duration::from_seconds(8))
+                                    .unwrap(),
+                            ],
+                        )
+                        .await;
+                    collect_job_ids.extend(collect_job_id);
+                    aggregate_share_job_ids.extend(aggregate_share_job_id);
+                    outstanding_batch_ids.extend(outstanding_batch_id);
+
+                    Ok((
+                        *leader_time_interval_task.id(),
+                        *helper_time_interval_task.id(),
+                        *leader_fixed_size_task.id(),
+                        *helper_fixed_size_task.id(),
+                        *other_task.id(),
+                        collect_job_ids,
+                        aggregate_share_job_ids,
+                        outstanding_batch_ids,
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+
+        // Run.
+        ds.run_tx(|tx| {
+            Box::pin(async move {
+                tx.delete_expired_collection_artifacts(
+                    &leader_time_interval_task_id,
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                )
+                .await?;
+                tx.delete_expired_collection_artifacts(
+                    &helper_time_interval_task_id,
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                )
+                .await?;
+                tx.delete_expired_collection_artifacts(
+                    &leader_fixed_size_task_id,
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                )
+                .await?;
+                tx.delete_expired_collection_artifacts(
+                    &helper_fixed_size_task_id,
+                    OLDEST_ALLOWED_REPORT_TIMESTAMP,
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Verify.
+        let (got_collect_job_ids, got_aggregate_share_job_ids, got_outstanding_batch_ids) = ds
+            .run_tx(|tx| {
+                Box::pin(async move {
+                    let leader_time_interval_collect_job_ids = tx
+                        .get_collect_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &leader_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|collect_job| *collect_job.collect_job_id());
+                    let helper_time_interval_collect_job_ids = tx
+                        .get_collect_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &helper_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|collect_job| *collect_job.collect_job_id());
+                    let leader_fixed_size_collect_job_ids = tx
+                        .get_collect_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &leader_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|collect_job| *collect_job.collect_job_id());
+                    let helper_fixed_size_collect_job_ids = tx
+                        .get_collect_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &helper_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|collect_job| *collect_job.collect_job_id());
+                    let other_task_collect_job_ids = tx
+                        .get_collect_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &other_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|collect_job| *collect_job.collect_job_id());
+                    let got_collect_job_ids = leader_time_interval_collect_job_ids
+                        .chain(helper_time_interval_collect_job_ids)
+                        .chain(leader_fixed_size_collect_job_ids)
+                        .chain(helper_fixed_size_collect_job_ids)
+                        .chain(other_task_collect_job_ids)
+                        .collect();
+
+                    let leader_time_interval_aggregate_share_job_ids = tx
+                        .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &leader_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    let helper_time_interval_aggregate_share_job_ids = tx
+                        .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &helper_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    let leader_fixed_size_aggregate_share_job_ids = tx
+                        .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &leader_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    let helper_fixed_size_aggregate_share_job_ids = tx
+                        .get_aggregate_share_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                            &helper_fixed_size_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    let other_task_aggregate_share_job_ids = tx
+                        .get_aggregate_share_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &leader_time_interval_task_id,
+                        )
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|job| (*job.task_id(), job.batch_identifier().get_encoded()));
+                    let got_aggregate_share_job_ids = leader_time_interval_aggregate_share_job_ids
+                        .chain(helper_time_interval_aggregate_share_job_ids)
+                        .chain(leader_fixed_size_aggregate_share_job_ids)
+                        .chain(helper_fixed_size_aggregate_share_job_ids)
+                        .chain(other_task_aggregate_share_job_ids)
+                        .collect();
+
+                    let leader_time_interval_outstanding_batch_ids = tx
+                        .get_outstanding_batches_for_task(&leader_time_interval_task_id)
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|batch| (*batch.task_id(), *batch.id()));
+                    let helper_time_interval_outstanding_batch_ids = tx
+                        .get_outstanding_batches_for_task(&helper_time_interval_task_id)
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|batch| (*batch.task_id(), *batch.id()));
+                    let leader_fixed_size_outstanding_batch_ids = tx
+                        .get_outstanding_batches_for_task(&leader_fixed_size_task_id)
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|batch| (*batch.task_id(), *batch.id()));
+                    let helper_fixed_size_outstanding_batch_ids = tx
+                        .get_outstanding_batches_for_task(&helper_fixed_size_task_id)
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|batch| (*batch.task_id(), *batch.id()));
+                    let other_task_outstanding_batch_ids = tx
+                        .get_outstanding_batches_for_task(&helper_fixed_size_task_id)
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|batch| (*batch.task_id(), *batch.id()));
+                    let got_outstanding_batch_ids = leader_time_interval_outstanding_batch_ids
+                        .chain(helper_time_interval_outstanding_batch_ids)
+                        .chain(leader_fixed_size_outstanding_batch_ids)
+                        .chain(helper_fixed_size_outstanding_batch_ids)
+                        .chain(other_task_outstanding_batch_ids)
+                        .collect();
+
+                    Ok((
+                        got_collect_job_ids,
+                        got_aggregate_share_job_ids,
+                        got_outstanding_batch_ids,
+                    ))
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(want_collect_job_ids, got_collect_job_ids);
+        assert_eq!(want_aggregate_share_job_ids, got_aggregate_share_job_ids);
+        assert_eq!(want_outstanding_batch_ids, got_outstanding_batch_ids);
     }
 
     #[tokio::test]

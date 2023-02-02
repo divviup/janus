@@ -5,6 +5,7 @@ pub mod aggregate_share;
 pub mod aggregation_job_creator;
 pub mod aggregation_job_driver;
 pub mod collect_job_driver;
+pub mod garbage_collector;
 pub mod query_type;
 
 use crate::{
@@ -20,7 +21,7 @@ use crate::{
         },
         Datastore,
     },
-    messages::TimeExt,
+    messages::{DurationExt, IntervalExt, TimeExt},
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     try_join,
 };
@@ -46,9 +47,9 @@ use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
     AggregateShareAad, AggregateShareReq, AggregateShareResp, AggregationJobId, BatchSelector,
-    CollectReq, CollectResp, HpkeCiphertext, HpkeConfigId, HpkeConfigList, InputShareAad, Interval,
-    PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Report, ReportId,
-    ReportIdChecksum, ReportShare, ReportShareError, Role, TaskId, Time,
+    CollectReq, CollectResp, Duration, HpkeCiphertext, HpkeConfigId, HpkeConfigList, InputShareAad,
+    Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult, Report,
+    ReportId, ReportIdChecksum, ReportShare, ReportShareError, Role, TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram, Meter, Unit},
@@ -181,6 +182,12 @@ pub enum Error {
         problem_details: Box<HttpApiProblem>,
         dap_problem_type: Option<DapProblemType>,
     },
+    /// An aggregate share request was rejected.
+    #[error("task {0}: {1}")]
+    AggregateShareRequestRejected(TaskId, String),
+    /// An empty aggregation (no report shares) was attempted.
+    #[error("task {0}: empty aggregation")]
+    EmptyAggregation(TaskId),
     /// An error representing a generic internal aggregation error; intended for "impossible"
     /// conditions.
     #[error("internal aggregator error: {0}")]
@@ -216,6 +223,8 @@ impl Error {
             Error::TaskParameters(_) => "task_parameters",
             Error::HttpClient(_) => "http_client",
             Error::Http { .. } => "http",
+            Error::AggregateShareRequestRejected(_, _) => "aggregate_share_request_rejected",
+            Error::EmptyAggregation(_) => "empty_aggregation",
             Error::Internal(_) => "internal",
         }
     }
@@ -574,7 +583,7 @@ impl<C: Clock> Aggregator<C> {
         }
 
         let resp = task_aggregator
-            .handle_aggregate_share(&self.datastore, req_bytes)
+            .handle_aggregate_share(&self.datastore, &self.clock, req_bytes)
             .await?;
         Ok(resp.get_encoded())
     }
@@ -811,10 +820,11 @@ impl TaskAggregator {
     async fn handle_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        clock: &C,
         req_bytes: &[u8],
     ) -> Result<AggregateShareResp, Error> {
         self.vdaf_ops
-            .handle_aggregate_share(datastore, Arc::clone(&self.task), req_bytes)
+            .handle_aggregate_share(datastore, clock, Arc::clone(&self.task), req_bytes)
             .await
     }
 }
@@ -1638,6 +1648,18 @@ impl VdafOps {
             ));
         }
 
+        // Reject reports that would be eligible for garbage collection, to prevent replay attacks.
+        if let Some(report_expiry_age) = task.report_expiry_age() {
+            let report_expiry_time = report.metadata().time().add(report_expiry_age)?;
+            if clock.now().is_after(&report_expiry_time) {
+                return Err(Error::ReportRejected(
+                    *report.task_id(),
+                    *report.metadata().id(),
+                    *report.metadata().time(),
+                ));
+            }
+        }
+
         // Decode (and in the case of the leader input share, decrypt) the remaining fields of the
         // report before storing them in the datastore. The spec does not require the /upload
         // handler to do this, but it exercises HPKE decryption, saves us the trouble of storing
@@ -1952,11 +1974,30 @@ impl VdafOps {
         let batch_identifier_opt =
             Q::upgrade_partial_batch_identifier(req.batch_selector().batch_identifier()).cloned();
         let req = Arc::new(req);
+        let min_client_timestamp = req
+            .report_shares()
+            .iter()
+            .map(|report_share| report_share.metadata().time())
+            .min()
+            .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
+        let max_client_timestamp = req
+            .report_shares()
+            .iter()
+            .map(|report_share| report_share.metadata().time())
+            .max()
+            .ok_or_else(|| Error::EmptyAggregation(*task.id()))?;
+        let client_timestamp_interval = Interval::new(
+            *min_client_timestamp,
+            max_client_timestamp
+                .difference(min_client_timestamp)?
+                .add(&Duration::from_seconds(1))?,
+        )?;
         let aggregation_job = Arc::new(AggregationJob::<L, Q, A>::new(
             *task.id(),
             *req.job_id(),
             batch_identifier_opt,
             agg_param,
+            client_timestamp_interval,
             if saw_continue {
                 AggregationJobState::InProgress
             } else {
@@ -3069,6 +3110,7 @@ impl VdafOps {
     async fn handle_aggregate_share<C: Clock>(
         &self,
         datastore: &Datastore<C>,
+        clock: &C,
         task: Arc<Task>,
         req_bytes: &[u8],
     ) -> Result<AggregateShareResp, Error> {
@@ -3079,7 +3121,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128Count,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3089,7 +3131,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3099,7 +3141,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3109,7 +3151,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3123,7 +3165,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3137,7 +3179,7 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3151,14 +3193,14 @@ impl VdafOps {
                     TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
             #[cfg(feature = "test-util")]
             (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
                 Self::handle_aggregate_share_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
-                    datastore, task, req_bytes,
+                    datastore, clock, task, req_bytes,
                 )
                 .await
             }
@@ -3169,7 +3211,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128Count,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3179,7 +3221,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128CountVecMultithreaded,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3189,7 +3231,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128Sum,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3199,7 +3241,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128Histogram,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3213,7 +3255,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3227,7 +3269,7 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
@@ -3241,14 +3283,14 @@ impl VdafOps {
                     FixedSize,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
                     _,
-                >(datastore, task, req_bytes)
+                >(datastore, clock, task, req_bytes)
                 .await
             }
 
             #[cfg(feature = "test-util")]
             (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
                 Self::handle_aggregate_share_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
-                    datastore, task, req_bytes,
+                    datastore, clock, task, req_bytes,
                 )
                 .await
             }
@@ -3262,6 +3304,7 @@ impl VdafOps {
         C: Clock,
     >(
         datastore: &Datastore<C>,
+        clock: &C,
         task: Arc<Task>,
         req_bytes: &[u8],
     ) -> Result<AggregateShareResp, Error>
@@ -3288,6 +3331,22 @@ impl VdafOps {
                     aggregate_share_req.batch_selector().batch_identifier()
                 ),
             ));
+        }
+
+        // Reject requests for aggregation shares that are eligible for GC, to prevent replay
+        // attacks.
+        if let Some(report_expiry_age) = task.report_expiry_age() {
+            if let Some(batch_interval) =
+                Q::to_batch_interval(aggregate_share_req.batch_selector().batch_identifier())
+            {
+                let aggregate_share_expiry_time = batch_interval.end().add(report_expiry_age)?;
+                if clock.now().is_after(&aggregate_share_expiry_time) {
+                    return Err(Error::AggregateShareRequestRejected(
+                        *task.id(),
+                        "aggregate share request too late".to_string(),
+                    ));
+                }
+            }
         }
 
         let aggregate_share_job = datastore
@@ -3568,6 +3627,13 @@ where
                     Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::HttpClient(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                     Err(Error::Http { .. }) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    Err(Error::AggregateShareRequestRejected(_, _)) => {
+                        StatusCode::BAD_REQUEST.into_response()
+                    }
+                    Err(Error::EmptyAggregation(task_id)) => build_problem_details_response(
+                        DapProblemType::UnrecognizedMessage,
+                        Some(task_id),
+                    ),
                     Err(Error::TaskParameters(_)) => {
                         StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
@@ -4273,11 +4339,13 @@ mod tests {
     async fn upload_filter() {
         install_test_trace_subscriber();
 
+        const REPORT_EXPIRY_AGE: u64 = 1_000_000;
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count,
             Role::Leader,
         )
+        .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
         .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
@@ -4300,6 +4368,41 @@ mod tests {
         let mut response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
             .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let problem_details: serde_json::Value =
+            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
+        assert_eq!(
+            problem_details,
+            json!({
+                "status": 400u16,
+                "type": "urn:ietf:params:ppm:dap:error:reportRejected",
+                "title": "Report could not be processed.",
+                "taskid": format!("{}", report.task_id()),
+            })
+        );
+
+        // Verify that reports older than the report expiry age are rejected with the reportRejected
+        // error type.
+        let gc_eligible_report = Report::new(
+            *report.task_id(),
+            ReportMetadata::new(
+                random(),
+                clock
+                    .now()
+                    .sub(&Duration::from_seconds(REPORT_EXPIRY_AGE + 30000))
+                    .unwrap(),
+            ),
+            report.public_share().to_vec(),
+            report.encrypted_input_shares().to_vec(),
+        );
+        let mut response = drive_filter(
+            Method::POST,
+            "/upload",
+            &gc_eligible_report.get_encoded(),
+            &filter,
+        )
+        .await
+        .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
             serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
@@ -5278,7 +5381,7 @@ mod tests {
             .run_tx(|tx| {
                 let task = task.clone();
                 Box::pin(async move {
-                    tx.get_aggregation_jobs_for_task_id::<
+                    tx.get_aggregation_jobs_for_task::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
                         TimeInterval,
                         Prio3Aes128Count,
@@ -5660,6 +5763,7 @@ mod tests {
                         aggregation_job_id,
                         None,
                         (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -5801,6 +5905,8 @@ mod tests {
                 aggregation_job_id,
                 None,
                 (),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             ))
         );
@@ -5981,6 +6087,8 @@ mod tests {
                         aggregation_job_id_0,
                         None,
                         (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -6266,6 +6374,8 @@ mod tests {
                         aggregation_job_id_1,
                         None,
                         (),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -6495,6 +6605,8 @@ mod tests {
                         aggregation_job_id,
                         None,
                         dummy_vdaf::AggregationParam(0),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -6607,6 +6719,8 @@ mod tests {
                         aggregation_job_id,
                         None,
                         dummy_vdaf::AggregationParam(0),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -6703,6 +6817,8 @@ mod tests {
                 aggregation_job_id,
                 None,
                 dummy_vdaf::AggregationParam(0),
+                Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                    .unwrap(),
                 AggregationJobState::Finished,
             ))
         );
@@ -6764,6 +6880,8 @@ mod tests {
                         aggregation_job_id,
                         None,
                         dummy_vdaf::AggregationParam(0),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -6897,6 +7015,8 @@ mod tests {
                         aggregation_job_id,
                         None,
                         dummy_vdaf::AggregationParam(0),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -7024,6 +7144,8 @@ mod tests {
                         aggregation_job_id,
                         None,
                         dummy_vdaf::AggregationParam(0),
+                        Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                            .unwrap(),
                         AggregationJobState::InProgress,
                     ))
                     .await?;
@@ -8089,30 +8211,19 @@ mod tests {
         install_test_trace_subscriber();
 
         // Prepare parameters.
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
+        const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
+        let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper)
+            .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
+            .build();
         let clock = MockClock::default();
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock.clone()).unwrap();
 
-        let request = AggregateShareReq::new(
-            *task.id(),
-            BatchSelector::new_time_interval(
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    // Collect request will be rejected because batch interval is too small
-                    Duration::from_seconds(task.time_precision().as_seconds() - 1),
-                )
-                .unwrap(),
-            ),
-            Vec::new(),
-            0,
-            ReportIdChecksum::default(),
-        );
-
+        // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
+        // small.)
         let (parts, body) = warp::test::request()
             .method("POST")
             .header(
@@ -8121,7 +8232,22 @@ mod tests {
             )
             .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
             .path("/aggregate_share")
-            .body(request.get_encoded())
+            .body(
+                AggregateShareReq::new(
+                    *task.id(),
+                    BatchSelector::new_time_interval(
+                        Interval::new(
+                            clock.now(),
+                            Duration::from_seconds(task.time_precision().as_seconds() - 1),
+                        )
+                        .unwrap(),
+                    ),
+                    Vec::new(),
+                    0,
+                    ReportIdChecksum::default(),
+                )
+                .get_encoded(),
+            )
             .filter(&filter)
             .await
             .unwrap()
@@ -8140,6 +8266,36 @@ mod tests {
                 "taskid": format!("{}", task.id()),
             })
         );
+
+        // Test that a request for a too-old batch fails.
+        let (parts, _) = warp::test::request()
+            .method("POST")
+            .header(
+                "DAP-Auth-Token",
+                task.primary_aggregator_auth_token().as_bytes(),
+            )
+            .header(CONTENT_TYPE, AggregateShareReq::<TimeInterval>::MEDIA_TYPE)
+            .path("/aggregate_share")
+            .body(
+                AggregateShareReq::new(
+                    *task.id(),
+                    BatchSelector::new_time_interval(
+                        Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
+                            .unwrap(),
+                    ),
+                    Vec::new(),
+                    0,
+                    ReportIdChecksum::default(),
+                )
+                .get_encoded(),
+            )
+            .filter(&filter)
+            .await
+            .unwrap()
+            .into_response()
+            .into_parts();
+
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
