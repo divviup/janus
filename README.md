@@ -29,7 +29,7 @@ components; see `.github/workflows/ci-build.yml` for example Docker invocations.
 
 ## Running tests
 
-Tests require that [`docker`](https://www.docker.com) & [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests and in the `PATH` of the test-runner's environment. The `docker` daemon must be running. CI tests currently use [`kind` 0.14.0](https://github.com/kubernetes-sigs/kind/releases/tag/v0.14.0) and the corresponding [Kubernetes 1.22 node image](kindest/node:v1.22.9@sha256:8135260b959dfe320206eb36b3aeda9cffcb262f4b44cda6b33f7bb73f453105) and using the same versions for local development is recommended.
+Tests require that [`docker`](https://www.docker.com) & [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests and in the `PATH` of the test-runner's environment. The `docker` daemon must be running. CI tests currently use [`kind` 0.17.0](https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0) and the corresponding Kubernetes 1.24 node image (kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315) and using the same versions for local development is recommended.
 
 To run Janus tests, execute `cargo test`.
 
