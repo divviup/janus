@@ -1971,8 +1971,6 @@ impl VdafOps {
         }
 
         // Store data to datastore.
-        let batch_identifier_opt =
-            Q::upgrade_partial_batch_identifier(req.batch_selector().batch_identifier()).cloned();
         let req = Arc::new(req);
         let min_client_timestamp = req
             .report_shares()
@@ -1995,8 +1993,8 @@ impl VdafOps {
         let aggregation_job = Arc::new(AggregationJob::<L, Q, A>::new(
             *task.id(),
             *req.job_id(),
-            batch_identifier_opt,
             agg_param,
+            req.batch_selector().batch_identifier().clone(),
             client_timestamp_interval,
             if saw_continue {
                 AggregationJobState::InProgress
@@ -2071,7 +2069,7 @@ impl VdafOps {
                             share_data.agg_state
                         {
                             accumulator.update(
-                                aggregation_job.partial_batch_identifier()?,
+                                aggregation_job.partial_batch_identifier(),
                                 share_data.report_share.metadata().id(),
                                 share_data.report_share.metadata().time(),
                                 output_share,
@@ -2223,7 +2221,7 @@ impl VdafOps {
                             Ok(PrepareTransition::Finish(output_share)) => {
                                 saw_finish = true;
                                 accumulator.update(
-                                    aggregation_job.partial_batch_identifier()?,
+                                    aggregation_job.partial_batch_identifier(),
                                     prep_step.report_id(),
                                     report_aggregation.time(),
                                     &output_share,
@@ -5394,7 +5392,7 @@ mod tests {
         assert_eq!(aggregation_jobs.len(), 1);
         assert_eq!(aggregation_jobs[0].task_id(), task.id());
         assert_eq!(aggregation_jobs[0].id(), request.job_id());
-        assert!(aggregation_jobs[0].batch_identifier().is_none());
+        assert_eq!(aggregation_jobs[0].partial_batch_identifier(), &());
         assert_eq!(
             aggregation_jobs[0].state(),
             &AggregationJobState::InProgress
@@ -5761,7 +5759,7 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        None,
+                        (),
                         (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
                         AggregationJobState::InProgress,
@@ -5903,7 +5901,7 @@ mod tests {
             Some(AggregationJob::new(
                 *task.id(),
                 aggregation_job_id,
-                None,
+                (),
                 (),
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
@@ -6085,7 +6083,7 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id_0,
-                        None,
+                        (),
                         (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
@@ -6372,7 +6370,7 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id_1,
-                        None,
+                        (),
                         (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
@@ -6603,8 +6601,8 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        None,
                         dummy_vdaf::AggregationParam(0),
+                        (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
@@ -6717,8 +6715,8 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        None,
                         dummy_vdaf::AggregationParam(0),
+                        (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
@@ -6815,8 +6813,8 @@ mod tests {
             Some(AggregationJob::new(
                 *task.id(),
                 aggregation_job_id,
-                None,
                 dummy_vdaf::AggregationParam(0),
+                (),
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
@@ -6878,8 +6876,8 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        None,
                         dummy_vdaf::AggregationParam(0),
+                        (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
@@ -7013,8 +7011,8 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        None,
                         dummy_vdaf::AggregationParam(0),
+                        (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
@@ -7142,8 +7140,8 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        None,
                         dummy_vdaf::AggregationParam(0),
+                        (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,

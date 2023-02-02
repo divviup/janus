@@ -724,7 +724,7 @@ mod tests {
     };
     use janus_messages::{
         query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
-        HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role, Time,
+        HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -772,29 +772,23 @@ mod tests {
                         .await?;
 
                     let aggregation_job_id = random();
+                    let report_timestamp = clock
+                        .now()
+                        .to_batch_interval_start(task.time_precision())
+                        .unwrap();
                     tx.put_aggregation_job(
                         &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                             *task.id(),
                             aggregation_job_id,
-                            Some(batch_interval),
                             aggregation_param,
-                            Interval::new(
-                                Time::from_seconds_since_epoch(0),
-                                Duration::from_seconds(1),
-                            )
-                            .unwrap(),
+                            (),
+                            Interval::new(report_timestamp, Duration::from_seconds(1)).unwrap(),
                             AggregationJobState::Finished,
                         ),
                     )
                     .await?;
 
-                    let report = LeaderStoredReport::new_dummy(
-                        *task.id(),
-                        clock
-                            .now()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                    );
+                    let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
                     tx.put_client_report(&report).await?;
 
@@ -897,29 +891,23 @@ mod tests {
                     .await?;
 
                     let aggregation_job_id = random();
+                    let report_timestamp = clock
+                        .now()
+                        .to_batch_interval_start(task.time_precision())
+                        .unwrap();
                     tx.put_aggregation_job(
                         &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                             *task.id(),
                             aggregation_job_id,
-                            Some(batch_interval),
                             aggregation_param,
-                            Interval::new(
-                                Time::from_seconds_since_epoch(0),
-                                Duration::from_seconds(1),
-                            )
-                            .unwrap(),
+                            (),
+                            Interval::new(report_timestamp, Duration::from_seconds(1)).unwrap(),
                             AggregationJobState::Finished,
                         ),
                     )
                     .await?;
 
-                    let report = LeaderStoredReport::new_dummy(
-                        *task.id(),
-                        clock
-                            .now()
-                            .to_batch_interval_start(task.time_precision())
-                            .unwrap(),
-                    );
+                    let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
                     tx.put_client_report(&report).await?;
 

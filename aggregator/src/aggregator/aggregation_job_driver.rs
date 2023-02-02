@@ -464,7 +464,7 @@ impl AggregationJobDriver {
             *task.id(),
             *aggregation_job.id(),
             aggregation_job.aggregation_parameter().get_encoded(),
-            PartialBatchSelector::new(aggregation_job.partial_batch_identifier()?.clone()),
+            PartialBatchSelector::new(aggregation_job.partial_batch_identifier().clone()),
             report_shares,
         );
 
@@ -685,7 +685,7 @@ impl AggregationJobDriver {
                     // If the leader didn't finish too, we transition to INVALID.
                     if let PrepareTransition::Finish(out_share) = leader_transition {
                         match accumulator.update(
-                            aggregation_job.partial_batch_identifier()?,
+                            aggregation_job.partial_batch_identifier(),
                             report_aggregation.report_id(),
                             report_aggregation.time(),
                             out_share,
@@ -1080,7 +1080,6 @@ mod tests {
         );
 
         let aggregation_job_id = random();
-        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         ds.run_tx(|tx| {
             let (task, report) = (task.clone(), report.clone());
@@ -1095,7 +1094,7 @@ mod tests {
                 >::new(
                     *task.id(),
                     aggregation_job_id,
-                    Some(batch_interval),
+                    (),
                     (),
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
@@ -1196,7 +1195,7 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                Some(batch_interval),
+                (),
                 (),
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
@@ -1303,7 +1302,6 @@ mod tests {
                 transcript.input_shares.clone(),
             );
         let aggregation_job_id = random();
-        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         let lease = ds
             .run_tx(|tx| {
@@ -1324,7 +1322,7 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        Some(batch_interval),
+                        (),
                         (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
@@ -1435,7 +1433,7 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                Some(batch_interval),
+                (),
                 (),
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
@@ -1564,8 +1562,8 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        Some(batch_id),
                         (),
+                        batch_id,
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
@@ -1663,8 +1661,8 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                Some(batch_id),
                 (),
+                batch_id,
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::InProgress,
@@ -1761,7 +1759,6 @@ mod tests {
             transcript.input_shares.clone(),
         );
         let aggregation_job_id = random();
-        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         let leader_prep_state = transcript.prep_state(0, Role::Leader);
         let leader_aggregate_share = vdaf
@@ -1788,7 +1785,7 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        Some(batch_interval),
+                        (),
                         (),
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
@@ -1880,7 +1877,7 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                Some(batch_interval),
+                (),
                 (),
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
@@ -2029,8 +2026,8 @@ mod tests {
                     >::new(
                         *task.id(),
                         aggregation_job_id,
-                        Some(batch_id),
                         (),
+                        batch_id,
                         Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                             .unwrap(),
                         AggregationJobState::InProgress,
@@ -2121,8 +2118,8 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, FixedSize, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                Some(batch_id),
                 (),
+                batch_id,
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
                 AggregationJobState::Finished,
@@ -2233,13 +2230,12 @@ mod tests {
             transcript.input_shares,
         );
         let aggregation_job_id = random();
-        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         let aggregation_job =
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                Some(batch_interval),
+                (),
                 (),
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
@@ -2417,7 +2413,6 @@ mod tests {
             Vec::new(),
             transcript.input_shares,
         );
-        let batch_interval = Interval::new(time, *task.time_precision()).unwrap();
 
         // Set up fixtures in the database.
         ds.run_tx(|tx| {
@@ -2437,7 +2432,7 @@ mod tests {
                 >::new(
                     *task.id(),
                     aggregation_job_id,
-                    Some(batch_interval),
+                    (),
                     (),
                     Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                         .unwrap(),
@@ -2554,7 +2549,7 @@ mod tests {
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
                 *task.id(),
                 aggregation_job_id,
-                Some(batch_interval),
+                (),
                 (),
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
                     .unwrap(),
