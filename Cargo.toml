@@ -28,7 +28,7 @@ janus_core = { version = "0.3", path = "core" }
 janus_integration_tests = { version = "0.3", path = "integration_tests" }
 janus_interop_binaries = { version = "0.3", path = "interop_binaries" }
 janus_messages = { version = "0.3", path = "messages" }
-k8s-openapi = { version = "0.16.0", features = ["v1_20"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
+k8s-openapi = { version = "0.16.0", features = ["v1_24"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.75.0", default-features = false, features = ["client"] }
 
 [profile.dev]

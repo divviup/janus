@@ -61,7 +61,7 @@ jobs:
       # We should always make sure that the `kind` CLI we install is from the
       # same release as the node image version used by
       # `janus_core::test_util::kubernetes::EphemeralCluster`
-      run: go install sigs.k8s.io/kind@v0.14.0
+      run: go install sigs.k8s.io/kind@v0.17.0
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@master
       with:
