@@ -3,6 +3,7 @@
 use crate::SecretBytes;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
+use http::HeaderValue;
 pub use janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use janus_core::{
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
@@ -490,14 +491,30 @@ impl TryFrom<SerializedTask> for Task {
             .aggregator_auth_tokens
             .into_iter()
             .map(|token| Ok(AuthenticationToken::from(URL_SAFE_NO_PAD.decode(token)?)))
-            .collect::<Result<_, Self::Error>>()?;
+            .collect::<Result<Vec<AuthenticationToken>, Self::Error>>()?;
+        for token in aggregator_auth_tokens.iter() {
+            HeaderValue::try_from(token.as_bytes()).map_err(|_| {
+                Error::InvalidParameter(concat!(
+                    "value in aggregator_auth_tokens does not base64url-decode to a valid ",
+                    "HTTP header value"
+                ))
+            })?;
+        }
 
         // collector_auth_tokens
         let collector_auth_tokens = serialized_task
             .collector_auth_tokens
             .into_iter()
             .map(|token| Ok(AuthenticationToken::from(URL_SAFE_NO_PAD.decode(token)?)))
-            .collect::<Result<_, Self::Error>>()?;
+            .collect::<Result<Vec<AuthenticationToken>, Self::Error>>()?;
+        for token in collector_auth_tokens.iter() {
+            HeaderValue::try_from(token.as_bytes()).map_err(|_| {
+                Error::InvalidParameter(concat!(
+                    "value in collector_auth_tokens does not base64url-decode to a valid ",
+                    "HTTP header value"
+                ))
+            })?;
+        }
 
         Task::new(
             task_id,
@@ -741,12 +758,14 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::{SecretBytes, Task, PRIO3_AES128_VERIFY_KEY_LENGTH};
+    use super::{SecretBytes, SerializedTask, Task, PRIO3_AES128_VERIFY_KEY_LENGTH};
     use crate::{
         config::test_util::roundtrip_encoding,
         messages::DurationExt,
-        task::{test_util::TaskBuilder, QueryType, VdafInstance},
+        task::{test_util::TaskBuilder, Error, QueryType, VdafInstance},
     };
+    use assert_matches::assert_matches;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
         task::AuthenticationToken,
@@ -1239,5 +1258,65 @@ mod tests {
                 Token::StructEnd,
             ],
         );
+    }
+
+    #[test]
+    fn reject_invalid_auth_tokens() {
+        let aggregator_keypair = generate_test_hpke_config_and_private_key();
+        let collector_keypair = generate_test_hpke_config_and_private_key();
+
+        let bad_agg_auth_token = SerializedTask {
+            task_id: Some(random()),
+            aggregator_endpoints: Vec::from([
+                "https://www.example.com/".parse().unwrap(),
+                "https://www.example.net/".parse().unwrap(),
+            ]),
+            query_type: QueryType::TimeInterval,
+            vdaf: VdafInstance::Prio3Aes128Count,
+            role: Role::Helper,
+            vdaf_verify_keys: Vec::from([]),
+            max_batch_query_count: 1,
+            task_expiration: Time::distant_future(),
+            report_expiry_age: None,
+            min_batch_size: 100,
+            time_precision: Duration::from_seconds(3600),
+            tolerable_clock_skew: Duration::from_seconds(15),
+            collector_hpke_config: collector_keypair.config().clone(),
+            aggregator_auth_tokens: Vec::from(["AAAAAAAAAAAAAA".to_string()]),
+            collector_auth_tokens: Vec::new(),
+            hpke_keys: Vec::from([aggregator_keypair.clone()]),
+        };
+        let err = Task::try_from(bad_agg_auth_token).unwrap_err();
+        assert_matches!(err, Error::InvalidParameter(message) => {
+            assert!(message.contains("aggregator") && message.contains("HTTP header value"), "{}", message);
+        });
+
+        let bad_collector_auth_token = SerializedTask {
+            task_id: Some(random()),
+            aggregator_endpoints: Vec::from([
+                "https://www.example.com/".parse().unwrap(),
+                "https://www.example.net/".parse().unwrap(),
+            ]),
+            query_type: QueryType::TimeInterval,
+            vdaf: VdafInstance::Prio3Aes128Count,
+            role: Role::Leader,
+            vdaf_verify_keys: Vec::from([]),
+            max_batch_query_count: 1,
+            task_expiration: Time::distant_future(),
+            report_expiry_age: None,
+            min_batch_size: 100,
+            time_precision: Duration::from_seconds(3600),
+            tolerable_clock_skew: Duration::from_seconds(15),
+            collector_hpke_config: collector_keypair.config().clone(),
+            aggregator_auth_tokens: Vec::from([
+                URL_SAFE_NO_PAD.encode(random::<AuthenticationToken>().as_bytes())
+            ]),
+            collector_auth_tokens: Vec::from(["AAAAAAAAAAAAAA".to_string()]),
+            hpke_keys: Vec::from([aggregator_keypair]),
+        };
+        let err = Task::try_from(bad_collector_auth_token).unwrap_err();
+        assert_matches!(err, Error::InvalidParameter(message) => {
+            assert!(message.contains("collector") && message.contains("HTTP header value"), "{}", message);
+        });
     }
 }
