@@ -2,22 +2,17 @@ use crate::{
     datastore::models::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
-    datastore::{self, gather_errors, models::OutstandingBatch, Datastore},
+    datastore::{gather_errors, models::OutstandingBatch, Datastore},
     messages::{DurationExt as _, TimeExt as _},
     task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
     try_join,
 };
-use anyhow::Result;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
 use futures::{future::join_all, FutureExt};
-use itertools::Itertools;
-use janus_core::{
-    task::VdafInstance,
-    time::{Clock, TimeExt as _},
-};
+use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     Duration as DurationMsg, Interval, Role, TaskId,
@@ -76,7 +71,6 @@ mod private {
 pub struct AggregationJobCreator<C: Clock> {
     // Dependencies.
     datastore: Datastore<C>,
-    clock: C,
 
     // Configuration values.
     /// How frequently we look for new tasks to start creating aggregation jobs for.
@@ -96,7 +90,6 @@ pub struct AggregationJobCreator<C: Clock> {
 impl<C: Clock + 'static> AggregationJobCreator<C> {
     pub fn new(
         datastore: Datastore<C>,
-        clock: C,
         tasks_update_frequency: Duration,
         aggregation_job_creation_interval: Duration,
         min_aggregation_job_size: usize,
@@ -104,7 +97,6 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> AggregationJobCreator<C> {
         AggregationJobCreator {
             datastore,
-            clock,
             tasks_update_frequency,
             aggregation_job_creation_interval,
             min_aggregation_job_size,
@@ -361,77 +353,58 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .run_tx_with_name("aggregation_job_creator_time_no_param", |tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
-                    let current_batch_start = this
-                        .clock
-                        .now()
-                        .to_batch_interval_start(task.time_precision())?;
-
-                    // Find some unaggregated client reports, and group them by their batch.
-                    let report_ids_by_batch = tx
+                    // Find some unaggregated client reports.
+                    let report_ids_and_times = tx
                         .get_unaggregated_client_report_ids_for_task(task.id())
-                        .await?
-                        .into_iter()
-                        .map(|(report_id, time)| {
-                            time.to_batch_interval_start(task.time_precision())
-                                .map(|rounded_time| (rounded_time, (report_id, time)))
-                                .map_err(datastore::Error::from)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?
-                        .into_iter()
-                        .into_group_map();
+                        .await?;
 
                     // Generate aggregation jobs & report aggregations based on the reports we read.
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::new();
-                    for (batch_start, report_times_and_ids) in report_ids_by_batch {
-                        let batch_interval = Interval::new(batch_start, *task.time_precision())?;
-                        for agg_job_reports in
-                            report_times_and_ids.chunks(this.max_aggregation_job_size)
-                        {
-                            if batch_start >= current_batch_start
-                                && agg_job_reports.len() < this.min_aggregation_job_size
-                            {
-                                continue;
-                            }
+                    for agg_job_reports in
+                        report_ids_and_times.chunks(this.max_aggregation_job_size)
+                    {
+                        if agg_job_reports.len() < this.min_aggregation_job_size {
+                            continue;
+                        }
 
-                            let aggregation_job_id = random();
-                            debug!(
-                                task_id = %task.id(),
-                                %aggregation_job_id,
-                                report_count = %agg_job_reports.len(),
-                                "Creating aggregation job"
-                            );
+                        let aggregation_job_id = random();
+                        debug!(
+                            task_id = %task.id(),
+                            %aggregation_job_id,
+                            report_count = %agg_job_reports.len(),
+                            "Creating aggregation job"
+                        );
 
-                            let min_client_timestamp =
-                                agg_job_reports.iter().map(|(_, time)| time).min().unwrap(); // unwrap safety: agg_job_reports is non-empty
-                            let max_client_timestamp =
-                                agg_job_reports.iter().map(|(_, time)| time).max().unwrap(); // unwrap safety: agg_job_reports is non-empty
-                            let client_timestamp_interval = Interval::new(
-                                *min_client_timestamp,
-                                max_client_timestamp
-                                    .difference(min_client_timestamp)?
-                                    .add(&DurationMsg::from_seconds(1))?,
-                            )?;
+                        let min_client_timestamp =
+                            agg_job_reports.iter().map(|(_, time)| time).min().unwrap(); // unwrap safety: agg_job_reports is non-empty
+                        let max_client_timestamp =
+                            agg_job_reports.iter().map(|(_, time)| time).max().unwrap(); // unwrap safety: agg_job_reports is non-empty
+                        let client_timestamp_interval = Interval::new(
+                            *min_client_timestamp,
+                            max_client_timestamp
+                                .difference(min_client_timestamp)?
+                                .add(&DurationMsg::from_seconds(1))?,
+                        )?;
 
-                            agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
+                        agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
+                            *task.id(),
+                            aggregation_job_id,
+                            (),
+                            (),
+                            client_timestamp_interval,
+                            AggregationJobState::InProgress,
+                        ));
+
+                        for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
+                            report_aggs.push(ReportAggregation::<L, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
-                                Some(batch_interval),
-                                (),
-                                client_timestamp_interval,
-                                AggregationJobState::InProgress,
+                                *report_id,
+                                *time,
+                                i64::try_from(ord)?,
+                                ReportAggregationState::Start,
                             ));
-
-                            for (ord, (report_id, time)) in agg_job_reports.iter().enumerate() {
-                                report_aggs.push(ReportAggregation::<L, A>::new(
-                                    *task.id(),
-                                    aggregation_job_id,
-                                    *report_id,
-                                    *time,
-                                    i64::try_from(ord)?,
-                                    ReportAggregationState::Start,
-                                ));
-                            }
                         }
                     }
 
@@ -607,8 +580,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         aggregation_jobs.push(AggregationJob::new(
                             *task.id(),
                             aggregation_job_id,
-                            Some(*batch.id()),
                             (),
+                            *batch.id(),
                             client_timestamp_interval,
                             AggregationJobState::InProgress,
                         ));
@@ -671,6 +644,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
         A::AggregationParam: Send + Sync + Eq + std::hash::Hash,
     {
+        use itertools::Itertools;
         let max_aggregation_job_size = self.max_aggregation_job_size;
 
         self.datastore
@@ -681,25 +655,19 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     // been aggregated yet, and group them by their batch.
                     let result_vec = tx
                         .get_unaggregated_client_report_ids_by_collect_for_task::<L, A>(task.id())
-                        .await?
+                        .await?;
+                    let report_count = result_vec.len();
+                    let result_map = result_vec
                         .into_iter()
                         .map(|(report_id, report_time, aggregation_param)| {
-                            report_time
-                                .to_batch_interval_start(task.time_precision())
-                                .map(|rounded_time| {
-                                    ((rounded_time, aggregation_param), (report_id, report_time))
-                                })
-                                .map_err(datastore::Error::from)
+                            (aggregation_param, (report_id, report_time))
                         })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let report_count = result_vec.len();
-                    let result_map = result_vec.into_iter().into_group_map();
+                        .into_group_map();
 
                     // Generate aggregation jobs and report aggregations.
                     let mut agg_jobs = Vec::new();
                     let mut report_aggs = Vec::with_capacity(report_count);
-                    for ((batch_start, aggregation_param), report_ids_and_times) in result_map {
-                        let batch_interval = Interval::new(batch_start, *task.time_precision())?;
+                    for (aggregation_param, report_ids_and_times) in result_map {
                         for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
                         {
                             let aggregation_job_id = random();
@@ -724,8 +692,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             agg_jobs.push(AggregationJob::<L, TimeInterval, A>::new(
                                 *task.id(),
                                 aggregation_job_id,
-                                Some(batch_interval),
                                 aggregation_param.clone(),
+                                (),
                                 client_timestamp_interval,
                                 AggregationJobState::InProgress,
                             ));
@@ -793,7 +761,7 @@ mod tests {
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
         },
-        time::{Clock, MockClock, TimeExt as CoreTimeExt},
+        time::{Clock, MockClock},
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
@@ -868,7 +836,6 @@ mod tests {
         const AGGREGATION_JOB_CREATION_INTERVAL: Duration = Duration::from_secs(1);
         let job_creator = Arc::new(AggregationJobCreator {
             datastore: ds,
-            clock,
             tasks_update_frequency: Duration::from_secs(3600),
             aggregation_job_creation_interval: AGGREGATION_JOB_CREATION_INTERVAL,
             min_aggregation_job_size: 0,
@@ -906,14 +873,16 @@ mod tests {
             .unwrap();
         assert!(helper_agg_jobs.is_empty());
         assert_eq!(leader_agg_jobs.len(), 1);
-        assert!(leader_agg_jobs
-            .iter()
-            .next()
-            .unwrap()
-            .1
-             .0
-            .batch_identifier()
-            .is_some());
+        assert_eq!(
+            leader_agg_jobs
+                .iter()
+                .next()
+                .unwrap()
+                .1
+                 .0
+                .partial_batch_identifier(),
+            &()
+        );
         let report_times_and_ids = leader_agg_jobs.into_iter().next().unwrap().1 .1;
         assert_eq!(
             report_times_and_ids,
@@ -934,14 +903,6 @@ mod tests {
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
-        // Sanity check the constant values provided.
-        #[allow(clippy::assertions_on_constants)]
-        {
-            assert!(1 < MIN_AGGREGATION_JOB_SIZE); // we can subtract 1 safely
-            assert!(MIN_AGGREGATION_JOB_SIZE < MAX_AGGREGATION_JOB_SIZE);
-            assert!(MAX_AGGREGATION_JOB_SIZE < usize::MAX); // we can add 1 safely
-        }
-
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
@@ -950,57 +911,24 @@ mod tests {
             )
             .build(),
         );
-        let current_batch = clock
-            .now()
-            .to_batch_interval_start(task.time_precision())
-            .unwrap();
 
-        // In the current batch, create MIN_AGGREGATION_JOB_SIZE reports. We expect an aggregation
-        // job to be created containing these reports.
+        // Create 2 max-size batches, a min-size batch, one extra report (which will be added to the
+        // min-size batch).
         let report_time = clock.now();
-        let cur_batch_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
+        let reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
             iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
-                .take(MIN_AGGREGATION_JOB_SIZE)
+                .take(2 * MAX_AGGREGATION_JOB_SIZE + MIN_AGGREGATION_JOB_SIZE + 1)
                 .collect();
-
-        // In a previous "small" batch, create fewer than MIN_AGGREGATION_JOB_SIZE reports. Since
-        // the minimum aggregation job size applies only to the current batch window, we expect an
-        // aggregation job to be created for these reports.
-        let report_time = report_time.sub(task.time_precision()).unwrap();
-        let small_batch_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
-                .take(MIN_AGGREGATION_JOB_SIZE - 1)
-                .collect();
-
-        // In a (separate) previous "big" batch, create more than MAX_AGGREGATION_JOB_SIZE reports.
-        // We expect these reports will be split into more than one aggregation job.
-        let report_time = report_time.sub(task.time_precision()).unwrap();
-        let big_batch_reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>> =
-            iter::repeat_with(|| LeaderStoredReport::new_dummy(*task.id(), report_time))
-                .take(MAX_AGGREGATION_JOB_SIZE + 1)
-                .collect();
-
-        let all_report_ids: HashSet<ReportId> = cur_batch_reports
+        let all_report_ids: HashSet<ReportId> = reports
             .iter()
-            .chain(&small_batch_reports)
-            .chain(&big_batch_reports)
             .map(|report| *report.metadata().id())
             .collect();
 
         ds.run_tx(|tx| {
-            let task = task.clone();
-            let (cur_batch_reports, small_batch_reports, big_batch_reports) = (
-                cur_batch_reports.clone(),
-                small_batch_reports.clone(),
-                big_batch_reports.clone(),
-            );
+            let (task, reports) = (Arc::clone(&task), reports.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                for report in cur_batch_reports
-                    .iter()
-                    .chain(&small_batch_reports)
-                    .chain(&big_batch_reports)
-                {
+                for report in reports.iter() {
                     tx.put_client_report(report).await?;
                 }
                 Ok(())
@@ -1012,7 +940,6 @@ mod tests {
         // Run.
         let job_creator = Arc::new(AggregationJobCreator {
             datastore: ds,
-            clock,
             tasks_update_frequency: Duration::from_secs(3600),
             aggregation_job_creation_interval: Duration::from_secs(1),
             min_aggregation_job_size: MIN_AGGREGATION_JOB_SIZE,
@@ -1042,20 +969,11 @@ mod tests {
             .unwrap();
         let mut seen_report_ids = HashSet::new();
         for (_, (_, times_and_ids)) in agg_jobs {
-            // All report IDs for aggregation job are in the same batch.
-            let batches: HashSet<Time> = times_and_ids
-                .iter()
-                .map(|(time, _)| time.to_batch_interval_start(task.time_precision()).unwrap())
-                .collect();
-            assert_eq!(batches.len(), 1);
-            let batch = batches.into_iter().next().unwrap();
-
             // The batch is at most MAX_AGGREGATION_JOB_SIZE in size.
             assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
-            // If we are in the current batch, the batch is at least MIN_AGGREGATION_JOB_SIZE in
-            // size.
-            assert!(batch < current_batch || times_and_ids.len() >= MIN_AGGREGATION_JOB_SIZE);
+            // The batch is at least MIN_AGGREGATION_JOB_SIZE in size.
+            assert!(times_and_ids.len() >= MIN_AGGREGATION_JOB_SIZE);
 
             // Report IDs are non-repeated across or inside aggregation jobs.
             for (_, report_id) in times_and_ids {
@@ -1098,7 +1016,6 @@ mod tests {
         // Run.
         let job_creator = Arc::new(AggregationJobCreator {
             datastore: ds,
-            clock,
             tasks_update_frequency: Duration::from_secs(3600),
             aggregation_job_creation_interval: Duration::from_secs(1),
             min_aggregation_job_size: 2,
@@ -1190,19 +1107,6 @@ mod tests {
         const MIN_BATCH_SIZE: usize = 200;
         const MAX_BATCH_SIZE: usize = 300;
 
-        // Sanity check the constant values provided.
-        #[allow(clippy::assertions_on_constants)]
-        {
-            assert!(1 < MIN_AGGREGATION_JOB_SIZE); // we can subtract 1 safely
-            assert!(MIN_AGGREGATION_JOB_SIZE <= MAX_AGGREGATION_JOB_SIZE);
-            assert!(MAX_AGGREGATION_JOB_SIZE < usize::MAX); // we can add 1 safely
-
-            assert!(MIN_BATCH_SIZE <= MAX_BATCH_SIZE);
-            u64::try_from(MIN_BATCH_SIZE).unwrap(); // MIN_BATCH_SIZE fits in a u64
-            u64::try_from(MAX_BATCH_SIZE).unwrap(); // MAX_BATCH_SIZE fits in a u64
-            MIN_BATCH_SIZE.checked_add(MAX_BATCH_SIZE).unwrap(); // we can add min + max batch size without overflowing
-        }
-
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::FixedSize {
@@ -1243,7 +1147,6 @@ mod tests {
         // Run.
         let job_creator = Arc::new(AggregationJobCreator {
             datastore: ds,
-            clock,
             tasks_update_frequency: Duration::from_secs(3600),
             aggregation_job_creation_interval: Duration::from_secs(1),
             min_aggregation_job_size: MIN_AGGREGATION_JOB_SIZE,
@@ -1290,8 +1193,8 @@ mod tests {
             // At most one aggregation job per batch will be smaller than the normal minimum
             // aggregation job size.
             if times_and_ids.len() < MIN_AGGREGATION_JOB_SIZE {
-                assert!(!batches_with_small_agg_jobs.contains(agg_job.batch_id().unwrap()));
-                batches_with_small_agg_jobs.insert(*agg_job.batch_id().unwrap());
+                assert!(!batches_with_small_agg_jobs.contains(agg_job.batch_id()));
+                batches_with_small_agg_jobs.insert(*agg_job.batch_id());
             }
 
             // The aggregation job is at most MAX_AGGREGATION_JOB_SIZE in size.
@@ -1370,7 +1273,6 @@ mod tests {
 
         let job_creator = AggregationJobCreator {
             datastore: ds,
-            clock,
             tasks_update_frequency: Duration::from_secs(3600),
             aggregation_job_creation_interval: Duration::from_secs(1),
             min_aggregation_job_size: 1,
@@ -1466,13 +1368,6 @@ mod tests {
         let mut seen_pairs = Vec::new();
         let mut aggregation_jobs_per_aggregation_param = HashMap::new();
         for (aggregation_job, times_and_ids) in agg_jobs.iter() {
-            // Check that all report IDs for an aggregation job are in the same batch.
-            let batches: HashSet<Time> = times_and_ids
-                .iter()
-                .map(|(time, _)| time.to_batch_interval_start(task.time_precision()).unwrap())
-                .collect();
-            assert_eq!(batches.len(), 1);
-
             assert!(times_and_ids.len() <= MAX_AGGREGATION_JOB_SIZE);
 
             *aggregation_jobs_per_aggregation_param

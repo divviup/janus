@@ -146,9 +146,9 @@ mod tests {
                     let aggregation_job = AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
-                        Some(batch_identifier),
                         AggregationParam(0),
-                        Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
+                        (),
+                        batch_identifier,
                         AggregationJobState::InProgress,
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
@@ -300,9 +300,9 @@ mod tests {
                     let aggregation_job = AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
-                        Some(batch_identifier),
                         AggregationParam(0),
-                        Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
+                        (),
+                        batch_identifier,
                         AggregationJobState::InProgress,
                     );
                     tx.put_aggregation_job(&aggregation_job).await.unwrap();
@@ -452,8 +452,8 @@ mod tests {
                     let aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
-                        Some(batch_identifier),
                         AggregationParam(0),
+                        batch_identifier,
                         Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
                         AggregationJobState::InProgress,
                     );
@@ -610,8 +610,8 @@ mod tests {
                     let aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *task.id(),
                         random(),
-                        Some(batch_identifier),
                         AggregationParam(0),
+                        batch_identifier,
                         Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap(),
                         AggregationJobState::InProgress,
                     );

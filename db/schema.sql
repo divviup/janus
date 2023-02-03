@@ -99,9 +99,8 @@ CREATE TABLE aggregation_jobs(
     id                        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                   BIGINT NOT NULL,                 -- ID of related task
     aggregation_job_id        BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
-    batch_identifier          BYTEA,                           -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector; present for leader tasks and fixed size tasks, NULL otherwise)
-    batch_interval            TSRANGE,                         -- batch interval, as a TSRANGE, populated only for leader time-interval tasks. (will match batch_identifier when present)
     aggregation_param         BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
+    batch_id                  BYTEA NOT NULL,                  -- batch ID (fixed-size only; corresponds to identifier in BatchSelector)
     client_timestamp_interval TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
     state                     AGGREGATION_JOB_STATE NOT NULL,  -- current state of the aggregation job
 
@@ -113,8 +112,7 @@ CREATE TABLE aggregation_jobs(
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 CREATE INDEX aggregation_jobs_state_and_lease_expiry ON aggregation_jobs(state, lease_expiry) WHERE state = 'IN_PROGRESS';
-CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, batch_identifier);
-CREATE INDEX aggregation_jobs_task_and_batch_interval ON aggregation_jobs USING gist (task_id, batch_interval) WHERE batch_interval IS NOT NULL;
+CREATE INDEX aggregation_jobs_task_and_batch_id ON aggregation_jobs(task_id, batch_id);
 CREATE INDEX aggregation_jobs_task_and_client_timestamp_interval ON aggregation_jobs USING gist (task_id, client_timestamp_interval);
 
 -- Specifies the possible state of aggregating a single report.
