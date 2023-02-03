@@ -3231,12 +3231,12 @@ ORDER BY id DESC
                           SELECT id FROM collect_jobs
                           WHERE aggregation_jobs.task_id = collect_jobs.task_id
                             AND (aggregation_jobs.batch_id = collect_jobs.batch_identifier
-                             OR aggregation_jobs.client_timestamp_interval <@ collect_jobs.batch_interval))
+                              OR aggregation_jobs.client_timestamp_interval && collect_jobs.batch_interval))
                       AND NOT EXISTS (
                           SELECT id FROM aggregate_share_jobs
                           WHERE aggregation_jobs.task_id = aggregate_share_jobs.task_id
                             AND (aggregation_jobs.batch_id = aggregate_share_jobs.batch_identifier
-                             OR aggregation_jobs.client_timestamp_interval <@ aggregate_share_jobs.batch_interval)
+                              OR aggregation_jobs.client_timestamp_interval && aggregate_share_jobs.batch_interval)
                       )
                       AND NOT EXISTS (
                           SELECT id FROM outstanding_batches
@@ -3258,7 +3258,7 @@ ORDER BY id DESC
                                 SELECT id FROM collect_jobs
                                 WHERE batch_aggregations.task_id = collect_jobs.task_id
                                     AND (batch_aggregations.batch_identifier = collect_jobs.batch_identifier
-                                    OR batch_aggregations.batch_interval <@ collect_jobs.batch_interval))
+                                      OR batch_aggregations.batch_interval <@ collect_jobs.batch_interval))
                             AND NOT EXISTS (
                                 SELECT id FROM aggregate_share_jobs
                                 WHERE batch_aggregations.task_id = aggregate_share_jobs.task_id
@@ -3316,7 +3316,7 @@ ORDER BY id DESC
                         JOIN aggregation_jobs
                             ON aggregation_jobs.task_id = collect_jobs.task_id
                             AND (aggregation_jobs.batch_id = collect_jobs.batch_identifier
-                                OR aggregation_jobs.client_timestamp_interval <@ collect_jobs.batch_interval)
+                              OR aggregation_jobs.client_timestamp_interval && collect_jobs.batch_interval)
                         GROUP BY collect_jobs.id
                     ) report_max_timestamps
                         ON report_max_timestamps.collect_job_id = collect_jobs.id
@@ -3333,7 +3333,7 @@ ORDER BY id DESC
                         JOIN aggregation_jobs
                             ON aggregation_jobs.task_id = aggregate_share_jobs.task_id
                             AND (aggregation_jobs.batch_id = aggregate_share_jobs.batch_identifier
-                              OR aggregation_jobs.client_timestamp_interval <@ aggregate_share_jobs.batch_interval)
+                              OR aggregation_jobs.client_timestamp_interval && aggregate_share_jobs.batch_interval)
                         GROUP BY aggregate_share_jobs.id
                     ) report_max_timestamps
                         ON report_max_timestamps.aggregate_share_job_id = aggregate_share_jobs.id
@@ -9421,12 +9421,25 @@ mod tests {
                 report_ids_and_timestamps.push((*report.metadata().id(), *client_timestamp));
             }
 
-            let min_client_timestamp = client_timestamps.iter().min().unwrap();
-            let max_client_timestamp = client_timestamps.iter().max().unwrap();
+            // We arbitrarily extend the client_timestamp_interval by one second in each direction
+            // in order to test that GC occurs correctly even if aggregation jobs overlap with, but
+            // are not contained within, collect jobs.
+            let min_client_timestamp = client_timestamps
+                .iter()
+                .min()
+                .unwrap()
+                .sub(&Duration::from_seconds(1))
+                .unwrap();
+            let max_client_timestamp = client_timestamps
+                .iter()
+                .max()
+                .unwrap()
+                .add(&Duration::from_seconds(1))
+                .unwrap();
             let client_timestamp_interval = Interval::new(
-                *min_client_timestamp,
+                min_client_timestamp,
                 max_client_timestamp
-                    .difference(min_client_timestamp)
+                    .difference(&min_client_timestamp)
                     .unwrap()
                     .add(&Duration::from_seconds(1))
                     .unwrap(),
@@ -9539,10 +9552,10 @@ mod tests {
                         leader_time_interval_task.id(),
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(10))
+                                .sub(&Duration::from_seconds(20))
                                 .unwrap(),
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(9))
+                                .sub(&Duration::from_seconds(19))
                                 .unwrap(),
                         ],
                     )
@@ -9574,10 +9587,10 @@ mod tests {
                             leader_time_interval_task.id(),
                             &[
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(9))
+                                    .add(&Duration::from_seconds(19))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(10))
+                                    .add(&Duration::from_seconds(20))
                                     .unwrap(),
                             ],
                         )
@@ -9593,10 +9606,10 @@ mod tests {
                             leader_time_interval_task.id(),
                             &[
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(9))
+                                    .sub(&Duration::from_seconds(10))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(8))
+                                    .sub(&Duration::from_seconds(9))
                                     .unwrap(),
                             ],
                         )
@@ -9620,10 +9633,10 @@ mod tests {
                         helper_time_interval_task.id(),
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(10))
+                                .sub(&Duration::from_seconds(20))
                                 .unwrap(),
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(9))
+                                .sub(&Duration::from_seconds(19))
                                 .unwrap(),
                         ],
                     )
@@ -9655,10 +9668,10 @@ mod tests {
                             helper_time_interval_task.id(),
                             &[
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(9))
+                                    .add(&Duration::from_seconds(19))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(10))
+                                    .add(&Duration::from_seconds(20))
                                     .unwrap(),
                             ],
                         )
@@ -9674,10 +9687,10 @@ mod tests {
                             helper_time_interval_task.id(),
                             &[
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(9))
+                                    .sub(&Duration::from_seconds(10))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(8))
+                                    .sub(&Duration::from_seconds(9))
                                     .unwrap(),
                             ],
                         )
@@ -9704,10 +9717,10 @@ mod tests {
                         leader_fixed_size_task.id(),
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(10))
+                                .sub(&Duration::from_seconds(20))
                                 .unwrap(),
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(9))
+                                .sub(&Duration::from_seconds(19))
                                 .unwrap(),
                         ],
                     )
@@ -9723,7 +9736,7 @@ mod tests {
                                     .sub(&Duration::from_seconds(5))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(5))
+                                    .add(&Duration::from_seconds(8))
                                     .unwrap(),
                             ],
                         )
@@ -9739,10 +9752,10 @@ mod tests {
                             leader_fixed_size_task.id(),
                             &[
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(9))
+                                    .add(&Duration::from_seconds(19))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(10))
+                                    .add(&Duration::from_seconds(20))
                                     .unwrap(),
                             ],
                         )
@@ -9758,10 +9771,10 @@ mod tests {
                             leader_fixed_size_task.id(),
                             &[
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(9))
+                                    .sub(&Duration::from_seconds(10))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(8))
+                                    .sub(&Duration::from_seconds(9))
                                     .unwrap(),
                             ],
                         )
@@ -9786,10 +9799,10 @@ mod tests {
                             leader_fixed_size_task.id(),
                             &[
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(9))
+                                    .sub(&Duration::from_seconds(8))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(8))
+                                    .sub(&Duration::from_seconds(7))
                                     .unwrap(),
                             ],
                         )
@@ -9807,10 +9820,10 @@ mod tests {
                         helper_fixed_size_task.id(),
                         &[
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(10))
+                                .sub(&Duration::from_seconds(20))
                                 .unwrap(),
                             OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                .sub(&Duration::from_seconds(9))
+                                .sub(&Duration::from_seconds(19))
                                 .unwrap(),
                         ],
                     )
@@ -9826,7 +9839,7 @@ mod tests {
                                     .sub(&Duration::from_seconds(5))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(5))
+                                    .add(&Duration::from_seconds(8))
                                     .unwrap(),
                             ],
                         )
@@ -9842,10 +9855,10 @@ mod tests {
                             helper_fixed_size_task.id(),
                             &[
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(9))
+                                    .add(&Duration::from_seconds(19))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .add(&Duration::from_seconds(10))
+                                    .add(&Duration::from_seconds(20))
                                     .unwrap(),
                             ],
                         )
@@ -9861,10 +9874,10 @@ mod tests {
                             helper_fixed_size_task.id(),
                             &[
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(9))
+                                    .sub(&Duration::from_seconds(10))
                                     .unwrap(),
                                 OLDEST_ALLOWED_REPORT_TIMESTAMP
-                                    .sub(&Duration::from_seconds(8))
+                                    .sub(&Duration::from_seconds(9))
                                     .unwrap(),
                             ],
                         )
