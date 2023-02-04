@@ -74,17 +74,19 @@ CREATE TABLE task_vdaf_verify_keys(
 -- Individual reports received from clients.
 CREATE TABLE client_reports(
     id                              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
-    task_id                         BIGINT NOT NULL,     -- task ID the report is associated with
-    report_id                       BYTEA NOT NULL,      -- 16-byte ReportID as defined by the DAP specification
-    client_timestamp                TIMESTAMP NOT NULL,  -- report timestamp, from client
-    extensions                      BYTEA,               -- encoded sequence of Extension messages (populated for leader only)
-    public_share                    BYTEA,               -- encoded public share (opaque VDAF message, populated for leader only)
-    leader_input_share              BYTEA,               -- encoded, decrypted leader input share (populated for leader only)
-    helper_encrypted_input_share    BYTEA,               -- encdoed HpkeCiphertext message containing the helper's input share (populated for leader only)
+    task_id                         BIGINT NOT NULL,                 -- task ID the report is associated with
+    report_id                       BYTEA NOT NULL,                  -- 16-byte ReportID as defined by the DAP specification
+    client_timestamp                TIMESTAMP NOT NULL,              -- report timestamp, from client
+    extensions                      BYTEA,                           -- encoded sequence of Extension messages (populated for leader only)
+    public_share                    BYTEA,                           -- encoded public share (opaque VDAF message, populated for leader only)
+    leader_input_share              BYTEA,                           -- encoded, decrypted leader input share (populated for leader only)
+    helper_encrypted_input_share    BYTEA,                           -- encoded HpkeCiphertext message containing the helper's input share (populated for leader only)
+    aggregation_started             BOOLEAN NOT NULL DEFAULT FALSE,  -- has this client report been associated with an aggregation job?
 
     CONSTRAINT client_reports_unique_task_id_and_report_id UNIQUE(task_id, report_id),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
+CREATE INDEX client_reports_task_unaggregated ON client_reports(task_id) WHERE aggregation_started = FALSE;
 CREATE INDEX client_reports_task_and_timestamp_index ON client_reports(task_id, client_timestamp);
 
 -- Specifies the possible state of an aggregation job.

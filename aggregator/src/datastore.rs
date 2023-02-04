@@ -1004,10 +1004,13 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// `get_unaggregated_client_report_ids_for_task` returns some report IDs corresponding to
-    /// unaggregated client reports for the task identified by the given task ID.
+    /// unaggregated client reports for the task identified by the given task ID. Returned client
+    /// reports are marked as aggregation-started: the caller must either create an aggregation job
+    /// with, or call `mark_reports_unaggregated` on, each returned report as part of the same
+    /// transaction.
     ///
-    /// This should only be used with VDAFs that have an aggregation parameter of the unit type.
-    /// It relies on this assumption to find relevant reports without consulting collect jobs. For
+    /// This should only be used with VDAFs that have an aggregation parameter of the unit type. It
+    /// relies on this assumption to find relevant reports without consulting collect jobs. For
     /// VDAFs that do have a different aggregation parameter,
     /// `get_unaggregated_client_report_ids_by_collect_for_task` should be used instead.
     #[tracing::instrument(skip(self), err)]
@@ -1019,11 +1022,14 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT report_id, client_timestamp FROM client_reports
-                LEFT JOIN report_aggregations ON report_aggregations.client_report_id = client_reports.id
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND report_aggregations.id IS NULL
-                LIMIT 5000",
+                "UPDATE client_reports SET aggregation_started = TRUE
+                WHERE id IN (
+                    SELECT id FROM client_reports
+                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      AND aggregation_started = FALSE
+                    LIMIT 5000
+                )
+                RETURNING report_id, client_timestamp",
             )
             .await?;
         let rows = self.tx.query(&stmt, &[&task_id.as_ref()]).await?;
@@ -1040,12 +1046,14 @@ impl<C: Clock> Transaction<'_, C> {
     /// `get_unaggregated_client_report_ids_by_collect_for_task` returns pairs of report IDs and
     /// aggregation parameters, corresponding to client reports that have not yet been aggregated,
     /// or not aggregated with a certain aggregation parameter, and for which there are collect
-    /// jobs, for a given task.
+    /// jobs, for a given task. Returned client reports are marked as aggregation-started, but this
+    /// will not stop additional aggregation jobs from being created later with different
+    /// aggregation parameters.
     ///
     /// This should only be used with VDAFs with a non-unit type aggregation parameter. If a VDAF
     /// has the unit type as its aggregation parameter, then
-    /// `get_unaggregated_client_report_ids_for_task` should be used instead. In such cases, it
-    /// is not necessary to wait for a collect job to arrive before preparing reports.
+    /// `get_unaggregated_client_report_ids_for_task` should be used instead. In such cases, it is
+    /// not necessary to wait for a collect job to arrive before preparing reports.
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
     pub async fn get_unaggregated_client_report_ids_by_collect_for_task<const L: usize, A>(
@@ -1060,26 +1068,37 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT DISTINCT report_id, client_timestamp, collect_jobs.aggregation_param
-                FROM collect_jobs
-                INNER JOIN client_reports
-                ON collect_jobs.task_id = client_reports.task_id
-                AND client_reports.client_timestamp <@ collect_jobs.batch_interval
-                LEFT JOIN (
-                    SELECT report_aggregations.id, report_aggregations.client_report_id,
-                        aggregation_jobs.aggregation_param
-                    FROM report_aggregations
-                    INNER JOIN aggregation_jobs
-                    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                    WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                ) AS report_aggs
-                ON report_aggs.client_report_id = client_reports.id
-                AND report_aggs.aggregation_param = collect_jobs.aggregation_param
-                WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND collect_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND collect_jobs.state = 'START'
-                AND report_aggs.id IS NULL
-                LIMIT 5000",
+                "WITH unaggregated_client_report_ids AS (
+                    SELECT DISTINCT report_id, client_timestamp, collect_jobs.aggregation_param
+                    FROM collect_jobs
+                    INNER JOIN client_reports
+                    ON collect_jobs.task_id = client_reports.task_id
+                    AND client_reports.client_timestamp <@ collect_jobs.batch_interval
+                    LEFT JOIN (
+                        SELECT report_aggregations.id, report_aggregations.client_report_id,
+                            aggregation_jobs.aggregation_param
+                        FROM report_aggregations
+                        INNER JOIN aggregation_jobs
+                        ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                        WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    ) AS report_aggs
+                    ON report_aggs.client_report_id = client_reports.id
+                    AND report_aggs.aggregation_param = collect_jobs.aggregation_param
+                    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND collect_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND collect_jobs.state = 'START'
+                    AND report_aggs.id IS NULL
+                    LIMIT 5000
+                ),
+                updated_client_reports AS (
+                    UPDATE client_reports SET aggregation_started = TRUE
+                    FROM unaggregated_client_report_ids
+                    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      AND client_reports.report_id = unaggregated_client_report_ids.report_id
+                      AND client_reports.client_timestamp = unaggregated_client_report_ids.client_timestamp
+                )
+                SELECT report_id, client_timestamp, aggregation_param
+                FROM unaggregated_client_report_ids",
             )
             .await?;
         let rows = self.tx.query(&stmt, &[&task_id.as_ref()]).await?;
@@ -1092,6 +1111,42 @@ impl<C: Clock> Transaction<'_, C> {
                 Ok((report_id, time, agg_param))
             })
             .collect::<Result<Vec<_>, Error>>()
+    }
+
+    /// `mark_reports_unaggregated` resets the aggregation-started flag on the given client reports,
+    /// so that they may once again be returned by `get_unaggregated_client_report_ids_for_task`. It
+    /// should generally only be called on report IDs returned from
+    /// `get_unaggregated_client_report_ids_for_task`, as part of the same transaction, for any
+    /// client reports that are not added to an aggregation job.
+    #[tracing::instrument(skip(self), err)]
+    pub async fn mark_reports_unaggregated(
+        &self,
+        task_id: &TaskId,
+        report_ids: &[ReportId],
+    ) -> Result<(), Error> {
+        let report_ids: Vec<_> = report_ids.iter().map(ReportId::get_encoded).collect();
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "UPDATE client_reports SET aggregation_started = FALSE
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                  AND report_id IN (SELECT * FROM UNNEST($2::BYTEA[]))",
+            )
+            .await?;
+        let row_count = self
+            .tx
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.as_ref(),
+                    /* task_id */ &report_ids,
+                ],
+            )
+            .await?;
+        if TryInto::<usize>::try_into(row_count)? != report_ids.len() {
+            return Err(Error::MutationTargetNotFound);
+        }
+        Ok(())
     }
 
     /// Return the number of reports in the provided task whose timestamp falls within the provided
@@ -5605,42 +5660,26 @@ mod tests {
                 tx.put_client_report(&aggregated_report).await?;
                 tx.put_client_report(&unrelated_report).await?;
 
-                let aggregation_job_id = random();
-                tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Count,
-                >::new(
-                    *task.id(),
-                    aggregation_job_id,
-                    (),
-                    (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::InProgress,
-                ))
-                .await?;
-                tx
-                    .put_report_aggregation(
-                        &ReportAggregation::new(
-                            *task.id(),
-                            aggregation_job_id,
-                            *aggregated_report.metadata().id(),
-                            *aggregated_report.metadata().time(),
-                            0,
-                            ReportAggregationState::<
-                                PRIO3_AES128_VERIFY_KEY_LENGTH,
-                                Prio3Aes128Count,
-                            >::Start,
-                        ),
+                // Mark aggregated_report as aggregated. (we use SQL here as there is no standard
+                // datastore operation to manually mark a client report as aggregated)
+                tx.tx
+                    .execute(
+                        "UPDATE client_reports SET aggregation_started = TRUE
+                        WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                          AND report_id = $2",
+                        &[
+                            &task.id().as_ref(),
+                            &aggregated_report.metadata().id().as_ref(),
+                        ],
                     )
-                    .await
+                    .await?;
+                Ok(())
             })
         })
         .await
         .unwrap();
 
-        // Run query & verify results.
+        // Verify that we can acquire both unaggregated reports.
         let got_reports = HashSet::from_iter(
             ds.run_tx(|tx| {
                 let task = task.clone();
@@ -5665,6 +5704,57 @@ mod tests {
                     *second_unaggregated_report.metadata().time(),
                 ),
             ]),
+        );
+
+        // Verify that attempting to acquire again does not return the reports.
+        let got_reports = HashSet::<(ReportId, Time)>::from_iter(
+            ds.run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.get_unaggregated_client_report_ids_for_task(task.id())
+                        .await
+                })
+            })
+            .await
+            .unwrap(),
+        );
+
+        assert!(got_reports.is_empty());
+
+        // Mark one report un-aggregated.
+        ds.run_tx(|tx| {
+            let (task, first_unaggregated_report) =
+                (task.clone(), first_unaggregated_report.clone());
+            Box::pin(async move {
+                tx.mark_reports_unaggregated(
+                    task.id(),
+                    &[*first_unaggregated_report.metadata().id()],
+                )
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Verify that we can retrieve the un-aggregated report again.
+        let got_reports = HashSet::from_iter(
+            ds.run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.get_unaggregated_client_report_ids_for_task(task.id())
+                        .await
+                })
+            })
+            .await
+            .unwrap(),
+        );
+
+        assert_eq!(
+            got_reports,
+            HashSet::from([(
+                *first_unaggregated_report.metadata().id(),
+                *first_unaggregated_report.metadata().time(),
+            ),]),
         );
     }
 

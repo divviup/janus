@@ -365,6 +365,13 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                         report_ids_and_times.chunks(this.max_aggregation_job_size)
                     {
                         if agg_job_reports.len() < this.min_aggregation_job_size {
+                            if !agg_job_reports.is_empty() {
+                                let report_ids: Vec<_> = agg_job_reports
+                                    .iter()
+                                    .map(|(report_id, _)| *report_id)
+                                    .collect();
+                                tx.mark_reports_unaggregated(task.id(), &report_ids).await?;
+                            }
                             continue;
                         }
 
@@ -595,6 +602,14 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
                     // Write the outstanding batches, aggregation jobs, & report aggregations we
                     // created.
+                    if !unaggregated_report_ids.is_empty() {
+                        let report_ids: Vec<_> = unaggregated_report_ids
+                            .iter()
+                            .map(|(report_id, _)| *report_id)
+                            .collect();
+                        tx.mark_reports_unaggregated(task.id(), &report_ids).await?;
+                    }
+
                     try_join!(
                         join_all(
                             aggregation_jobs
@@ -632,7 +647,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
     async fn create_aggregation_jobs_for_task_with_param<const L: usize, A>(
-        &self,
+        self: Arc<Self>,
         task: Arc<Task>,
     ) -> anyhow::Result<()>
     where
@@ -649,7 +664,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
         self.datastore
             .run_tx_with_name("aggregation_job_creator_time_with_param", |tx| {
-                let task = Arc::clone(&task);
+                let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
                     // Find some client reports that are covered by a collect request, but haven't
                     // been aggregated yet, and group them by their batch.
@@ -670,6 +685,17 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     for (aggregation_param, report_ids_and_times) in result_map {
                         for agg_job_reports in report_ids_and_times.chunks(max_aggregation_job_size)
                         {
+                            if agg_job_reports.len() < this.min_aggregation_job_size {
+                                if !agg_job_reports.is_empty() {
+                                    let report_ids: Vec<_> = agg_job_reports
+                                        .iter()
+                                        .map(|(report_id, _)| *report_id)
+                                        .collect();
+                                    tx.mark_reports_unaggregated(task.id(), &report_ids).await?;
+                                }
+                                continue;
+                            }
+
                             let aggregation_job_id = random();
                             debug!(
                                 task_id = %task.id(),
@@ -1271,14 +1297,14 @@ mod tests {
         .await
         .unwrap();
 
-        let job_creator = AggregationJobCreator {
+        let job_creator = Arc::new(AggregationJobCreator {
             datastore: ds,
             tasks_update_frequency: Duration::from_secs(3600),
             aggregation_job_creation_interval: Duration::from_secs(1),
             min_aggregation_job_size: 1,
             max_aggregation_job_size: MAX_AGGREGATION_JOB_SIZE,
-        };
-        job_creator
+        });
+        Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task_with_param::<0, dummy_vdaf::Vdaf>(Arc::clone(&task))
             .await
             .unwrap();
@@ -1340,7 +1366,7 @@ mod tests {
             .unwrap();
 
         // Run again, this time it should create some aggregation jobs.
-        job_creator
+        Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task_with_param::<0, dummy_vdaf::Vdaf>(Arc::clone(&task))
             .await
             .unwrap();
@@ -1397,7 +1423,7 @@ mod tests {
 
         // Run once more, and confirm that no further aggregation jobs are created.
         // Run again, this time it should create some aggregation jobs.
-        job_creator
+        Arc::clone(&job_creator)
             .create_aggregation_jobs_for_task_with_param::<0, dummy_vdaf::Vdaf>(Arc::clone(&task))
             .await
             .unwrap();
