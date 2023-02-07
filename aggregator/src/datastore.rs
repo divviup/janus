@@ -1006,7 +1006,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// `get_unaggregated_client_report_ids_for_task` returns some report IDs corresponding to
     /// unaggregated client reports for the task identified by the given task ID. Returned client
     /// reports are marked as aggregation-started: the caller must either create an aggregation job
-    /// with, or call `mark_reports_unaggregated` on, each returned report as part of the same
+    /// with, or call `mark_reports_unaggregated` on each returned report as part of the same
     /// transaction.
     ///
     /// This should only be used with VDAFs that have an aggregation parameter of the unit type. It
