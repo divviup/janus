@@ -55,7 +55,7 @@ warp = "0.3"
 zstd = { version = "0.12", optional = true }
 
 [dev-dependencies]
-janus_interop_binaries = { workspace = true, features = ["fpvec_bounded_l2", "testcontainer", "test-util"] }
+janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "testcontainer", "test-util"] }
 janus_core = { workspace = true, features = ["test-util", "fpvec_bounded_l2"] }
 reqwest = { version = "0.11.14", default-features = false, features = ["json"] }
 
