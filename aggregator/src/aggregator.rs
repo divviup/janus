@@ -8,6 +8,7 @@ pub mod collect_job_driver;
 pub mod garbage_collector;
 pub mod query_type;
 
+use self::query_type::{AccumulableQueryType, UploadableQueryType};
 use crate::{
     aggregator::{
         accumulator::Accumulator, aggregate_share::compute_aggregate_share,
@@ -19,18 +20,20 @@ use crate::{
             AggregateShareJob, AggregationJob, AggregationJobState, CollectJob, CollectJobState,
             LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
-        Datastore,
+        Datastore, Transaction,
     },
     messages::{DurationExt, IntervalExt, TimeExt},
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     try_join,
 };
+use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
+use futures::future::join_all;
 use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
     HeaderMap, StatusCode,
@@ -72,14 +75,20 @@ use reqwest::Client;
 use std::{
     collections::{HashMap, HashSet},
     convert::Infallible,
-    fmt::{self, Display, Formatter},
+    fmt::{self, Debug, Display, Formatter},
     future::Future,
     io::Cursor,
+    marker::PhantomData,
+    mem::replace,
     net::SocketAddr,
     sync::Arc,
-    time::Instant,
+    time::{Duration as StdDuration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::{
+    select,
+    sync::{mpsc, oneshot, Mutex},
+    time::{sleep_until, Instant as TokioInstant},
+};
 use tracing::{debug, error, info, warn};
 use url::Url;
 use uuid::Uuid;
@@ -94,8 +103,6 @@ use warp::{
 use janus_core::test_util::dummy_vdaf;
 #[cfg(feature = "test-util")]
 use prio::vdaf::VdafError;
-
-use self::query_type::AccumulableQueryType;
 
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
@@ -315,8 +322,10 @@ pub struct Aggregator<C: Clock> {
     datastore: Arc<Datastore<C>>,
     /// Clock used to sample time.
     clock: C,
+    /// Report writer, with support for batching.
+    report_writer: Arc<ReportWriteBatcher<C>>,
     /// Cache of task aggregators.
-    task_aggregators: Mutex<HashMap<TaskId, Arc<TaskAggregator>>>,
+    task_aggregators: Mutex<HashMap<TaskId, Arc<TaskAggregator<C>>>>,
 
     // Metrics.
     /// Counter tracking the number of failed decryptions while handling the /upload endpoint.
@@ -328,8 +337,35 @@ pub struct Aggregator<C: Clock> {
     aggregate_step_failure_counter: Counter<u64>,
 }
 
+/// Config represents a configuration for an Aggregator.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Config {
+    /// Defines the maximum size of a batch of uploaded reports which will be written in a single
+    /// transaction.
+    pub max_upload_batch_size: usize,
+
+    /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not yet
+    /// reached `max_batch_upload_size`.
+    pub max_upload_batch_write_delay: StdDuration,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            max_upload_batch_size: 1,
+            max_upload_batch_write_delay: StdDuration::ZERO,
+        }
+    }
+}
+
 impl<C: Clock> Aggregator<C> {
-    fn new(datastore: Arc<Datastore<C>>, clock: C, meter: Meter) -> Self {
+    fn new(datastore: Arc<Datastore<C>>, clock: C, meter: Meter, cfg: Config) -> Self {
+        let report_writer = Arc::new(ReportWriteBatcher::new(
+            Arc::clone(&datastore),
+            cfg.max_upload_batch_size,
+            cfg.max_upload_batch_write_delay,
+        ));
+
         let upload_decrypt_failure_counter = meter
             .u64_counter("janus_upload_decrypt_failures")
             .with_description("Number of decryption failures in the /upload endpoint.")
@@ -348,6 +384,7 @@ impl<C: Clock> Aggregator<C> {
         Self {
             datastore,
             clock,
+            report_writer,
             task_aggregators: Mutex::new(HashMap::new()),
             upload_decrypt_failure_counter,
             upload_decode_failure_counter,
@@ -369,16 +406,18 @@ impl<C: Clock> Aggregator<C> {
         Ok(task_aggregator.handle_hpke_config().get_encoded())
     }
 
-    async fn handle_upload(&self, report_bytes: &[u8]) -> Result<(), Error> {
-        let report = Report::get_decoded(report_bytes)?;
+    async fn handle_upload(&self, report_bytes: &[u8]) -> Result<(), Arc<Error>> {
+        let report = Report::get_decoded(report_bytes).map_err(|err| Arc::new(Error::from(err)))?;
 
-        let task_aggregator = self.task_aggregator_for(report.task_id()).await?;
+        let task_aggregator = self
+            .task_aggregator_for(report.task_id())
+            .await
+            .map_err(Arc::new)?;
         if task_aggregator.task.role() != &Role::Leader {
-            return Err(Error::UnrecognizedTask(*report.task_id()));
+            return Err(Arc::new(Error::UnrecognizedTask(*report.task_id())));
         }
         task_aggregator
             .handle_upload(
-                &self.datastore,
                 &self.clock,
                 &self.upload_decrypt_failure_counter,
                 &self.upload_decode_failure_counter,
@@ -588,7 +627,7 @@ impl<C: Clock> Aggregator<C> {
         Ok(resp.get_encoded())
     }
 
-    async fn task_aggregator_for(&self, task_id: &TaskId) -> Result<Arc<TaskAggregator>, Error> {
+    async fn task_aggregator_for(&self, task_id: &TaskId) -> Result<Arc<TaskAggregator<C>>, Error> {
         // TODO(#238): don't cache forever (decide on & implement some cache eviction policy).
         // This is important both to avoid ever-growing resource usage, and to allow aggregators to
         // notice when a task changes (e.g. due to key rotation).
@@ -610,7 +649,7 @@ impl<C: Clock> Aggregator<C> {
             })
             .await?
             .ok_or(Error::UnrecognizedTask(*task_id))?;
-        let task_agg = Arc::new(TaskAggregator::new(task)?);
+        let task_agg = Arc::new(TaskAggregator::new(task, Arc::clone(&self.report_writer))?);
         {
             let mut task_aggs = self.task_aggregators.lock().await;
             Ok(Arc::clone(task_aggs.entry(*task_id).or_insert(task_agg)))
@@ -621,17 +660,19 @@ impl<C: Clock> Aggregator<C> {
 /// TaskAggregator provides aggregation functionality for a single task.
 // TODO(#224): refactor Aggregator to perform indepedent batched operations (e.g. report handling in
 // Aggregate requests) using a parallelized library like Rayon.
-pub struct TaskAggregator {
+pub struct TaskAggregator<C: Clock> {
     /// The task being aggregated.
     task: Arc<Task>,
     /// VDAF-specific operations.
     vdaf_ops: VdafOps,
+    /// Report writer, with support for batching.
+    report_writer: Arc<ReportWriteBatcher<C>>,
 }
 
-impl TaskAggregator {
+impl<C: Clock> TaskAggregator<C> {
     /// Create a new aggregator. `report_recipient` is used to decrypt reports received by this
     /// aggregator.
-    fn new(task: Task) -> Result<Self, Error> {
+    fn new(task: Task, report_writer: Arc<ReportWriteBatcher<C>>) -> Result<Self, Error> {
         let vdaf_ops = match task.vdaf() {
             VdafInstance::Prio3Aes128Count => {
                 let vdaf = Prio3::new_aes128_count(2)?;
@@ -710,6 +751,7 @@ impl TaskAggregator {
         Ok(Self {
             task: Arc::new(task),
             vdaf_ops,
+            report_writer,
         })
     }
 
@@ -728,27 +770,26 @@ impl TaskAggregator {
             .clone()]))
     }
 
-    async fn handle_upload<C: Clock>(
+    async fn handle_upload(
         &self,
-        datastore: &Datastore<C>,
         clock: &C,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
         report: Report,
-    ) -> Result<(), Error> {
+    ) -> Result<(), Arc<Error>> {
         self.vdaf_ops
             .handle_upload(
-                datastore,
                 clock,
                 upload_decrypt_failure_counter,
                 upload_decode_failure_counter,
                 &self.task,
+                &self.report_writer,
                 report,
             )
             .await
     }
 
-    async fn handle_aggregate_init<C: Clock>(
+    async fn handle_aggregate_init(
         &self,
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
@@ -764,7 +805,7 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_continue<C: Clock>(
+    async fn handle_aggregate_continue(
         &self,
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
@@ -780,7 +821,7 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_collect<C: Clock>(
+    async fn handle_collect(
         &self,
         datastore: &Datastore<C>,
         req_bytes: &[u8],
@@ -797,7 +838,7 @@ impl TaskAggregator {
             .join(&collect_job_id.to_string())?)
     }
 
-    async fn handle_get_collect_job<C: Clock>(
+    async fn handle_get_collect_job(
         &self,
         datastore: &Datastore<C>,
         collect_job_id: Uuid,
@@ -807,7 +848,7 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_delete_collect_job<C: Clock>(
+    async fn handle_delete_collect_job(
         &self,
         datastore: &Datastore<C>,
         collect_job_id: Uuid,
@@ -817,7 +858,7 @@ impl TaskAggregator {
             .await
     }
 
-    async fn handle_aggregate_share<C: Clock>(
+    async fn handle_aggregate_share(
         &self,
         datastore: &Datastore<C>,
         clock: &C,
@@ -872,129 +913,300 @@ enum VdafOps {
 impl VdafOps {
     async fn handle_upload<C: Clock>(
         &self,
-        datastore: &Datastore<C>,
         clock: &C,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
         task: &Task,
+        report_writer: &ReportWriteBatcher<C>,
         report: Report,
-    ) -> Result<(), Error> {
-        match self {
-            VdafOps::Prio3Aes128Count(vdaf, _) => {
-                Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count, _>(
-                    datastore,
-                    vdaf,
+    ) -> Result<(), Arc<Error>> {
+        match (task.query_type(), self) {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(vdaf, _)) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Aes128Count,
+                    _,
+                >(
+                    Arc::clone(vdaf),
                     clock,
                     upload_decrypt_failure_counter,
                     upload_decode_failure_counter,
                     task,
+                    report_writer,
                     report,
                 )
                 .await
             }
-            VdafOps::Prio3Aes128CountVec(vdaf, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(vdaf, _)) => {
                 Self::handle_upload_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128CountVecMultithreaded,
                     _,
                 >(
-                    datastore,
-                    vdaf,
+                    Arc::clone(vdaf),
                     clock,
                     upload_decrypt_failure_counter,
                     upload_decode_failure_counter,
                     task,
+                    report_writer,
                     report,
                 )
                 .await
             }
-            VdafOps::Prio3Aes128Sum(vdaf, _) => {
-                Self::handle_upload_generic::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum, _>(
-                    datastore,
-                    vdaf,
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report,
-                )
-                .await
-            }
-            VdafOps::Prio3Aes128Histogram(vdaf, _) => Self::handle_upload_generic::<
-                PRIO3_AES128_VERIFY_KEY_LENGTH,
-                Prio3Aes128Histogram,
-                _,
-            >(
-                datastore,
-                vdaf,
-                clock,
-                upload_decrypt_failure_counter,
-                upload_decode_failure_counter,
-                task,
-                report,
-            )
-            .await,
-            #[cfg(feature = "fpvec_bounded_l2")]
-            VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(vdaf, _) => {
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(vdaf, _)) => {
                 Self::handle_upload_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Aes128Sum,
+                    _,
+                >(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(vdaf, _)) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
+                    Prio3Aes128Histogram,
+                    _,
+                >(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::TimeInterval,
+                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(vdaf, _),
+            ) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
                     _,
                 >(
-                    datastore,
-                    vdaf,
+                    Arc::clone(vdaf),
                     clock,
                     upload_decrypt_failure_counter,
                     upload_decode_failure_counter,
                     task,
+                    report_writer,
                     report,
                 )
                 .await
             }
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(vdaf, _) => {
+            (
+                task::QueryType::TimeInterval,
+                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(vdaf, _),
+            ) => {
                 Self::handle_upload_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
                     _,
                 >(
-                    datastore,
-                    vdaf,
+                    Arc::clone(vdaf),
                     clock,
                     upload_decrypt_failure_counter,
                     upload_decode_failure_counter,
                     task,
+                    report_writer,
                     report,
                 )
                 .await
             }
             #[cfg(feature = "fpvec_bounded_l2")]
-            VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(vdaf, _) => {
+            (
+                task::QueryType::TimeInterval,
+                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(vdaf, _),
+            ) => {
                 Self::handle_upload_generic::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    TimeInterval,
                     Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
                     _,
                 >(
-                    datastore,
-                    vdaf,
+                    Arc::clone(vdaf),
                     clock,
                     upload_decrypt_failure_counter,
                     upload_decode_failure_counter,
                     task,
+                    report_writer,
                     report,
                 )
                 .await
             }
 
             #[cfg(feature = "test-util")]
-            VdafOps::Fake(vdaf) => {
-                Self::handle_upload_generic::<0, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    vdaf,
+            (task::QueryType::TimeInterval, VdafOps::Fake(vdaf)) => {
+                Self::handle_upload_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
+                    Arc::clone(vdaf),
                     clock,
                     upload_decrypt_failure_counter,
                     upload_decode_failure_counter,
                     task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(vdaf, _)) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Count,
+                    _,
+                >(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(vdaf, _)) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128CountVecMultithreaded,
+                    _,
+                >(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(vdaf, _)) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Sum,
+                    _,
+                >(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(vdaf, _)) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128Histogram,
+                    _,
+                >(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::FixedSize { .. },
+                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(vdaf, _),
+            ) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
+                    _,
+                >(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::FixedSize { .. },
+                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(vdaf, _),
+            ) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
+                    _,
+                >(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+            #[cfg(feature = "fpvec_bounded_l2")]
+            (
+                task::QueryType::FixedSize { .. },
+                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(vdaf, _),
+            ) => {
+                Self::handle_upload_generic::<
+                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    FixedSize,
+                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
+                    _,
+                >(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
+                    report,
+                )
+                .await
+            }
+
+            #[cfg(feature = "test-util")]
+            (task::QueryType::FixedSize { .. }, VdafOps::Fake(vdaf)) => {
+                Self::handle_upload_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
+                    Arc::clone(vdaf),
+                    clock,
+                    upload_decrypt_failure_counter,
+                    upload_decode_failure_counter,
+                    task,
+                    report_writer,
                     report,
                 )
                 .await
@@ -1584,32 +1796,33 @@ impl VdafOps {
         }
     }
 
-    async fn handle_upload_generic<const L: usize, A, C>(
-        datastore: &Datastore<C>,
-        vdaf: &A,
+    async fn handle_upload_generic<const L: usize, Q, A, C>(
+        vdaf: Arc<A>,
         clock: &C,
         upload_decrypt_failure_counter: &Counter<u64>,
         upload_decode_failure_counter: &Counter<u64>,
         task: &Task,
+        report_writer: &ReportWriteBatcher<C>,
         report: Report,
-    ) -> Result<(), Error>
+    ) -> Result<(), Arc<Error>>
     where
         A: vdaf::Aggregator<L> + Send + Sync + 'static,
         A::InputShare: PartialEq + Send + Sync,
         A::PublicShare: PartialEq + Send + Sync,
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         C: Clock,
+        Q: UploadableQueryType,
     {
         // The leader's report is the first one.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if report.encrypted_input_shares().len() != 2 {
-            return Err(Error::UnrecognizedMessage(
+            return Err(Arc::new(Error::UnrecognizedMessage(
                 Some(*report.task_id()),
                 "unexpected number of encrypted shares in report",
-            ));
+            )));
         }
         let leader_encrypted_input_share =
             &report.encrypted_input_shares()[Role::Leader.index().unwrap()];
@@ -1626,37 +1839,44 @@ impl VdafOps {
                 )
             })?;
 
-        let report_deadline = clock.now().add(task.tolerable_clock_skew())?;
+        let report_deadline = clock
+            .now()
+            .add(task.tolerable_clock_skew())
+            .map_err(|err| Arc::new(Error::from(err)))?;
 
         // Reject reports from too far in the future.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if report.metadata().time().is_after(&report_deadline) {
-            return Err(Error::ReportTooEarly(
+            return Err(Arc::new(Error::ReportTooEarly(
                 *report.task_id(),
                 *report.metadata().id(),
                 *report.metadata().time(),
-            ));
+            )));
         }
 
         // Reject reports after a task has expired.
         // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.3.2
         if report.metadata().time().is_after(task.task_expiration()) {
-            return Err(Error::ReportRejected(
+            return Err(Arc::new(Error::ReportRejected(
                 *report.task_id(),
                 *report.metadata().id(),
                 *report.metadata().time(),
-            ));
+            )));
         }
 
         // Reject reports that would be eligible for garbage collection, to prevent replay attacks.
         if let Some(report_expiry_age) = task.report_expiry_age() {
-            let report_expiry_time = report.metadata().time().add(report_expiry_age)?;
+            let report_expiry_time = report
+                .metadata()
+                .time()
+                .add(report_expiry_age)
+                .map_err(|err| Arc::new(Error::from(err)))?;
             if clock.now().is_after(&report_expiry_time) {
-                return Err(Error::ReportRejected(
+                return Err(Arc::new(Error::ReportRejected(
                     *report.task_id(),
                     *report.metadata().id(),
                     *report.metadata().time(),
-                ));
+                )));
             }
         }
 
@@ -1666,7 +1886,7 @@ impl VdafOps {
         // reports we can't use, and lets the aggregation job handler assume the values it reads
         // from the datastore are valid. We don't inform the client if this fails.
         let public_share =
-            match A::PublicShare::get_decoded_with_param(&vdaf, report.public_share()) {
+            match A::PublicShare::get_decoded_with_param(&vdaf.as_ref(), report.public_share()) {
                 Ok(public_share) => public_share,
                 Err(err) => {
                     warn!(
@@ -1706,10 +1926,11 @@ impl VdafOps {
         };
 
         let leader_plaintext_input_share =
-            PlaintextInputShare::get_decoded(&encoded_leader_plaintext_input_share)?;
+            PlaintextInputShare::get_decoded(&encoded_leader_plaintext_input_share)
+                .map_err(|err| Arc::new(Error::from(err)))?;
 
         let leader_input_share = match A::InputShare::get_decoded_with_param(
-            &(vdaf, Role::Leader.index().unwrap()),
+            &(&vdaf, Role::Leader.index().unwrap()),
             leader_plaintext_input_share.payload(),
         ) {
             Ok(leader_input_share) => leader_input_share,
@@ -1728,7 +1949,7 @@ impl VdafOps {
         let helper_encrypted_input_share =
             &report.encrypted_input_shares()[Role::Helper.index().unwrap()];
 
-        let stored_report = LeaderStoredReport::new(
+        let report = LeaderStoredReport::new(
             *report.task_id(),
             report.metadata().clone(),
             public_share,
@@ -1737,56 +1958,9 @@ impl VdafOps {
             helper_encrypted_input_share.clone(),
         );
 
-        datastore
-            .run_tx_with_name("upload", |tx| {
-                let (vdaf, stored_report) = (vdaf.clone(), stored_report.clone());
-                Box::pin(async move {
-                    let (existing_client_report, conflicting_collect_jobs) = try_join!(
-                        tx.get_client_report(
-                            &vdaf,
-                            stored_report.task_id(),
-                            stored_report.metadata().id()
-                        ),
-                        tx.get_collect_jobs_including_time::<L, A>(
-                            stored_report.task_id(),
-                            stored_report.metadata().time()
-                        ),
-                    )?;
-
-                    // Reject reports whose report IDs have been seen before.
-                    // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-16
-                    if existing_client_report.is_some() {
-                        return Err(datastore::Error::User(
-                            Error::ReportRejected(
-                                *stored_report.task_id(),
-                                *stored_report.metadata().id(),
-                                *stored_report.metadata().time(),
-                            )
-                            .into(),
-                        ));
-                    }
-
-                    // Reject reports whose timestamps fall into a batch interval that has already
-                    // been collected.
-                    // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-17
-                    if !conflicting_collect_jobs.is_empty() {
-                        return Err(datastore::Error::User(
-                            Error::ReportRejected(
-                                *stored_report.task_id(),
-                                *stored_report.metadata().id(),
-                                *stored_report.metadata().time(),
-                            )
-                            .into(),
-                        ));
-                    }
-
-                    // Store the report.
-                    tx.put_client_report::<L, A>(&stored_report).await?;
-                    Ok(())
-                })
-            })
-            .await?;
-        Ok(())
+        report_writer
+            .write_report(WritableReport::<L, Q, A>::new(report))
+            .await
     }
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
@@ -2486,7 +2660,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync + 'static,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.
@@ -2777,7 +2951,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     {
         let collect_job = datastore
             .run_tx_with_name("get_collect_job", |tx| {
@@ -3075,7 +3249,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync + PartialEq + Eq,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     {
         datastore
             .run_tx_with_name("delete_collect_job", move |tx| {
@@ -3310,7 +3484,7 @@ impl VdafOps {
         A::AggregationParam: Send + Sync,
         A::AggregateShare: Send + Sync,
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     {
         // Decode request, and verify that it is for the current task. We use an assert to check
         // that the task IDs match as this should be guaranteed by the caller.
@@ -3459,6 +3633,222 @@ impl VdafOps {
     }
 }
 
+type ReportWriteBatcherSender<C> = mpsc::Sender<(
+    Box<dyn ReportWriter<C>>,
+    oneshot::Sender<Result<(), Arc<Error>>>,
+)>;
+type ReportWriteBatcherReceiver<C> = mpsc::Receiver<(
+    Box<dyn ReportWriter<C>>,
+    oneshot::Sender<Result<(), Arc<Error>>>,
+)>;
+
+struct ReportWriteBatcher<C: Clock> {
+    report_tx: ReportWriteBatcherSender<C>,
+}
+
+impl<C: Clock> ReportWriteBatcher<C> {
+    pub fn new(
+        ds: Arc<Datastore<C>>,
+        max_batch_size: usize,
+        max_batch_write_delay: StdDuration,
+    ) -> Self {
+        let (report_tx, report_rx) = mpsc::channel(1);
+
+        tokio::spawn(async move {
+            Self::run_upload_batcher(ds, report_rx, max_batch_size, max_batch_write_delay).await
+        });
+
+        Self { report_tx }
+    }
+
+    pub async fn write_report<R: ReportWriter<C>>(&self, report: R) -> Result<(), Arc<Error>>
+    where
+        R: 'static,
+    {
+        // Send report to be written.
+        // Unwrap safety: report_rx is not dropped until ReportWriteBatcher is dropped.
+        let (rslt_tx, rslt_rx) = oneshot::channel();
+        self.report_tx
+            .send((Box::new(report), rslt_tx))
+            .await
+            .unwrap();
+
+        // Await the result of writing the report.
+        // Unwrap safety: rslt_tx is always sent on before being dropped, and is never closed.
+        rslt_rx.await.unwrap()
+    }
+
+    async fn run_upload_batcher(
+        ds: Arc<Datastore<C>>,
+        mut report_rx: ReportWriteBatcherReceiver<C>,
+        max_batch_size: usize,
+        max_batch_write_delay: StdDuration,
+    ) {
+        let mut is_done = false;
+        let mut batch_expiry = TokioInstant::now();
+        let mut report_writers = Vec::with_capacity(max_batch_size);
+        let mut result_txs = Vec::with_capacity(max_batch_size);
+        while !is_done {
+            // Wait for an event of interest.
+            let write_batch = select! {
+                // Wait until we receive a report to be written (or the channel is closed due to the
+                // ReportWriteBatcher being dropped)...
+                item = report_rx.recv() => {
+                    match item {
+                        // We got an item. Add it to the current batch of reports to be written.
+                        Some((report_writer, rslt_tx)) => {
+                            if report_writers.is_empty() {
+                                batch_expiry = TokioInstant::now() + max_batch_write_delay;
+                            }
+                            report_writers.push(report_writer);
+                            result_txs.push(rslt_tx);
+                            report_writers.len() >= max_batch_size
+                        }
+
+                        // The channel is closed. Note this, and write any final reports that may be
+                        // batched before shutting down.
+                        None => {
+                            is_done = true;
+                            !report_writers.is_empty()
+                        },
+                    }
+                },
+
+                // ... or the current batch times out.
+                _ = sleep_until(batch_expiry), if !report_writers.is_empty() => true,
+            };
+
+            // If the event made us want to write the current batch to storage, do so.
+            if write_batch {
+                let ds = Arc::clone(&ds);
+                let result_writers =
+                    replace(&mut report_writers, Vec::with_capacity(max_batch_size));
+                let result_txs = replace(&mut result_txs, Vec::with_capacity(max_batch_size));
+                tokio::spawn(async move {
+                    Self::write_batch(ds, result_writers, result_txs).await;
+                });
+            }
+        }
+    }
+
+    async fn write_batch(
+        ds: Arc<Datastore<C>>,
+        report_writers: Vec<Box<dyn ReportWriter<C>>>,
+        result_txs: Vec<oneshot::Sender<Result<(), Arc<Error>>>>,
+    ) {
+        // Check preconditions.
+        assert_eq!(report_writers.len(), result_txs.len());
+
+        // Run all report writes concurrently.
+        let report_writers = Arc::new(report_writers);
+        let rslts = ds
+            .run_tx_with_name("upload", |tx| {
+                let report_writers = Arc::clone(&report_writers);
+                Box::pin(async move {
+                    Ok(join_all(report_writers.iter().map(|rw| rw.write_report(tx))).await)
+                })
+            })
+            .await;
+
+        match rslts {
+            Ok(rslts) => {
+                // Individual, per-request results.
+                assert_eq!(result_txs.len(), rslts.len()); // sanity check: should be guaranteed.
+                for (rslt_tx, rslt) in result_txs.into_iter().zip(rslts.into_iter()) {
+                    // Unwrap safety: rslt_rx is not closed or dropped until rslt_tx is sent on.
+                    rslt_tx
+                        .send(rslt.map_err(|err| Arc::new(Error::from(err))))
+                        .unwrap();
+                }
+            }
+            Err(err) => {
+                // Total-transaction failures are given to all waiting report uploaders.
+                let err = Arc::new(Error::from(err));
+                for rslt_tx in result_txs.into_iter() {
+                    // Unwrap safety: rslt_rx is not closed or dropped until rslt_tx is sent on.
+                    rslt_tx.send(Err(Arc::clone(&err))).unwrap();
+                }
+            }
+        };
+    }
+}
+
+#[async_trait]
+trait ReportWriter<C: Clock>: Debug + Send + Sync {
+    async fn write_report(&self, tx: &Transaction<C>) -> Result<(), datastore::Error>;
+}
+
+#[derive(Debug)]
+struct WritableReport<const L: usize, Q, A>
+where
+    A: vdaf::Aggregator<L> + Send + Sync + 'static,
+    A::InputShare: PartialEq + Send + Sync,
+    A::PublicShare: PartialEq + Send + Sync,
+    A::AggregationParam: Send + Sync,
+    A::AggregateShare: Send + Sync,
+    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    Q: UploadableQueryType,
+{
+    report: LeaderStoredReport<L, A>,
+    _phantom_q: PhantomData<Q>,
+}
+
+impl<const L: usize, Q, A> WritableReport<L, Q, A>
+where
+    A: vdaf::Aggregator<L> + Send + Sync + 'static,
+    A::InputShare: PartialEq + Send + Sync,
+    A::PublicShare: PartialEq + Send + Sync,
+    A::AggregationParam: Send + Sync,
+    A::AggregateShare: Send + Sync,
+    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    Q: UploadableQueryType,
+{
+    fn new(report: LeaderStoredReport<L, A>) -> Self {
+        Self {
+            report,
+            _phantom_q: PhantomData::<Q>,
+        }
+    }
+}
+
+#[async_trait]
+impl<const L: usize, C, Q, A> ReportWriter<C> for WritableReport<L, Q, A>
+where
+    A: vdaf::Aggregator<L> + Send + Sync + 'static,
+    A::InputShare: PartialEq + Send + Sync,
+    A::PublicShare: PartialEq + Send + Sync,
+    A::AggregationParam: Send + Sync,
+    A::AggregateShare: Send + Sync,
+    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    C: Clock,
+    Q: UploadableQueryType,
+{
+    async fn write_report(&self, tx: &Transaction<C>) -> Result<(), datastore::Error> {
+        Q::validate_uploaded_report(tx, &self.report).await?;
+
+        // Store the report.
+        match tx.put_client_report::<L, A>(&self.report).await {
+            Ok(()) => Ok(()),
+
+            // Reject reports whose report IDs have been seen before.
+            // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-16
+            Err(datastore::Error::MutationTargetAlreadyExisted) => Err(datastore::Error::User(
+                Error::ReportRejected(
+                    *self.report.task_id(),
+                    *self.report.metadata().id(),
+                    *self.report.metadata().time(),
+                )
+                .into(),
+            )),
+
+            err => err,
+        }
+    }
+}
+
 /// Injects a clone of the provided value into the warp filter, making it
 /// available to the filter's map() or and_then() handler.
 fn with_cloned_value<T>(value: T) -> impl Filter<Extract = (T,), Error = Infallible> + Clone
@@ -3528,7 +3918,11 @@ fn error_handler<F, T>(
     name: &'static str,
 ) -> impl Fn(F) -> BoxedFilter<(Response,)>
 where
-    F: Filter<Extract = (Result<T, Error>,), Error = Rejection> + Clone + Send + Sync + 'static,
+    F: Filter<Extract = (Result<T, Arc<Error>>,), Error = Rejection>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     T: Reply,
 {
     move |filter| {
@@ -3536,8 +3930,8 @@ where
         warp::any()
             .map(Instant::now)
             .and(filter)
-            .map(move |start: Instant, result: Result<T, Error>| {
-                let error_code = if let Err(error) = &result {
+            .map(move |start: Instant, result: Result<T, Arc<Error>>| {
+                let error_code = if let Err(error) = result.as_ref() {
                     warn!(?error, endpoint = name, "Error handling endpoint");
                     error.error_code()
                 } else {
@@ -3554,87 +3948,93 @@ where
 
                 match result {
                     Ok(reply) => reply.into_response(),
-                    Err(Error::InvalidConfiguration(_)) => {
-                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                    }
-                    Err(Error::MessageDecode(_)) => {
-                        build_problem_details_response(DapProblemType::UnrecognizedMessage, None)
-                    }
-                    Err(Error::ReportRejected(task_id, _, _)) => build_problem_details_response(
-                        DapProblemType::ReportRejected,
-                        Some(task_id),
-                    ),
-                    Err(Error::UnrecognizedMessage(task_id, _)) => {
-                        build_problem_details_response(DapProblemType::UnrecognizedMessage, task_id)
-                    }
-                    Err(Error::UnrecognizedTask(task_id)) => {
-                        // TODO(#237): ensure that a helper returns HTTP 404 or 403 when this happens.
-                        build_problem_details_response(
-                            DapProblemType::UnrecognizedTask,
-                            Some(task_id),
-                        )
-                    }
-                    Err(Error::MissingTaskId) => {
-                        build_problem_details_response(DapProblemType::MissingTaskId, None)
-                    }
-                    Err(Error::UnrecognizedAggregationJob(task_id, _)) => {
-                        build_problem_details_response(
-                            DapProblemType::UnrecognizedAggregationJob,
-                            Some(task_id),
-                        )
-                    }
-                    Err(Error::DeletedCollectJob(_)) => StatusCode::NO_CONTENT.into_response(),
-                    Err(Error::UnrecognizedCollectJob(_)) => StatusCode::NOT_FOUND.into_response(),
-                    Err(Error::OutdatedHpkeConfig(task_id, _)) => build_problem_details_response(
-                        DapProblemType::OutdatedConfig,
-                        Some(task_id),
-                    ),
-                    Err(Error::ReportTooEarly(task_id, _, _)) => build_problem_details_response(
-                        DapProblemType::ReportTooEarly,
-                        Some(task_id),
-                    ),
-                    Err(Error::UnauthorizedRequest(task_id)) => build_problem_details_response(
-                        DapProblemType::UnauthorizedRequest,
-                        Some(task_id),
-                    ),
-                    Err(Error::InvalidBatchSize(task_id, _)) => build_problem_details_response(
-                        DapProblemType::InvalidBatchSize,
-                        Some(task_id),
-                    ),
-                    Err(Error::BatchInvalid(task_id, _)) => {
-                        build_problem_details_response(DapProblemType::BatchInvalid, Some(task_id))
-                    }
-                    Err(Error::BatchOverlap(task_id, _)) => {
-                        build_problem_details_response(DapProblemType::BatchOverlap, Some(task_id))
-                    }
-                    Err(Error::BatchMismatch(inner)) => build_problem_details_response(
-                        DapProblemType::BatchMismatch,
-                        Some(inner.task_id),
-                    ),
-                    Err(Error::BatchQueriedTooManyTimes(task_id, ..)) => {
-                        build_problem_details_response(
-                            DapProblemType::BatchQueriedTooManyTimes,
-                            Some(task_id),
-                        )
-                    }
-                    Err(Error::Hpke(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::Datastore(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::Vdaf(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::Internal(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::Url(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::Message(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::HttpClient(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::Http { .. }) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    Err(Error::AggregateShareRequestRejected(_, _)) => {
-                        StatusCode::BAD_REQUEST.into_response()
-                    }
-                    Err(Error::EmptyAggregation(task_id)) => build_problem_details_response(
-                        DapProblemType::UnrecognizedMessage,
-                        Some(task_id),
-                    ),
-                    Err(Error::TaskParameters(_)) => {
-                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                    }
+                    Err(err) => match err.as_ref() {
+                        Error::InvalidConfiguration(_) => {
+                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        }
+                        Error::MessageDecode(_) => build_problem_details_response(
+                            DapProblemType::UnrecognizedMessage,
+                            None,
+                        ),
+                        Error::ReportRejected(task_id, _, _) => build_problem_details_response(
+                            DapProblemType::ReportRejected,
+                            Some(*task_id),
+                        ),
+                        Error::UnrecognizedMessage(task_id, _) => build_problem_details_response(
+                            DapProblemType::UnrecognizedMessage,
+                            *task_id,
+                        ),
+                        Error::UnrecognizedTask(task_id) => {
+                            // TODO(#237): ensure that a helper returns HTTP 404 or 403 when this happens.
+                            build_problem_details_response(
+                                DapProblemType::UnrecognizedTask,
+                                Some(*task_id),
+                            )
+                        }
+                        Error::MissingTaskId => {
+                            build_problem_details_response(DapProblemType::MissingTaskId, None)
+                        }
+                        Error::UnrecognizedAggregationJob(task_id, _) => {
+                            build_problem_details_response(
+                                DapProblemType::UnrecognizedAggregationJob,
+                                Some(*task_id),
+                            )
+                        }
+                        Error::DeletedCollectJob(_) => StatusCode::NO_CONTENT.into_response(),
+                        Error::UnrecognizedCollectJob(_) => StatusCode::NOT_FOUND.into_response(),
+                        Error::OutdatedHpkeConfig(task_id, _) => build_problem_details_response(
+                            DapProblemType::OutdatedConfig,
+                            Some(*task_id),
+                        ),
+                        Error::ReportTooEarly(task_id, _, _) => build_problem_details_response(
+                            DapProblemType::ReportTooEarly,
+                            Some(*task_id),
+                        ),
+                        Error::UnauthorizedRequest(task_id) => build_problem_details_response(
+                            DapProblemType::UnauthorizedRequest,
+                            Some(*task_id),
+                        ),
+                        Error::InvalidBatchSize(task_id, _) => build_problem_details_response(
+                            DapProblemType::InvalidBatchSize,
+                            Some(*task_id),
+                        ),
+                        Error::BatchInvalid(task_id, _) => build_problem_details_response(
+                            DapProblemType::BatchInvalid,
+                            Some(*task_id),
+                        ),
+                        Error::BatchOverlap(task_id, _) => build_problem_details_response(
+                            DapProblemType::BatchOverlap,
+                            Some(*task_id),
+                        ),
+                        Error::BatchMismatch(inner) => build_problem_details_response(
+                            DapProblemType::BatchMismatch,
+                            Some(inner.task_id),
+                        ),
+                        Error::BatchQueriedTooManyTimes(task_id, ..) => {
+                            build_problem_details_response(
+                                DapProblemType::BatchQueriedTooManyTimes,
+                                Some(*task_id),
+                            )
+                        }
+                        Error::Hpke(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                        Error::Datastore(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                        Error::Vdaf(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                        Error::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                        Error::Url(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                        Error::Message(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                        Error::HttpClient(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                        Error::Http { .. } => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                        Error::AggregateShareRequestRejected(_, _) => {
+                            StatusCode::BAD_REQUEST.into_response()
+                        }
+                        Error::EmptyAggregation(task_id) => build_problem_details_response(
+                            DapProblemType::UnrecognizedMessage,
+                            Some(*task_id),
+                        ),
+                        Error::TaskParameters(_) => {
+                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        }
+                    },
                 }
             })
             .boxed()
@@ -3672,7 +4072,11 @@ fn compose_common_wrappers<F1, F2, T>(
 ) -> BoxedFilter<(impl Reply,)>
 where
     F1: Filter<Extract = (), Error = Rejection> + Send + Sync + 'static,
-    F2: Filter<Extract = (Result<T, Error>,), Error = Rejection> + Clone + Send + Sync + 'static,
+    F2: Filter<Extract = (Result<T, Arc<Error>>,), Error = Rejection>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     T: Reply + 'static,
 {
     route_filter
@@ -3696,6 +4100,7 @@ const CORS_PREFLIGHT_CACHE_AGE: u32 = 24 * 60 * 60;
 pub fn aggregator_filter<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
+    cfg: Config,
 ) -> Result<BoxedFilter<(impl Reply,)>, Error> {
     let meter = opentelemetry::global::meter("janus_aggregator");
     let response_time_histogram = meter
@@ -3704,7 +4109,7 @@ pub fn aggregator_filter<C: Clock>(
         .with_unit(Unit::new("seconds"))
         .init();
 
-    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter));
+    let aggregator = Arc::new(Aggregator::new(datastore, clock, meter, cfg));
 
     let hpke_config_routing = warp::path("hpke_config");
     let hpke_config_responding = warp::get()
@@ -3714,12 +4119,15 @@ pub fn aggregator_filter<C: Clock>(
             |aggregator: Arc<Aggregator<C>>, query_params: HashMap<String, String>| async move {
                 let hpke_config_bytes = aggregator
                     .handle_hpke_config(query_params.get("task_id").map(String::as_ref))
-                    .await?;
+                    .await
+                    .map_err(Arc::new)?;
                 http::Response::builder()
                     .header(CACHE_CONTROL, "max-age=86400")
                     .header(CONTENT_TYPE, HpkeConfigList::MEDIA_TYPE)
                     .body(hpke_config_bytes)
-                    .map_err(|err| Error::Internal(format!("couldn't produce response: {err}")))
+                    .map_err(|err| {
+                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
+                    })
             },
         );
     let hpke_config_endpoint = compose_common_wrappers(
@@ -3743,8 +4151,10 @@ pub fn aggregator_filter<C: Clock>(
         .and(with_cloned_value(Arc::clone(&aggregator)))
         .and(warp::body::bytes())
         .then(|aggregator: Arc<Aggregator<C>>, body: Bytes| async move {
-            aggregator.handle_upload(&body).await?;
-            Ok(StatusCode::OK)
+            aggregator
+                .handle_upload(&body)
+                .await
+                .map(|_| StatusCode::OK)
         });
     let upload_endpoint = compose_common_wrappers(
         upload_routing,
@@ -3773,19 +4183,27 @@ pub fn aggregator_filter<C: Clock>(
                 match content_type.as_str() {
                     AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE => http::Response::builder()
                         .header(CONTENT_TYPE, AggregateInitializeResp::MEDIA_TYPE)
-                        .body(aggregator.handle_aggregate_init(&body, auth_token).await?),
+                        .body(
+                            aggregator
+                                .handle_aggregate_init(&body, auth_token)
+                                .await
+                                .map_err(Arc::new)?,
+                        ),
                     AggregateContinueReq::MEDIA_TYPE => http::Response::builder()
                         .header(CONTENT_TYPE, AggregateContinueResp::MEDIA_TYPE)
                         .body(
                             aggregator
                                 .handle_aggregate_continue(&body, auth_token)
-                                .await?,
+                                .await
+                                .map_err(Arc::new)?,
                         ),
                     _ => http::Response::builder()
                         .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
                         .body(Vec::new()),
                 }
-                .map_err(|err| Error::Internal(format!("couldn't produce response: {err}")))
+                .map_err(|err| {
+                    Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
+                })
             },
         );
     let aggregate_endpoint = compose_common_wrappers(
@@ -3834,7 +4252,8 @@ pub fn aggregator_filter<C: Clock>(
                  auth_token: Option<String>| async move {
                     let resp_bytes = aggregator
                         .handle_get_collect_job(collect_job_id, auth_token)
-                        .await?;
+                        .await
+                        .map_err(Arc::new)?;
                     match resp_bytes {
                         Some(resp_bytes) => http::Response::builder()
                             .header(CONTENT_TYPE, CollectResp::<TimeInterval>::MEDIA_TYPE)
@@ -3843,7 +4262,9 @@ pub fn aggregator_filter<C: Clock>(
                             .status(StatusCode::ACCEPTED)
                             .body(Vec::new()),
                     }
-                    .map_err(|err| Error::Internal(format!("couldn't produce response: {err}")))
+                    .map_err(|err| {
+                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
+                    })
                 },
             );
     let collect_jobs_get_endpoint = compose_common_wrappers(
@@ -3866,6 +4287,7 @@ pub fn aggregator_filter<C: Clock>(
                     aggregator
                         .handle_delete_collect_job(collect_job_id, auth_token)
                         .await
+                        .map_err(Arc::new)
                 },
             );
     let collect_jobs_delete_endpoint = compose_common_wrappers(
@@ -3887,12 +4309,17 @@ pub fn aggregator_filter<C: Clock>(
         .and(warp::header::optional::<String>(DAP_AUTH_HEADER))
         .then(
             |aggregator: Arc<Aggregator<C>>, body: Bytes, auth_token: Option<String>| async move {
-                let resp_bytes = aggregator.handle_aggregate_share(&body, auth_token).await?;
+                let resp_bytes = aggregator
+                    .handle_aggregate_share(&body, auth_token)
+                    .await
+                    .map_err(Arc::new)?;
 
                 http::Response::builder()
                     .header(CONTENT_TYPE, AggregateShareResp::MEDIA_TYPE)
                     .body(resp_bytes)
-                    .map_err(|err| Error::Internal(format!("couldn't produce response: {err}")))
+                    .map_err(|err| {
+                        Arc::new(Error::Internal(format!("couldn't produce response: {err}")))
+                    })
             },
         );
     let aggregate_share_endpoint = compose_common_wrappers(
@@ -3913,18 +4340,19 @@ pub fn aggregator_filter<C: Clock>(
         .boxed())
 }
 
-/// Construct a DAP aggregator server, listening on the provided [`SocketAddr`].
-/// If the `SocketAddr`'s `port` is 0, an ephemeral port is used. Returns a
-/// `SocketAddr` representing the address and port the server are listening on
-/// and a future that can be `await`ed to begin serving requests.
+/// Construct a DAP aggregator server, listening on the provided [`SocketAddr`]. If the
+/// `SocketAddr`'s `port` is 0, an ephemeral port is used. Returns a `SocketAddr` representing the
+/// address and port the server are listening on and a future that can be `await`ed to begin serving
+/// requests.
 pub fn aggregator_server<C: Clock>(
     datastore: Arc<Datastore<C>>,
     clock: C,
+    cfg: Config,
     listen_address: SocketAddr,
     response_headers: HeaderMap,
     shutdown_signal: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(SocketAddr, impl Future<Output = ()> + 'static), Error> {
-    let filter = aggregator_filter(datastore, clock)?;
+    let filter = aggregator_filter(datastore, clock, cfg)?;
     let wrapped_filter = filter.with(warp::filters::reply::headers(response_headers));
     let server = warp::serve(wrapped_filter);
     Ok(server.bind_with_graceful_shutdown(listen_address, shutdown_signal))
@@ -4038,7 +4466,7 @@ mod tests {
     use crate::{
         aggregator::{
             aggregator_filter, error_handler, post_to_helper, Aggregator, BatchMismatch,
-            CollectableQueryType, Error,
+            CollectableQueryType, Config, Error,
         },
         datastore::{
             models::{
@@ -4054,6 +4482,7 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
+    use futures::future::try_join_all;
     use http::{
         header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
         Method, StatusCode,
@@ -4093,7 +4522,13 @@ mod tests {
     use rand::random;
     use reqwest::Client;
     use serde_json::json;
-    use std::{collections::HashMap, io::Cursor, sync::Arc};
+    use std::{
+        collections::{HashMap, HashSet},
+        io::Cursor,
+        iter,
+        sync::Arc,
+        time::Duration as StdDuration,
+    };
     use url::Url;
     use uuid::Uuid;
     use warp::{
@@ -4123,7 +4558,7 @@ mod tests {
 
         let want_hpke_key = current_hpke_key(task.hpke_keys()).clone();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         // No task ID provided
         let mut response = warp::test::request()
@@ -4233,7 +4668,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
         let response = warp::test::request()
@@ -4273,13 +4708,8 @@ mod tests {
         );
     }
 
-    async fn setup_report(
-        task: &Task,
-        datastore: &Datastore<MockClock>,
-        report_timestamp: Time,
-    ) -> Report {
+    fn create_report(task: &Task, report_timestamp: Time) -> Report {
         assert_eq!(task.vdaf(), &VdafInstance::Prio3Aes128Count);
-        datastore.put_task(task).await.unwrap();
 
         let vdaf = Prio3Aes128Count::new_aes128_count(2).unwrap();
         let hpke_key = current_hpke_key(task.hpke_keys());
@@ -4349,8 +4779,10 @@ mod tests {
         let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
 
-        let report = setup_report(&task, &datastore, clock.now()).await;
-        let filter = aggregator_filter(Arc::clone(&datastore), clock.clone()).unwrap();
+        datastore.put_task(&task).await.unwrap();
+        let report = create_report(&task, clock.now());
+        let filter =
+            aggregator_filter(Arc::clone(&datastore), clock.clone(), Config::default()).unwrap();
 
         let response = drive_filter(Method::POST, "/upload", &report.get_encoded(), &filter)
             .await
@@ -4514,12 +4946,11 @@ mod tests {
         )
         .with_task_expiration(clock.now().add(&Duration::from_seconds(60)).unwrap())
         .build();
-        let report_2 = setup_report(
+        datastore.put_task(&task_expire_soon).await.unwrap();
+        let report_2 = create_report(
             &task_expire_soon,
-            &datastore,
             clock.now().add(&Duration::from_seconds(120)).unwrap(),
-        )
-        .await;
+        );
         let mut response = drive_filter(Method::POST, "/upload", &report_2.get_encoded(), &filter)
             .await
             .unwrap();
@@ -4600,18 +5031,19 @@ mod tests {
     async fn upload_filter_helper() {
         install_test_trace_subscriber();
 
+        let clock = MockClock::default();
+        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
             VdafInstance::Prio3Aes128Count,
             Role::Helper,
         )
         .build();
-        let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        datastore.put_task(&task).await.unwrap();
+        let report = create_report(&task, clock.now());
 
-        let report = setup_report(&task, &datastore, clock.now()).await;
-
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let (part, body) = warp::test::request()
             .method("POST")
@@ -4648,19 +5080,13 @@ mod tests {
         );
     }
 
-    enum UploadTestCaseReportTimestamp {
-        OnClockSkewBoundary,
-        WithinTolerableClockSkew,
-        PastTolerableClockSkew,
-    }
-
     async fn setup_upload_test(
-        report_timestamp_duration: UploadTestCaseReportTimestamp,
+        cfg: Config,
     ) -> (
         Prio3Aes128Count,
         Aggregator<MockClock>,
+        MockClock,
         Task,
-        Report,
         Arc<Datastore<MockClock>>,
         DbHandle,
     ) {
@@ -4675,36 +5101,28 @@ mod tests {
 
         let (datastore, db_handle) = ephemeral_datastore(clock.clone()).await;
         let datastore = Arc::new(datastore);
-
-        let report_timestamp = match report_timestamp_duration {
-            UploadTestCaseReportTimestamp::OnClockSkewBoundary => {
-                clock.now().add(task.tolerable_clock_skew()).unwrap()
-            }
-            UploadTestCaseReportTimestamp::WithinTolerableClockSkew => clock.now(),
-            UploadTestCaseReportTimestamp::PastTolerableClockSkew => clock
-                .now()
-                .add(task.tolerable_clock_skew())
-                .unwrap()
-                .add(&Duration::from_seconds(1))
-                .unwrap(),
-        };
-        let report = setup_report(&task, &datastore, report_timestamp).await;
+        datastore.put_task(&task).await.unwrap();
 
         let aggregator = Aggregator::new(
             Arc::clone(&datastore),
             clock.clone(),
             meter("janus_aggregator"),
+            cfg,
         );
 
-        (vdaf, aggregator, task, report, datastore, db_handle)
+        (vdaf, aggregator, clock, task, datastore, db_handle)
     }
 
     #[tokio::test]
     async fn upload() {
         install_test_trace_subscriber();
 
-        let (vdaf, aggregator, _, report, datastore, _db_handle) =
-            setup_upload_test(UploadTestCaseReportTimestamp::WithinTolerableClockSkew).await;
+        let (vdaf, aggregator, clock, task, datastore, _db_handle) = setup_upload_test(Config {
+            max_upload_batch_size: 1000,
+            max_upload_batch_write_delay: StdDuration::from_millis(500),
+        })
+        .await;
+        let report = create_report(&task, clock.now());
 
         aggregator
             .handle_upload(&report.get_encoded())
@@ -4724,20 +5142,60 @@ mod tests {
         assert_eq!(report.metadata(), got_report.metadata());
 
         // should reject duplicate reports.
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::ReportRejected(task_id, stale_report_id, stale_time)) => {
-            assert_eq!(&task_id, report.task_id());
-            assert_eq!(report.metadata().id(), &stale_report_id);
-            assert_eq!(report.metadata().time(), &stale_time);
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err().as_ref(), Error::ReportRejected(task_id, stale_report_id, stale_time) => {
+            assert_eq!(report.task_id(), task_id);
+            assert_eq!(report.metadata().id(), stale_report_id);
+            assert_eq!(report.metadata().time(), stale_time);
         });
+    }
+
+    #[tokio::test]
+    async fn upload_batch() {
+        install_test_trace_subscriber();
+
+        const BATCH_SIZE: usize = 100;
+        let (vdaf, aggregator, clock, task, datastore, _db_handle) = setup_upload_test(Config {
+            max_upload_batch_size: BATCH_SIZE,
+            max_upload_batch_write_delay: StdDuration::from_secs(86400),
+        })
+        .await;
+
+        let reports: Vec<_> = iter::repeat_with(|| create_report(&task, clock.now()))
+            .take(BATCH_SIZE)
+            .collect();
+        let want_report_ids: HashSet<_> = reports.iter().map(|r| *r.metadata().id()).collect();
+
+        let aggregator = Arc::new(aggregator);
+        try_join_all(reports.iter().map(|r| {
+            let aggregator = Arc::clone(&aggregator);
+            let enc = r.get_encoded();
+            async move { aggregator.handle_upload(&enc).await }
+        }))
+        .await
+        .unwrap();
+
+        let got_report_ids = datastore
+            .run_tx(|tx| {
+                let vdaf = vdaf.clone();
+                let task = task.clone();
+                Box::pin(async move { tx.get_client_reports_for_task(&vdaf, task.id()).await })
+            })
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| *r.metadata().id())
+            .collect();
+
+        assert_eq!(want_report_ids, got_report_ids);
     }
 
     #[tokio::test]
     async fn upload_wrong_number_of_encrypted_shares() {
         install_test_trace_subscriber();
 
-        let (_, aggregator, _, report, _, _db_handle) =
-            setup_upload_test(UploadTestCaseReportTimestamp::WithinTolerableClockSkew).await;
-
+        let (_, aggregator, clock, task, _, _db_handle) =
+            setup_upload_test(Config::default()).await;
+        let report = create_report(&task, clock.now());
         let report = Report::new(
             *report.task_id(),
             report.metadata().clone(),
@@ -4746,8 +5204,12 @@ mod tests {
         );
 
         assert_matches!(
-            aggregator.handle_upload(&report.get_encoded()).await,
-            Err(Error::UnrecognizedMessage(_, _))
+            aggregator
+                .handle_upload(&report.get_encoded())
+                .await
+                .unwrap_err()
+                .as_ref(),
+            Error::UnrecognizedMessage(_, _)
         );
     }
 
@@ -4755,8 +5217,9 @@ mod tests {
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
-        let (_, aggregator, task, report, _, _db_handle) =
-            setup_upload_test(UploadTestCaseReportTimestamp::WithinTolerableClockSkew).await;
+        let (_, aggregator, clock, task, _, _db_handle) =
+            setup_upload_test(Config::default()).await;
+        let report = create_report(&task, clock.now());
 
         let unused_hpke_config_id = (0..)
             .map(HpkeConfigId::from)
@@ -4779,9 +5242,9 @@ mod tests {
             ]),
         );
 
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await, Err(Error::OutdatedHpkeConfig(task_id, config_id)) => {
-            assert_eq!(&task_id, report.task_id());
-            assert_eq!(config_id, unused_hpke_config_id);
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err().as_ref(), Error::OutdatedHpkeConfig(task_id, config_id) => {
+            assert_eq!(report.task_id(), task_id);
+            assert_eq!(config_id, &unused_hpke_config_id);
         });
     }
 
@@ -4789,8 +5252,9 @@ mod tests {
     async fn upload_report_in_the_future_boundary_condition() {
         install_test_trace_subscriber();
 
-        let (vdaf, aggregator, _, report, datastore, _db_handle) =
-            setup_upload_test(UploadTestCaseReportTimestamp::OnClockSkewBoundary).await;
+        let (vdaf, aggregator, clock, task, datastore, _db_handle) =
+            setup_upload_test(Config::default()).await;
+        let report = create_report(&task, clock.now().add(task.tolerable_clock_skew()).unwrap());
 
         aggregator
             .handle_upload(&report.get_encoded())
@@ -4814,18 +5278,27 @@ mod tests {
     async fn upload_report_in_the_future_past_clock_skew() {
         install_test_trace_subscriber();
 
-        let (_, aggregator, _, report, _, _db_handle) =
-            setup_upload_test(UploadTestCaseReportTimestamp::PastTolerableClockSkew).await;
+        let (_, aggregator, clock, task, _, _db_handle) =
+            setup_upload_test(Config::default()).await;
+        let report = create_report(
+            &task,
+            clock
+                .now()
+                .add(task.tolerable_clock_skew())
+                .unwrap()
+                .add(&Duration::from_seconds(1))
+                .unwrap(),
+        );
 
         let upload_error = aggregator
             .handle_upload(&report.get_encoded())
             .await
             .unwrap_err();
 
-        assert_matches!(upload_error, Error::ReportTooEarly(task_id, report_id, time) => {
-            assert_eq!(&task_id, report.task_id());
-            assert_eq!(report.metadata().id(), &report_id);
-            assert_eq!(report.metadata().time(), &time);
+        assert_matches!(upload_error.as_ref(), Error::ReportTooEarly(task_id, report_id, time) => {
+            assert_eq!(report.task_id(), task_id);
+            assert_eq!(report.metadata().id(), report_id);
+            assert_eq!(report.metadata().time(), time);
         });
     }
 
@@ -4833,8 +5306,9 @@ mod tests {
     async fn upload_report_for_collected_batch() {
         install_test_trace_subscriber();
 
-        let (_, aggregator, task, report, datastore, _db_handle) =
-            setup_upload_test(UploadTestCaseReportTimestamp::WithinTolerableClockSkew).await;
+        let (_, aggregator, clock, task, datastore, _db_handle) =
+            setup_upload_test(Config::default()).await;
+        let report = create_report(&task, clock.now());
 
         // Insert a collect job for the batch interval including our report.
         let batch_interval = Interval::new(
@@ -4868,10 +5342,10 @@ mod tests {
             .unwrap();
 
         // Try to upload the report, verify that we get the expected error.
-        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err(), Error::ReportRejected(err_task_id, err_report_id, err_time) => {
-            assert_eq!(report.task_id(), &err_task_id);
-            assert_eq!(report.metadata().id(), &err_report_id);
-            assert_eq!(report.metadata().time(), &err_time);
+        assert_matches!(aggregator.handle_upload(&report.get_encoded()).await.unwrap_err().as_ref(), Error::ReportRejected(err_task_id, err_report_id, err_time) => {
+            assert_eq!(report.task_id(), err_task_id);
+            assert_eq!(report.metadata().id(), err_report_id);
+            assert_eq!(report.metadata().time(), err_time);
         });
     }
 
@@ -4898,7 +5372,7 @@ mod tests {
             Vec::new(),
         );
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let (part, body) = warp::test::request()
             .method("POST")
@@ -4980,7 +5454,7 @@ mod tests {
             Vec::new(),
         );
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -5285,7 +5759,7 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -5439,7 +5913,7 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -5516,7 +5990,7 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -5590,7 +6064,7 @@ mod tests {
             Vec::from([report_share.clone(), report_share]),
         );
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -5836,7 +6310,7 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(datastore.clone(), clock, Config::default()).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -6154,8 +6628,12 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter =
-            aggregator_filter(datastore.clone(), first_batch_interval_clock.clone()).unwrap();
+        let filter = aggregator_filter(
+            datastore.clone(),
+            first_batch_interval_clock.clone(),
+            Config::default(),
+        )
+        .unwrap();
 
         let response = warp::test::request()
             .method("POST")
@@ -6441,7 +6919,12 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(datastore.clone(), first_batch_interval_clock).unwrap();
+        let filter = aggregator_filter(
+            datastore.clone(),
+            first_batch_interval_clock,
+            Config::default(),
+        )
+        .unwrap();
 
         let response = warp::test::request()
             .method("POST")
@@ -6635,7 +7118,7 @@ mod tests {
             )]),
         );
 
-        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(datastore.clone(), clock, Config::default()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -6749,7 +7232,7 @@ mod tests {
             )]),
         );
 
-        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(datastore.clone(), clock, Config::default()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -6912,7 +7395,7 @@ mod tests {
             )]),
         );
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -7065,7 +7548,7 @@ mod tests {
             ]),
         );
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -7174,7 +7657,7 @@ mod tests {
             )]),
         );
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -7218,7 +7701,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let request = CollectReq::new(
             *task.id(),
@@ -7266,7 +7749,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let request = CollectReq::new(
             *task.id(),
@@ -7322,7 +7805,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let request = CollectReq::new(
             *task.id(),
@@ -7380,7 +7863,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let request = CollectReq::new(
             *task.id(),
@@ -7444,7 +7927,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
 
         let req = CollectReq::new(
             *task.id(),
@@ -7553,7 +8036,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
 
         let request = CollectReq::new(
             *task.id(),
@@ -7685,7 +8168,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
 
         let request = CollectReq::new(
             *task.id(),
@@ -7828,7 +8311,9 @@ mod tests {
     async fn no_such_collect_job() {
         install_test_trace_subscriber();
         let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
+                .unwrap();
 
         let no_such_collect_job_id = Uuid::new_v4();
 
@@ -7880,7 +8365,9 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
+                .unwrap();
 
         // Sending this request will consume a query for [0, time_precision).
         let request = CollectReq::new(
@@ -7978,7 +8465,9 @@ mod tests {
             .await
             .unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), MockClock::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
+                .unwrap();
 
         // Sending this request will consume a query for [0, 2 * time_precision).
         let request = CollectReq::new(
@@ -8074,7 +8563,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::clone(&datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
 
         // Try to delete a collect job that doesn't exist
         let delete_job_response = warp::test::request()
@@ -8163,7 +8652,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock).unwrap();
+        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
         let request = AggregateShareReq::new(
             *task.id(),
@@ -8218,7 +8707,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock.clone()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock.clone(), Config::default()).unwrap();
 
         // Test that a request for an invalid batch fails. (Specifically, the batch interval is too
         // small.)
@@ -8314,7 +8804,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(datastore.clone(), clock).unwrap();
+        let filter = aggregator_filter(datastore.clone(), clock, Config::default()).unwrap();
 
         // There are no batch aggregations in the datastore yet
         let request = AggregateShareReq::new(
@@ -8924,7 +9414,7 @@ mod tests {
             let error_factory = Arc::new(error_factory);
             let base_filter = warp::post().map({
                 let error_factory = Arc::clone(&error_factory);
-                move || -> Result<Response, Error> { Err(error_factory()) }
+                move || -> Result<Response, Arc<Error>> { Err(Arc::new(error_factory())) }
             });
             let wrapped_filter = base_filter.with(warp::wrap_fn(error_handler(
                 response_histogram.clone(),

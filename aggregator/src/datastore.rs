@@ -1162,7 +1162,8 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// `put_client_report` stores a client report, the associated plaintext leader input share and
-    /// the associated encrypted helper share.
+    /// the associated encrypted helper share. If the client report was already stored, returns
+    /// a `MutationTargetAlreadyExisted` error.
     #[tracing::instrument(skip(self), err)]
     pub(crate) async fn put_client_report<const L: usize, A>(
         &self,
@@ -1192,10 +1193,12 @@ impl<C: Clock> Transaction<'_, C> {
                     leader_input_share,
                     helper_encrypted_input_share
                 )
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)
+                ON CONFLICT DO NOTHING",
             )
             .await?;
-        self.tx
+        let rows_affected = self
+            .tx
             .execute(
                 &stmt,
                 &[
@@ -1209,6 +1212,9 @@ impl<C: Clock> Transaction<'_, C> {
                 ],
             )
             .await?;
+        if rows_affected == 0 {
+            return Err(Error::MutationTargetAlreadyExisted);
+        }
         Ok(())
     }
 
@@ -3596,9 +3602,12 @@ pub enum Error {
     Pool(#[from] deadpool_postgres::PoolError),
     #[error("crypter error")]
     Crypt,
-    /// An attempt was made to mutate a row that does not exist.
+    /// An attempt was made to mutate an entity that does not exist.
     #[error("not found in datastore")]
     MutationTargetNotFound,
+    /// An attempt was made to insert an entity that already existed.
+    #[error("already in datastore")]
+    MutationTargetAlreadyExisted,
     /// The database was in an unexpected state.
     #[error("inconsistent database state: {0}")]
     DbState(String),
@@ -3756,8 +3765,6 @@ pub mod models {
     impl<const L: usize, A> LeaderStoredReport<L, A>
     where
         A: vdaf::Aggregator<L>,
-        A::InputShare: PartialEq,
-        A::PublicShare: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         pub fn new(

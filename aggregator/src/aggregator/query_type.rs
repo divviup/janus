@@ -2,7 +2,7 @@ use super::Error;
 use crate::{
     datastore::{
         self, gather_errors,
-        models::{AggregateShareJob, BatchAggregation},
+        models::{AggregateShareJob, BatchAggregation, LeaderStoredReport},
         Transaction,
     },
     messages::TimeExt as _,
@@ -17,6 +17,65 @@ use janus_messages::{
 };
 use prio::vdaf;
 use std::iter;
+
+#[async_trait]
+pub trait UploadableQueryType: QueryType {
+    async fn validate_uploaded_report<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+        tx: &Transaction<'_, C>,
+        report: &LeaderStoredReport<L, A>,
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::InputShare: Send + Sync,
+        A::PublicShare: Send + Sync;
+}
+
+#[async_trait]
+impl UploadableQueryType for TimeInterval {
+    async fn validate_uploaded_report<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+        tx: &Transaction<'_, C>,
+        report: &LeaderStoredReport<L, A>,
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::InputShare: Send + Sync,
+        A::PublicShare: Send + Sync,
+    {
+        // Reject reports whose timestamps fall into a batch interval that has already been
+        // collected.
+        // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-17
+        let conflicting_collect_jobs = tx
+            .get_collect_jobs_including_time::<L, A>(report.task_id(), report.metadata().time())
+            .await?;
+        if !conflicting_collect_jobs.is_empty() {
+            return Err(datastore::Error::User(
+                Error::ReportRejected(
+                    *report.task_id(),
+                    *report.metadata().id(),
+                    *report.metadata().time(),
+                )
+                .into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl UploadableQueryType for FixedSize {
+    async fn validate_uploaded_report<const L: usize, C: Clock, A: vdaf::Aggregator<L>>(
+        _: &Transaction<'_, C>,
+        _: &LeaderStoredReport<L, A>,
+    ) -> Result<(), datastore::Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        Ok(())
+    }
+}
 
 #[async_trait]
 pub trait AccumulableQueryType: QueryType {
