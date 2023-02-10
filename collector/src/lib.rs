@@ -375,7 +375,7 @@ where
     }
 
     /// Send a collect request to the leader aggregator.
-    #[tracing::instrument(err)]
+    #[tracing::instrument(skip(aggregation_parameter), err)]
     async fn start_collection<Q: QueryType>(
         &self,
         query: Query<Q>,
