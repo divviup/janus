@@ -2471,7 +2471,7 @@ impl VdafOps {
         }
     }
 
-    #[tracing::instrument(skip(datastore, req_bytes), err)]
+    #[tracing::instrument(skip(datastore, task, req_bytes), fields(task_id = ?task.id()), err)]
     async fn handle_collect_generic<
         const L: usize,
         Q: CollectableQueryType,

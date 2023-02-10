@@ -316,7 +316,7 @@ pub struct Transaction<'a, C: Clock> {
 
 impl<C: Clock> Transaction<'_, C> {
     /// Writes a task into the datastore.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
         let endpoints: Vec<_> = task
             .aggregator_endpoints()
