@@ -228,6 +228,17 @@ impl<C: Clock> Datastore<C> {
                     );
                     continue;
                 }
+                Err(err) if err.is_deadlock_failure() => {
+                    self.transaction_status_counter.add(
+                        &Context::current(),
+                        1,
+                        &[
+                            KeyValue::new("status", "error_deadlock"),
+                            KeyValue::new("tx", name),
+                        ],
+                    );
+                    continue;
+                }
                 Err(Error::Db(_)) | Err(Error::Pool(_)) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
@@ -3687,37 +3698,57 @@ impl Error {
     /// "serialization" failure, which requires the entire transaction to be aborted & retried from
     /// the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
     fn is_serialization_failure(&self) -> bool {
-        match self {
+        if let Error::Db(err) = self {
             // T_R_SERIALIZATION_FAILURE (40001) is documented as the error code which is always used
             // for serialization failures which require rollback-and-retry.
-            Error::Db(err) => err
-                .code()
-                .map_or(false, |c| c == &SqlState::T_R_SERIALIZATION_FAILURE),
-            _ => false,
+            err.code()
+                .map_or(false, |c| c == &SqlState::T_R_SERIALIZATION_FAILURE)
+        } else {
+            false
+        }
+    }
+
+    /// Check if this error is due to a Postgres deadlock failure.
+    ///
+    /// The documentation recommends retrying these errors in addition to serialization failures.
+    /// See https://www.postgresql.org/docs/15/mvcc-serialization-failure-handling.html
+    fn is_deadlock_failure(&self) -> bool {
+        if let Error::Db(err) = self {
+            err.code()
+                .map_or(false, |c| c == &SqlState::T_R_DEADLOCK_DETECTED)
+        } else {
+            false
         }
     }
 
     /// Check if this error is due to the current SQL transaction being in a failed state, because
-    /// of an error in a preceding statement. The corresponding Postgres error message is "current
-    /// transaction is aborted, commands ignored until end of transaction block".
+    /// of an error in a preceding statement.
+    ///
+    /// The corresponding Postgres error message is "current transaction is aborted, commands
+    /// ignored until end of transaction block".
     fn is_in_failed_transaction(&self) -> bool {
-        match self {
-            Error::Db(err) => err
-                .code()
-                .map_or(false, |c| c == &SqlState::IN_FAILED_SQL_TRANSACTION),
-            _ => false,
+        if let Error::Db(err) = self {
+            err.code()
+                .map_or(false, |c| c == &SqlState::IN_FAILED_SQL_TRANSACTION)
+        } else {
+            false
         }
     }
 
-    /// Select one error out of a pair to propagate. If one error is due to a serialization
-    /// failure, that error will be returned, as it indicates the transaction should be retried.
-    /// If one error is due to the transaction already being in a failed state, the opposite error
-    /// will be returned, to provide more useful diagnostic information. If neither of these cases
-    /// applies, `self` will be returned.
+    /// Select one error out of a pair to propagate.
+    ///
+    /// If one error is due to a serialization failure or deadlock failure, that error will be
+    /// returned, as it indicates the transaction should be retried. If one error is due to the
+    /// transaction already being in a failed state, the opposite error will be returned, to provide
+    /// more useful diagnostic information. If neither of these cases applies, `self` will be
+    /// returned.
     pub fn combine(self, other: Error) -> Error {
-        if self.is_serialization_failure() {
+        if self.is_serialization_failure() || self.is_deadlock_failure() {
             self
-        } else if other.is_serialization_failure() || self.is_in_failed_transaction() {
+        } else if other.is_serialization_failure()
+            || other.is_deadlock_failure()
+            || self.is_in_failed_transaction()
+        {
             other
         } else {
             self
