@@ -1118,7 +1118,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// should generally only be called on report IDs returned from
     /// `get_unaggregated_client_report_ids_for_task`, as part of the same transaction, for any
     /// client reports that are not added to an aggregation job.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, report_ids), err)]
     pub async fn mark_reports_unaggregated(
         &self,
         task_id: &TaskId,
