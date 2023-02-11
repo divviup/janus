@@ -5189,53 +5189,124 @@ pub mod test_util {
     use deadpool_postgres::{Manager, Pool};
     use janus_core::time::Clock;
     use lazy_static::lazy_static;
-    use rand::{distributions::Standard, thread_rng, Rng};
+    use rand::{distributions::Standard, random, thread_rng, Rng};
     use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
     use std::{
         env::{self, VarError},
+        mem::take,
         process::Command,
         str::FromStr,
+        sync::{Arc, Barrier, Weak},
+        thread::{self, JoinHandle},
     };
-    use testcontainers::{images::postgres::Postgres, Container, RunnableImage};
-    use tokio_postgres::{Config, NoTls};
+    use testcontainers::{images::postgres::Postgres, RunnableImage};
+    use tokio::sync::{oneshot, Mutex};
+    use tokio_postgres::{connect, Config, NoTls};
     use tracing::trace;
 
-    /// The Janus database schema.
-    pub const SCHEMA: &str = include_str!("../../db/schema.sql");
-
-    lazy_static! {
-        static ref CONTAINER_CLIENT: testcontainers::clients::Cli =
-            testcontainers::clients::Cli::default();
+    struct EphemeralDatabase {
+        port_number: u16,
+        shutdown_barrier: Arc<Barrier>,
+        join_handle: Option<JoinHandle<()>>,
     }
 
-    /// DbHandle represents a handle to a running (ephemeral) database. Dropping this value
-    /// causes the database to be shut down & cleaned up.
-    pub struct DbHandle {
-        _db_container: Container<'static, Postgres>,
+    impl EphemeralDatabase {
+        async fn shared() -> Arc<Self> {
+            // (once Weak::new is stabilized as a const function, replace this with a normal static
+            // variable)
+            lazy_static! {
+                static ref EPHEMERAL_DATABASE: Mutex<Weak<EphemeralDatabase>> =
+                    Mutex::new(Weak::new());
+            }
+
+            let mut g = EPHEMERAL_DATABASE.lock().await;
+            if let Some(ephemeral_database) = g.upgrade() {
+                return ephemeral_database;
+            }
+
+            let ephemeral_database = Arc::new(EphemeralDatabase::start().await);
+            *g = Arc::downgrade(&ephemeral_database);
+            ephemeral_database
+        }
+
+        async fn start() -> Self {
+            let (port_tx, port_rx) = oneshot::channel();
+            let shutdown_barrier = Arc::new(Barrier::new(2));
+            let join_handle = thread::spawn({
+                let shutdown_barrier = Arc::clone(&shutdown_barrier);
+                move || {
+                    // Start an instance of Postgres running in a container.
+                    let container_client = testcontainers::clients::Cli::default();
+                    let db_container = container_client
+                        .run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
+                    const POSTGRES_DEFAULT_PORT: u16 = 5432;
+                    let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
+                    trace!("Postgres container is up with port {port_number}");
+                    port_tx.send(port_number).unwrap();
+
+                    // Wait for the barrier as a shutdown signal.
+                    shutdown_barrier.wait();
+                    trace!("Shutting down Postgres container with port {port_number}");
+                }
+            });
+            let port_number = port_rx.await.unwrap();
+
+            Self {
+                port_number,
+                shutdown_barrier,
+                join_handle: Some(join_handle),
+            }
+        }
+
+        fn connection_string(&self, db_name: &str) -> String {
+            format!(
+                "postgres://postgres:postgres@127.0.0.1:{}/{db_name}",
+                self.port_number
+            )
+        }
+    }
+
+    impl Drop for EphemeralDatabase {
+        fn drop(&mut self) {
+            // Wait on the shutdown barrier, which will cause the container-management thread to
+            // begin shutdown. Then wait for the container-management thread itself to terminate.
+            // This guarantees container shutdown finishes before dropping the EphemeralDatabase
+            // completes.
+            self.shutdown_barrier.wait();
+            if let Some(join_handle) = take(&mut self.join_handle) {
+                join_handle.join().unwrap();
+            }
+        }
+    }
+
+    /// EphemeralDatastore represents an ephemeral datastore instance. It has methods allowing
+    /// creation of Datastores, as well as the ability to retrieve the underlying connection pool.
+    ///
+    /// Dropping the EphemeralDatastore will cause it to be shut down & cleaned up.
+    pub struct EphemeralDatastore {
+        db: Arc<EphemeralDatabase>,
         connection_string: String,
-        port_number: u16,
+        pool: Pool,
         datastore_key_bytes: Vec<u8>,
     }
 
-    impl DbHandle {
-        /// Retrieve a datastore attached to the ephemeral database.
+    impl EphemeralDatastore {
+        /// Creates a Datastore instance based on this EphemeralDatastore. All returned Datastore
+        /// instances will refer to the same underlying durable state.
         pub fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
-            // Create a crypter based on the generated key bytes.
             let datastore_key =
                 LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &self.datastore_key_bytes).unwrap());
             let crypter = Crypter::new(Vec::from([datastore_key]));
-
             Datastore::new(self.pool(), crypter, clock)
         }
 
-        /// Retrieve a Postgres connection pool attached to the ephemeral database.
+        /// Retrieves the connection pool used for this EphemeralDatastore. Typically, this would be
+        /// used only by tests which need to run custom SQL.
         pub fn pool(&self) -> Pool {
-            let cfg = Config::from_str(&self.connection_string).unwrap();
-            let conn_mgr = Manager::new(cfg, NoTls);
-            Pool::builder(conn_mgr).build().unwrap()
+            self.pool.clone()
         }
 
-        /// Get a PostgreSQL connection string to connect to the temporary database.
+        /// Retrieves the connection string used to connect to this EphemeralDatastore.
         pub fn connection_string(&self) -> &str {
             &self.connection_string
         }
@@ -5243,12 +5314,6 @@ pub mod test_util {
         /// Get the bytes of the key used to encrypt sensitive datastore values.
         pub fn datastore_key_bytes(&self) -> &[u8] {
             &self.datastore_key_bytes
-        }
-
-        /// Get the port number that the temporary database is exposed on, via the 127.0.0.1
-        /// loopback interface.
-        pub fn port_number(&self) -> u16 {
-            self.port_number
         }
 
         /// Open an interactive terminal to the database in a new terminal window, and block
@@ -5294,7 +5359,7 @@ pub mod test_util {
 
                     let psql_command = format!(
                         "psql --host=127.0.0.1 --user=postgres -p {}",
-                        self.port_number(),
+                        self.db.port_number,
                     );
                     command.arg(shell_cmd.replacen("{}", &psql_command, 1));
                     command
@@ -5310,7 +5375,7 @@ pub mod test_util {
                         "--user=postgres",
                         "-p",
                     ]);
-                    command.arg(format!("{}", self.port_number()));
+                    command.arg(format!("{}", self.db.port_number));
                     command
                 }
 
@@ -5322,49 +5387,45 @@ pub mod test_util {
         }
     }
 
-    impl Drop for DbHandle {
-        fn drop(&mut self) {
-            trace!(connection_string = %self.connection_string, "Dropping ephemeral Postgres container");
-        }
-    }
+    /// Creates a new, empty EphemeralDatastore with no schema applied. Almost all uses will want to
+    /// call `ephemeral_datastore` instead, which applies the standard schema.
+    pub async fn ephemeral_datastore_no_schema() -> EphemeralDatastore {
+        let db = EphemeralDatabase::shared().await;
+        let db_name = format!("janus_test_{}", hex::encode(random::<[u8; 16]>()));
 
-    /// ephemeral_db_handle creates a new ephemeral database which has no schema & is empty.
-    /// Dropping the return value causes the database to be shut down & cleaned up.
-    ///
-    /// Most users will want to call ephemeral_datastore() instead, which applies the Janus
-    /// schema and creates a datastore.
-    pub fn ephemeral_db_handle() -> DbHandle {
-        // Start an instance of Postgres running in a container.
-        let db_container =
-            CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
+        // Create Postgres DB & apply schema.
+        let (client, conn) = connect(&db.connection_string("postgres"), NoTls)
+            .await
+            .unwrap();
+        tokio::spawn(async move { conn.await.unwrap() }); // automatically stops after Client is dropped
+        client
+            .batch_execute(&format!("CREATE DATABASE {db_name}"))
+            .await
+            .unwrap();
 
-        // Compute the Postgres connection string.
-        const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
-        let connection_string =
-            format!("postgres://postgres:postgres@127.0.0.1:{port_number}/postgres");
-        trace!("Postgres container is up with URL {}", connection_string);
+        // Create a connection pool for the newly-created database.
+        let connection_string = db.connection_string(&db_name);
+        let cfg = Config::from_str(&connection_string).unwrap();
+        let conn_mgr = Manager::new(cfg, NoTls);
+        let pool = Pool::builder(conn_mgr).build().unwrap();
 
-        // Create a random (ephemeral) key.
-        let datastore_key_bytes = generate_aead_key_bytes();
-
-        DbHandle {
-            _db_container: db_container,
+        EphemeralDatastore {
+            db,
             connection_string,
-            port_number,
-            datastore_key_bytes,
+            pool,
+            datastore_key_bytes: generate_aead_key_bytes(),
         }
     }
 
-    /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database
-    /// which has the Janus schema applied but is otherwise empty.
-    ///
-    /// Dropping the second return value causes the database to be shut down & cleaned up.
-    pub async fn ephemeral_datastore<C: Clock>(clock: C) -> (Datastore<C>, DbHandle) {
-        let db_handle = ephemeral_db_handle();
-        let client = db_handle.pool().get().await.unwrap();
-        client.batch_execute(SCHEMA).await.unwrap();
-        (db_handle.datastore(clock), db_handle)
+    /// Creates a new, empty EphemeralDatastore.
+    pub async fn ephemeral_datastore() -> EphemeralDatastore {
+        let ephemeral_datastore = ephemeral_datastore_no_schema().await;
+        let client = ephemeral_datastore.pool().get().await.unwrap();
+        client
+            .batch_execute(include_str!("../../db/schema.sql"))
+            .await
+            .unwrap();
+        ephemeral_datastore
     }
 
     pub fn generate_aead_key_bytes() -> Vec<u8> {
@@ -5435,7 +5496,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_task() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         // Insert tasks, check that they can be retrieved by ID.
         let mut want_tasks = HashMap::new();
@@ -5553,7 +5615,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -5616,7 +5679,8 @@ mod tests {
     #[tokio::test]
     async fn report_not_found() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let rslt = ds
             .run_tx(|tx| {
@@ -5638,7 +5702,8 @@ mod tests {
     #[tokio::test]
     async fn get_unaggregated_client_report_ids_for_task() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let time_precision = Duration::from_seconds(1000);
         let when = MockClock::default()
@@ -5792,7 +5857,8 @@ mod tests {
     #[tokio::test]
     async fn get_unaggregated_client_report_ids_with_agg_param_for_task() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -6047,8 +6113,8 @@ mod tests {
     #[tokio::test]
     async fn count_client_reports_for_interval() {
         install_test_trace_subscriber();
-
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -6154,8 +6220,8 @@ mod tests {
     #[tokio::test]
     async fn count_client_reports_for_batch_id() {
         install_test_trace_subscriber();
-
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::FixedSize { max_batch_size: 10 },
@@ -6284,7 +6350,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report_share() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -6383,7 +6450,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_aggregation_job() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
@@ -6497,7 +6565,8 @@ mod tests {
         // Setup: insert a few aggregation jobs.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         const AGGREGATION_JOB_COUNT: usize = 10;
         let task = TaskBuilder::new(
@@ -6781,7 +6850,8 @@ mod tests {
     #[tokio::test]
     async fn aggregation_job_not_found() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let rslt = ds
             .run_tx(|tx| {
@@ -6821,7 +6891,8 @@ mod tests {
     async fn get_aggregation_jobs_for_task() {
         // Setup.
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
@@ -6902,7 +6973,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report_aggregation() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
@@ -7041,7 +7113,8 @@ mod tests {
     #[tokio::test]
     async fn report_aggregation_not_found() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let vdaf = Arc::new(dummy_vdaf::Vdaf::default());
 
@@ -7084,7 +7157,8 @@ mod tests {
     #[tokio::test]
     async fn get_report_aggregations_for_aggregation_job() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
@@ -7254,7 +7328,8 @@ mod tests {
         .unwrap();
         let aggregation_param = AggregationParam(23);
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             let task = task.clone();
@@ -7488,7 +7563,8 @@ mod tests {
         .unwrap();
         let aggregation_param = AggregationParam(23);
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             let (first_task, second_task) = (first_task.clone(), second_task.clone());
@@ -7566,7 +7642,8 @@ mod tests {
         .unwrap();
         let aggregation_param = AggregationParam(13);
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             let task = task.clone();
@@ -7656,7 +7733,8 @@ mod tests {
         // Setup: write collect jobs to the datastore.
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -7900,7 +7978,8 @@ mod tests {
     async fn time_interval_collect_job_acquire_release_happy_path() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8031,7 +8110,8 @@ mod tests {
     async fn fixed_size_collect_job_acquire_release_happy_path() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8154,7 +8234,8 @@ mod tests {
     async fn collect_job_acquire_no_aggregation_job_with_task_id() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let other_task_id = random();
@@ -8203,7 +8284,8 @@ mod tests {
     async fn collect_job_acquire_no_aggregation_job_with_agg_param() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8255,7 +8337,8 @@ mod tests {
     async fn collect_job_acquire_report_shares_outside_interval() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8316,7 +8399,8 @@ mod tests {
     async fn collect_job_acquire_release_job_finished() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8377,7 +8461,8 @@ mod tests {
     async fn collect_job_acquire_release_aggregation_job_in_progress() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([
@@ -8459,7 +8544,8 @@ mod tests {
     async fn collect_job_acquire_job_max() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8606,7 +8692,8 @@ mod tests {
     async fn collect_job_acquire_state_filtering() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8734,7 +8821,8 @@ mod tests {
     async fn roundtrip_batch_aggregation_time_interval() {
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -8926,7 +9014,8 @@ mod tests {
     async fn roundtrip_batch_aggregation_fixed_size() {
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -9021,7 +9110,8 @@ mod tests {
     async fn roundtrip_aggregate_share_job() {
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -9124,7 +9214,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let (task_id, batch_id) = ds
             .run_tx(|tx| {
@@ -9395,7 +9486,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -9519,7 +9611,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -10249,7 +10342,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         // Setup.
         async fn write_collect_artifacts<Q: ExpirationQueryTypeExt>(
@@ -10785,7 +10879,9 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_interval_sql() {
-        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(MockClock::default());
+
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {

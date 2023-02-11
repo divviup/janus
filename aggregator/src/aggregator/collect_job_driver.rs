@@ -858,8 +858,8 @@ mod tests {
     async fn drive_collect_job() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let time_precision = Duration::from_seconds(500);
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
@@ -1106,8 +1106,8 @@ mod tests {
         // Setup: insert a collect job into the datastore.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let (lease, collect_job) = setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
 
@@ -1158,8 +1158,8 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let (_, collect_job) =
             setup_collect_job_test_case(clock.clone(), Arc::clone(&ds), false).await;
@@ -1243,8 +1243,8 @@ mod tests {
         // Setup: insert a collect job into the datastore.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let (lease, collect_job) = setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
 
