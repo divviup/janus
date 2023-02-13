@@ -5,9 +5,6 @@ use lazy_static::lazy_static;
 use rand::{distributions::Standard, random, thread_rng, Rng};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
-    env::{self, VarError},
-    mem::take,
-    process::Command,
     str::FromStr,
     sync::{Arc, Barrier, Weak},
     thread::{self, JoinHandle},
@@ -85,9 +82,7 @@ impl Drop for EphemeralDatabase {
         // This guarantees container shutdown finishes before dropping the EphemeralDatabase
         // completes.
         self.shutdown_barrier.wait();
-        if let Some(join_handle) = take(&mut self.join_handle) {
-            join_handle.join().unwrap();
-        }
+        self.join_handle.take().unwrap().join().unwrap();
     }
 }
 
@@ -96,7 +91,7 @@ impl Drop for EphemeralDatabase {
 ///
 /// Dropping the EphemeralDatastore will cause it to be shut down & cleaned up.
 pub struct EphemeralDatastore {
-    db: Arc<EphemeralDatabase>,
+    _db: Arc<EphemeralDatabase>,
     connection_string: String,
     pool: Pool,
     datastore_key_bytes: Vec<u8>,
@@ -127,76 +122,6 @@ impl EphemeralDatastore {
     pub fn datastore_key_bytes(&self) -> &[u8] {
         &self.datastore_key_bytes
     }
-
-    /// Open an interactive terminal to the database in a new terminal window, and block
-    /// until the user exits from the terminal. This is intended to be used while
-    /// debugging tests.
-    ///
-    /// By default, this will invoke `gnome-terminal`, which is readily available on
-    /// GNOME-based Linux distributions. To use a different terminal, set the environment
-    /// variable `JANUS_SHELL_CMD` to a shell command that will open a new terminal window
-    /// of your choice. This command line should include a "{}" in the position appropriate
-    /// for what command the terminal should run when it opens. A `psql` invocation will
-    /// be substituted in place of the "{}". Note that this shell command must not exit
-    /// immediately once the terminal is spawned; it should continue running as long as the
-    /// terminal is open. If the command provided exits too soon, then the test will
-    /// continue running without intervention, leading to the test's database shutting
-    /// down.
-    ///
-    /// # Example
-    ///
-    /// ```text
-    /// JANUS_SHELL_CMD='xterm -e {}' cargo test
-    /// ```
-    pub fn interactive_db_terminal(&self) {
-        let mut command = match env::var("JANUS_SHELL_CMD") {
-            Ok(shell_cmd) => {
-                if !shell_cmd.contains("{}") {
-                    panic!("JANUS_SHELL_CMD should contain a \"{{}}\" to denote where the database command should be substituted");
-                }
-
-                #[cfg(not(windows))]
-                let mut command = {
-                    let mut command = Command::new("sh");
-                    command.arg("-c");
-                    command
-                };
-
-                #[cfg(windows)]
-                let mut command = {
-                    let mut command = Command::new("cmd.exe");
-                    command.arg("/c");
-                    command
-                };
-
-                let psql_command = format!(
-                    "psql --host=127.0.0.1 --user=postgres -p {}",
-                    self.db.port_number,
-                );
-                command.arg(shell_cmd.replacen("{}", &psql_command, 1));
-                command
-            }
-
-            Err(VarError::NotPresent) => {
-                let mut command = Command::new("gnome-terminal");
-                command.args([
-                    "--wait",
-                    "--",
-                    "psql",
-                    "--host=127.0.0.1",
-                    "--user=postgres",
-                    "-p",
-                ]);
-                command.arg(format!("{}", self.db.port_number));
-                command
-            }
-
-            Err(VarError::NotUnicode(_)) => {
-                panic!("JANUS_SHELL_CMD contains invalid unicode data");
-            }
-        };
-        command.spawn().unwrap().wait().unwrap();
-    }
 }
 
 /// Creates a new, empty EphemeralDatastore with no schema applied. Almost all uses will want to
@@ -204,8 +129,9 @@ impl EphemeralDatastore {
 pub async fn ephemeral_datastore_no_schema() -> EphemeralDatastore {
     let db = EphemeralDatabase::shared().await;
     let db_name = format!("janus_test_{}", hex::encode(random::<[u8; 16]>()));
+    trace!("Creating ephemeral postgres datastore {db_name}");
 
-    // Create Postgres DB & apply schema.
+    // Create Postgres DB.
     let (client, conn) = connect(&db.connection_string("postgres"), NoTls)
         .await
         .unwrap();
@@ -222,7 +148,7 @@ pub async fn ephemeral_datastore_no_schema() -> EphemeralDatastore {
     let pool = Pool::builder(conn_mgr).build().unwrap();
 
     EphemeralDatastore {
-        db,
+        _db: db,
         connection_string,
         pool,
         datastore_key_bytes: generate_aead_key_bytes(),
