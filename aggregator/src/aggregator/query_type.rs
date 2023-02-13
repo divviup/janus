@@ -73,6 +73,9 @@ impl UploadableQueryType for FixedSize {
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+        // Fixed-size tasks associate reports to batches at time of aggregation rather than at time
+        // of upload, and there are no other relevant checks to apply here, so this method simply
+        // returns Ok(()).
         Ok(())
     }
 }

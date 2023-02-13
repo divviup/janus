@@ -1,18 +1,11 @@
 //! Common functionality for DAP aggregators.
 
-pub mod accumulator;
-pub mod aggregate_share;
-pub mod aggregation_job_creator;
-pub mod aggregation_job_driver;
-pub mod collect_job_driver;
-pub mod garbage_collector;
-pub mod query_type;
-
-use self::query_type::{AccumulableQueryType, UploadableQueryType};
 use crate::{
     aggregator::{
-        accumulator::Accumulator, aggregate_share::compute_aggregate_share,
-        query_type::CollectableQueryType,
+        accumulator::Accumulator,
+        aggregate_share::compute_aggregate_share,
+        query_type::{AccumulableQueryType, CollectableQueryType, UploadableQueryType},
+        report_writer::{ReportWriteBatcher, WritableReport},
     },
     datastore::{
         self,
@@ -20,20 +13,14 @@ use crate::{
             AggregateShareJob, AggregationJob, AggregationJobState, CollectJob, CollectJobState,
             LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
-        Datastore, Transaction,
+        Datastore,
     },
     messages::{DurationExt, IntervalExt, TimeExt},
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
     try_join,
 };
-use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::types::extra::{U15, U31, U63};
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{FixedI16, FixedI32, FixedI64};
-use futures::future::join_all;
 use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION},
     HeaderMap, StatusCode,
@@ -68,7 +55,7 @@ use prio::{
             Prio3, Prio3Aes128Count, Prio3Aes128CountVecMultithreaded, Prio3Aes128Histogram,
             Prio3Aes128Sum,
         },
-        PrepareTransition,
+        PrepareTransition, VdafError,
     },
 };
 use reqwest::Client;
@@ -78,17 +65,11 @@ use std::{
     fmt::{self, Debug, Display, Formatter},
     future::Future,
     io::Cursor,
-    marker::PhantomData,
-    mem::replace,
     net::SocketAddr,
     sync::Arc,
     time::{Duration as StdDuration, Instant},
 };
-use tokio::{
-    select,
-    sync::{mpsc, oneshot, Mutex},
-    time::{sleep_until, Instant as TokioInstant},
-};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use url::Url;
 use uuid::Uuid;
@@ -99,10 +80,23 @@ use warp::{
     trace, Filter, Rejection, Reply,
 };
 
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::{
+    types::extra::{U15, U31, U63},
+    FixedI16, FixedI32, FixedI64,
+};
+
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
-#[cfg(feature = "test-util")]
-use prio::vdaf::VdafError;
+
+pub mod accumulator;
+pub mod aggregate_share;
+pub mod aggregation_job_creator;
+pub mod aggregation_job_driver;
+pub mod collect_job_driver;
+pub mod garbage_collector;
+pub mod query_type;
+pub mod report_writer;
 
 /// Errors returned by functions and methods in this module
 #[derive(Debug, thiserror::Error)]
@@ -152,7 +146,7 @@ pub enum Error {
     Datastore(datastore::Error),
     /// An error from the underlying VDAF library.
     #[error("VDAF error: {0}")]
-    Vdaf(#[from] vdaf::VdafError),
+    Vdaf(#[from] VdafError),
     /// A collect or aggregate share request was rejected because the interval failed boundary
     /// checks (§4.5.6).
     #[error("task {0}: invalid batch interval: {1}")]
@@ -345,7 +339,8 @@ pub struct Config {
     pub max_upload_batch_size: usize,
 
     /// Defines the maximum delay before writing a batch of uploaded reports, even if it has not yet
-    /// reached `max_batch_upload_size`.
+    /// reached `max_batch_upload_size`. This is the maximum delay added to the /upload endpoint due
+    /// to write-batching.
     pub max_upload_batch_write_delay: StdDuration,
 }
 
@@ -3630,222 +3625,6 @@ impl VdafOps {
         )?;
 
         Ok(AggregateShareResp::new(encrypted_aggregate_share))
-    }
-}
-
-type ReportWriteBatcherSender<C> = mpsc::Sender<(
-    Box<dyn ReportWriter<C>>,
-    oneshot::Sender<Result<(), Arc<Error>>>,
-)>;
-type ReportWriteBatcherReceiver<C> = mpsc::Receiver<(
-    Box<dyn ReportWriter<C>>,
-    oneshot::Sender<Result<(), Arc<Error>>>,
-)>;
-
-struct ReportWriteBatcher<C: Clock> {
-    report_tx: ReportWriteBatcherSender<C>,
-}
-
-impl<C: Clock> ReportWriteBatcher<C> {
-    pub fn new(
-        ds: Arc<Datastore<C>>,
-        max_batch_size: usize,
-        max_batch_write_delay: StdDuration,
-    ) -> Self {
-        let (report_tx, report_rx) = mpsc::channel(1);
-
-        tokio::spawn(async move {
-            Self::run_upload_batcher(ds, report_rx, max_batch_size, max_batch_write_delay).await
-        });
-
-        Self { report_tx }
-    }
-
-    pub async fn write_report<R: ReportWriter<C>>(&self, report: R) -> Result<(), Arc<Error>>
-    where
-        R: 'static,
-    {
-        // Send report to be written.
-        // Unwrap safety: report_rx is not dropped until ReportWriteBatcher is dropped.
-        let (rslt_tx, rslt_rx) = oneshot::channel();
-        self.report_tx
-            .send((Box::new(report), rslt_tx))
-            .await
-            .unwrap();
-
-        // Await the result of writing the report.
-        // Unwrap safety: rslt_tx is always sent on before being dropped, and is never closed.
-        rslt_rx.await.unwrap()
-    }
-
-    async fn run_upload_batcher(
-        ds: Arc<Datastore<C>>,
-        mut report_rx: ReportWriteBatcherReceiver<C>,
-        max_batch_size: usize,
-        max_batch_write_delay: StdDuration,
-    ) {
-        let mut is_done = false;
-        let mut batch_expiry = TokioInstant::now();
-        let mut report_writers = Vec::with_capacity(max_batch_size);
-        let mut result_txs = Vec::with_capacity(max_batch_size);
-        while !is_done {
-            // Wait for an event of interest.
-            let write_batch = select! {
-                // Wait until we receive a report to be written (or the channel is closed due to the
-                // ReportWriteBatcher being dropped)...
-                item = report_rx.recv() => {
-                    match item {
-                        // We got an item. Add it to the current batch of reports to be written.
-                        Some((report_writer, rslt_tx)) => {
-                            if report_writers.is_empty() {
-                                batch_expiry = TokioInstant::now() + max_batch_write_delay;
-                            }
-                            report_writers.push(report_writer);
-                            result_txs.push(rslt_tx);
-                            report_writers.len() >= max_batch_size
-                        }
-
-                        // The channel is closed. Note this, and write any final reports that may be
-                        // batched before shutting down.
-                        None => {
-                            is_done = true;
-                            !report_writers.is_empty()
-                        },
-                    }
-                },
-
-                // ... or the current batch times out.
-                _ = sleep_until(batch_expiry), if !report_writers.is_empty() => true,
-            };
-
-            // If the event made us want to write the current batch to storage, do so.
-            if write_batch {
-                let ds = Arc::clone(&ds);
-                let result_writers =
-                    replace(&mut report_writers, Vec::with_capacity(max_batch_size));
-                let result_txs = replace(&mut result_txs, Vec::with_capacity(max_batch_size));
-                tokio::spawn(async move {
-                    Self::write_batch(ds, result_writers, result_txs).await;
-                });
-            }
-        }
-    }
-
-    async fn write_batch(
-        ds: Arc<Datastore<C>>,
-        report_writers: Vec<Box<dyn ReportWriter<C>>>,
-        result_txs: Vec<oneshot::Sender<Result<(), Arc<Error>>>>,
-    ) {
-        // Check preconditions.
-        assert_eq!(report_writers.len(), result_txs.len());
-
-        // Run all report writes concurrently.
-        let report_writers = Arc::new(report_writers);
-        let rslts = ds
-            .run_tx_with_name("upload", |tx| {
-                let report_writers = Arc::clone(&report_writers);
-                Box::pin(async move {
-                    Ok(join_all(report_writers.iter().map(|rw| rw.write_report(tx))).await)
-                })
-            })
-            .await;
-
-        match rslts {
-            Ok(rslts) => {
-                // Individual, per-request results.
-                assert_eq!(result_txs.len(), rslts.len()); // sanity check: should be guaranteed.
-                for (rslt_tx, rslt) in result_txs.into_iter().zip(rslts.into_iter()) {
-                    // Unwrap safety: rslt_rx is not closed or dropped until rslt_tx is sent on.
-                    rslt_tx
-                        .send(rslt.map_err(|err| Arc::new(Error::from(err))))
-                        .unwrap();
-                }
-            }
-            Err(err) => {
-                // Total-transaction failures are given to all waiting report uploaders.
-                let err = Arc::new(Error::from(err));
-                for rslt_tx in result_txs.into_iter() {
-                    // Unwrap safety: rslt_rx is not closed or dropped until rslt_tx is sent on.
-                    rslt_tx.send(Err(Arc::clone(&err))).unwrap();
-                }
-            }
-        };
-    }
-}
-
-#[async_trait]
-trait ReportWriter<C: Clock>: Debug + Send + Sync {
-    async fn write_report(&self, tx: &Transaction<C>) -> Result<(), datastore::Error>;
-}
-
-#[derive(Debug)]
-struct WritableReport<const L: usize, Q, A>
-where
-    A: vdaf::Aggregator<L> + Send + Sync + 'static,
-    A::InputShare: PartialEq + Send + Sync,
-    A::PublicShare: PartialEq + Send + Sync,
-    A::AggregationParam: Send + Sync,
-    A::AggregateShare: Send + Sync,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    Q: UploadableQueryType,
-{
-    report: LeaderStoredReport<L, A>,
-    _phantom_q: PhantomData<Q>,
-}
-
-impl<const L: usize, Q, A> WritableReport<L, Q, A>
-where
-    A: vdaf::Aggregator<L> + Send + Sync + 'static,
-    A::InputShare: PartialEq + Send + Sync,
-    A::PublicShare: PartialEq + Send + Sync,
-    A::AggregationParam: Send + Sync,
-    A::AggregateShare: Send + Sync,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    Q: UploadableQueryType,
-{
-    fn new(report: LeaderStoredReport<L, A>) -> Self {
-        Self {
-            report,
-            _phantom_q: PhantomData::<Q>,
-        }
-    }
-}
-
-#[async_trait]
-impl<const L: usize, C, Q, A> ReportWriter<C> for WritableReport<L, Q, A>
-where
-    A: vdaf::Aggregator<L> + Send + Sync + 'static,
-    A::InputShare: PartialEq + Send + Sync,
-    A::PublicShare: PartialEq + Send + Sync,
-    A::AggregationParam: Send + Sync,
-    A::AggregateShare: Send + Sync,
-    for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    C: Clock,
-    Q: UploadableQueryType,
-{
-    async fn write_report(&self, tx: &Transaction<C>) -> Result<(), datastore::Error> {
-        Q::validate_uploaded_report(tx, &self.report).await?;
-
-        // Store the report.
-        match tx.put_client_report::<L, A>(&self.report).await {
-            Ok(()) => Ok(()),
-
-            // Reject reports whose report IDs have been seen before.
-            // https://datatracker.ietf.org/doc/html/draft-ietf-ppm-dap-03#section-4.3.2-16
-            Err(datastore::Error::MutationTargetAlreadyExisted) => Err(datastore::Error::User(
-                Error::ReportRejected(
-                    *self.report.task_id(),
-                    *self.report.metadata().id(),
-                    *self.report.metadata().time(),
-                )
-                .into(),
-            )),
-
-            err => err,
-        }
     }
 }
 

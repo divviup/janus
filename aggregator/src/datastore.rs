@@ -5483,12 +5483,10 @@ mod tests {
         )
         .build();
 
+        let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let report: LeaderStoredReport<0, dummy_vdaf::Vdaf> = LeaderStoredReport::new(
             *task.id(),
-            ReportMetadata::new(
-                ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                Time::from_seconds_since_epoch(12345),
-            ),
+            ReportMetadata::new(report_id, Time::from_seconds_since_epoch(12345)),
             (), // public share
             Vec::from([
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
@@ -5516,7 +5514,6 @@ mod tests {
         let retrieved_report = ds
             .run_tx(|tx| {
                 let task_id = *report.task_id();
-                let report_id = *report.metadata().id();
                 Box::pin(async move {
                     tx.get_client_report::<0, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
@@ -5532,6 +5529,33 @@ mod tests {
 
         assert_eq!(report.task_id(), retrieved_report.task_id());
         assert_eq!(report.metadata(), retrieved_report.metadata());
+
+        // Try to write a different report with the same ID, and verify we get the expected error.
+        let result = ds
+            .run_tx(|tx| {
+                let task_id = *report.task_id();
+                Box::pin(async move {
+                    tx.put_client_report(&LeaderStoredReport::<0, dummy_vdaf::Vdaf>::new(
+                        task_id,
+                        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321)),
+                        (), // public share
+                        Vec::from([
+                            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_2")),
+                            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_3")),
+                        ]),
+                        (), // leader input share
+                        /* Dummy ciphertext for the helper share */
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(14),
+                            Vec::from("encapsulated_context_2"),
+                            Vec::from("payload_2"),
+                        ),
+                    ))
+                    .await
+                })
+            })
+            .await;
+        assert_matches!(result, Err(Error::MutationTargetAlreadyExisted));
     }
 
     #[tokio::test]
