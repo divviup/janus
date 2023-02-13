@@ -3709,7 +3709,7 @@ pub enum Error {
 impl Error {
     /// is_serialization_failure determines if a given error corresponds to a Postgres
     /// "serialization" failure, which requires the entire transaction to be aborted & retried from
-    /// the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
+    /// the beginning per <https://www.postgresql.org/docs/current/transaction-iso.html>.
     pub fn is_serialization_failure(&self) -> bool {
         if let Error::Db(err) = self {
             // T_R_SERIALIZATION_FAILURE (40001) is documented as the error code which is always used
@@ -3724,7 +3724,7 @@ impl Error {
     /// Check if this error is due to a Postgres deadlock failure.
     ///
     /// The documentation recommends retrying these errors in addition to serialization failures.
-    /// See https://www.postgresql.org/docs/15/mvcc-serialization-failure-handling.html
+    /// See <https://www.postgresql.org/docs/15/mvcc-serialization-failure-handling.html>
     pub fn is_deadlock_failure(&self) -> bool {
         if let Error::Db(err) = self {
             err.code()
