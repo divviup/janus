@@ -53,6 +53,10 @@ use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
 use uuid::Uuid;
 
+#[cfg(feature = "test-util")]
+#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
+pub mod test_util;
+
 /// A replacement for [`tokio::try_join!`] that is safe to use on datastore errors.
 ///
 /// This macro concurrently awaits on multiple fallible futures, and returns a `Result` holding
@@ -228,6 +232,17 @@ impl<C: Clock> Datastore<C> {
                     );
                     continue;
                 }
+                Err(err) if err.is_deadlock_failure() => {
+                    self.transaction_status_counter.add(
+                        &Context::current(),
+                        1,
+                        &[
+                            KeyValue::new("status", "error_deadlock"),
+                            KeyValue::new("tx", name),
+                        ],
+                    );
+                    continue;
+                }
                 Err(Error::Db(_)) | Err(Error::Pool(_)) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
@@ -316,7 +331,7 @@ pub struct Transaction<'a, C: Clock> {
 
 impl<C: Clock> Transaction<'_, C> {
     /// Writes a task into the datastore.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
         let endpoints: Vec<_> = task
             .aggregator_endpoints()
@@ -1004,10 +1019,13 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// `get_unaggregated_client_report_ids_for_task` returns some report IDs corresponding to
-    /// unaggregated client reports for the task identified by the given task ID.
+    /// unaggregated client reports for the task identified by the given task ID. Returned client
+    /// reports are marked as aggregation-started: the caller must either create an aggregation job
+    /// with, or call `mark_reports_unaggregated` on each returned report as part of the same
+    /// transaction.
     ///
-    /// This should only be used with VDAFs that have an aggregation parameter of the unit type.
-    /// It relies on this assumption to find relevant reports without consulting collect jobs. For
+    /// This should only be used with VDAFs that have an aggregation parameter of the unit type. It
+    /// relies on this assumption to find relevant reports without consulting collect jobs. For
     /// VDAFs that do have a different aggregation parameter,
     /// `get_unaggregated_client_report_ids_by_collect_for_task` should be used instead.
     #[tracing::instrument(skip(self), err)]
@@ -1019,11 +1037,14 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT report_id, client_timestamp FROM client_reports
-                LEFT JOIN report_aggregations ON report_aggregations.client_report_id = client_reports.id
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND report_aggregations.id IS NULL
-                LIMIT 5000",
+                "UPDATE client_reports SET aggregation_started = TRUE
+                WHERE id IN (
+                    SELECT id FROM client_reports
+                    WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      AND aggregation_started = FALSE
+                    LIMIT 5000
+                )
+                RETURNING report_id, client_timestamp",
             )
             .await?;
         let rows = self.tx.query(&stmt, &[&task_id.as_ref()]).await?;
@@ -1040,12 +1061,14 @@ impl<C: Clock> Transaction<'_, C> {
     /// `get_unaggregated_client_report_ids_by_collect_for_task` returns pairs of report IDs and
     /// aggregation parameters, corresponding to client reports that have not yet been aggregated,
     /// or not aggregated with a certain aggregation parameter, and for which there are collect
-    /// jobs, for a given task.
+    /// jobs, for a given task. Returned client reports are marked as aggregation-started, but this
+    /// will not stop additional aggregation jobs from being created later with different
+    /// aggregation parameters.
     ///
     /// This should only be used with VDAFs with a non-unit type aggregation parameter. If a VDAF
     /// has the unit type as its aggregation parameter, then
-    /// `get_unaggregated_client_report_ids_for_task` should be used instead. In such cases, it
-    /// is not necessary to wait for a collect job to arrive before preparing reports.
+    /// `get_unaggregated_client_report_ids_for_task` should be used instead. In such cases, it is
+    /// not necessary to wait for a collect job to arrive before preparing reports.
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
     pub async fn get_unaggregated_client_report_ids_by_collect_for_task<const L: usize, A>(
@@ -1060,26 +1083,37 @@ impl<C: Clock> Transaction<'_, C> {
         let stmt = self
             .tx
             .prepare_cached(
-                "SELECT DISTINCT report_id, client_timestamp, collect_jobs.aggregation_param
-                FROM collect_jobs
-                INNER JOIN client_reports
-                ON collect_jobs.task_id = client_reports.task_id
-                AND client_reports.client_timestamp <@ collect_jobs.batch_interval
-                LEFT JOIN (
-                    SELECT report_aggregations.id, report_aggregations.client_report_id,
-                        aggregation_jobs.aggregation_param
-                    FROM report_aggregations
-                    INNER JOIN aggregation_jobs
-                    ON aggregation_jobs.id = report_aggregations.aggregation_job_id
-                    WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                ) AS report_aggs
-                ON report_aggs.client_report_id = client_reports.id
-                AND report_aggs.aggregation_param = collect_jobs.aggregation_param
-                WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND collect_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND collect_jobs.state = 'START'
-                AND report_aggs.id IS NULL
-                LIMIT 5000",
+                "WITH unaggregated_client_report_ids AS (
+                    SELECT DISTINCT report_id, client_timestamp, collect_jobs.aggregation_param
+                    FROM collect_jobs
+                    INNER JOIN client_reports
+                    ON collect_jobs.task_id = client_reports.task_id
+                    AND client_reports.client_timestamp <@ collect_jobs.batch_interval
+                    LEFT JOIN (
+                        SELECT report_aggregations.id, report_aggregations.client_report_id,
+                            aggregation_jobs.aggregation_param
+                        FROM report_aggregations
+                        INNER JOIN aggregation_jobs
+                        ON aggregation_jobs.id = report_aggregations.aggregation_job_id
+                        WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    ) AS report_aggs
+                    ON report_aggs.client_report_id = client_reports.id
+                    AND report_aggs.aggregation_param = collect_jobs.aggregation_param
+                    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND collect_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND collect_jobs.state = 'START'
+                    AND report_aggs.id IS NULL
+                    LIMIT 5000
+                ),
+                updated_client_reports AS (
+                    UPDATE client_reports SET aggregation_started = TRUE
+                    FROM unaggregated_client_report_ids
+                    WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                      AND client_reports.report_id = unaggregated_client_report_ids.report_id
+                      AND client_reports.client_timestamp = unaggregated_client_report_ids.client_timestamp
+                )
+                SELECT report_id, client_timestamp, aggregation_param
+                FROM unaggregated_client_report_ids",
             )
             .await?;
         let rows = self.tx.query(&stmt, &[&task_id.as_ref()]).await?;
@@ -1092,6 +1126,42 @@ impl<C: Clock> Transaction<'_, C> {
                 Ok((report_id, time, agg_param))
             })
             .collect::<Result<Vec<_>, Error>>()
+    }
+
+    /// `mark_reports_unaggregated` resets the aggregation-started flag on the given client reports,
+    /// so that they may once again be returned by `get_unaggregated_client_report_ids_for_task`. It
+    /// should generally only be called on report IDs returned from
+    /// `get_unaggregated_client_report_ids_for_task`, as part of the same transaction, for any
+    /// client reports that are not added to an aggregation job.
+    #[tracing::instrument(skip(self, report_ids), err)]
+    pub async fn mark_reports_unaggregated(
+        &self,
+        task_id: &TaskId,
+        report_ids: &[ReportId],
+    ) -> Result<(), Error> {
+        let report_ids: Vec<_> = report_ids.iter().map(ReportId::get_encoded).collect();
+        let stmt = self
+            .tx
+            .prepare_cached(
+                "UPDATE client_reports SET aggregation_started = FALSE
+                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                  AND report_id IN (SELECT * FROM UNNEST($2::BYTEA[]))",
+            )
+            .await?;
+        let row_count = self
+            .tx
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ &task_id.as_ref(),
+                    /* task_id */ &report_ids,
+                ],
+            )
+            .await?;
+        if TryInto::<usize>::try_into(row_count)? != report_ids.len() {
+            return Err(Error::MutationTargetNotFound);
+        }
+        Ok(())
     }
 
     /// Return the number of reports in the provided task whose timestamp falls within the provided
@@ -3641,37 +3711,57 @@ impl Error {
     /// "serialization" failure, which requires the entire transaction to be aborted & retried from
     /// the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
     fn is_serialization_failure(&self) -> bool {
-        match self {
+        if let Error::Db(err) = self {
             // T_R_SERIALIZATION_FAILURE (40001) is documented as the error code which is always used
             // for serialization failures which require rollback-and-retry.
-            Error::Db(err) => err
-                .code()
-                .map_or(false, |c| c == &SqlState::T_R_SERIALIZATION_FAILURE),
-            _ => false,
+            err.code()
+                .map_or(false, |c| c == &SqlState::T_R_SERIALIZATION_FAILURE)
+        } else {
+            false
+        }
+    }
+
+    /// Check if this error is due to a Postgres deadlock failure.
+    ///
+    /// The documentation recommends retrying these errors in addition to serialization failures.
+    /// See https://www.postgresql.org/docs/15/mvcc-serialization-failure-handling.html
+    fn is_deadlock_failure(&self) -> bool {
+        if let Error::Db(err) = self {
+            err.code()
+                .map_or(false, |c| c == &SqlState::T_R_DEADLOCK_DETECTED)
+        } else {
+            false
         }
     }
 
     /// Check if this error is due to the current SQL transaction being in a failed state, because
-    /// of an error in a preceding statement. The corresponding Postgres error message is "current
-    /// transaction is aborted, commands ignored until end of transaction block".
+    /// of an error in a preceding statement.
+    ///
+    /// The corresponding Postgres error message is "current transaction is aborted, commands
+    /// ignored until end of transaction block".
     fn is_in_failed_transaction(&self) -> bool {
-        match self {
-            Error::Db(err) => err
-                .code()
-                .map_or(false, |c| c == &SqlState::IN_FAILED_SQL_TRANSACTION),
-            _ => false,
+        if let Error::Db(err) = self {
+            err.code()
+                .map_or(false, |c| c == &SqlState::IN_FAILED_SQL_TRANSACTION)
+        } else {
+            false
         }
     }
 
-    /// Select one error out of a pair to propagate. If one error is due to a serialization
-    /// failure, that error will be returned, as it indicates the transaction should be retried.
-    /// If one error is due to the transaction already being in a failed state, the opposite error
-    /// will be returned, to provide more useful diagnostic information. If neither of these cases
-    /// applies, `self` will be returned.
+    /// Select one error out of a pair to propagate.
+    ///
+    /// If one error is due to a serialization failure or deadlock failure, that error will be
+    /// returned, as it indicates the transaction should be retried. If one error is due to the
+    /// transaction already being in a failed state, the opposite error will be returned, to provide
+    /// more useful diagnostic information. If neither of these cases applies, `self` will be
+    /// returned.
     pub fn combine(self, other: Error) -> Error {
-        if self.is_serialization_failure() {
+        if self.is_serialization_failure() || self.is_deadlock_failure() {
             self
-        } else if other.is_serialization_failure() || self.is_in_failed_transaction() {
+        } else if other.is_serialization_failure()
+            || other.is_deadlock_failure()
+            || self.is_in_failed_transaction()
+        {
             other
         } else {
             self
@@ -5103,204 +5193,6 @@ pub mod models {
     }
 }
 
-#[cfg(feature = "test-util")]
-#[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
-pub mod test_util {
-    use super::{Crypter, Datastore};
-    use deadpool_postgres::{Manager, Pool};
-    use janus_core::time::Clock;
-    use lazy_static::lazy_static;
-    use rand::{distributions::Standard, thread_rng, Rng};
-    use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
-    use std::{
-        env::{self, VarError},
-        process::Command,
-        str::FromStr,
-    };
-    use testcontainers::{images::postgres::Postgres, Container, RunnableImage};
-    use tokio_postgres::{Config, NoTls};
-    use tracing::trace;
-
-    /// The Janus database schema.
-    pub const SCHEMA: &str = include_str!("../../db/schema.sql");
-
-    lazy_static! {
-        static ref CONTAINER_CLIENT: testcontainers::clients::Cli =
-            testcontainers::clients::Cli::default();
-    }
-
-    /// DbHandle represents a handle to a running (ephemeral) database. Dropping this value
-    /// causes the database to be shut down & cleaned up.
-    pub struct DbHandle {
-        _db_container: Container<'static, Postgres>,
-        connection_string: String,
-        port_number: u16,
-        datastore_key_bytes: Vec<u8>,
-    }
-
-    impl DbHandle {
-        /// Retrieve a datastore attached to the ephemeral database.
-        pub fn datastore<C: Clock>(&self, clock: C) -> Datastore<C> {
-            // Create a crypter based on the generated key bytes.
-            let datastore_key =
-                LessSafeKey::new(UnboundKey::new(&AES_128_GCM, &self.datastore_key_bytes).unwrap());
-            let crypter = Crypter::new(Vec::from([datastore_key]));
-
-            Datastore::new(self.pool(), crypter, clock)
-        }
-
-        /// Retrieve a Postgres connection pool attached to the ephemeral database.
-        pub fn pool(&self) -> Pool {
-            let cfg = Config::from_str(&self.connection_string).unwrap();
-            let conn_mgr = Manager::new(cfg, NoTls);
-            Pool::builder(conn_mgr).build().unwrap()
-        }
-
-        /// Get a PostgreSQL connection string to connect to the temporary database.
-        pub fn connection_string(&self) -> &str {
-            &self.connection_string
-        }
-
-        /// Get the bytes of the key used to encrypt sensitive datastore values.
-        pub fn datastore_key_bytes(&self) -> &[u8] {
-            &self.datastore_key_bytes
-        }
-
-        /// Get the port number that the temporary database is exposed on, via the 127.0.0.1
-        /// loopback interface.
-        pub fn port_number(&self) -> u16 {
-            self.port_number
-        }
-
-        /// Open an interactive terminal to the database in a new terminal window, and block
-        /// until the user exits from the terminal. This is intended to be used while
-        /// debugging tests.
-        ///
-        /// By default, this will invoke `gnome-terminal`, which is readily available on
-        /// GNOME-based Linux distributions. To use a different terminal, set the environment
-        /// variable `JANUS_SHELL_CMD` to a shell command that will open a new terminal window
-        /// of your choice. This command line should include a "{}" in the position appropriate
-        /// for what command the terminal should run when it opens. A `psql` invocation will
-        /// be substituted in place of the "{}". Note that this shell command must not exit
-        /// immediately once the terminal is spawned; it should continue running as long as the
-        /// terminal is open. If the command provided exits too soon, then the test will
-        /// continue running without intervention, leading to the test's database shutting
-        /// down.
-        ///
-        /// # Example
-        ///
-        /// ```text
-        /// JANUS_SHELL_CMD='xterm -e {}' cargo test
-        /// ```
-        pub fn interactive_db_terminal(&self) {
-            let mut command = match env::var("JANUS_SHELL_CMD") {
-                Ok(shell_cmd) => {
-                    if !shell_cmd.contains("{}") {
-                        panic!("JANUS_SHELL_CMD should contain a \"{{}}\" to denote where the database command should be substituted");
-                    }
-
-                    #[cfg(not(windows))]
-                    let mut command = {
-                        let mut command = Command::new("sh");
-                        command.arg("-c");
-                        command
-                    };
-
-                    #[cfg(windows)]
-                    let mut command = {
-                        let mut command = Command::new("cmd.exe");
-                        command.arg("/c");
-                        command
-                    };
-
-                    let psql_command = format!(
-                        "psql --host=127.0.0.1 --user=postgres -p {}",
-                        self.port_number(),
-                    );
-                    command.arg(shell_cmd.replacen("{}", &psql_command, 1));
-                    command
-                }
-
-                Err(VarError::NotPresent) => {
-                    let mut command = Command::new("gnome-terminal");
-                    command.args([
-                        "--wait",
-                        "--",
-                        "psql",
-                        "--host=127.0.0.1",
-                        "--user=postgres",
-                        "-p",
-                    ]);
-                    command.arg(format!("{}", self.port_number()));
-                    command
-                }
-
-                Err(VarError::NotUnicode(_)) => {
-                    panic!("JANUS_SHELL_CMD contains invalid unicode data");
-                }
-            };
-            command.spawn().unwrap().wait().unwrap();
-        }
-    }
-
-    impl Drop for DbHandle {
-        fn drop(&mut self) {
-            trace!(connection_string = %self.connection_string, "Dropping ephemeral Postgres container");
-        }
-    }
-
-    /// ephemeral_db_handle creates a new ephemeral database which has no schema & is empty.
-    /// Dropping the return value causes the database to be shut down & cleaned up.
-    ///
-    /// Most users will want to call ephemeral_datastore() instead, which applies the Janus
-    /// schema and creates a datastore.
-    pub fn ephemeral_db_handle() -> DbHandle {
-        // Start an instance of Postgres running in a container.
-        let db_container =
-            CONTAINER_CLIENT.run(RunnableImage::from(Postgres::default()).with_tag("14-alpine"));
-
-        // Compute the Postgres connection string.
-        const POSTGRES_DEFAULT_PORT: u16 = 5432;
-        let port_number = db_container.get_host_port_ipv4(POSTGRES_DEFAULT_PORT);
-        let connection_string =
-            format!("postgres://postgres:postgres@127.0.0.1:{port_number}/postgres");
-        trace!("Postgres container is up with URL {}", connection_string);
-
-        // Create a random (ephemeral) key.
-        let datastore_key_bytes = generate_aead_key_bytes();
-
-        DbHandle {
-            _db_container: db_container,
-            connection_string,
-            port_number,
-            datastore_key_bytes,
-        }
-    }
-
-    /// ephemeral_datastore creates a new Datastore instance backed by an ephemeral database
-    /// which has the Janus schema applied but is otherwise empty.
-    ///
-    /// Dropping the second return value causes the database to be shut down & cleaned up.
-    pub async fn ephemeral_datastore<C: Clock>(clock: C) -> (Datastore<C>, DbHandle) {
-        let db_handle = ephemeral_db_handle();
-        let client = db_handle.pool().get().await.unwrap();
-        client.batch_execute(SCHEMA).await.unwrap();
-        (db_handle.datastore(clock), db_handle)
-    }
-
-    pub fn generate_aead_key_bytes() -> Vec<u8> {
-        thread_rng()
-            .sample_iter(Standard)
-            .take(AES_128_GCM.key_len())
-            .collect()
-    }
-
-    pub fn generate_aead_key() -> LessSafeKey {
-        let unbound_key = UnboundKey::new(&AES_128_GCM, &generate_aead_key_bytes()).unwrap();
-        LessSafeKey::new(unbound_key)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -5356,7 +5248,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_task() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         // Insert tasks, check that they can be retrieved by ID.
         let mut want_tasks = HashMap::new();
@@ -5474,7 +5367,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -5561,7 +5455,8 @@ mod tests {
     #[tokio::test]
     async fn report_not_found() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let rslt = ds
             .run_tx(|tx| {
@@ -5583,7 +5478,8 @@ mod tests {
     #[tokio::test]
     async fn get_unaggregated_client_report_ids_for_task() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let time_precision = Duration::from_seconds(1000);
         let when = MockClock::default()
@@ -5636,42 +5532,26 @@ mod tests {
                 tx.put_client_report(&aggregated_report).await?;
                 tx.put_client_report(&unrelated_report).await?;
 
-                let aggregation_job_id = random();
-                tx.put_aggregation_job(&AggregationJob::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Count,
-                >::new(
-                    *task.id(),
-                    aggregation_job_id,
-                    (),
-                    (),
-                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
-                        .unwrap(),
-                    AggregationJobState::InProgress,
-                ))
-                .await?;
-                tx
-                    .put_report_aggregation(
-                        &ReportAggregation::new(
-                            *task.id(),
-                            aggregation_job_id,
-                            *aggregated_report.metadata().id(),
-                            *aggregated_report.metadata().time(),
-                            0,
-                            ReportAggregationState::<
-                                PRIO3_AES128_VERIFY_KEY_LENGTH,
-                                Prio3Aes128Count,
-                            >::Start,
-                        ),
+                // Mark aggregated_report as aggregated. (we use SQL here as there is no standard
+                // datastore operation to manually mark a client report as aggregated)
+                tx.tx
+                    .execute(
+                        "UPDATE client_reports SET aggregation_started = TRUE
+                        WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                          AND report_id = $2",
+                        &[
+                            &task.id().as_ref(),
+                            &aggregated_report.metadata().id().as_ref(),
+                        ],
                     )
-                    .await
+                    .await?;
+                Ok(())
             })
         })
         .await
         .unwrap();
 
-        // Run query & verify results.
+        // Verify that we can acquire both unaggregated reports.
         let got_reports = HashSet::from_iter(
             ds.run_tx(|tx| {
                 let task = task.clone();
@@ -5697,12 +5577,64 @@ mod tests {
                 ),
             ]),
         );
+
+        // Verify that attempting to acquire again does not return the reports.
+        let got_reports = HashSet::<(ReportId, Time)>::from_iter(
+            ds.run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.get_unaggregated_client_report_ids_for_task(task.id())
+                        .await
+                })
+            })
+            .await
+            .unwrap(),
+        );
+
+        assert!(got_reports.is_empty());
+
+        // Mark one report un-aggregated.
+        ds.run_tx(|tx| {
+            let (task, first_unaggregated_report) =
+                (task.clone(), first_unaggregated_report.clone());
+            Box::pin(async move {
+                tx.mark_reports_unaggregated(
+                    task.id(),
+                    &[*first_unaggregated_report.metadata().id()],
+                )
+                .await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Verify that we can retrieve the un-aggregated report again.
+        let got_reports = HashSet::from_iter(
+            ds.run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    tx.get_unaggregated_client_report_ids_for_task(task.id())
+                        .await
+                })
+            })
+            .await
+            .unwrap(),
+        );
+
+        assert_eq!(
+            got_reports,
+            HashSet::from([(
+                *first_unaggregated_report.metadata().id(),
+                *first_unaggregated_report.metadata().time(),
+            ),]),
+        );
     }
 
     #[tokio::test]
     async fn get_unaggregated_client_report_ids_with_agg_param_for_task() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -5957,8 +5889,8 @@ mod tests {
     #[tokio::test]
     async fn count_client_reports_for_interval() {
         install_test_trace_subscriber();
-
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -6064,8 +5996,8 @@ mod tests {
     #[tokio::test]
     async fn count_client_reports_for_batch_id() {
         install_test_trace_subscriber();
-
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::FixedSize { max_batch_size: 10 },
@@ -6194,7 +6126,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report_share() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -6293,7 +6226,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_aggregation_job() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
@@ -6407,7 +6341,8 @@ mod tests {
         // Setup: insert a few aggregation jobs.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         const AGGREGATION_JOB_COUNT: usize = 10;
         let task = TaskBuilder::new(
@@ -6691,7 +6626,8 @@ mod tests {
     #[tokio::test]
     async fn aggregation_job_not_found() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let rslt = ds
             .run_tx(|tx| {
@@ -6731,7 +6667,8 @@ mod tests {
     async fn get_aggregation_jobs_for_task() {
         // Setup.
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         // We use a dummy VDAF & fixed-size task for this test, to better exercise the
         // serialization/deserialization roundtrip of the batch_identifier & aggregation_param.
@@ -6812,7 +6749,8 @@ mod tests {
     #[tokio::test]
     async fn roundtrip_report_aggregation() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
@@ -6951,7 +6889,8 @@ mod tests {
     #[tokio::test]
     async fn report_aggregation_not_found() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let vdaf = Arc::new(dummy_vdaf::Vdaf::default());
 
@@ -6994,7 +6933,8 @@ mod tests {
     #[tokio::test]
     async fn get_report_aggregations_for_aggregation_job() {
         install_test_trace_subscriber();
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
@@ -7164,7 +7104,8 @@ mod tests {
         .unwrap();
         let aggregation_param = AggregationParam(23);
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             let task = task.clone();
@@ -7398,7 +7339,8 @@ mod tests {
         .unwrap();
         let aggregation_param = AggregationParam(23);
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             let (first_task, second_task) = (first_task.clone(), second_task.clone());
@@ -7476,7 +7418,8 @@ mod tests {
         .unwrap();
         let aggregation_param = AggregationParam(13);
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             let task = task.clone();
@@ -7566,7 +7509,8 @@ mod tests {
         // Setup: write collect jobs to the datastore.
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         let task = TaskBuilder::new(
             task::QueryType::TimeInterval,
@@ -7810,7 +7754,8 @@ mod tests {
     async fn time_interval_collect_job_acquire_release_happy_path() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -7941,7 +7886,8 @@ mod tests {
     async fn fixed_size_collect_job_acquire_release_happy_path() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8064,7 +8010,8 @@ mod tests {
     async fn collect_job_acquire_no_aggregation_job_with_task_id() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let other_task_id = random();
@@ -8113,7 +8060,8 @@ mod tests {
     async fn collect_job_acquire_no_aggregation_job_with_agg_param() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8165,7 +8113,8 @@ mod tests {
     async fn collect_job_acquire_report_shares_outside_interval() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8226,7 +8175,8 @@ mod tests {
     async fn collect_job_acquire_release_job_finished() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8287,7 +8237,8 @@ mod tests {
     async fn collect_job_acquire_release_aggregation_job_in_progress() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([
@@ -8369,7 +8320,8 @@ mod tests {
     async fn collect_job_acquire_job_max() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8516,7 +8468,8 @@ mod tests {
     async fn collect_job_acquire_state_filtering() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
@@ -8644,7 +8597,8 @@ mod tests {
     async fn roundtrip_batch_aggregation_time_interval() {
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -8836,7 +8790,8 @@ mod tests {
     async fn roundtrip_batch_aggregation_fixed_size() {
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -8931,7 +8886,8 @@ mod tests {
     async fn roundtrip_aggregate_share_job() {
         install_test_trace_subscriber();
 
-        let (ds, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
 
         ds.run_tx(|tx| {
             Box::pin(async move {
@@ -9034,7 +8990,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         let (task_id, batch_id) = ds
             .run_tx(|tx| {
@@ -9305,7 +9262,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -9429,7 +9387,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -10159,7 +10118,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         // Setup.
         async fn write_collect_artifacts<Q: ExpirationQueryTypeExt>(
@@ -10695,7 +10655,9 @@ mod tests {
 
     #[tokio::test]
     async fn roundtrip_interval_sql() {
-        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(MockClock::default());
+
         datastore
             .run_tx(|tx| {
                 Box::pin(async move {

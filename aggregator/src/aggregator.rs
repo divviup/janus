@@ -2640,7 +2640,7 @@ impl VdafOps {
         }
     }
 
-    #[tracing::instrument(skip(datastore), err)]
+    #[tracing::instrument(skip(datastore, task, req_bytes), fields(task_id = ?task.id()), err)]
     async fn handle_collect_generic<
         const L: usize,
         Q: CollectableQueryType,
@@ -4252,7 +4252,7 @@ mod tests {
                 AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
                 CollectJob, CollectJobState, ReportAggregation, ReportAggregationState,
             },
-            test_util::{ephemeral_datastore, DbHandle},
+            test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
         messages::{DurationExt, TimeExt},
@@ -4331,7 +4331,8 @@ mod tests {
         .build();
         let unknown_task_id: TaskId = random();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -4443,7 +4444,8 @@ mod tests {
         )
         .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -4555,8 +4557,8 @@ mod tests {
         .with_report_expiry_age(Some(Duration::from_seconds(REPORT_EXPIRY_AGE)))
         .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
@@ -4811,7 +4813,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -4867,7 +4870,7 @@ mod tests {
         MockClock,
         Task,
         Arc<Datastore<MockClock>>,
-        DbHandle,
+        EphemeralDatastore,
     ) {
         let clock = MockClock::default();
         let vdaf = Prio3Aes128Count::new_aes128_count(2).unwrap();
@@ -4878,8 +4881,9 @@ mod tests {
         )
         .build();
 
-        let (datastore, db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
+
         datastore.put_task(&task).await.unwrap();
 
         let aggregator = Aggregator::new(
@@ -4889,18 +4893,26 @@ mod tests {
             cfg,
         );
 
-        (vdaf, aggregator, clock, task, datastore, db_handle)
+        (
+            vdaf,
+            aggregator,
+            clock,
+            task,
+            datastore,
+            ephemeral_datastore,
+        )
     }
 
     #[tokio::test]
     async fn upload() {
         install_test_trace_subscriber();
 
-        let (vdaf, aggregator, clock, task, datastore, _db_handle) = setup_upload_test(Config {
-            max_upload_batch_size: 1000,
-            max_upload_batch_write_delay: StdDuration::from_millis(500),
-        })
-        .await;
+        let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
+            setup_upload_test(Config {
+                max_upload_batch_size: 1000,
+                max_upload_batch_write_delay: StdDuration::from_millis(500),
+            })
+            .await;
         let report = create_report(&task, clock.now());
 
         aggregator
@@ -4933,11 +4945,12 @@ mod tests {
         install_test_trace_subscriber();
 
         const BATCH_SIZE: usize = 100;
-        let (vdaf, aggregator, clock, task, datastore, _db_handle) = setup_upload_test(Config {
-            max_upload_batch_size: BATCH_SIZE,
-            max_upload_batch_write_delay: StdDuration::from_secs(86400),
-        })
-        .await;
+        let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
+            setup_upload_test(Config {
+                max_upload_batch_size: BATCH_SIZE,
+                max_upload_batch_write_delay: StdDuration::from_secs(86400),
+            })
+            .await;
 
         let reports: Vec<_> = iter::repeat_with(|| create_report(&task, clock.now()))
             .take(BATCH_SIZE)
@@ -4972,7 +4985,7 @@ mod tests {
     async fn upload_wrong_number_of_encrypted_shares() {
         install_test_trace_subscriber();
 
-        let (_, aggregator, clock, task, _, _db_handle) =
+        let (_, aggregator, clock, task, _, _ephemeral_datastore) =
             setup_upload_test(Config::default()).await;
         let report = create_report(&task, clock.now());
         let report = Report::new(
@@ -4996,7 +5009,7 @@ mod tests {
     async fn upload_wrong_hpke_config_id() {
         install_test_trace_subscriber();
 
-        let (_, aggregator, clock, task, _, _db_handle) =
+        let (_, aggregator, clock, task, _, _ephemeral_datastore) =
             setup_upload_test(Config::default()).await;
         let report = create_report(&task, clock.now());
 
@@ -5031,7 +5044,7 @@ mod tests {
     async fn upload_report_in_the_future_boundary_condition() {
         install_test_trace_subscriber();
 
-        let (vdaf, aggregator, clock, task, datastore, _db_handle) =
+        let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
             setup_upload_test(Config::default()).await;
         let report = create_report(&task, clock.now().add(task.tolerable_clock_skew()).unwrap());
 
@@ -5057,7 +5070,7 @@ mod tests {
     async fn upload_report_in_the_future_past_clock_skew() {
         install_test_trace_subscriber();
 
-        let (_, aggregator, clock, task, _, _db_handle) =
+        let (_, aggregator, clock, task, _, _ephemeral_datastore) =
             setup_upload_test(Config::default()).await;
         let report = create_report(
             &task,
@@ -5085,7 +5098,7 @@ mod tests {
     async fn upload_report_for_collected_batch() {
         install_test_trace_subscriber();
 
-        let (_, aggregator, clock, task, datastore, _db_handle) =
+        let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
             setup_upload_test(Config::default()).await;
         let report = create_report(&task, clock.now());
 
@@ -5139,7 +5152,8 @@ mod tests {
         )
         .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -5221,7 +5235,8 @@ mod tests {
         )
         .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -5305,8 +5320,8 @@ mod tests {
         )
         .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
@@ -5664,7 +5679,8 @@ mod tests {
         )
         .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
         let hpke_key = current_hpke_key(task.hpke_keys());
 
         datastore.put_task(&task).await.unwrap();
@@ -5741,7 +5757,8 @@ mod tests {
         )
         .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
         let hpke_key = current_hpke_key(task.hpke_keys());
 
         datastore.put_task(&task).await.unwrap();
@@ -5817,7 +5834,8 @@ mod tests {
         )
         .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -5891,8 +5909,8 @@ mod tests {
         )
         .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
@@ -6206,8 +6224,8 @@ mod tests {
         .build();
         let aggregation_job_id_0 = random();
         let aggregation_job_id_1 = random();
-        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(MockClock::default()));
         let first_batch_interval_clock = MockClock::default();
         let second_batch_interval_clock = MockClock::new(
             first_batch_interval_clock
@@ -6833,8 +6851,8 @@ mod tests {
             Time::from_seconds_since_epoch(54321),
         );
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         // Setup datastore.
         datastore
@@ -6947,8 +6965,8 @@ mod tests {
             Time::from_seconds_since_epoch(54321),
         );
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         // Setup datastore.
         datastore
@@ -7109,7 +7127,8 @@ mod tests {
             Time::from_seconds_since_epoch(54321),
         );
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         // Setup datastore.
         datastore
@@ -7225,7 +7244,8 @@ mod tests {
         );
 
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         // Setup datastore.
         datastore
@@ -7374,7 +7394,8 @@ mod tests {
         );
 
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         // Setup datastore.
         datastore
@@ -7476,7 +7497,8 @@ mod tests {
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -7524,7 +7546,8 @@ mod tests {
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -7580,7 +7603,8 @@ mod tests {
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -7638,7 +7662,8 @@ mod tests {
             .with_min_batch_size(1)
             .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -7701,8 +7726,8 @@ mod tests {
             Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         datastore.put_task(&task).await.unwrap();
 
@@ -7810,8 +7835,8 @@ mod tests {
             Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         datastore.put_task(&task).await.unwrap();
 
@@ -7942,8 +7967,8 @@ mod tests {
         let helper_aggregate_share = AggregateShare::from(Vec::from([Field64::from(32)]));
 
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         datastore.put_task(&task).await.unwrap();
 
@@ -8089,7 +8114,8 @@ mod tests {
     #[tokio::test]
     async fn no_such_collect_job() {
         install_test_trace_subscriber();
-        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(MockClock::default());
         let filter =
             aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
                 .unwrap();
@@ -8117,7 +8143,8 @@ mod tests {
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
 
-        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(MockClock::default());
 
         datastore
             .run_tx(|tx| {
@@ -8217,7 +8244,8 @@ mod tests {
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
 
-        let (datastore, _db_handle) = ephemeral_datastore(MockClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(MockClock::default());
 
         datastore
             .run_tx(|tx| {
@@ -8337,8 +8365,8 @@ mod tests {
             Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
 
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         datastore.put_task(&task).await.unwrap();
 
@@ -8427,7 +8455,8 @@ mod tests {
         let task =
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -8482,7 +8511,8 @@ mod tests {
             .with_report_expiry_age(Some(REPORT_EXPIRY_AGE))
             .build();
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = ephemeral_datastore.datastore(clock.clone());
 
         datastore.put_task(&task).await.unwrap();
 
@@ -8578,8 +8608,8 @@ mod tests {
             .build();
 
         let clock = MockClock::default();
-        let (datastore, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let datastore = Arc::new(datastore);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         datastore.put_task(&task).await.unwrap();
 

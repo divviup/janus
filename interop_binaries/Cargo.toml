@@ -28,7 +28,7 @@ backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.21.0"
 clap = "4.1.4"
 futures = { version = "0.3.26", optional = true }
-fixed = { version = "1.22", optional = true }
+fixed = { version = "1.23", optional = true }
 fixed-macro = { version = "1.1.1", optional = true }
 hex = { version = "0.4", optional = true }
 lazy_static = { version = "1", optional = true }
@@ -44,7 +44,7 @@ regex = { version = "1", optional = true }
 reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls"] }
 ring = "0.16.20"
 serde = { version = "1.0.152", features = ["derive"] }
-serde_json = "1.0.91"
+serde_json = "1.0.92"
 testcontainers = { version = "0.14" }
 tokio = { version = "1.25", features = ["full", "tracing"] }
 tracing = "0.1.37"
@@ -55,7 +55,7 @@ warp = "0.3"
 zstd = { version = "0.12", optional = true }
 
 [dev-dependencies]
-janus_interop_binaries = { workspace = true, features = ["fpvec_bounded_l2", "testcontainer", "test-util"] }
+janus_interop_binaries = { path = ".", features = ["fpvec_bounded_l2", "testcontainer", "test-util"] }
 janus_core = { workspace = true, features = ["test-util", "fpvec_bounded_l2"] }
 reqwest = { version = "0.11.14", default-features = false, features = ["json"] }
 

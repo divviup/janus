@@ -10,7 +10,7 @@ use prio::vdaf::{self, Aggregatable};
 /// The assumption is that all aggregation jobs contributing to those batch aggregations have
 /// been driven to completion, and that the query count requirements have been validated for the
 /// included batches.
-#[tracing::instrument(err)]
+#[tracing::instrument(skip(task), fields(task_id = ?task.id()), err)]
 pub(crate) async fn compute_aggregate_share<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
     task: &Task,
     batch_aggregations: &[BatchAggregation<L, Q, A>],

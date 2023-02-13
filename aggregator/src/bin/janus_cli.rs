@@ -454,7 +454,7 @@ mod tests {
         },
         config::CommonConfig,
         datastore::{
-            test_util::{ephemeral_datastore, ephemeral_db_handle},
+            test_util::{ephemeral_datastore, ephemeral_datastore_no_schema},
             Datastore,
         },
         task::{test_util::TaskBuilder, QueryType, Task},
@@ -543,8 +543,8 @@ mod tests {
 
     #[tokio::test]
     async fn write_schema() {
-        let db_handle = ephemeral_db_handle();
-        let ds = db_handle.datastore(RealClock::default());
+        let ephemeral_datastore = ephemeral_datastore_no_schema().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default());
 
         // Verify that the query we will run later returns an error if there is no database schema written.
         ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
@@ -552,7 +552,9 @@ mod tests {
             .unwrap_err();
 
         // Run the program logic.
-        super::write_schema(&db_handle.pool(), false).await.unwrap();
+        super::write_schema(&ephemeral_datastore.pool(), false)
+            .await
+            .unwrap();
 
         // Verify that the schema was written (by running a query that would fail if it weren't).
         ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
@@ -562,14 +564,16 @@ mod tests {
 
     #[tokio::test]
     async fn write_schema_dry_run() {
-        let db_handle = ephemeral_db_handle();
-        let ds = db_handle.datastore(RealClock::default());
+        let ephemeral_datastore = ephemeral_datastore_no_schema().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default());
 
         ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
             .await
             .unwrap_err();
 
-        super::write_schema(&db_handle.pool(), true).await.unwrap();
+        super::write_schema(&ephemeral_datastore.pool(), true)
+            .await
+            .unwrap();
 
         // Verify that no schema was written (by running a query that would fail if it weren't).
         ds.run_tx(|tx| Box::pin(async move { tx.get_tasks().await }))
@@ -601,7 +605,8 @@ mod tests {
 
     #[tokio::test]
     async fn provision_tasks() {
-        let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default());
 
         let tasks = Vec::from([
             TaskBuilder::new(
@@ -634,7 +639,8 @@ mod tests {
 
     #[tokio::test]
     async fn provision_task_dry_run() {
-        let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default());
 
         let tasks = Vec::from([TaskBuilder::new(
             QueryType::TimeInterval,
@@ -673,7 +679,8 @@ mod tests {
             .build(),
         ]);
 
-        let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default());
 
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file
@@ -778,7 +785,8 @@ mod tests {
   hpke_keys: []
 "#;
 
-        let (ds, _db_handle) = ephemeral_datastore(RealClock::default()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(RealClock::default());
 
         let mut tasks_file = NamedTempFile::new().unwrap();
         tasks_file
