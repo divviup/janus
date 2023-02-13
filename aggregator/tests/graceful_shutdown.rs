@@ -109,13 +109,14 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
 
     // This datastore will be used indirectly by the child process, which
     // will connect to its backing database separately.
-    let (datastore, db_handle) = ephemeral_datastore(RealClock::default()).await;
+    let ephemeral_datastore = ephemeral_datastore().await;
+    let datastore = ephemeral_datastore.datastore(RealClock::default());
 
     let health_check_port = select_open_port().await.unwrap();
     let health_check_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, health_check_port));
 
     let mut db_config = Mapping::new();
-    db_config.insert("url".into(), db_handle.connection_string().into());
+    db_config.insert("url".into(), ephemeral_datastore.connection_string().into());
     db_config.insert("connection_pool_timeout_secs".into(), "60".into());
     config.insert("database".into(), db_config.into());
     config.insert(
@@ -159,7 +160,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
         .env("RUSTLOG", "trace")
         .env(
             "DATASTORE_KEYS",
-            STANDARD_NO_PAD.encode(db_handle.datastore_key_bytes()),
+            STANDARD_NO_PAD.encode(ephemeral_datastore.datastore_key_bytes()),
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -818,7 +818,8 @@ mod tests {
         // Setup.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
         // this test to run without the need for a (racy, wallclock-consuming) real sleep.
@@ -924,7 +925,8 @@ mod tests {
         // Setup.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1017,7 +1019,8 @@ mod tests {
         // Setup.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
@@ -1126,7 +1129,8 @@ mod tests {
         // Setup.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1241,7 +1245,8 @@ mod tests {
     async fn create_aggregation_jobs_for_time_interval_task_with_param() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(clock.clone());
 
         const MAX_AGGREGATION_JOB_SIZE: usize = 10;
 

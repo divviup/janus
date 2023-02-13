@@ -1038,8 +1038,8 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let task = TaskBuilder::new(
             QueryType::TimeInterval,
@@ -1248,8 +1248,8 @@ mod tests {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -1502,8 +1502,8 @@ mod tests {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -1718,8 +1718,8 @@ mod tests {
         // been stepped once.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -1956,8 +1956,8 @@ mod tests {
         // been stepped once.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -2190,8 +2190,8 @@ mod tests {
         // Setup: insert a client report and add it to a new aggregation job.
         install_test_trace_subscriber();
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
 
         let task = TaskBuilder::new(
@@ -2378,8 +2378,8 @@ mod tests {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let task = TaskBuilder::new(
             QueryType::TimeInterval,

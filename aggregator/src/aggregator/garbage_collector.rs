@@ -113,8 +113,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -259,8 +259,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -420,8 +420,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
@@ -570,8 +570,8 @@ mod tests {
         install_test_trace_subscriber();
 
         let clock = MockClock::default();
-        let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
-        let ds = Arc::new(ds);
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
         let vdaf = dummy_vdaf::Vdaf::new();
 
         // Setup.
