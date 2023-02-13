@@ -331,7 +331,7 @@ pub struct Transaction<'a, C: Clock> {
 
 impl<C: Clock> Transaction<'_, C> {
     /// Writes a task into the datastore.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
         let endpoints: Vec<_> = task
             .aggregator_endpoints()
@@ -1133,7 +1133,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// should generally only be called on report IDs returned from
     /// `get_unaggregated_client_report_ids_for_task`, as part of the same transaction, for any
     /// client reports that are not added to an aggregation job.
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, report_ids), err)]
     pub async fn mark_reports_unaggregated(
         &self,
         task_id: &TaskId,

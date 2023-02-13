@@ -233,7 +233,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_task(
         self: Arc<Self>,
         task: Arc<Task>,
@@ -333,7 +333,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_time_interval_task_no_param<
         const L: usize,
         A: vdaf::Aggregator<L, AggregationParam = ()>,
@@ -439,7 +439,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
             .await?)
     }
 
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_fixed_size_task_no_param<
         const L: usize,
         A: vdaf::Aggregator<L, AggregationParam = ()>,
@@ -645,7 +645,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     /// be used with VDAFs that have non-unit type aggregation parameters.
     // This is only used in tests thus far.
     #[cfg(test)]
-    #[tracing::instrument(skip(self), err)]
+    #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_task_with_param<const L: usize, A>(
         self: Arc<Self>,
         task: Arc<Task>,
