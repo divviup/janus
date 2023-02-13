@@ -123,7 +123,23 @@ impl<C: Clock> ReportWriteBatcher<C> {
             .run_tx_with_name("upload", |tx| {
                 let report_writers = Arc::clone(&report_writers);
                 Box::pin(async move {
-                    Ok(join_all(report_writers.iter().map(|rw| rw.write_report(tx))).await)
+                    let mut rslts =
+                        join_all(report_writers.iter().map(|rw| rw.write_report(tx))).await;
+
+                    // Hack: look for a retryable error, and return it if we find one. (This is a
+                    // hack because we want to replace the retry-detection logic to be fully
+                    // included in Datastore & Transaction, rather than pushed out to authors of
+                    // Datastore transaction callbacks.)
+                    for rslt in &mut rslts {
+                        if let Err(err) = rslt {
+                            if err.is_serialization_failure() || err.is_deadlock_failure() {
+                                // The replacement error is arbitrary as we are going to throw rslts away.
+                                return Err(replace(err, datastore::Error::Crypt));
+                            }
+                        }
+                    }
+
+                    Ok(rslts)
                 })
             })
             .await;

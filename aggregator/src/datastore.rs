@@ -3710,7 +3710,7 @@ impl Error {
     /// is_serialization_failure determines if a given error corresponds to a Postgres
     /// "serialization" failure, which requires the entire transaction to be aborted & retried from
     /// the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
-    fn is_serialization_failure(&self) -> bool {
+    pub fn is_serialization_failure(&self) -> bool {
         if let Error::Db(err) = self {
             // T_R_SERIALIZATION_FAILURE (40001) is documented as the error code which is always used
             // for serialization failures which require rollback-and-retry.
@@ -3725,7 +3725,7 @@ impl Error {
     ///
     /// The documentation recommends retrying these errors in addition to serialization failures.
     /// See https://www.postgresql.org/docs/15/mvcc-serialization-failure-handling.html
-    fn is_deadlock_failure(&self) -> bool {
+    pub fn is_deadlock_failure(&self) -> bool {
         if let Error::Db(err) = self {
             err.code()
                 .map_or(false, |c| c == &SqlState::T_R_DEADLOCK_DETECTED)
