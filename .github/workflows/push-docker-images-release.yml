@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+    - run: echo "GIT_REVISION=$(git describe --always --dirty=-modified)" >> $GITHUB_ENV
     # See https://github.com/google-github-actions/auth#authenticating-to-container-registry-and-artifact-registry
     - id: "gcp-auth-private"
       name: "Authenticate to GCP (private repositories)"
@@ -48,6 +49,7 @@ jobs:
         docker build \
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregator:${{ steps.get_version.outputs.VERSION }} \
           --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregator:${{ steps.get_version.outputs.VERSION }} \
+          --build-arg GIT_REVISION=${GIT_REVISION} \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregator:${{ steps.get_version.outputs.VERSION }}
     - run: |-
@@ -55,6 +57,7 @@ jobs:
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }} \
           --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=aggregation_job_creator \
+          --build-arg GIT_REVISION=${GIT_REVISION} \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_creator:${{ steps.get_version.outputs.VERSION }}
     - run: |-
@@ -62,6 +65,7 @@ jobs:
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }} \
           --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=aggregation_job_driver \
+          --build-arg GIT_REVISION=${GIT_REVISION} \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_aggregation_job_driver:${{ steps.get_version.outputs.VERSION }}
     - run: |-
@@ -69,6 +73,7 @@ jobs:
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }} \
           --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=collection_job_driver \
+          --build-arg GIT_REVISION=${GIT_REVISION} \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_collection_job_driver:${{ steps.get_version.outputs.VERSION }}
     - run: |-
@@ -76,6 +81,7 @@ jobs:
           --tag us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }} \
           --tag us-west2-docker.pkg.dev/divviup-artifacts-public/janus/janus_cli:${{ steps.get_version.outputs.VERSION }} \
           --build-arg BINARY=janus_cli \
+          --build-arg GIT_REVISION=${GIT_REVISION} \
           .
     - run: docker push us-west2-docker.pkg.dev/janus-artifacts/janus/janus_cli:${{ steps.get_version.outputs.VERSION }}
 
