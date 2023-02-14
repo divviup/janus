@@ -797,7 +797,8 @@ mod tests {
 
                     let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                        .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -918,7 +919,8 @@ mod tests {
 
                     let report = LeaderStoredReport::new_dummy(*task.id(), report_timestamp);
 
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                        .await?;
 
                     tx.put_report_aggregation(&ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
