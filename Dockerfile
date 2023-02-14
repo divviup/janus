@@ -17,7 +17,7 @@ COPY messages /src/messages
 ENV GIT_REVISION ${GIT_REVISION}
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target cargo build --release -p janus_aggregator --bin $BINARY --features=prometheus && cp /src/target/release/$BINARY /$BINARY
 
-FROM alpine:3.17.1
+FROM alpine:3.17.2
 ARG BINARY=aggregator
 ARG GIT_REVISION=unknown
 LABEL revision ${GIT_REVISION}
