@@ -12,7 +12,6 @@ use crate::{
         Datastore,
     },
     task::{self, PRIO3_AES128_VERIFY_KEY_LENGTH},
-    try_join,
 };
 use derivative::Derivative;
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -45,6 +44,7 @@ use prio::{
 };
 use reqwest::Method;
 use std::{sync::Arc, time::Duration};
+use tokio::try_join;
 use tracing::{info, warn};
 
 /// Drives a collection job.

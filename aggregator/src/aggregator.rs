@@ -17,7 +17,6 @@ use crate::{
     },
     messages::{DurationExt, IntervalExt, TimeExt},
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
-    try_join,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
@@ -71,7 +70,7 @@ use std::{
     sync::Arc,
     time::{Duration as StdDuration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, try_join};
 use tracing::{debug, error, info, warn};
 use url::Url;
 use warp::{cors::Cors, filters::BoxedFilter, reply::Response, trace, Filter, Rejection, Reply};

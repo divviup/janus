@@ -4,7 +4,7 @@ use crate::{
         send_request_to_helper,
     },
     datastore::{
-        self, gather_errors,
+        self,
         models::{
             AcquiredAggregationJob, AggregationJob, AggregationJobState, LeaderStoredReport, Lease,
             ReportAggregation, ReportAggregationState,
@@ -12,7 +12,6 @@ use crate::{
         Datastore,
     },
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
-    try_join,
 };
 use anyhow::{anyhow, Context as _, Result};
 use derivative::Derivative;
@@ -20,7 +19,7 @@ use derivative::Derivative;
 use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
-use futures::future::{join_all, BoxFuture, FutureExt};
+use futures::future::{try_join_all, BoxFuture, FutureExt};
 use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
@@ -46,6 +45,7 @@ use prio::{
 };
 use reqwest::Method;
 use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
+use tokio::try_join;
 use tracing::{info, warn};
 
 #[derive(Derivative)]
@@ -280,8 +280,8 @@ impl AggregationJobDriver {
                     // Read client reports, but only for report aggregations in state START.
                     // TODO(#224): create "get_client_reports_for_aggregation_job" datastore
                     // operation to avoid needing to join many futures?
-                    let client_reports = gather_errors(
-                        join_all(report_aggregations.iter().filter_map(|report_aggregation| {
+                    let client_reports =
+                        try_join_all(report_aggregations.iter().filter_map(|report_aggregation| {
                             if report_aggregation.state() == &ReportAggregationState::Start {
                                 Some(
                                     tx.get_client_report(
@@ -311,8 +311,7 @@ impl AggregationJobDriver {
                                 None
                             }
                         }))
-                        .await,
-                    )?;
+                        .await?;
 
                     Ok((
                         Arc::new(task),
@@ -753,20 +752,15 @@ impl AggregationJobDriver {
                     Arc::clone(&lease),
                 );
                 Box::pin(async move {
-                    let report_aggregations_future = join_all(
-                        report_aggregations_to_write
-                            .iter()
-                            .map(|report_aggregation| {
-                                tx.update_report_aggregation(report_aggregation)
-                            }),
-                    )
-                    .map(gather_errors);
-                    let aggregation_job_future = join_all(
+                    let report_aggregations_future =
+                        try_join_all(report_aggregations_to_write.iter().map(
+                            |report_aggregation| tx.update_report_aggregation(report_aggregation),
+                        ));
+                    let aggregation_job_future = try_join_all(
                         aggregation_job_to_write
                             .iter()
                             .map(|aggregation_job| tx.update_aggregation_job(aggregation_job)),
-                    )
-                    .map(gather_errors);
+                    );
                     let batch_aggregations_future = accumulator.flush_to_datastore(tx);
 
                     try_join!(
