@@ -8,15 +8,17 @@ use crate::{
     metrics::{install_metrics_exporter, MetricsExporterConfiguration},
     trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use backoff::{future::retry, ExponentialBackoff};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use clap::Parser;
 use deadpool::managed::TimeoutType;
 use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
+use git_version::git_version;
 use http::StatusCode;
 use janus_core::time::Clock;
+use opentelemetry::{Context, KeyValue};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};
 use std::{
     fmt::{self, Debug, Formatter},
@@ -261,6 +263,30 @@ where
         .context("couldn't install tracing subscriber")?;
     let _metrics_exporter = install_metrics_exporter(&config.common_config().metrics_config)
         .context("failed to install metrics exporter")?;
+
+    // Create build info metrics gauge.
+    let meter = opentelemetry::global::meter("janus_aggregator");
+    let gauge = meter
+        .u64_observable_gauge("janus_build_info")
+        .with_description(
+            "A metric with a constant '1' value labeled with build-time version information.",
+        )
+        .init();
+    let mut git_revision: &str = git_version!(fallback = "unknown");
+    if git_revision == "unknown" {
+        if let Some(value) = option_env!("GIT_REVISION") {
+            git_revision = value;
+        }
+    }
+    gauge.observe(
+        &Context::current(),
+        1,
+        &[
+            KeyValue::new("version", env!("CARGO_PKG_VERSION")),
+            KeyValue::new("revision", git_revision),
+            KeyValue::new("rust_version", env!("RUSTC_SEMVER")),
+        ],
+    );
 
     info!(common_options = ?options.common_options(), ?config, "Starting up");
 
