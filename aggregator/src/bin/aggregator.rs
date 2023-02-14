@@ -2,13 +2,13 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use http::HeaderMap;
 use janus_aggregator::{
-    aggregator::aggregator_server,
+    aggregator::{self, aggregator_server},
     binary_utils::{janus_main, setup_signal_handler, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
 };
 use janus_core::time::RealClock;
 use serde::{Deserialize, Serialize};
-use std::{iter::Iterator, net::SocketAddr, sync::Arc};
+use std::{iter::Iterator, net::SocketAddr, sync::Arc, time::Duration};
 use tracing::info;
 
 #[tokio::main]
@@ -20,6 +20,7 @@ async fn main() -> Result<()> {
         let (bound_address, server) = aggregator_server(
             Arc::new(ctx.datastore),
             ctx.clock,
+            ctx.config.aggregator_config(),
             ctx.config.listen_address,
             ctx.config
                 .response_header_map()
@@ -75,6 +76,8 @@ pub struct HeaderEntry {
 ///   url: "postgres://postgres:postgres@localhost:5432/postgres"
 /// logging_config: # logging_config is optional
 ///   force_json_output: true
+/// max_upload_batch_size: 100
+/// max_upload_batch_write_delay_ms: 250
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
@@ -92,6 +95,14 @@ struct Config {
     /// Additional headers that will be added to all responses.
     #[serde(default)]
     response_headers: Vec<HeaderEntry>,
+
+    /// Defines the maximum size of a batch of uploaded reports which will be written in a single
+    /// transaction.
+    max_upload_batch_size: usize,
+
+    /// Defines the maximum delay in milliseconds before writing a batch of uploaded reports, even
+    /// if it has not yet reached `max_batch_upload_size`.
+    max_upload_batch_write_delay_ms: u64,
 }
 
 impl Config {
@@ -105,6 +116,15 @@ impl Config {
                 ))
             })
             .collect()
+    }
+
+    fn aggregator_config(&self) -> aggregator::Config {
+        aggregator::Config {
+            max_upload_batch_size: self.max_upload_batch_size,
+            max_upload_batch_write_delay: Duration::from_millis(
+                self.max_upload_batch_write_delay_ms,
+            ),
+        }
     }
 }
 
@@ -123,6 +143,7 @@ mod tests {
     use super::{Config, HeaderEntry, Options};
     use clap::CommandFactory;
     use janus_aggregator::{
+        aggregator,
         config::{
             test_util::{
                 generate_db_config, generate_metrics_config, generate_trace_config,
@@ -138,6 +159,7 @@ mod tests {
     use std::{
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        time::Duration,
     };
 
     #[test]
@@ -159,6 +181,8 @@ mod tests {
                 name: "name".to_owned(),
                 value: "value".to_owned(),
             }]),
+            max_upload_batch_size: 100,
+            max_upload_batch_write_delay_ms: 250,
         })
     }
 
@@ -177,6 +201,8 @@ mod tests {
         tokio_console_config:
             enabled: true
             listen_address: 127.0.0.1:6669
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
     "#
             )
             .unwrap()
@@ -201,7 +227,33 @@ mod tests {
         url: "postgres://postgres:postgres@localhost:5432/postgres"
         connection_pool_timeouts_secs: 60
     logging_config:
+        tokio_console_config:
+            enabled: true
+            listen_address: 127.0.0.1:6669
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
+    "#
+            )
+            .unwrap()
+            .aggregator_config(),
+            aggregator::Config {
+                max_upload_batch_size: 100,
+                max_upload_batch_write_delay: Duration::from_millis(250),
+            }
+        );
+
+        assert_eq!(
+            serde_yaml::from_str::<Config>(
+                r#"---
+    listen_address: "0.0.0.0:8080"
+    health_check_listen_address: "0.0.0.0:8080"
+    database:
+        url: "postgres://postgres:postgres@localhost:5432/postgres"
+        connection_pool_timeouts_secs: 60
+    logging_config:
         open_telemetry_config: jaeger
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
     "#
             )
             .unwrap()
@@ -225,6 +277,8 @@ mod tests {
                 endpoint: "https://api.honeycomb.io:443"
                 metadata:
                     x-honeycomb-team: "YOUR_API_KEY"
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
     "#
             )
             .unwrap()
@@ -255,6 +309,8 @@ mod tests {
             prometheus:
                 host: 0.0.0.0
                 port: 9464
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
     "#
             )
             .unwrap()
@@ -282,6 +338,8 @@ mod tests {
                 metadata:
                     x-honeycomb-team: "YOUR_API_KEY"
                     x-honeycomb-dataset: "YOUR_METRICS_DATASET"
+    max_upload_batch_size: 100
+    max_upload_batch_write_delay_ms: 250
     "#
             )
             .unwrap()

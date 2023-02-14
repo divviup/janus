@@ -239,6 +239,8 @@ async fn server_shutdown() {
         "listen_address".into(),
         format!("{aggregator_listen_address}").into(),
     );
+    config.insert("max_upload_batch_size".into(), 100.into());
+    config.insert("max_upload_batch_write_delay_ms".into(), 250.into());
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregator"), config).await;
 }

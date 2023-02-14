@@ -2,7 +2,7 @@ use anyhow::Context;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::aggregator_filter,
+    aggregator::{self, aggregator_filter},
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
     datastore::Datastore,
@@ -113,7 +113,14 @@ fn make_filter(
     dap_serving_prefix: String,
 ) -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
     let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
-    let dap_filter = aggregator_filter(Arc::clone(&datastore), RealClock::default())?;
+    let dap_filter = aggregator_filter(
+        Arc::clone(&datastore),
+        RealClock::default(),
+        aggregator::Config {
+            max_upload_batch_size: 100,
+            max_upload_batch_write_delay: std::time::Duration::from_millis(100),
+        },
+    )?;
 
     // Respect dap_serving_prefix.
     let dap_filter = dap_serving_prefix

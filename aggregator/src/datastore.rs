@@ -1232,7 +1232,8 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// `put_client_report` stores a client report, the associated plaintext leader input share and
-    /// the associated encrypted helper share.
+    /// the associated encrypted helper share. If the client report was already stored, returns
+    /// a `MutationTargetAlreadyExisted` error.
     #[tracing::instrument(skip(self), err)]
     pub(crate) async fn put_client_report<const L: usize, A>(
         &self,
@@ -1262,10 +1263,12 @@ impl<C: Clock> Transaction<'_, C> {
                     leader_input_share,
                     helper_encrypted_input_share
                 )
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)
+                ON CONFLICT DO NOTHING",
             )
             .await?;
-        self.tx
+        let rows_affected = self
+            .tx
             .execute(
                 &stmt,
                 &[
@@ -1279,6 +1282,9 @@ impl<C: Clock> Transaction<'_, C> {
                 ],
             )
             .await?;
+        if rows_affected == 0 {
+            return Err(Error::MutationTargetAlreadyExisted);
+        }
         Ok(())
     }
 
@@ -3666,9 +3672,12 @@ pub enum Error {
     Pool(#[from] deadpool_postgres::PoolError),
     #[error("crypter error")]
     Crypt,
-    /// An attempt was made to mutate a row that does not exist.
+    /// An attempt was made to mutate an entity that does not exist.
     #[error("not found in datastore")]
     MutationTargetNotFound,
+    /// An attempt was made to insert an entity that already existed.
+    #[error("already in datastore")]
+    MutationTargetAlreadyExisted,
     /// The database was in an unexpected state.
     #[error("inconsistent database state: {0}")]
     DbState(String),
@@ -3700,8 +3709,8 @@ pub enum Error {
 impl Error {
     /// is_serialization_failure determines if a given error corresponds to a Postgres
     /// "serialization" failure, which requires the entire transaction to be aborted & retried from
-    /// the beginning per https://www.postgresql.org/docs/current/transaction-iso.html.
-    fn is_serialization_failure(&self) -> bool {
+    /// the beginning per <https://www.postgresql.org/docs/current/transaction-iso.html>.
+    pub fn is_serialization_failure(&self) -> bool {
         if let Error::Db(err) = self {
             // T_R_SERIALIZATION_FAILURE (40001) is documented as the error code which is always used
             // for serialization failures which require rollback-and-retry.
@@ -3715,8 +3724,8 @@ impl Error {
     /// Check if this error is due to a Postgres deadlock failure.
     ///
     /// The documentation recommends retrying these errors in addition to serialization failures.
-    /// See https://www.postgresql.org/docs/15/mvcc-serialization-failure-handling.html
-    fn is_deadlock_failure(&self) -> bool {
+    /// See <https://www.postgresql.org/docs/15/mvcc-serialization-failure-handling.html>
+    pub fn is_deadlock_failure(&self) -> bool {
         if let Error::Db(err) = self {
             err.code()
                 .map_or(false, |c| c == &SqlState::T_R_DEADLOCK_DETECTED)
@@ -3846,8 +3855,6 @@ pub mod models {
     impl<const L: usize, A> LeaderStoredReport<L, A>
     where
         A: vdaf::Aggregator<L>,
-        A::InputShare: PartialEq,
-        A::PublicShare: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         pub fn new(
@@ -5370,12 +5377,10 @@ mod tests {
         )
         .build();
 
+        let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let report: LeaderStoredReport<0, dummy_vdaf::Vdaf> = LeaderStoredReport::new(
             *task.id(),
-            ReportMetadata::new(
-                ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-                Time::from_seconds_since_epoch(12345),
-            ),
+            ReportMetadata::new(report_id, Time::from_seconds_since_epoch(12345)),
             (), // public share
             Vec::from([
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
@@ -5403,7 +5408,6 @@ mod tests {
         let retrieved_report = ds
             .run_tx(|tx| {
                 let task_id = *report.task_id();
-                let report_id = *report.metadata().id();
                 Box::pin(async move {
                     tx.get_client_report::<0, dummy_vdaf::Vdaf>(
                         &dummy_vdaf::Vdaf::new(),
@@ -5419,6 +5423,33 @@ mod tests {
 
         assert_eq!(report.task_id(), retrieved_report.task_id());
         assert_eq!(report.metadata(), retrieved_report.metadata());
+
+        // Try to write a different report with the same ID, and verify we get the expected error.
+        let result = ds
+            .run_tx(|tx| {
+                let task_id = *report.task_id();
+                Box::pin(async move {
+                    tx.put_client_report(&LeaderStoredReport::<0, dummy_vdaf::Vdaf>::new(
+                        task_id,
+                        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321)),
+                        (), // public share
+                        Vec::from([
+                            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_2")),
+                            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_3")),
+                        ]),
+                        (), // leader input share
+                        /* Dummy ciphertext for the helper share */
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(14),
+                            Vec::from("encapsulated_context_2"),
+                            Vec::from("payload_2"),
+                        ),
+                    ))
+                    .await
+                })
+            })
+            .await;
+        assert_matches!(result, Err(Error::MutationTargetAlreadyExisted));
     }
 
     #[tokio::test]
