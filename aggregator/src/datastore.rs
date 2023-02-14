@@ -1,10 +1,10 @@
 //! Janus datastore (durable storage) implementation.
 
 use self::models::{
-    AcquiredAggregationJob, AcquiredCollectJob, AggregateShareJob, AggregationJob, AggregatorRole,
-    BatchAggregation, CollectJob, CollectJobState, CollectJobStateCode, LeaderStoredReport, Lease,
-    LeaseToken, OutstandingBatch, ReportAggregation, ReportAggregationState,
-    ReportAggregationStateCode, SqlInterval,
+    AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
+    AggregatorRole, BatchAggregation, CollectionJob, CollectionJobState, CollectionJobStateCode,
+    LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
+    ReportAggregationState, ReportAggregationStateCode, SqlInterval,
 };
 #[cfg(test)]
 use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
@@ -24,8 +24,8 @@ use janus_core::{
 };
 use janus_messages::{
     query_type::{QueryType, TimeInterval},
-    AggregationJobId, BatchId, Duration, Extension, HpkeCiphertext, HpkeConfig, Interval, ReportId,
-    ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
+    AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, HpkeConfig,
+    Interval, ReportId, ReportIdChecksum, ReportMetadata, ReportShare, Role, TaskId, Time,
 };
 use opentelemetry::{
     metrics::{Counter, Histogram},
@@ -51,7 +51,6 @@ use std::{
 };
 use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
 use url::Url;
-use uuid::Uuid;
 
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
@@ -1025,7 +1024,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// transaction.
     ///
     /// This should only be used with VDAFs that have an aggregation parameter of the unit type. It
-    /// relies on this assumption to find relevant reports without consulting collect jobs. For
+    /// relies on this assumption to find relevant reports without consulting collection jobs. For
     /// VDAFs that do have a different aggregation parameter,
     /// `get_unaggregated_client_report_ids_by_collect_for_task` should be used instead.
     #[tracing::instrument(skip(self), err)]
@@ -1068,7 +1067,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// This should only be used with VDAFs with a non-unit type aggregation parameter. If a VDAF
     /// has the unit type as its aggregation parameter, then
     /// `get_unaggregated_client_report_ids_for_task` should be used instead. In such cases, it is
-    /// not necessary to wait for a collect job to arrive before preparing reports.
+    /// not necessary to wait for a collection job to arrive before preparing reports.
     #[cfg(test)]
     #[tracing::instrument(skip(self), err)]
     pub async fn get_unaggregated_client_report_ids_by_collect_for_task<const L: usize, A>(
@@ -1084,11 +1083,11 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "WITH unaggregated_client_report_ids AS (
-                    SELECT DISTINCT report_id, client_timestamp, collect_jobs.aggregation_param
-                    FROM collect_jobs
+                    SELECT DISTINCT report_id, client_timestamp, collection_jobs.aggregation_param
+                    FROM collection_jobs
                     INNER JOIN client_reports
-                    ON collect_jobs.task_id = client_reports.task_id
-                    AND client_reports.client_timestamp <@ collect_jobs.batch_interval
+                    ON collection_jobs.task_id = client_reports.task_id
+                    AND client_reports.client_timestamp <@ collection_jobs.batch_interval
                     LEFT JOIN (
                         SELECT report_aggregations.id, report_aggregations.client_report_id,
                             aggregation_jobs.aggregation_param
@@ -1098,10 +1097,10 @@ impl<C: Clock> Transaction<'_, C> {
                         WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                     ) AS report_aggs
                     ON report_aggs.client_report_id = client_reports.id
-                    AND report_aggs.aggregation_param = collect_jobs.aggregation_param
+                    AND report_aggs.aggregation_param = collection_jobs.aggregation_param
                     WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                    AND collect_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                    AND collect_jobs.state = 'START'
+                    AND collection_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND collection_jobs.state = 'START'
                     AND report_aggs.id IS NULL
                     LIMIT 5000
                 ),
@@ -1415,7 +1414,7 @@ impl<C: Clock> Transaction<'_, C> {
             .map(|row| {
                 Self::aggregation_job_from_row(
                     task_id,
-                    &AggregationJobId::get_decoded(row.get("aggregation_job_id"))?,
+                    &row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?,
                     &row,
                 )
             })
@@ -1494,7 +1493,7 @@ impl<C: Clock> Transaction<'_, C> {
             .map(|row| {
                 let task_id = TaskId::get_decoded(row.get("task_id"))?;
                 let aggregation_job_id =
-                    AggregationJobId::get_decoded(row.get("aggregation_job_id"))?;
+                    row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?;
                 let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
                 let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
@@ -1938,33 +1937,12 @@ impl<C: Clock> Transaction<'_, C> {
         )
     }
 
-    /// Returns the task ID for the provided collect job ID, or `None` if no such collect job
-    /// exists.
+    /// Returns the collection job for the provided ID, or `None` if no such collection job exists.
     #[tracing::instrument(skip(self), err)]
-    pub async fn get_collect_job_task_id(
+    pub async fn get_collection_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
         &self,
-        collect_job_id: &Uuid,
-    ) -> Result<Option<TaskId>, Error> {
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "SELECT task_id FROM tasks
-                WHERE id = (SELECT task_id FROM collect_jobs WHERE collect_job_id = $1)",
-            )
-            .await?;
-        self.tx
-            .query_opt(&stmt, &[&collect_job_id])
-            .await?
-            .map(|row| TaskId::get_decoded(row.get("task_id")).map_err(Error::from))
-            .transpose()
-    }
-
-    /// Returns the collect job for the provided UUID, or `None` if no such collect job exists.
-    #[tracing::instrument(skip(self), err)]
-    pub async fn get_collect_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
-        &self,
-        collect_job_id: &Uuid,
-    ) -> Result<Option<CollectJob<L, Q, A>>, Error>
+        collection_job_id: &CollectionJobId,
+    ) -> Result<Option<CollectionJob<L, Q, A>>, Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -1974,72 +1952,35 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "SELECT
                     tasks.task_id,
-                    collect_jobs.batch_identifier,
-                    collect_jobs.aggregation_param,
-                    collect_jobs.state,
-                    collect_jobs.report_count,
-                    collect_jobs.helper_aggregate_share,
-                    collect_jobs.leader_aggregate_share
-                FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
-                WHERE collect_jobs.collect_job_id = $1",
+                    collection_jobs.batch_identifier,
+                    collection_jobs.aggregation_param,
+                    collection_jobs.state,
+                    collection_jobs.report_count,
+                    collection_jobs.helper_aggregate_share,
+                    collection_jobs.leader_aggregate_share
+                FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
+                WHERE collection_jobs.collection_job_id = $1",
             )
             .await?;
         self.tx
-            .query_opt(&stmt, &[&collect_job_id])
+            .query_opt(&stmt, &[&collection_job_id.as_ref()])
             .await?
             .map(|row| {
                 let task_id = TaskId::get_decoded(row.get("task_id"))?;
                 let batch_identifier =
                     Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-                Self::collect_job_from_row(task_id, batch_identifier, *collect_job_id, &row)
+                Self::collection_job_from_row(task_id, batch_identifier, *collection_job_id, &row)
             })
             .transpose()
     }
 
-    /// If a collect job corresponding to the provided values exists, its UUID is returned, which
-    /// may then be used to construct a collect job URI. If that collect job does not exist, returns
-    /// `Ok(None)`.
-    #[tracing::instrument(skip(self, aggregation_parameter), err)]
-    pub(crate) async fn get_collect_job_id<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
-        &self,
-        task_id: &TaskId,
-        batch_identifier: &Q::BatchIdentifier,
-        aggregation_parameter: &A::AggregationParam,
-    ) -> Result<Option<Uuid>, Error>
-    where
-        A::AggregationParam: Encode + std::fmt::Debug,
-        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-    {
-        let stmt = self
-            .tx
-            .prepare_cached(
-                "SELECT collect_job_id FROM collect_jobs
-                WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
-                AND batch_identifier = $2 AND aggregation_param = $3",
-            )
-            .await?;
-        let row = self
-            .tx
-            .query_opt(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* batch_identifier */ &batch_identifier.get_encoded(),
-                    /* aggregation_param */ &aggregation_parameter.get_encoded(),
-                ],
-            )
-            .await?;
-
-        Ok(row.map(|row| row.get("collect_job_id")))
-    }
-
-    /// Returns all collect jobs for the given task which include the given timestamp. Applies only
+    /// Returns all collection jobs for the given task which include the given timestamp. Applies only
     /// to time-interval tasks.
-    pub async fn get_collect_jobs_including_time<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn get_collection_jobs_including_time<const L: usize, A: vdaf::Aggregator<L>>(
         &self,
         task_id: &TaskId,
         timestamp: &Time,
-    ) -> Result<Vec<CollectJob<L, TimeInterval, A>>, Error>
+    ) -> Result<Vec<CollectionJob<L, TimeInterval, A>>, Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -2048,16 +1989,16 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT
-                    collect_jobs.collect_job_id,
-                    collect_jobs.batch_identifier,
-                    collect_jobs.aggregation_param,
-                    collect_jobs.state,
-                    collect_jobs.report_count,
-                    collect_jobs.helper_aggregate_share,
-                    collect_jobs.leader_aggregate_share
-                FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
+                    collection_jobs.collection_job_id,
+                    collection_jobs.batch_identifier,
+                    collection_jobs.aggregation_param,
+                    collection_jobs.state,
+                    collection_jobs.report_count,
+                    collection_jobs.helper_aggregate_share,
+                    collection_jobs.leader_aggregate_share
+                FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND collect_jobs.batch_interval @> $2::TIMESTAMP",
+                  AND collection_jobs.batch_interval @> $2::TIMESTAMP",
             )
             .await?;
         self.tx
@@ -2072,19 +2013,20 @@ impl<C: Clock> Transaction<'_, C> {
             .into_iter()
             .map(|row| {
                 let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
-                let collect_job_id = row.get("collect_job_id");
-                Self::collect_job_from_row(*task_id, batch_identifier, collect_job_id, &row)
+                let collection_job_id =
+                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+                Self::collection_job_from_row(*task_id, batch_identifier, collection_job_id, &row)
             })
             .collect()
     }
 
-    /// Returns all collect jobs for the given task whose collect intervals intersect with the given
+    /// Returns all collection jobs for the given task whose collect intervals intersect with the given
     /// interval. Applies only to time-interval tasks.
-    pub async fn get_collect_jobs_intersecting_interval<const L: usize, A: vdaf::Aggregator<L>>(
+    pub async fn get_collection_jobs_intersecting_interval<const L: usize, A: vdaf::Aggregator<L>>(
         &self,
         task_id: &TaskId,
         batch_interval: &Interval,
-    ) -> Result<Vec<CollectJob<L, TimeInterval, A>>, Error>
+    ) -> Result<Vec<CollectionJob<L, TimeInterval, A>>, Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -2093,16 +2035,16 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT
-                    collect_jobs.collect_job_id,
-                    collect_jobs.batch_identifier,
-                    collect_jobs.aggregation_param,
-                    collect_jobs.state,
-                    collect_jobs.report_count,
-                    collect_jobs.helper_aggregate_share,
-                    collect_jobs.leader_aggregate_share
-                FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
+                    collection_jobs.collection_job_id,
+                    collection_jobs.batch_identifier,
+                    collection_jobs.aggregation_param,
+                    collection_jobs.state,
+                    collection_jobs.report_count,
+                    collection_jobs.helper_aggregate_share,
+                    collection_jobs.leader_aggregate_share
+                FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND collect_jobs.batch_interval && $2",
+                  AND collection_jobs.batch_interval && $2",
             )
             .await?;
         self.tx
@@ -2117,20 +2059,21 @@ impl<C: Clock> Transaction<'_, C> {
             .into_iter()
             .map(|row| {
                 let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
-                let collect_job_id = row.get("collect_job_id");
-                Self::collect_job_from_row::<L, TimeInterval, A>(
+                let collection_job_id =
+                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+                Self::collection_job_from_row::<L, TimeInterval, A>(
                     *task_id,
                     batch_identifier,
-                    collect_job_id,
+                    collection_job_id,
                     &row,
                 )
             })
             .collect()
     }
 
-    /// Retrieves all collect jobs for the given batch identifier. Multiple collect jobs may be
+    /// Retrieves all collection jobs for the given batch identifier. Multiple collection jobs may be
     /// returned with distinct aggregation parameters.
-    pub async fn get_collect_jobs_by_batch_identifier<
+    pub async fn get_collection_jobs_by_batch_identifier<
         const L: usize,
         Q: QueryType,
         A: vdaf::Aggregator<L>,
@@ -2138,7 +2081,7 @@ impl<C: Clock> Transaction<'_, C> {
         &self,
         task_id: &TaskId,
         batch_identifier: &Q::BatchIdentifier,
-    ) -> Result<Vec<CollectJob<L, Q, A>>, Error>
+    ) -> Result<Vec<CollectionJob<L, Q, A>>, Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -2147,15 +2090,15 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT
-                    collect_jobs.collect_job_id,
-                    collect_jobs.aggregation_param,
-                    collect_jobs.state,
-                    collect_jobs.report_count,
-                    collect_jobs.helper_aggregate_share,
-                    collect_jobs.leader_aggregate_share
-                FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
+                    collection_jobs.collection_job_id,
+                    collection_jobs.aggregation_param,
+                    collection_jobs.state,
+                    collection_jobs.report_count,
+                    collection_jobs.helper_aggregate_share,
+                    collection_jobs.leader_aggregate_share
+                FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1
-                  AND collect_jobs.batch_identifier = $2",
+                  AND collection_jobs.batch_identifier = $2",
             )
             .await?;
         self.tx
@@ -2169,17 +2112,27 @@ impl<C: Clock> Transaction<'_, C> {
             .await?
             .into_iter()
             .map(|row| {
-                let collect_job_id = row.get("collect_job_id");
-                Self::collect_job_from_row(*task_id, batch_identifier.clone(), collect_job_id, &row)
+                let collection_job_id =
+                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+                Self::collection_job_from_row(
+                    *task_id,
+                    batch_identifier.clone(),
+                    collection_job_id,
+                    &row,
+                )
             })
             .collect()
     }
 
     #[cfg(feature = "test-util")]
-    pub async fn get_collect_jobs_for_task<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub async fn get_collection_jobs_for_task<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
         task_id: &TaskId,
-    ) -> Result<Vec<CollectJob<L, Q, A>>, Error>
+    ) -> Result<Vec<CollectionJob<L, Q, A>>, Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -2188,14 +2141,14 @@ impl<C: Clock> Transaction<'_, C> {
             .tx
             .prepare_cached(
                 "SELECT
-                    collect_jobs.collect_job_id,
-                    collect_jobs.batch_identifier,
-                    collect_jobs.aggregation_param,
-                    collect_jobs.state,
-                    collect_jobs.report_count,
-                    collect_jobs.helper_aggregate_share,
-                    collect_jobs.leader_aggregate_share
-                FROM collect_jobs JOIN tasks ON tasks.id = collect_jobs.task_id
+                    collection_jobs.collection_job_id,
+                    collection_jobs.batch_identifier,
+                    collection_jobs.aggregation_param,
+                    collection_jobs.state,
+                    collection_jobs.report_count,
+                    collection_jobs.helper_aggregate_share,
+                    collection_jobs.leader_aggregate_share
+                FROM collection_jobs JOIN tasks ON tasks.id = collection_jobs.task_id
                 WHERE tasks.task_id = $1",
             )
             .await?;
@@ -2204,43 +2157,44 @@ impl<C: Clock> Transaction<'_, C> {
             .await?
             .into_iter()
             .map(|row| {
-                let collect_job_id = row.get("collect_job_id");
+                let collection_job_id =
+                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
                 let batch_identifier =
                     Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
-                Self::collect_job_from_row(*task_id, batch_identifier, collect_job_id, &row)
+                Self::collection_job_from_row(*task_id, batch_identifier, collection_job_id, &row)
             })
             .collect()
     }
 
-    fn collect_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    fn collection_job_from_row<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
         task_id: TaskId,
         batch_identifier: Q::BatchIdentifier,
-        collect_job_id: Uuid,
+        collection_job_id: CollectionJobId,
         row: &Row,
-    ) -> Result<CollectJob<L, Q, A>, Error>
+    ) -> Result<CollectionJob<L, Q, A>, Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-        let state: CollectJobStateCode = row.get("state");
+        let state: CollectionJobStateCode = row.get("state");
         let report_count: Option<i64> = row.get("report_count");
         let helper_aggregate_share_bytes: Option<Vec<u8>> = row.get("helper_aggregate_share");
         let leader_aggregate_share_bytes: Option<Vec<u8>> = row.get("leader_aggregate_share");
 
         let state = match state {
-            CollectJobStateCode::Start => CollectJobState::Start,
+            CollectionJobStateCode::Start => CollectionJobState::Start,
 
-            CollectJobStateCode::Finished => {
+            CollectionJobStateCode::Finished => {
                 let report_count = u64::try_from(report_count.ok_or_else(|| {
                     Error::DbState(
-                        "collect job in state FINISHED but report_count is NULL".to_string(),
+                        "collection job in state FINISHED but report_count is NULL".to_string(),
                     )
                 })?)?;
                 let encrypted_helper_aggregate_share = HpkeCiphertext::get_decoded(
                     &helper_aggregate_share_bytes.ok_or_else(|| {
                         Error::DbState(
-                            "collect job in state FINISHED but helper_aggregate_share is NULL"
+                            "collection job in state FINISHED but helper_aggregate_share is NULL"
                                 .to_string(),
                         )
                     })?,
@@ -2248,7 +2202,7 @@ impl<C: Clock> Transaction<'_, C> {
                 let leader_aggregate_share = A::AggregateShare::try_from(
                     &leader_aggregate_share_bytes.ok_or_else(|| {
                         Error::DbState(
-                            "collect job is in state FINISHED but leader_aggregate_share is NULL"
+                            "collection job is in state FINISHED but leader_aggregate_share is NULL"
                                 .to_string(),
                         )
                     })?,
@@ -2258,49 +2212,49 @@ impl<C: Clock> Transaction<'_, C> {
                         "leader_aggregate_share stored in database is invalid: {err:?}"
                     ))
                 })?;
-                CollectJobState::Finished {
+                CollectionJobState::Finished {
                     report_count,
                     encrypted_helper_aggregate_share,
                     leader_aggregate_share,
                 }
             }
 
-            CollectJobStateCode::Abandoned => CollectJobState::Abandoned,
+            CollectionJobStateCode::Abandoned => CollectionJobState::Abandoned,
 
-            CollectJobStateCode::Deleted => CollectJobState::Deleted,
+            CollectionJobStateCode::Deleted => CollectionJobState::Deleted,
         };
 
-        Ok(CollectJob::new(
+        Ok(CollectionJob::new(
             task_id,
-            collect_job_id,
+            collection_job_id,
             batch_identifier,
             aggregation_param,
             state,
         ))
     }
 
-    /// Stores a new collect job.
+    /// Stores a new collection job.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn put_collect_job<
+    pub(crate) async fn put_collection_job<
         const L: usize,
         Q: CollectableQueryType,
         A: vdaf::Aggregator<L>,
     >(
         &self,
-        collect_job: &CollectJob<L, Q, A>,
+        collection_job: &CollectionJob<L, Q, A>,
     ) -> Result<(), Error>
     where
         A::AggregationParam: Encode + std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let batch_interval =
-            Q::to_batch_interval(collect_job.batch_identifier()).map(SqlInterval::from);
+            Q::to_batch_interval(collection_job.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
             .tx
             .prepare_cached(
-                "INSERT INTO collect_jobs
-                    (collect_job_id, task_id, batch_identifier, batch_interval, aggregation_param,
+                "INSERT INTO collection_jobs
+                    (collection_job_id, task_id, batch_identifier, batch_interval, aggregation_param,
                     state)
                 VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, $6)",
             )
@@ -2309,13 +2263,13 @@ impl<C: Clock> Transaction<'_, C> {
             .execute(
                 &stmt,
                 &[
-                    /* collect_job_id */ collect_job.collect_job_id(),
-                    /* task_id */ collect_job.task_id().as_ref(),
-                    /* batch_identifier */ &collect_job.batch_identifier().get_encoded(),
+                    /* collection_job_id */ collection_job.collection_job_id().as_ref(),
+                    /* task_id */ collection_job.task_id().as_ref(),
+                    /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
                     /* batch_interval */ &batch_interval,
                     /* aggregation_param */
-                    &collect_job.aggregation_parameter().get_encoded(),
-                    /* state */ &collect_job.state().collect_job_state_code(),
+                    &collection_job.aggregation_parameter().get_encoded(),
+                    /* state */ &collection_job.state().collection_job_state_code(),
                 ],
             )
             .await?;
@@ -2323,15 +2277,15 @@ impl<C: Clock> Transaction<'_, C> {
         Ok(())
     }
 
-    /// acquire_incomplete_time_interval_collect_jobs retrieves & acquires the IDs of unclaimed
-    /// incomplete collect jobs. At most `maximum_acquire_count` jobs are acquired. The job is
+    /// acquire_incomplete_time_interval_collection_jobs retrieves & acquires the IDs of unclaimed
+    /// incomplete collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is
     /// acquired with a "lease" that will time out; the desired duration of the lease is a
     /// parameter, and the lease expiration time is returned. Applies only to time-interval tasks.
-    pub async fn acquire_incomplete_time_interval_collect_jobs(
+    pub async fn acquire_incomplete_time_interval_collection_jobs(
         &self,
         lease_duration: &StdDuration,
         maximum_acquire_count: usize,
-    ) -> Result<Vec<Lease<AcquiredCollectJob>>, Error> {
+    ) -> Result<Vec<Lease<AcquiredCollectionJob>>, Error> {
         let now = self.clock.now().as_naive_date_time()?;
         let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
@@ -2341,36 +2295,36 @@ impl<C: Clock> Transaction<'_, C> {
             .prepare_cached(
                 "
 WITH updated as (
-    UPDATE collect_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
+    UPDATE collection_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
     FROM tasks
-    WHERE collect_jobs.id IN (
-        SELECT collect_jobs.id FROM collect_jobs
+    WHERE collection_jobs.id IN (
+        SELECT collection_jobs.id FROM collection_jobs
         -- Join on aggregation jobs with matching task ID, matching aggregation parameter, and
         -- subsets of the batch interval
         INNER JOIN aggregation_jobs
-            ON collect_jobs.aggregation_param = aggregation_jobs.aggregation_param
-            AND collect_jobs.task_id = aggregation_jobs.task_id
-            AND collect_jobs.batch_interval && aggregation_jobs.client_timestamp_interval
+            ON collection_jobs.aggregation_param = aggregation_jobs.aggregation_param
+            AND collection_jobs.task_id = aggregation_jobs.task_id
+            AND collection_jobs.batch_interval && aggregation_jobs.client_timestamp_interval
         WHERE
             -- Constraint for tasks table in FROM position
-            tasks.id = collect_jobs.task_id
-            -- Only return time interval collect jobs.
+            tasks.id = collection_jobs.task_id
+            -- Only return time interval collection jobs.
             AND tasks.query_type ? 'TimeInterval'
-            -- Only acquire collect jobs in a non-terminal state.
-            AND collect_jobs.state = 'START'
-            -- Do not acquire collect jobs with an unexpired lease
-            AND collect_jobs.lease_expiry <= $2
-        GROUP BY collect_jobs.id
-        -- Do not acquire collect jobs where any associated aggregation jobs are not finished
+            -- Only acquire collection jobs in a non-terminal state.
+            AND collection_jobs.state = 'START'
+            -- Do not acquire collection jobs with an unexpired lease
+            AND collection_jobs.lease_expiry <= $2
+        GROUP BY collection_jobs.id
+        -- Do not acquire collection jobs where any associated aggregation jobs are not finished
         HAVING bool_and(aggregation_jobs.state != 'IN_PROGRESS')
-        -- Honor maximum_acquire_count *after* winnowing down to runnable collect jobs
+        -- Honor maximum_acquire_count *after* winnowing down to runnable collection jobs
         LIMIT $3
     )
-    RETURNING tasks.task_id, tasks.query_type, tasks.vdaf, collect_jobs.collect_job_id,
-              collect_jobs.id, collect_jobs.lease_token, collect_jobs.lease_attempts
+    RETURNING tasks.task_id, tasks.query_type, tasks.vdaf, collection_jobs.collection_job_id,
+              collection_jobs.id, collection_jobs.lease_token, collection_jobs.lease_attempts
 )
-SELECT task_id, query_type, vdaf, collect_job_id, lease_token, lease_attempts FROM updated
--- TODO (#174): revisit collect job queueing behavior implied by this ORDER BY
+SELECT task_id, query_type, vdaf, collection_job_id, lease_token, lease_attempts FROM updated
+-- TODO (#174): revisit collection job queueing behavior implied by this ORDER BY
 ORDER BY id DESC
 ",
             )
@@ -2388,13 +2342,14 @@ ORDER BY id DESC
             .into_iter()
             .map(|row| {
                 let task_id = TaskId::get_decoded(row.get("task_id"))?;
-                let collect_job_id = row.get("collect_job_id");
+                let collection_job_id =
+                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
                 let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
                 let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
                 let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
                 Ok(Lease::new(
-                    AcquiredCollectJob::new(task_id, collect_job_id, query_type, vdaf),
+                    AcquiredCollectionJob::new(task_id, collection_job_id, query_type, vdaf),
                     lease_expiry_time,
                     lease_token,
                     lease_attempts,
@@ -2403,15 +2358,15 @@ ORDER BY id DESC
             .collect()
     }
 
-    /// acquire_incomplete_fixed_size_collect_jobs retrieves & acquires the IDs of unclaimed
-    /// incomplete collect jobs. At most `maximum_acquire_count` jobs are acquired. The job is
+    /// acquire_incomplete_fixed_size_collection_jobs retrieves & acquires the IDs of unclaimed
+    /// incomplete collection jobs. At most `maximum_acquire_count` jobs are acquired. The job is
     /// acquired with a "lease" that will time out; the desired duration of the lease is a
     /// parameter, and the lease expiration time is returned. Applies only to fixed-size tasks.
-    pub async fn acquire_incomplete_fixed_size_collect_jobs(
+    pub async fn acquire_incomplete_fixed_size_collection_jobs(
         &self,
         lease_duration: &StdDuration,
         maximum_acquire_count: usize,
-    ) -> Result<Vec<Lease<AcquiredCollectJob>>, Error> {
+    ) -> Result<Vec<Lease<AcquiredCollectionJob>>, Error> {
         let now = self.clock.now().as_naive_date_time()?;
         let lease_expiry_time = add_naive_date_time_duration(&now, lease_duration)?;
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
@@ -2421,36 +2376,36 @@ ORDER BY id DESC
             .prepare_cached(
                 "
 WITH updated as (
-    UPDATE collect_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
+    UPDATE collection_jobs SET lease_expiry = $1, lease_token = gen_random_bytes(16), lease_attempts = lease_attempts + 1
     FROM tasks
-    WHERE collect_jobs.id IN (
-        SELECT collect_jobs.id FROM collect_jobs
+    WHERE collection_jobs.id IN (
+        SELECT collection_jobs.id FROM collection_jobs
         -- Join on aggregation jobs with matching task ID, matching aggregation parameter, and
         -- matching batch identifier.
         INNER JOIN aggregation_jobs
-            ON collect_jobs.aggregation_param = aggregation_jobs.aggregation_param
-            AND collect_jobs.task_id = aggregation_jobs.task_id
-            AND collect_jobs.batch_identifier = aggregation_jobs.batch_id
+            ON collection_jobs.aggregation_param = aggregation_jobs.aggregation_param
+            AND collection_jobs.task_id = aggregation_jobs.task_id
+            AND collection_jobs.batch_identifier = aggregation_jobs.batch_id
         WHERE
             -- Constraint for tasks table in FROM position
-            tasks.id = collect_jobs.task_id
-            -- Only return fixed-size collect jobs.
+            tasks.id = collection_jobs.task_id
+            -- Only return fixed-size collection jobs.
             AND tasks.query_type ? 'FixedSize'
-            -- Only acquire collect jobs in a non-terminal state.
-            AND collect_jobs.state = 'START'
-            -- Do not acquire collect jobs with an unexpired lease
-            AND collect_jobs.lease_expiry <= $2
-        GROUP BY collect_jobs.id
-        -- Do not acquire collect jobs where any associated aggregation jobs are not finished
+            -- Only acquire collection jobs in a non-terminal state.
+            AND collection_jobs.state = 'START'
+            -- Do not acquire collection jobs with an unexpired lease
+            AND collection_jobs.lease_expiry <= $2
+        GROUP BY collection_jobs.id
+        -- Do not acquire collection jobs where any associated aggregation jobs are not finished
         HAVING bool_and(aggregation_jobs.state != 'IN_PROGRESS')
-        -- Honor maximum_acquire_count *after* winnowing down to runnable collect jobs
+        -- Honor maximum_acquire_count *after* winnowing down to runnable collection jobs
         LIMIT $3
     )
-    RETURNING tasks.task_id, tasks.query_type, tasks.vdaf, collect_jobs.collect_job_id,
-              collect_jobs.id, collect_jobs.lease_token, collect_jobs.lease_attempts
+    RETURNING tasks.task_id, tasks.query_type, tasks.vdaf, collection_jobs.collection_job_id,
+              collection_jobs.id, collection_jobs.lease_token, collection_jobs.lease_attempts
 )
-SELECT task_id, query_type, vdaf, collect_job_id, lease_token, lease_attempts FROM updated
--- TODO (#174): revisit collect job queueing behavior implied by this ORDER BY
+SELECT task_id, query_type, vdaf, collection_job_id, lease_token, lease_attempts FROM updated
+-- TODO (#174): revisit collection job queueing behavior implied by this ORDER BY
 ORDER BY id DESC
 ",
             )
@@ -2468,13 +2423,14 @@ ORDER BY id DESC
             .into_iter()
             .map(|row| {
                 let task_id = TaskId::get_decoded(row.get("task_id"))?;
-                let collect_job_id = row.get("collect_job_id");
+                let collection_job_id =
+                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
                 let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
                 let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
                 let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
                 let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
                 Ok(Lease::new(
-                    AcquiredCollectJob::new(task_id, collect_job_id, query_type, vdaf),
+                    AcquiredCollectionJob::new(task_id, collection_job_id, query_type, vdaf),
                     lease_expiry_time,
                     lease_token,
                     lease_attempts,
@@ -2483,22 +2439,22 @@ ORDER BY id DESC
             .collect()
     }
 
-    /// release_collect_job releases an acquired (via e.g. acquire_incomplete_collect_jobs) collect
-    /// job. It returns an error if the collect job has no current lease.
-    pub async fn release_collect_job(
+    /// release_collection_job releases an acquired (via e.g. acquire_incomplete_collection_jobs) collect
+    /// job. It returns an error if the collection job has no current lease.
+    pub async fn release_collection_job(
         &self,
-        lease: &Lease<AcquiredCollectJob>,
+        lease: &Lease<AcquiredCollectionJob>,
     ) -> Result<(), Error> {
         let stmt = self
             .tx
             .prepare_cached(
-                "UPDATE collect_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = NULL, lease_attempts = 0
+                "UPDATE collection_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = NULL, lease_attempts = 0
                 FROM tasks
-                WHERE tasks.id = collect_jobs.task_id
+                WHERE tasks.id = collection_jobs.task_id
                   AND tasks.task_id = $1
-                  AND collect_jobs.collect_job_id = $2
-                  AND collect_jobs.lease_expiry = $3
-                  AND collect_jobs.lease_token = $4",
+                  AND collection_jobs.collection_job_id = $2
+                  AND collection_jobs.lease_expiry = $3
+                  AND collection_jobs.lease_token = $4",
             )
             .await?;
         check_single_row_mutation(
@@ -2507,7 +2463,7 @@ ORDER BY id DESC
                     &stmt,
                     &[
                         /* task_id */ &lease.leased().task_id().as_ref(),
-                        /* collect_job_id */ &lease.leased().collect_job_id(),
+                        /* collection_job_id */ &lease.leased().collection_job_id().as_ref(),
                         /* lease_expiry */ &lease.lease_expiry_time(),
                         /* lease_token */ &lease.lease_token().as_ref(),
                     ],
@@ -2516,25 +2472,29 @@ ORDER BY id DESC
         )
     }
 
-    /// Updates an existing collect job.
+    /// Updates an existing collection job.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn update_collect_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
+    pub(crate) async fn update_collection_job<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
         &self,
-        collect_job: &CollectJob<L, Q, A>,
+        collection_job: &CollectionJob<L, Q, A>,
     ) -> Result<(), Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let (report_count, leader_aggregate_share, helper_aggregate_share) = match collect_job
+        let (report_count, leader_aggregate_share, helper_aggregate_share) = match collection_job
             .state()
         {
-            CollectJobState::Start => {
+            CollectionJobState::Start => {
                 return Err(Error::InvalidParameter(
-                    "cannot update collect job into START state",
+                    "cannot update collection job into START state",
                 ));
             }
-            CollectJobState::Finished {
+            CollectionJobState::Finished {
                 report_count,
                 encrypted_helper_aggregate_share,
                 leader_aggregate_share,
@@ -2545,18 +2505,18 @@ ORDER BY id DESC
 
                 (report_count, leader_aggregate_share, helper_aggregate_share)
             }
-            CollectJobState::Abandoned | CollectJobState::Deleted => (None, None, None),
+            CollectionJobState::Abandoned | CollectionJobState::Deleted => (None, None, None),
         };
 
         let stmt = self
             .tx
             .prepare_cached(
-                "UPDATE collect_jobs SET
+                "UPDATE collection_jobs SET
                     state = $1,
                     report_count = $2,
                     leader_aggregate_share = $3,
                     helper_aggregate_share = $4
-                WHERE collect_job_id = $5",
+                WHERE collection_job_id = $5",
             )
             .await?;
 
@@ -2565,11 +2525,11 @@ ORDER BY id DESC
                 .execute(
                     &stmt,
                     &[
-                        /* state */ &collect_job.state().collect_job_state_code(),
+                        /* state */ &collection_job.state().collection_job_state_code(),
                         /* report_count */ &report_count,
                         /* leader_aggregate_share */ &leader_aggregate_share,
                         /* helper_aggregate_share */ &helper_aggregate_share,
-                        /* collect_job_id */ &collect_job.collect_job_id(),
+                        /* collection_job_id */ &collection_job.collection_job_id().as_ref(),
                     ],
                 )
                 .await?,
@@ -3304,10 +3264,10 @@ ORDER BY id DESC
                     WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
                       AND UPPER(client_timestamp_interval) <= $2
                       AND NOT EXISTS (
-                          SELECT id FROM collect_jobs
-                          WHERE aggregation_jobs.task_id = collect_jobs.task_id
-                            AND (aggregation_jobs.batch_id = collect_jobs.batch_identifier
-                              OR aggregation_jobs.client_timestamp_interval && collect_jobs.batch_interval))
+                          SELECT id FROM collection_jobs
+                          WHERE aggregation_jobs.task_id = collection_jobs.task_id
+                            AND (aggregation_jobs.batch_id = collection_jobs.batch_identifier
+                              OR aggregation_jobs.client_timestamp_interval && collection_jobs.batch_interval))
                       AND NOT EXISTS (
                           SELECT id FROM aggregate_share_jobs
                           WHERE aggregation_jobs.task_id = aggregate_share_jobs.task_id
@@ -3331,10 +3291,10 @@ ORDER BY id DESC
                             batch_aggregations.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                             AND UPPER(batch_aggregations.batch_interval) <= $2
                             AND NOT EXISTS (
-                                SELECT id FROM collect_jobs
-                                WHERE batch_aggregations.task_id = collect_jobs.task_id
-                                    AND (batch_aggregations.batch_identifier = collect_jobs.batch_identifier
-                                      OR batch_aggregations.batch_interval <@ collect_jobs.batch_interval))
+                                SELECT id FROM collection_jobs
+                                WHERE batch_aggregations.task_id = collection_jobs.task_id
+                                    AND (batch_aggregations.batch_identifier = collection_jobs.batch_identifier
+                                      OR batch_aggregations.batch_interval <@ collection_jobs.batch_interval))
                             AND NOT EXISTS (
                                 SELECT id FROM aggregate_share_jobs
                                 WHERE batch_aggregations.task_id = aggregate_share_jobs.task_id
@@ -3367,7 +3327,7 @@ ORDER BY id DESC
         Ok(())
     }
 
-    /// Deletes old collection artifacts (collect jobs/aggregate share jobs/outstanding batches) for
+    /// Deletes old collection artifacts (collection jobs/aggregate share jobs/outstanding batches) for
     /// a given task, that is, collection artifacts for which all associated client reports have
     /// timestamps older than a given timestamp.
     ///
@@ -3382,21 +3342,21 @@ ORDER BY id DESC
         let stmt = self
             .tx
             .prepare_cached(
-                "WITH collect_jobs_to_delete AS (
-                    SELECT id FROM collect_jobs
+                "WITH collection_jobs_to_delete AS (
+                    SELECT id FROM collection_jobs
                     JOIN (
                         SELECT
-                            collect_jobs.id AS collect_job_id,
+                            collection_jobs.id AS collection_job_id,
                             MAX(UPPER(aggregation_jobs.client_timestamp_interval)) AS max_timestamp
-                        FROM collect_jobs
+                        FROM collection_jobs
                         JOIN aggregation_jobs
-                            ON aggregation_jobs.task_id = collect_jobs.task_id
-                            AND (aggregation_jobs.batch_id = collect_jobs.batch_identifier
-                              OR aggregation_jobs.client_timestamp_interval && collect_jobs.batch_interval)
-                        GROUP BY collect_jobs.id
+                            ON aggregation_jobs.task_id = collection_jobs.task_id
+                            AND (aggregation_jobs.batch_id = collection_jobs.batch_identifier
+                              OR aggregation_jobs.client_timestamp_interval && collection_jobs.batch_interval)
+                        GROUP BY collection_jobs.id
                     ) report_max_timestamps
-                        ON report_max_timestamps.collect_job_id = collect_jobs.id
-                    WHERE collect_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                        ON report_max_timestamps.collection_job_id = collection_jobs.id
+                    WHERE collection_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                         AND report_max_timestamps.max_timestamp <= $2
                 ),
                 aggregate_share_jobs_to_delete AS (
@@ -3440,7 +3400,7 @@ ORDER BY id DESC
                     DELETE FROM outstanding_batches
                     WHERE id IN (SELECT id FROM outstanding_batches_to_delete)
                 )
-                DELETE FROM collect_jobs WHERE id IN (SELECT id FROM collect_jobs_to_delete)",
+                DELETE FROM collection_jobs WHERE id IN (SELECT id FROM collection_jobs_to_delete)",
             )
             .await?;
         self.tx
@@ -3811,8 +3771,8 @@ pub mod models {
     use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance};
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        AggregationJobId, BatchId, Duration, Extension, HpkeCiphertext, Interval, ReportId,
-        ReportIdChecksum, ReportMetadata, ReportShareError, Role, TaskId, Time,
+        AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, Interval,
+        ReportId, ReportIdChecksum, ReportMetadata, ReportShareError, Role, TaskId, Time,
     };
     use postgres_protocol::types::{
         range_from_sql, range_to_sql, timestamp_from_sql, timestamp_to_sql, Range, RangeBound,
@@ -3825,7 +3785,6 @@ pub mod models {
     use rand::{distributions::Standard, prelude::Distribution};
     use std::fmt::{Debug, Formatter};
     use std::{fmt::Display, ops::RangeInclusive};
-    use uuid::Uuid;
 
     // We have to manually implement [Partial]Eq for a number of types because the derived
     // implementations don't play nice with generic fields, even if those fields are constrained to
@@ -4259,47 +4218,47 @@ pub mod models {
         }
     }
 
-    /// AcquiredCollectJob represents an incomplete collect job whose lease has been acquired.
+    /// AcquiredCollectionJob represents an incomplete collection job whose lease has been acquired.
     #[derive(Clone, Debug, PartialOrd, Ord, Eq, PartialEq)]
-    pub struct AcquiredCollectJob {
+    pub struct AcquiredCollectionJob {
         task_id: TaskId,
-        collect_job_id: Uuid,
+        collection_job_id: CollectionJobId,
         query_type: task::QueryType,
         vdaf: VdafInstance,
     }
 
-    impl AcquiredCollectJob {
-        /// Creates a new [`AcquiredCollectJob`].
+    impl AcquiredCollectionJob {
+        /// Creates a new [`AcquiredCollectionJob`].
         pub fn new(
             task_id: TaskId,
-            collect_job_id: Uuid,
+            collection_job_id: CollectionJobId,
             query_type: task::QueryType,
             vdaf: VdafInstance,
         ) -> Self {
             Self {
                 task_id,
-                collect_job_id,
+                collection_job_id,
                 query_type,
                 vdaf,
             }
         }
 
-        /// Returns the task ID associated with this acquired collect job.
+        /// Returns the task ID associated with this acquired collection job.
         pub fn task_id(&self) -> &TaskId {
             &self.task_id
         }
 
-        /// Returns the collect job ID associated with this acquired collect job.
-        pub fn collect_job_id(&self) -> &Uuid {
-            &self.collect_job_id
+        /// Returns the collection job ID associated with this acquired collection job.
+        pub fn collection_job_id(&self) -> &CollectionJobId {
+            &self.collection_job_id
         }
 
-        /// Returns the query type associated with this acquired collect job.
+        /// Returns the query type associated with this acquired collection job.
         pub fn query_type(&self) -> &task::QueryType {
             &self.query_type
         }
 
-        /// Returns the VDAF associated with this acquired collect job.
+        /// Returns the VDAF associated with this acquired collection job.
         pub fn vdaf(&self) -> &VdafInstance {
             &self.vdaf
         }
@@ -4681,59 +4640,59 @@ pub mod models {
     {
     }
 
-    /// CollectJob represents a row in the `collect_jobs` table, used by leaders to represent
-    /// running collect jobs and store the results of completed ones.
+    /// CollectionJob represents a row in the `collection_jobs` table, used by leaders to represent
+    /// running collection jobs and store the results of completed ones.
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub struct CollectJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>
+    pub struct CollectionJob<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        /// The task ID for this collect job.
+        /// The task ID for this collection job.
         task_id: TaskId,
-        /// The unique identifier for the collect job.
-        collect_job_id: Uuid,
-        /// The batch interval covered by the collect job.
+        /// The unique identifier for the collection job.
+        collection_job_id: CollectionJobId,
+        /// The batch interval covered by the collection job.
         batch_identifier: Q::BatchIdentifier,
         /// The VDAF aggregation parameter used to prepare and aggregate input shares.
         #[derivative(Debug = "ignore")]
         aggregation_parameter: A::AggregationParam,
-        /// The current state of the collect job.
-        state: CollectJobState<L, A>,
+        /// The current state of the collection job.
+        state: CollectionJobState<L, A>,
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> CollectJob<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> CollectionJob<L, Q, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        /// Creates a new [`CollectJob`].
+        /// Creates a new [`CollectionJob`].
         pub fn new(
             task_id: TaskId,
-            collect_job_id: Uuid,
+            collection_job_id: CollectionJobId,
             batch_identifier: Q::BatchIdentifier,
             aggregation_parameter: A::AggregationParam,
-            state: CollectJobState<L, A>,
+            state: CollectionJobState<L, A>,
         ) -> Self {
             Self {
                 task_id,
-                collect_job_id,
+                collection_job_id,
                 batch_identifier,
                 aggregation_parameter,
                 state,
             }
         }
 
-        /// Returns the task ID associated with this collect job.
+        /// Returns the task ID associated with this collection job.
         pub fn task_id(&self) -> &TaskId {
             &self.task_id
         }
 
-        /// Returns the collect job ID associated with this collect job.
-        pub fn collect_job_id(&self) -> &Uuid {
-            &self.collect_job_id
+        /// Returns the collection job ID associated with this collection job.
+        pub fn collection_job_id(&self) -> &CollectionJobId {
+            &self.collection_job_id
         }
 
-        /// Gets the batch identifier associated with this collect job.
+        /// Gets the batch identifier associated with this collection job.
         ///
         /// This method would typically be used for code which is generic over the query type.
         /// Query-type specific code will typically call one of [`Self::batch_interval`] or
@@ -4742,75 +4701,75 @@ pub mod models {
             &self.batch_identifier
         }
 
-        /// Returns the aggregation parameter associated with this collect job.
+        /// Returns the aggregation parameter associated with this collection job.
         pub fn aggregation_parameter(&self) -> &A::AggregationParam {
             &self.aggregation_parameter
         }
 
-        /// Returns the state associated with this collect job.
-        pub fn state(&self) -> &CollectJobState<L, A> {
+        /// Returns the state associated with this collection job.
+        pub fn state(&self) -> &CollectionJobState<L, A> {
             &self.state
         }
 
-        /// Returns a new [`CollectJob`] corresponding to this collect job updated to have the given
+        /// Returns a new [`CollectionJob`] corresponding to this collection job updated to have the given
         /// state.
-        pub fn with_state(self, state: CollectJobState<L, A>) -> Self {
+        pub fn with_state(self, state: CollectionJobState<L, A>) -> Self {
             Self { state, ..self }
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> CollectJob<L, TimeInterval, A>
+    impl<const L: usize, A: vdaf::Aggregator<L>> CollectionJob<L, TimeInterval, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        /// Gets the batch interval associated with this collect job.
+        /// Gets the batch interval associated with this collection job.
         pub fn batch_interval(&self) -> &Interval {
             self.batch_identifier()
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> CollectJob<L, FixedSize, A>
+    impl<const L: usize, A: vdaf::Aggregator<L>> CollectionJob<L, FixedSize, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        /// Gets the batch ID associated with this collect job.
+        /// Gets the batch ID associated with this collection job.
         pub fn batch_id(&self) -> &BatchId {
             self.batch_identifier()
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> PartialEq for CollectJob<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> PartialEq for CollectionJob<L, Q, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::AggregationParam: PartialEq,
-        CollectJobState<L, A>: PartialEq,
+        CollectionJobState<L, A>: PartialEq,
     {
         fn eq(&self, other: &Self) -> bool {
             self.task_id == other.task_id
-                && self.collect_job_id == other.collect_job_id
+                && self.collection_job_id == other.collection_job_id
                 && self.batch_identifier == other.batch_identifier
                 && self.aggregation_parameter == other.aggregation_parameter
                 && self.state == other.state
         }
     }
 
-    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> Eq for CollectJob<L, Q, A>
+    impl<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>> Eq for CollectionJob<L, Q, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::AggregationParam: Eq,
-        CollectJobState<L, A>: Eq,
+        CollectionJobState<L, A>: Eq,
     {
     }
 
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    pub enum CollectJobState<const L: usize, A: vdaf::Aggregator<L>>
+    pub enum CollectionJobState<const L: usize, A: vdaf::Aggregator<L>>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         Start,
         Finished {
-            /// The number of reports included in this collect job.
+            /// The number of reports included in this collection job.
             report_count: u64,
             /// The helper's encrypted aggregate share over the input shares in the interval.
             encrypted_helper_aggregate_share: HpkeCiphertext,
@@ -4822,22 +4781,22 @@ pub mod models {
         Deleted,
     }
 
-    impl<const L: usize, A> CollectJobState<L, A>
+    impl<const L: usize, A> CollectionJobState<L, A>
     where
         A: vdaf::Aggregator<L>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        pub(super) fn collect_job_state_code(&self) -> CollectJobStateCode {
+        pub(super) fn collection_job_state_code(&self) -> CollectionJobStateCode {
             match self {
-                Self::Start => CollectJobStateCode::Start,
-                Self::Finished { .. } => CollectJobStateCode::Finished,
-                Self::Abandoned => CollectJobStateCode::Abandoned,
-                Self::Deleted => CollectJobStateCode::Deleted,
+                Self::Start => CollectionJobStateCode::Start,
+                Self::Finished { .. } => CollectionJobStateCode::Finished,
+                Self::Abandoned => CollectionJobStateCode::Abandoned,
+                Self::Deleted => CollectionJobStateCode::Deleted,
             }
         }
     }
 
-    impl<const L: usize, A> Display for CollectJobState<L, A>
+    impl<const L: usize, A> Display for CollectionJobState<L, A>
     where
         A: vdaf::Aggregator<L>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -4856,7 +4815,7 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for CollectJobState<L, A>
+    impl<const L: usize, A: vdaf::Aggregator<L>> PartialEq for CollectionJobState<L, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::AggregateShare: PartialEq,
@@ -4884,7 +4843,7 @@ pub mod models {
         }
     }
 
-    impl<const L: usize, A: vdaf::Aggregator<L>> Eq for CollectJobState<L, A>
+    impl<const L: usize, A: vdaf::Aggregator<L>> Eq for CollectionJobState<L, A>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::AggregateShare: Eq,
@@ -4892,8 +4851,8 @@ pub mod models {
     }
 
     #[derive(Debug, FromSql, ToSql)]
-    #[postgres(name = "collect_job_state")]
-    pub(super) enum CollectJobStateCode {
+    #[postgres(name = "collection_job_state")]
+    pub(super) enum CollectionJobStateCode {
         #[postgres(name = "START")]
         Start,
         #[postgres(name = "FINISHED")]
@@ -5201,7 +5160,7 @@ mod tests {
             gather_errors,
             models::{
                 AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregationJobState,
-                BatchAggregation, CollectJob, CollectJobState, LeaderStoredReport, Lease,
+                BatchAggregation, CollectionJob, CollectionJobState, LeaderStoredReport, Lease,
                 OutstandingBatch, ReportAggregation, ReportAggregationState, SqlInterval,
             },
             test_util::{ephemeral_datastore, generate_aead_key},
@@ -5225,9 +5184,9 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
-        AggregateShareAad, AggregationJobId, BatchId, BatchSelector, Duration, Extension,
-        ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, ReportId, ReportIdChecksum,
-        ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+        AggregateShareAad, AggregationJobId, BatchId, BatchSelector, CollectionJobId, Duration,
+        Extension, ExtensionType, HpkeCiphertext, HpkeConfigId, Interval, ReportId,
+        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use prio::{
         codec::{Decode, Encode},
@@ -5241,9 +5200,8 @@ mod tests {
         sync::Arc,
         time::Duration as StdDuration,
     };
-    use uuid::Uuid;
 
-    use super::{models::AcquiredCollectJob, Datastore};
+    use super::{models::AcquiredCollectionJob, Datastore};
 
     #[tokio::test]
     async fn roundtrip_task() {
@@ -5689,16 +5647,16 @@ mod tests {
 
                 // There are no client reports submitted under this task, so we shouldn't see
                 // this aggregation parameter at all.
-                tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *unrelated_task.id(),
-                    Uuid::new_v4(),
+                    random(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(8).unwrap(),
                     )
                     .unwrap(),
                     AggregationParam(255),
-                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
+                    CollectionJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await
             })
@@ -5720,7 +5678,7 @@ mod tests {
             .unwrap();
         assert!(got_reports.is_empty());
 
-        // Add collect jobs, and mark one report as having already been aggregated once.
+        // Add collection jobs, and mark one report as having already been aggregated once.
         ds.run_tx(|tx| {
             let (task, aggregated_report_id, aggregated_report_time) = (
                 task.clone(),
@@ -5728,42 +5686,42 @@ mod tests {
                 *aggregated_report.metadata().time(),
             );
             Box::pin(async move {
-                tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    Uuid::new_v4(),
+                    random(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(8).unwrap(),
                     )
                     .unwrap(),
                     AggregationParam(0),
-                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
+                    CollectionJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
-                tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    Uuid::new_v4(),
+                    random(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(8).unwrap(),
                     )
                     .unwrap(),
                     AggregationParam(1),
-                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
+                    CollectionJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
                 // No reports fall in this interval, so we shouldn't see it's aggregation
                 // parameter at all.
-                tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    Uuid::new_v4(),
+                    random(),
                     Interval::new(
                         Time::from_seconds_since_epoch(8 * 3600),
                         Duration::from_hours(8).unwrap(),
                     )
                     .unwrap(),
                     AggregationParam(2),
-                    CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
+                    CollectionJobState::<0, dummy_vdaf::Vdaf>::Start,
                 ))
                 .await?;
 
@@ -5836,33 +5794,33 @@ mod tests {
         expected_reports.sort();
         assert_eq!(got_reports, expected_reports);
 
-        // Add overlapping collect jobs with repeated aggregation parameters. Make sure we don't
+        // Add overlapping collection jobs with repeated aggregation parameters. Make sure we don't
         // repeat result tuples, which could lead to double counting in batch aggregations.
         ds.run_tx(|tx| {
             let task = task.clone();
             Box::pin(async move {
-                tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    Uuid::new_v4(),
+                    random(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(16).unwrap(),
                     )
                     .unwrap(),
                     AggregationParam(0),
-                    CollectJobState::Start,
+                    CollectionJobState::Start,
                 ))
                 .await?;
-                tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                tx.put_collection_job(&CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    Uuid::new_v4(),
+                    random(),
                     Interval::new(
                         Time::from_seconds_since_epoch(0),
                         Duration::from_hours(16).unwrap(),
                     )
                     .unwrap(),
                     AggregationParam(1),
-                    CollectJobState::Start,
+                    CollectionJobState::Start,
                 ))
                 .await?;
                 Ok(())
@@ -7082,322 +7040,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lookup_collect_job() {
-        install_test_trace_subscriber();
-
-        let task = TaskBuilder::new(
-            task::QueryType::TimeInterval,
-            VdafInstance::Fake,
-            Role::Leader,
-        )
-        .build();
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(100),
-            Duration::from_seconds(100),
-        )
-        .unwrap();
-        let timestamp = Time::from_seconds_since_epoch(150);
-        let interval = Interval::new(
-            Time::from_seconds_since_epoch(100),
-            Duration::from_seconds(10),
-        )
-        .unwrap();
-        let aggregation_param = AggregationParam(23);
-
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default());
-
-        ds.run_tx(|tx| {
-            let task = task.clone();
-            Box::pin(async move { tx.put_task(&task).await })
-        })
-        .await
-        .unwrap();
-
-        let collect_job_id = ds
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    tx.get_collect_job_id::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        task.id(),
-                        &batch_interval,
-                        &aggregation_param,
-                    )
-                    .await
-                })
-            })
-            .await
-            .unwrap();
-        assert!(collect_job_id.is_none());
-
-        let collect_job_id = ds
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    let collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        Uuid::new_v4(),
-                        batch_interval,
-                        aggregation_param,
-                        CollectJobState::<0, dummy_vdaf::Vdaf>::Start,
-                    );
-                    tx.put_collect_job(&collect_job).await?;
-                    Ok(*collect_job.collect_job_id())
-                })
-            })
-            .await
-            .unwrap();
-
-        let same_collect_job_id = ds
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    tx.get_collect_job_id::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        task.id(),
-                        &batch_interval,
-                        &aggregation_param,
-                    )
-                    .await
-                })
-            })
-            .await
-            .unwrap()
-            .unwrap();
-
-        // Should get the same UUID for the same values.
-        assert_eq!(collect_job_id, same_collect_job_id);
-
-        // Check that we can find the collect job by timestamp or batch identifier.
-        let (collect_jobs_by_time, collect_jobs_by_interval, collect_jobs_by_batch_identifier) = ds
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    let collect_jobs_by_time = tx
-                        .get_collect_jobs_including_time::<0, dummy_vdaf::Vdaf>(
-                            task.id(),
-                            &timestamp,
-                        )
-                        .await?;
-                    let collect_jobs_by_interval = tx
-                        .get_collect_jobs_intersecting_interval::<0, dummy_vdaf::Vdaf>(
-                            task.id(),
-                            &interval,
-                        )
-                        .await?;
-                    let collect_jobs_by_batch_identifier = tx
-                        .get_collect_jobs_by_batch_identifier::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                            task.id(),
-                            &batch_interval,
-                        )
-                        .await?;
-
-                    Ok((
-                        collect_jobs_by_time,
-                        collect_jobs_by_interval,
-                        collect_jobs_by_batch_identifier,
-                    ))
-                })
-            })
-            .await
-            .unwrap();
-
-        let want_collect_jobs = Vec::from([CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-            *task.id(),
-            collect_job_id,
-            batch_interval,
-            aggregation_param,
-            CollectJobState::Start,
-        )]);
-
-        assert_eq!(collect_jobs_by_time, want_collect_jobs);
-        assert_eq!(collect_jobs_by_interval, want_collect_jobs);
-        assert_eq!(collect_jobs_by_batch_identifier, want_collect_jobs);
-
-        let rows = ds
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.tx
-                        .query("SELECT id FROM collect_jobs", &[])
-                        .await
-                        .map_err(Error::from)
-                })
-            })
-            .await
-            .unwrap();
-
-        assert!(rows.len() == 1);
-
-        let different_batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(101),
-            Duration::from_seconds(100),
-        )
-        .unwrap();
-        let different_collect_job_id = ds
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    let collect_job_id = Uuid::new_v4();
-                    tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                        *task.id(),
-                        collect_job_id,
-                        different_batch_interval,
-                        aggregation_param,
-                        CollectJobState::Start,
-                    ))
-                    .await?;
-                    Ok(collect_job_id)
-                })
-            })
-            .await
-            .unwrap();
-
-        // New collect job should yield a new UUID.
-        assert!(different_collect_job_id != collect_job_id);
-
-        let rows = ds
-            .run_tx(|tx| {
-                Box::pin(async move {
-                    tx.tx
-                        .query("SELECT id FROM collect_jobs", &[])
-                        .await
-                        .map_err(Error::from)
-                })
-            })
-            .await
-            .unwrap();
-
-        // A new row should be present.
-        assert!(rows.len() == 2);
-
-        // Check that we can find both collect jobs by timestamp.
-        let (mut collect_jobs_by_time, mut collect_jobs_by_interval) = ds
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    let collect_jobs_by_time = tx
-                        .get_collect_jobs_including_time::<0, dummy_vdaf::Vdaf>(
-                            task.id(),
-                            &timestamp,
-                        )
-                        .await?;
-                    let collect_jobs_by_interval = tx
-                        .get_collect_jobs_intersecting_interval::<0, dummy_vdaf::Vdaf>(
-                            task.id(),
-                            &interval,
-                        )
-                        .await?;
-                    Ok((collect_jobs_by_time, collect_jobs_by_interval))
-                })
-            })
-            .await
-            .unwrap();
-        collect_jobs_by_time.sort_by(|x, y| x.collect_job_id().cmp(y.collect_job_id()));
-        collect_jobs_by_interval.sort_by(|x, y| x.collect_job_id().cmp(y.collect_job_id()));
-
-        let mut want_collect_jobs = Vec::from([
-            CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                *task.id(),
-                collect_job_id,
-                batch_interval,
-                aggregation_param,
-                CollectJobState::Start,
-            ),
-            CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                *task.id(),
-                different_collect_job_id,
-                different_batch_interval,
-                aggregation_param,
-                CollectJobState::Start,
-            ),
-        ]);
-        want_collect_jobs.sort_by(|x, y| x.collect_job_id().cmp(y.collect_job_id()));
-
-        assert_eq!(collect_jobs_by_time, want_collect_jobs);
-        assert_eq!(collect_jobs_by_interval, want_collect_jobs);
-    }
-
-    #[tokio::test]
-    async fn get_collect_job_task_id() {
-        install_test_trace_subscriber();
-
-        let first_task = TaskBuilder::new(
-            task::QueryType::TimeInterval,
-            VdafInstance::Fake,
-            Role::Leader,
-        )
-        .build();
-        let second_task = TaskBuilder::new(
-            task::QueryType::TimeInterval,
-            VdafInstance::Fake,
-            Role::Leader,
-        )
-        .build();
-        let batch_interval = Interval::new(
-            Time::from_seconds_since_epoch(100),
-            Duration::from_seconds(100),
-        )
-        .unwrap();
-        let aggregation_param = AggregationParam(23);
-
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let ds = ephemeral_datastore.datastore(MockClock::default());
-
-        ds.run_tx(|tx| {
-            let (first_task, second_task) = (first_task.clone(), second_task.clone());
-            Box::pin(async move {
-                tx.put_task(&first_task).await.unwrap();
-                tx.put_task(&second_task).await.unwrap();
-
-                let first_collect_job_id = Uuid::new_v4();
-                tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                    *first_task.id(),
-                    first_collect_job_id,
-                    batch_interval,
-                    aggregation_param,
-                    CollectJobState::Start,
-                ))
-                .await
-                .unwrap();
-
-                let second_collect_job_id = Uuid::new_v4();
-                tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                    *second_task.id(),
-                    second_collect_job_id,
-                    batch_interval,
-                    aggregation_param,
-                    CollectJobState::Start,
-                ))
-                .await
-                .unwrap();
-
-                assert_eq!(
-                    Some(first_task.id()),
-                    tx.get_collect_job_task_id(&first_collect_job_id)
-                        .await
-                        .unwrap()
-                        .as_ref()
-                );
-                assert_eq!(
-                    Some(second_task.id()),
-                    tx.get_collect_job_task_id(&second_collect_job_id)
-                        .await
-                        .unwrap()
-                        .as_ref()
-                );
-                assert_eq!(
-                    None,
-                    tx.get_collect_job_task_id(&Uuid::new_v4()).await.unwrap()
-                );
-
-                Ok(())
-            })
-        })
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn get_collect_job() {
+    async fn get_collection_job() {
         install_test_trace_subscriber();
 
         let task = TaskBuilder::new(
@@ -7426,41 +7069,41 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&task).await.unwrap();
 
-                let first_collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                let first_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    Uuid::new_v4(),
+                    random(),
                     first_batch_interval,
                     aggregation_param,
-                    CollectJobState::Start,
+                    CollectionJobState::Start,
                 );
-                tx.put_collect_job(&first_collect_job).await.unwrap();
+                tx.put_collection_job(&first_collection_job).await.unwrap();
 
-                let second_collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                let second_collection_job = CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    Uuid::new_v4(),
+                    random(),
                     second_batch_interval,
                     aggregation_param,
-                    CollectJobState::Start,
+                    CollectionJobState::Start,
                 );
-                tx.put_collect_job(&second_collect_job).await.unwrap();
+                tx.put_collection_job(&second_collection_job).await.unwrap();
 
-                let first_collect_job_again = tx
-                    .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        first_collect_job.collect_job_id(),
+                let first_collection_job_again = tx
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        first_collection_job.collection_job_id(),
                     )
                     .await
                     .unwrap()
                     .unwrap();
-                assert_eq!(first_collect_job, first_collect_job_again);
+                assert_eq!(first_collection_job, first_collection_job_again);
 
-                let second_collect_job_again = tx
-                    .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        second_collect_job.collect_job_id(),
+                let second_collection_job_again = tx
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        second_collection_job.collection_job_id(),
                     )
                     .await
                     .unwrap()
                     .unwrap();
-                assert_eq!(second_collect_job, second_collect_job_again);
+                assert_eq!(second_collection_job, second_collection_job_again);
 
                 let encrypted_helper_aggregate_share = hpke::seal(
                     task.collector_hpke_config(),
@@ -7478,24 +7121,27 @@ mod tests {
                 )
                 .unwrap();
 
-                let first_collect_job = first_collect_job.with_state(CollectJobState::Finished {
-                    report_count: 12,
-                    encrypted_helper_aggregate_share,
-                    leader_aggregate_share: AggregateShare(41),
-                });
+                let first_collection_job =
+                    first_collection_job.with_state(CollectionJobState::Finished {
+                        report_count: 12,
+                        encrypted_helper_aggregate_share,
+                        leader_aggregate_share: AggregateShare(41),
+                    });
 
-                tx.update_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&first_collect_job)
-                    .await
-                    .unwrap();
+                tx.update_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    &first_collection_job,
+                )
+                .await
+                .unwrap();
 
-                let updated_first_collect_job = tx
-                    .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        first_collect_job.collect_job_id(),
+                let updated_first_collection_job = tx
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        first_collection_job.collection_job_id(),
                     )
                     .await
                     .unwrap()
                     .unwrap();
-                assert_eq!(first_collect_job, updated_first_collect_job);
+                assert_eq!(first_collection_job, updated_first_collection_job);
 
                 Ok(())
             })
@@ -7505,8 +7151,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_collect_jobs() {
-        // Setup: write collect jobs to the datastore.
+    async fn update_collection_jobs() {
+        // Setup: write collection jobs to the datastore.
         install_test_trace_subscriber();
 
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -7535,70 +7181,79 @@ mod tests {
                 tx.put_task(&task).await?;
 
                 let aggregation_param = AggregationParam(10);
-                let abandoned_collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
-                    Uuid::new_v4(),
-                    abandoned_batch_interval,
-                    aggregation_param,
-                    CollectJobState::Start,
-                );
-                tx.put_collect_job(&abandoned_collect_job).await?;
+                let abandoned_collection_job =
+                    CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        random(),
+                        abandoned_batch_interval,
+                        aggregation_param,
+                        CollectionJobState::Start,
+                    );
+                tx.put_collection_job(&abandoned_collection_job).await?;
 
-                let deleted_collect_job = CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                    *task.id(),
-                    Uuid::new_v4(),
-                    deleted_batch_interval,
-                    aggregation_param,
-                    CollectJobState::Start,
-                );
-                tx.put_collect_job(&deleted_collect_job).await?;
+                let deleted_collection_job =
+                    CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                        *task.id(),
+                        random(),
+                        deleted_batch_interval,
+                        aggregation_param,
+                        CollectionJobState::Start,
+                    );
+                tx.put_collection_job(&deleted_collection_job).await?;
 
-                let abandoned_collect_job_again = tx
-                    .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        abandoned_collect_job.collect_job_id(),
+                let abandoned_collection_job_again = tx
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        abandoned_collection_job.collection_job_id(),
                     )
                     .await?
                     .unwrap();
 
                 // Verify: initial state.
-                assert_eq!(abandoned_collect_job, abandoned_collect_job_again);
+                assert_eq!(abandoned_collection_job, abandoned_collection_job_again);
 
-                // Setup: update the collect jobs.
-                let abandoned_collect_job =
-                    abandoned_collect_job.with_state(CollectJobState::Abandoned);
-                let deleted_collect_job = deleted_collect_job.with_state(CollectJobState::Deleted);
+                // Setup: update the collection jobs.
+                let abandoned_collection_job =
+                    abandoned_collection_job.with_state(CollectionJobState::Abandoned);
+                let deleted_collection_job =
+                    deleted_collection_job.with_state(CollectionJobState::Deleted);
 
-                tx.update_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&abandoned_collect_job)
-                    .await?;
-                tx.update_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&deleted_collect_job)
-                    .await?;
+                tx.update_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    &abandoned_collection_job,
+                )
+                .await?;
+                tx.update_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    &deleted_collection_job,
+                )
+                .await?;
 
-                let abandoned_collect_job_again = tx
-                    .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        abandoned_collect_job.collect_job_id(),
+                let abandoned_collection_job_again = tx
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        abandoned_collection_job.collection_job_id(),
                     )
                     .await?
                     .unwrap();
 
-                let deleted_collect_job_again = tx
-                    .get_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
-                        deleted_collect_job.collect_job_id(),
+                let deleted_collection_job_again = tx
+                    .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        deleted_collection_job.collection_job_id(),
                     )
                     .await?
                     .unwrap();
 
-                // Verify: collect jobs were updated.
-                assert_eq!(abandoned_collect_job, abandoned_collect_job_again);
-                assert_eq!(deleted_collect_job, deleted_collect_job_again);
+                // Verify: collection jobs were updated.
+                assert_eq!(abandoned_collection_job, abandoned_collection_job_again);
+                assert_eq!(deleted_collection_job, deleted_collection_job_again);
 
                 // Setup: try to update a job into state `Start`
-                let abandoned_collect_job =
-                    abandoned_collect_job.with_state(CollectJobState::Start);
+                let abandoned_collection_job =
+                    abandoned_collection_job.with_state(CollectionJobState::Start);
 
                 // Verify: Update should fail
-                tx.update_collect_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&abandoned_collect_job)
-                    .await
-                    .unwrap_err();
+                tx.update_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    &abandoned_collection_job,
+                )
+                .await
+                .unwrap_err();
                 Ok(())
             })
         })
@@ -7607,7 +7262,7 @@ mod tests {
     }
 
     #[derive(Copy, Clone)]
-    enum CollectJobTestCaseState {
+    enum CollectionJobTestCaseState {
         Start,
         Finished,
         Deleted,
@@ -7615,29 +7270,29 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct CollectJobTestCase<Q: QueryType> {
+    struct CollectionJobTestCase<Q: QueryType> {
         should_be_acquired: bool,
         task_id: TaskId,
         batch_identifier: Q::BatchIdentifier,
         agg_param: AggregationParam,
-        collect_job_id: Option<Uuid>,
-        state: CollectJobTestCaseState,
+        collection_job_id: Option<CollectionJobId>,
+        state: CollectionJobTestCaseState,
     }
 
     #[derive(Clone)]
-    struct CollectJobAcquireTestCase<Q: CollectableQueryType> {
+    struct CollectionJobAcquireTestCase<Q: CollectableQueryType> {
         task_ids: Vec<TaskId>,
         query_type: task::QueryType,
         reports: Vec<LeaderStoredReport<0, dummy_vdaf::Vdaf>>,
         aggregation_jobs: Vec<AggregationJob<0, Q, dummy_vdaf::Vdaf>>,
         report_aggregations: Vec<ReportAggregation<0, dummy_vdaf::Vdaf>>,
-        collect_job_test_cases: Vec<CollectJobTestCase<Q>>,
+        collection_job_test_cases: Vec<CollectionJobTestCase<Q>>,
     }
 
-    async fn setup_collect_job_acquire_test_case<Q: CollectableQueryType>(
+    async fn setup_collection_job_acquire_test_case<Q: CollectableQueryType>(
         ds: &Datastore<MockClock>,
-        test_case: CollectJobAcquireTestCase<Q>,
-    ) -> CollectJobAcquireTestCase<Q> {
+        test_case: CollectionJobAcquireTestCase<Q>,
+    ) -> CollectionJobAcquireTestCase<Q> {
         ds.run_tx(|tx| {
             let mut test_case = test_case.clone();
             Box::pin(async move {
@@ -7662,15 +7317,15 @@ mod tests {
                     tx.put_report_aggregation(report_aggregation).await?;
                 }
 
-                for test_case in test_case.collect_job_test_cases.iter_mut() {
-                    let collect_job = CollectJob::<0, Q, dummy_vdaf::Vdaf>::new(
+                for test_case in test_case.collection_job_test_cases.iter_mut() {
+                    let collection_job = CollectionJob::<0, Q, dummy_vdaf::Vdaf>::new(
                         test_case.task_id,
-                        Uuid::new_v4(),
+                        random(),
                         test_case.batch_identifier.clone(),
                         test_case.agg_param,
                         match test_case.state {
-                            CollectJobTestCaseState::Start => CollectJobState::Start,
-                            CollectJobTestCaseState::Finished => CollectJobState::Finished {
+                            CollectionJobTestCaseState::Start => CollectionJobState::Start,
+                            CollectionJobTestCaseState::Finished => CollectionJobState::Finished {
                                 report_count: 1,
                                 encrypted_helper_aggregate_share: HpkeCiphertext::new(
                                     HpkeConfigId::from(0),
@@ -7679,12 +7334,12 @@ mod tests {
                                 ),
                                 leader_aggregate_share: AggregateShare(0),
                             },
-                            CollectJobTestCaseState::Abandoned => CollectJobState::Abandoned,
-                            CollectJobTestCaseState::Deleted => CollectJobState::Deleted,
+                            CollectionJobTestCaseState::Abandoned => CollectionJobState::Abandoned,
+                            CollectionJobTestCaseState::Deleted => CollectionJobState::Deleted,
                         },
                     );
-                    tx.put_collect_job(&collect_job).await?;
-                    test_case.collect_job_id = Some(*collect_job.collect_job_id());
+                    tx.put_collection_job(&collection_job).await?;
+                    test_case.collection_job_id = Some(*collection_job.collection_job_id());
                 }
 
                 Ok(test_case)
@@ -7694,11 +7349,11 @@ mod tests {
         .unwrap()
     }
 
-    async fn run_collect_job_acquire_test_case<Q: CollectableQueryType>(
+    async fn run_collection_job_acquire_test_case<Q: CollectableQueryType>(
         ds: &Datastore<MockClock>,
-        test_case: CollectJobAcquireTestCase<Q>,
-    ) -> Vec<Lease<AcquiredCollectJob>> {
-        let test_case = setup_collect_job_acquire_test_case(ds, test_case).await;
+        test_case: CollectionJobAcquireTestCase<Q>,
+    ) -> Vec<Lease<AcquiredCollectionJob>> {
+        let test_case = setup_collection_job_acquire_test_case(ds, test_case).await;
 
         let clock = &ds.clock;
         ds.run_tx(|tx| {
@@ -7706,28 +7361,31 @@ mod tests {
             let clock = clock.clone();
             Box::pin(async move {
                 let time_interval_leases = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 10)
+                    .acquire_incomplete_time_interval_collection_jobs(
+                        &StdDuration::from_secs(100),
+                        10,
+                    )
                     .await?;
                 let fixed_size_leases = tx
-                    .acquire_incomplete_fixed_size_collect_jobs(&StdDuration::from_secs(100), 10)
+                    .acquire_incomplete_fixed_size_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await?;
 
-                let mut leased_collect_jobs: Vec<_> = time_interval_leases
+                let mut leased_collection_jobs: Vec<_> = time_interval_leases
                     .iter()
                     .chain(fixed_size_leases.iter())
                     .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
                     .collect();
-                leased_collect_jobs.sort();
+                leased_collection_jobs.sort();
 
-                let mut expected_collect_jobs: Vec<_> = test_case
-                    .collect_job_test_cases
+                let mut expected_collection_jobs: Vec<_> = test_case
+                    .collection_job_test_cases
                     .iter()
                     .filter(|c| c.should_be_acquired)
                     .map(|c| {
                         (
-                            AcquiredCollectJob::new(
+                            AcquiredCollectionJob::new(
                                 c.task_id,
-                                c.collect_job_id.unwrap(),
+                                c.collection_job_id.unwrap(),
                                 test_case.query_type,
                                 VdafInstance::Fake,
                             ),
@@ -7736,9 +7394,9 @@ mod tests {
                         )
                     })
                     .collect();
-                expected_collect_jobs.sort();
+                expected_collection_jobs.sort();
 
-                assert_eq!(leased_collect_jobs, expected_collect_jobs);
+                assert_eq!(leased_collection_jobs, expected_collection_jobs);
 
                 Ok(time_interval_leases
                     .into_iter()
@@ -7751,7 +7409,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn time_interval_collect_job_acquire_release_happy_path() {
+    async fn time_interval_collection_job_acquire_release_happy_path() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -7787,36 +7445,36 @@ mod tests {
             ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
         )]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
+        let collection_job_test_cases = Vec::from([CollectionJobTestCase::<TimeInterval> {
             should_be_acquired: true,
             task_id,
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
-            collect_job_id: None,
-            state: CollectJobTestCaseState::Start,
+            collection_job_id: None,
+            state: CollectionJobTestCaseState::Start,
         }]);
 
-        let collect_job_leases = run_collect_job_acquire_test_case(
+        let collection_job_leases = run_collection_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase {
+            CollectionJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
                 query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
-                collect_job_test_cases,
+                collection_job_test_cases,
             },
         )
         .await;
 
         let reacquired_jobs = ds
             .run_tx(|tx| {
-                let collect_job_leases = collect_job_leases.clone();
+                let collection_job_leases = collection_job_leases.clone();
                 Box::pin(async move {
-                    // Try to re-acquire collect jobs. Nothing should happen because the lease is still
+                    // Try to re-acquire collection jobs. Nothing should happen because the lease is still
                     // valid.
                     assert!(tx
-                        .acquire_incomplete_time_interval_collect_jobs(
+                        .acquire_incomplete_time_interval_collection_jobs(
                             &StdDuration::from_secs(100),
                             10
                         )
@@ -7825,12 +7483,12 @@ mod tests {
                         .is_empty());
 
                     // Release the lease, then re-acquire it.
-                    tx.release_collect_job(&collect_job_leases[0])
+                    tx.release_collection_job(&collection_job_leases[0])
                         .await
                         .unwrap();
 
                     let reacquired_leases = tx
-                        .acquire_incomplete_time_interval_collect_jobs(
+                        .acquire_incomplete_time_interval_collection_jobs(
                             &StdDuration::from_secs(100),
                             10,
                         )
@@ -7841,13 +7499,13 @@ mod tests {
                         .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
                         .collect();
 
-                    let collect_jobs: Vec<_> = collect_job_leases
+                    let collection_jobs: Vec<_> = collection_job_leases
                         .iter()
                         .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
                         .collect();
 
                     assert_eq!(reacquired_jobs.len(), 1);
-                    assert_eq!(reacquired_jobs, collect_jobs);
+                    assert_eq!(reacquired_jobs, collection_jobs);
 
                     Ok(reacquired_leases)
                 })
@@ -7863,7 +7521,10 @@ mod tests {
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
                 let acquired_jobs = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 10)
+                    .acquire_incomplete_time_interval_collection_jobs(
+                        &StdDuration::from_secs(100),
+                        10,
+                    )
                     .await
                     .unwrap();
 
@@ -7883,7 +7544,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fixed_size_collect_job_acquire_release_happy_path() {
+    async fn fixed_size_collection_job_acquire_release_happy_path() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -7913,21 +7574,21 @@ mod tests {
             ReportAggregationState::Start, // Doesn't matter what state the report aggregation is in
         )]);
 
-        let collect_job_leases = run_collect_job_acquire_test_case(
+        let collection_job_leases = run_collection_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase {
+            CollectionJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
                 query_type: task::QueryType::FixedSize { max_batch_size: 10 },
                 reports,
                 aggregation_jobs,
                 report_aggregations,
-                collect_job_test_cases: Vec::from([CollectJobTestCase::<FixedSize> {
+                collection_job_test_cases: Vec::from([CollectionJobTestCase::<FixedSize> {
                     should_be_acquired: true,
                     task_id,
                     batch_identifier: batch_id,
                     agg_param: AggregationParam(0),
-                    collect_job_id: None,
-                    state: CollectJobTestCaseState::Start,
+                    collection_job_id: None,
+                    state: CollectionJobTestCaseState::Start,
                 }]),
             },
         )
@@ -7935,12 +7596,12 @@ mod tests {
 
         let reacquired_jobs = ds
             .run_tx(|tx| {
-                let collect_job_leases = collect_job_leases.clone();
+                let collection_job_leases = collection_job_leases.clone();
                 Box::pin(async move {
-                    // Try to re-acquire collect jobs. Nothing should happen because the lease is still
+                    // Try to re-acquire collection jobs. Nothing should happen because the lease is still
                     // valid.
                     assert!(tx
-                        .acquire_incomplete_fixed_size_collect_jobs(
+                        .acquire_incomplete_fixed_size_collection_jobs(
                             &StdDuration::from_secs(100),
                             10,
                         )
@@ -7949,12 +7610,12 @@ mod tests {
                         .is_empty());
 
                     // Release the lease, then re-acquire it.
-                    tx.release_collect_job(&collect_job_leases[0])
+                    tx.release_collection_job(&collection_job_leases[0])
                         .await
                         .unwrap();
 
                     let reacquired_leases = tx
-                        .acquire_incomplete_fixed_size_collect_jobs(
+                        .acquire_incomplete_fixed_size_collection_jobs(
                             &StdDuration::from_secs(100),
                             10,
                         )
@@ -7965,13 +7626,13 @@ mod tests {
                         .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
                         .collect();
 
-                    let collect_jobs: Vec<_> = collect_job_leases
+                    let collection_jobs: Vec<_> = collection_job_leases
                         .iter()
                         .map(|lease| (lease.leased().clone(), lease.lease_expiry_time()))
                         .collect();
 
                     assert_eq!(reacquired_jobs.len(), 1);
-                    assert_eq!(reacquired_jobs, collect_jobs);
+                    assert_eq!(reacquired_jobs, collection_jobs);
 
                     Ok(reacquired_leases)
                 })
@@ -7987,7 +7648,7 @@ mod tests {
             Box::pin(async move {
                 // Re-acquire the jobs whose lease should have lapsed.
                 let acquired_jobs = tx
-                    .acquire_incomplete_fixed_size_collect_jobs(&StdDuration::from_secs(100), 10)
+                    .acquire_incomplete_fixed_size_collection_jobs(&StdDuration::from_secs(100), 10)
                     .await
                     .unwrap();
 
@@ -8007,7 +7668,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_job_acquire_no_aggregation_job_with_task_id() {
+    async fn collection_job_acquire_no_aggregation_job_with_task_id() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -8023,7 +7684,7 @@ mod tests {
         .unwrap();
         let aggregation_jobs =
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                // Aggregation job task ID does not match collect job task ID
+                // Aggregation job task ID does not match collection job task ID
                 other_task_id,
                 random(),
                 AggregationParam(0),
@@ -8033,31 +7694,31 @@ mod tests {
                 AggregationJobState::Finished,
             )]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
+        let collection_job_test_cases = Vec::from([CollectionJobTestCase::<TimeInterval> {
             should_be_acquired: false,
             task_id,
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
-            collect_job_id: None,
-            state: CollectJobTestCaseState::Start,
+            collection_job_id: None,
+            state: CollectionJobTestCaseState::Start,
         }]);
 
-        run_collect_job_acquire_test_case(
+        run_collection_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase {
+            CollectionJobAcquireTestCase {
                 task_ids: Vec::from([task_id, other_task_id]),
                 query_type: task::QueryType::TimeInterval,
                 reports: Vec::new(),
                 aggregation_jobs,
                 report_aggregations: Vec::new(),
-                collect_job_test_cases,
+                collection_job_test_cases,
             },
         )
         .await;
     }
 
     #[tokio::test]
-    async fn collect_job_acquire_no_aggregation_job_with_agg_param() {
+    async fn collection_job_acquire_no_aggregation_job_with_agg_param() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -8078,7 +7739,7 @@ mod tests {
             Vec::from([AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                 task_id,
                 random(),
-                // Aggregation job agg param does not match collect job agg param
+                // Aggregation job agg param does not match collection job agg param
                 AggregationParam(1),
                 (),
                 Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
@@ -8086,31 +7747,31 @@ mod tests {
                 AggregationJobState::Finished,
             )]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
+        let collection_job_test_cases = Vec::from([CollectionJobTestCase::<TimeInterval> {
             should_be_acquired: false,
             task_id,
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
-            collect_job_id: None,
-            state: CollectJobTestCaseState::Start,
+            collection_job_id: None,
+            state: CollectionJobTestCaseState::Start,
         }]);
 
-        run_collect_job_acquire_test_case(
+        run_collection_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase {
+            CollectionJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
                 query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations: Vec::new(),
-                collect_job_test_cases,
+                collection_job_test_cases,
             },
         )
         .await;
     }
 
     #[tokio::test]
-    async fn collect_job_acquire_report_shares_outside_interval() {
+    async fn collection_job_acquire_report_shares_outside_interval() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -8119,7 +7780,7 @@ mod tests {
         let task_id = random();
         let reports = Vec::from([LeaderStoredReport::new_dummy(
             task_id,
-            // Report associated with the aggregation job is outside the collect job's batch
+            // Report associated with the aggregation job is outside the collection job's batch
             // interval
             Time::from_seconds_since_epoch(200),
         )]);
@@ -8146,15 +7807,15 @@ mod tests {
             ReportAggregationState::Start, // Shouldn't matter what state the report aggregation is in
         )]);
 
-        run_collect_job_acquire_test_case(
+        run_collection_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase::<TimeInterval> {
+            CollectionJobAcquireTestCase::<TimeInterval> {
                 task_ids: Vec::from([task_id]),
                 query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
-                collect_job_test_cases: Vec::from([CollectJobTestCase::<TimeInterval> {
+                collection_job_test_cases: Vec::from([CollectionJobTestCase::<TimeInterval> {
                     should_be_acquired: false,
                     task_id,
                     batch_identifier: Interval::new(
@@ -8163,8 +7824,8 @@ mod tests {
                     )
                     .unwrap(),
                     agg_param: AggregationParam(0),
-                    collect_job_id: None,
-                    state: CollectJobTestCaseState::Start,
+                    collection_job_id: None,
+                    state: CollectionJobTestCaseState::Start,
                 }]),
             },
         )
@@ -8172,7 +7833,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_job_acquire_release_job_finished() {
+    async fn collection_job_acquire_release_job_finished() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -8209,32 +7870,32 @@ mod tests {
             ReportAggregationState::Start,
         )]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
+        let collection_job_test_cases = Vec::from([CollectionJobTestCase::<TimeInterval> {
             should_be_acquired: false,
             task_id,
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
-            collect_job_id: None,
-            // Collect job has already run to completion
-            state: CollectJobTestCaseState::Finished,
+            collection_job_id: None,
+            // collection job has already run to completion
+            state: CollectionJobTestCaseState::Finished,
         }]);
 
-        run_collect_job_acquire_test_case(
+        run_collection_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase {
+            CollectionJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
                 query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
-                collect_job_test_cases,
+                collection_job_test_cases,
             },
         )
         .await;
     }
 
     #[tokio::test]
-    async fn collect_job_acquire_release_aggregation_job_in_progress() {
+    async fn collection_job_acquire_release_aggregation_job_in_progress() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -8293,31 +7954,31 @@ mod tests {
             ),
         ]);
 
-        let collect_job_test_cases = Vec::from([CollectJobTestCase::<TimeInterval> {
+        let collection_job_test_cases = Vec::from([CollectionJobTestCase::<TimeInterval> {
             should_be_acquired: false,
             task_id,
             batch_identifier: batch_interval,
             agg_param: AggregationParam(0),
-            collect_job_id: None,
-            state: CollectJobTestCaseState::Start,
+            collection_job_id: None,
+            state: CollectionJobTestCaseState::Start,
         }]);
 
-        run_collect_job_acquire_test_case(
+        run_collection_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase {
+            CollectionJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
                 query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
-                collect_job_test_cases,
+                collection_job_test_cases,
             },
         )
         .await;
     }
 
     #[tokio::test]
-    async fn collect_job_acquire_job_max() {
+    async fn collection_job_acquire_job_max() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -8373,16 +8034,16 @@ mod tests {
             ),
         ]);
 
-        let collect_job_test_cases = Vec::from([
-            CollectJobTestCase::<TimeInterval> {
+        let collection_job_test_cases = Vec::from([
+            CollectionJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(0),
-                collect_job_id: None,
-                state: CollectJobTestCaseState::Start,
+                collection_job_id: None,
+                state: CollectionJobTestCaseState::Start,
             },
-            CollectJobTestCase::<TimeInterval> {
+            CollectionJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
                 batch_identifier: Interval::new(
@@ -8391,20 +8052,20 @@ mod tests {
                 )
                 .unwrap(),
                 agg_param: AggregationParam(1),
-                collect_job_id: None,
-                state: CollectJobTestCaseState::Start,
+                collection_job_id: None,
+                state: CollectionJobTestCaseState::Start,
             },
         ]);
 
-        let test_case = setup_collect_job_acquire_test_case(
+        let test_case = setup_collection_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase::<TimeInterval> {
+            CollectionJobAcquireTestCase::<TimeInterval> {
                 task_ids: Vec::from([task_id]),
                 query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
-                collect_job_test_cases,
+                collection_job_test_cases,
             },
         )
         .await;
@@ -8413,38 +8074,41 @@ mod tests {
             let test_case = test_case.clone();
             let clock = clock.clone();
             Box::pin(async move {
-                // Acquire a single collect job, twice. Each call should yield one job. We don't
+                // Acquire a single collection job, twice. Each call should yield one job. We don't
                 // care what order they are acquired in.
-                let mut acquired_collect_jobs = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 1)
+                let mut acquired_collection_jobs = tx
+                    .acquire_incomplete_time_interval_collection_jobs(
+                        &StdDuration::from_secs(100),
+                        1,
+                    )
                     .await?;
-                assert_eq!(acquired_collect_jobs.len(), 1);
+                assert_eq!(acquired_collection_jobs.len(), 1);
 
-                acquired_collect_jobs.extend(
-                    tx.acquire_incomplete_time_interval_collect_jobs(
+                acquired_collection_jobs.extend(
+                    tx.acquire_incomplete_time_interval_collection_jobs(
                         &StdDuration::from_secs(100),
                         1,
                     )
                     .await?,
                 );
 
-                assert_eq!(acquired_collect_jobs.len(), 2);
+                assert_eq!(acquired_collection_jobs.len(), 2);
 
-                let mut acquired_collect_jobs: Vec<_> = acquired_collect_jobs
+                let mut acquired_collection_jobs: Vec<_> = acquired_collection_jobs
                     .iter()
                     .map(|lease| (lease.leased().clone(), *lease.lease_expiry_time()))
                     .collect();
-                acquired_collect_jobs.sort();
+                acquired_collection_jobs.sort();
 
-                let mut expected_collect_jobs: Vec<_> = test_case
-                    .collect_job_test_cases
+                let mut expected_collection_jobs: Vec<_> = test_case
+                    .collection_job_test_cases
                     .iter()
                     .filter(|c| c.should_be_acquired)
                     .map(|c| {
                         (
-                            AcquiredCollectJob::new(
+                            AcquiredCollectionJob::new(
                                 c.task_id,
-                                c.collect_job_id.unwrap(),
+                                c.collection_job_id.unwrap(),
                                 task::QueryType::TimeInterval,
                                 VdafInstance::Fake,
                             ),
@@ -8453,9 +8117,9 @@ mod tests {
                         )
                     })
                     .collect();
-                expected_collect_jobs.sort();
+                expected_collection_jobs.sort();
 
-                assert_eq!(acquired_collect_jobs, expected_collect_jobs);
+                assert_eq!(acquired_collection_jobs, expected_collection_jobs);
 
                 Ok(())
             })
@@ -8465,7 +8129,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_job_acquire_state_filtering() {
+    async fn collection_job_acquire_state_filtering() {
         install_test_trace_subscriber();
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
@@ -8538,53 +8202,56 @@ mod tests {
             ),
         ]);
 
-        let collect_job_test_cases = Vec::from([
-            CollectJobTestCase::<TimeInterval> {
+        let collection_job_test_cases = Vec::from([
+            CollectionJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(0),
-                collect_job_id: None,
-                state: CollectJobTestCaseState::Finished,
+                collection_job_id: None,
+                state: CollectionJobTestCaseState::Finished,
             },
-            CollectJobTestCase::<TimeInterval> {
+            CollectionJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(1),
-                collect_job_id: None,
-                state: CollectJobTestCaseState::Abandoned,
+                collection_job_id: None,
+                state: CollectionJobTestCaseState::Abandoned,
             },
-            CollectJobTestCase::<TimeInterval> {
+            CollectionJobTestCase::<TimeInterval> {
                 should_be_acquired: true,
                 task_id,
                 batch_identifier: batch_interval,
                 agg_param: AggregationParam(2),
-                collect_job_id: None,
-                state: CollectJobTestCaseState::Deleted,
+                collection_job_id: None,
+                state: CollectionJobTestCaseState::Deleted,
             },
         ]);
 
-        setup_collect_job_acquire_test_case(
+        setup_collection_job_acquire_test_case(
             &ds,
-            CollectJobAcquireTestCase {
+            CollectionJobAcquireTestCase {
                 task_ids: Vec::from([task_id]),
                 query_type: task::QueryType::TimeInterval,
                 reports,
                 aggregation_jobs,
                 report_aggregations,
-                collect_job_test_cases,
+                collection_job_test_cases,
             },
         )
         .await;
 
         ds.run_tx(|tx| {
             Box::pin(async move {
-                // No collect jobs should be acquired because none of them are in the START state
-                let acquired_collect_jobs = tx
-                    .acquire_incomplete_time_interval_collect_jobs(&StdDuration::from_secs(100), 10)
+                // No collection jobs should be acquired because none of them are in the START state
+                let acquired_collection_jobs = tx
+                    .acquire_incomplete_time_interval_collection_jobs(
+                        &StdDuration::from_secs(100),
+                        10,
+                    )
                     .await?;
-                assert!(acquired_collect_jobs.is_empty());
+                assert!(acquired_collection_jobs.is_empty());
 
                 Ok(())
             })
@@ -9413,7 +9080,7 @@ mod tests {
 
             // We arbitrarily extend the client_timestamp_interval by one second in each direction
             // in order to test that GC occurs correctly even if aggregation jobs overlap with, but
-            // are not contained within, collect jobs.
+            // are not contained within, collection jobs.
             let min_client_timestamp = client_timestamps
                 .iter()
                 .min()
@@ -9589,7 +9256,7 @@ mod tests {
                     batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
-                    // Leader, time-interval aggregation job with attached collect job [not GC'ed].
+                    // Leader, time-interval aggregation job with attached collection job [not GC'ed].
                     let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<TimeInterval>(
                             tx,
@@ -9604,13 +9271,15 @@ mod tests {
                             ],
                         )
                         .await;
-                    tx.put_collect_job(&CollectJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
-                        *leader_time_interval_task.id(),
-                        Uuid::new_v4(),
-                        batch_identifier,
-                        AggregationParam(0),
-                        CollectJobState::Start,
-                    ))
+                    tx.put_collection_job(
+                        &CollectionJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
+                            *leader_time_interval_task.id(),
+                            random(),
+                            batch_identifier,
+                            AggregationParam(0),
+                            CollectionJobState::Start,
+                        ),
+                    )
                     .await
                     .unwrap();
                     aggregation_job_ids.insert(aggregation_job_id);
@@ -9754,7 +9423,7 @@ mod tests {
                     batch_aggregation_ids.insert(batch_aggregation_id.get_encoded());
                     all_report_ids.extend(report_ids);
 
-                    // Leader, fixed-size aggregation job with attached collect job [not GC'ed].
+                    // Leader, fixed-size aggregation job with attached collection job [not GC'ed].
                     let (batch_identifier, aggregation_job_id, batch_aggregation_id, report_ids) =
                         write_aggregation_artifacts::<FixedSize>(
                             tx,
@@ -9769,12 +9438,12 @@ mod tests {
                             ],
                         )
                         .await;
-                    tx.put_collect_job(&CollectJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    tx.put_collection_job(&CollectionJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
                         *leader_fixed_size_task.id(),
-                        Uuid::new_v4(),
+                        random(),
                         batch_identifier,
                         AggregationParam(0),
-                        CollectJobState::Start,
+                        CollectionJobState::Start,
                     ))
                     .await
                     .unwrap();
@@ -10127,7 +9796,7 @@ mod tests {
             task: &Task,
             client_timestamps: &[Time],
         ) -> (
-            Option<Uuid>,              // collect job ID
+            Option<CollectionJobId>,   // collection job ID
             Option<(TaskId, Vec<u8>)>, // aggregate share job ID (task ID, encoded batch identifier)
             Option<(TaskId, BatchId)>, // outstanding batch ID
         ) {
@@ -10160,20 +9829,20 @@ mod tests {
             }
 
             if task.role() == &Role::Leader {
-                let collect_job = CollectJob::<0, Q, dummy_vdaf::Vdaf>::new(
+                let collection_job = CollectionJob::<0, Q, dummy_vdaf::Vdaf>::new(
                     *task.id(),
-                    Uuid::new_v4(),
+                    random(),
                     batch_identifier.clone(),
                     AggregationParam(0),
-                    CollectJobState::Start,
+                    CollectionJobState::Start,
                 );
-                tx.put_collect_job(&collect_job).await.unwrap();
+                tx.put_collection_job(&collection_job).await.unwrap();
 
                 let outstanding_batch_id =
                     Q::write_outstanding_batch(tx, task.id(), &batch_identifier).await;
 
                 return (
-                    Some(*collect_job.collect_job_id()),
+                    Some(*collection_job.collection_job_id()),
                     None,
                     outstanding_batch_id,
                 );
@@ -10205,7 +9874,7 @@ mod tests {
             leader_fixed_size_task_id,
             helper_fixed_size_task_id,
             other_task_id,
-            want_collect_job_ids,
+            want_collection_job_ids,
             want_aggregate_share_job_ids,
             want_outstanding_batch_ids,
         ) = ds
@@ -10247,7 +9916,7 @@ mod tests {
                     tx.put_task(&helper_fixed_size_task).await?;
                     tx.put_task(&other_task).await?;
 
-                    let mut collect_job_ids = HashSet::new();
+                    let mut collection_job_ids = HashSet::new();
                     let mut aggregate_share_job_ids = HashSet::new();
                     let mut outstanding_batch_ids = HashSet::new();
 
@@ -10267,7 +9936,7 @@ mod tests {
                     .await;
 
                     // Leader, time-interval collection artifacts with old & new reports. [not GC'ed]
-                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                    let (collection_job_id, aggregate_share_job_id, outstanding_batch_id) =
                         write_collect_artifacts::<TimeInterval>(
                             tx,
                             &leader_time_interval_task,
@@ -10281,12 +9950,12 @@ mod tests {
                             ],
                         )
                         .await;
-                    collect_job_ids.extend(collect_job_id);
+                    collection_job_ids.extend(collection_job_id);
                     aggregate_share_job_ids.extend(aggregate_share_job_id);
                     outstanding_batch_ids.extend(outstanding_batch_id);
 
                     // Leader, time-interval collection artifacts with new reports. [not GC'ed]
-                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                    let (collection_job_id, aggregate_share_job_id, outstanding_batch_id) =
                         write_collect_artifacts::<TimeInterval>(
                             tx,
                             &leader_time_interval_task,
@@ -10300,7 +9969,7 @@ mod tests {
                             ],
                         )
                         .await;
-                    collect_job_ids.extend(collect_job_id);
+                    collection_job_ids.extend(collection_job_id);
                     aggregate_share_job_ids.extend(aggregate_share_job_id);
                     outstanding_batch_ids.extend(outstanding_batch_id);
 
@@ -10320,7 +9989,7 @@ mod tests {
                     .await;
 
                     // Helper, time-interval collection artifacts with old & new reports. [not GC'ed]
-                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                    let (collection_job_id, aggregate_share_job_id, outstanding_batch_id) =
                         write_collect_artifacts::<TimeInterval>(
                             tx,
                             &helper_time_interval_task,
@@ -10334,12 +10003,12 @@ mod tests {
                             ],
                         )
                         .await;
-                    collect_job_ids.extend(collect_job_id);
+                    collection_job_ids.extend(collection_job_id);
                     aggregate_share_job_ids.extend(aggregate_share_job_id);
                     outstanding_batch_ids.extend(outstanding_batch_id);
 
                     // Helper, time-interval collection artifacts with new reports. [not GC'ed]
-                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                    let (collection_job_id, aggregate_share_job_id, outstanding_batch_id) =
                         write_collect_artifacts::<TimeInterval>(
                             tx,
                             &helper_time_interval_task,
@@ -10353,7 +10022,7 @@ mod tests {
                             ],
                         )
                         .await;
-                    collect_job_ids.extend(collect_job_id);
+                    collection_job_ids.extend(collection_job_id);
                     aggregate_share_job_ids.extend(aggregate_share_job_id);
                     outstanding_batch_ids.extend(outstanding_batch_id);
 
@@ -10373,7 +10042,7 @@ mod tests {
                     .await;
 
                     // Leader, fixed-size collection artifacts with old & new reports. [not GC'ed]
-                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                    let (collection_job_id, aggregate_share_job_id, outstanding_batch_id) =
                         write_collect_artifacts::<FixedSize>(
                             tx,
                             &leader_fixed_size_task,
@@ -10387,15 +10056,15 @@ mod tests {
                             ],
                         )
                         .await;
-                    collect_job_ids.extend(collect_job_id);
+                    collection_job_ids.extend(collection_job_id);
                     aggregate_share_job_ids.extend(aggregate_share_job_id);
                     outstanding_batch_ids.extend(outstanding_batch_id);
 
                     // Leader, fixed-size collection artifacts with new reports. [not GC'ed]
-                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                    let (collection_job_id, aggregate_share_job_id, outstanding_batch_id) =
                         write_collect_artifacts::<FixedSize>(tx, &leader_fixed_size_task, &[])
                             .await;
-                    collect_job_ids.extend(collect_job_id);
+                    collection_job_ids.extend(collection_job_id);
                     aggregate_share_job_ids.extend(aggregate_share_job_id);
                     outstanding_batch_ids.extend(outstanding_batch_id);
 
@@ -10415,7 +10084,7 @@ mod tests {
                     .await;
 
                     // Helper, fixed-size collection artifacts with old & new reports. [not GC'ed]
-                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                    let (collection_job_id, aggregate_share_job_id, outstanding_batch_id) =
                         write_collect_artifacts::<FixedSize>(
                             tx,
                             &helper_fixed_size_task,
@@ -10429,20 +10098,20 @@ mod tests {
                             ],
                         )
                         .await;
-                    collect_job_ids.extend(collect_job_id);
+                    collection_job_ids.extend(collection_job_id);
                     aggregate_share_job_ids.extend(aggregate_share_job_id);
                     outstanding_batch_ids.extend(outstanding_batch_id);
 
                     // Helper, fixed-size collection artifacts with new reports. [not GC'ed]
-                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                    let (collection_job_id, aggregate_share_job_id, outstanding_batch_id) =
                         write_collect_artifacts::<FixedSize>(tx, &helper_fixed_size_task, &[])
                             .await;
-                    collect_job_ids.extend(collect_job_id);
+                    collection_job_ids.extend(collection_job_id);
                     aggregate_share_job_ids.extend(aggregate_share_job_id);
                     outstanding_batch_ids.extend(outstanding_batch_id);
 
                     // Collection artifacts for different task. [not GC'ed]
-                    let (collect_job_id, aggregate_share_job_id, outstanding_batch_id) =
+                    let (collection_job_id, aggregate_share_job_id, outstanding_batch_id) =
                         write_collect_artifacts::<TimeInterval>(
                             tx,
                             &other_task,
@@ -10456,7 +10125,7 @@ mod tests {
                             ],
                         )
                         .await;
-                    collect_job_ids.extend(collect_job_id);
+                    collection_job_ids.extend(collection_job_id);
                     aggregate_share_job_ids.extend(aggregate_share_job_id);
                     outstanding_batch_ids.extend(outstanding_batch_id);
 
@@ -10466,7 +10135,7 @@ mod tests {
                         *leader_fixed_size_task.id(),
                         *helper_fixed_size_task.id(),
                         *other_task.id(),
-                        collect_job_ids,
+                        collection_job_ids,
                         aggregate_share_job_ids,
                         outstanding_batch_ids,
                     ))
@@ -10505,54 +10174,54 @@ mod tests {
         .unwrap();
 
         // Verify.
-        let (got_collect_job_ids, got_aggregate_share_job_ids, got_outstanding_batch_ids) = ds
+        let (got_collection_job_ids, got_aggregate_share_job_ids, got_outstanding_batch_ids) = ds
             .run_tx(|tx| {
                 Box::pin(async move {
-                    let leader_time_interval_collect_job_ids = tx
-                        .get_collect_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                    let leader_time_interval_collection_job_ids = tx
+                        .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &leader_time_interval_task_id,
                         )
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collect_job| *collect_job.collect_job_id());
-                    let helper_time_interval_collect_job_ids = tx
-                        .get_collect_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        .map(|collection_job| *collection_job.collection_job_id());
+                    let helper_time_interval_collection_job_ids = tx
+                        .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &helper_time_interval_task_id,
                         )
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collect_job| *collect_job.collect_job_id());
-                    let leader_fixed_size_collect_job_ids = tx
-                        .get_collect_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        .map(|collection_job| *collection_job.collection_job_id());
+                    let leader_fixed_size_collection_job_ids = tx
+                        .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                             &leader_fixed_size_task_id,
                         )
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collect_job| *collect_job.collect_job_id());
-                    let helper_fixed_size_collect_job_ids = tx
-                        .get_collect_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        .map(|collection_job| *collection_job.collection_job_id());
+                    let helper_fixed_size_collection_job_ids = tx
+                        .get_collection_jobs_for_task::<0, FixedSize, dummy_vdaf::Vdaf>(
                             &helper_fixed_size_task_id,
                         )
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collect_job| *collect_job.collect_job_id());
-                    let other_task_collect_job_ids = tx
-                        .get_collect_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                        .map(|collection_job| *collection_job.collection_job_id());
+                    let other_task_collection_job_ids = tx
+                        .get_collection_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
                             &other_task_id,
                         )
                         .await
                         .unwrap()
                         .into_iter()
-                        .map(|collect_job| *collect_job.collect_job_id());
-                    let got_collect_job_ids = leader_time_interval_collect_job_ids
-                        .chain(helper_time_interval_collect_job_ids)
-                        .chain(leader_fixed_size_collect_job_ids)
-                        .chain(helper_fixed_size_collect_job_ids)
-                        .chain(other_task_collect_job_ids)
+                        .map(|collection_job| *collection_job.collection_job_id());
+                    let got_collection_job_ids = leader_time_interval_collection_job_ids
+                        .chain(helper_time_interval_collection_job_ids)
+                        .chain(leader_fixed_size_collection_job_ids)
+                        .chain(helper_fixed_size_collection_job_ids)
+                        .chain(other_task_collection_job_ids)
                         .collect();
 
                     let leader_time_interval_aggregate_share_job_ids = tx
@@ -10640,7 +10309,7 @@ mod tests {
                         .collect();
 
                     Ok((
-                        got_collect_job_ids,
+                        got_collection_job_ids,
                         got_aggregate_share_job_ids,
                         got_outstanding_batch_ids,
                     ))
@@ -10648,7 +10317,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(want_collect_job_ids, got_collect_job_ids);
+        assert_eq!(want_collection_job_ids, got_collection_job_ids);
         assert_eq!(want_aggregate_share_job_ids, got_aggregate_share_job_ids);
         assert_eq!(want_outstanding_batch_ids, got_outstanding_batch_ids);
     }

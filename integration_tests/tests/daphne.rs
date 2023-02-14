@@ -12,8 +12,11 @@ use janus_messages::Role;
 
 mod common;
 
+// TODO(timg): re-enable DAphne tests once Daphne implements DAP-04
+
 // This test places Daphne in the leader role & Janus in the helper role.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn daphne_janus() {
     install_test_trace_subscriber();
 
@@ -49,6 +52,7 @@ async fn daphne_janus() {
 
 // This test places Janus in the leader role & Daphne in the helper role.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn janus_daphne() {
     install_test_trace_subscriber();
 

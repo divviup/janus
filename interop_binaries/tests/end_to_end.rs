@@ -465,7 +465,7 @@ async fn run(
             "error: {:?}",
             collect_start_response_object.get("error"),
         );
-        let collect_job_handle = collect_start_response_object
+        let collection_job_handle = collect_start_response_object
             .get("handle")
             .expect("collect_start response is missing \"handle\"")
             .as_str()
@@ -485,7 +485,7 @@ async fn run(
                         .unwrap(),
                 )
                 .json(&json!({
-                    "handle": collect_job_handle,
+                    "handle": collection_job_handle,
                 }))
                 .send()
                 .await

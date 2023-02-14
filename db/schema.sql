@@ -100,7 +100,7 @@ CREATE TYPE AGGREGATION_JOB_STATE AS ENUM(
 CREATE TABLE aggregation_jobs(
     id                        BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- artificial ID, internal-only
     task_id                   BIGINT NOT NULL,                 -- ID of related task
-    aggregation_job_id        BYTEA NOT NULL,                  -- 32-byte AggregationJobID as defined by the DAP specification
+    aggregation_job_id        BYTEA NOT NULL,                  -- 16-byte AggregationJobID as defined by the DAP specification
     aggregation_param         BYTEA NOT NULL,                  -- encoded aggregation parameter (opaque VDAF message)
     batch_id                  BYTEA NOT NULL,                  -- batch ID (fixed-size only; corresponds to identifier in BatchSelector)
     client_timestamp_interval TSRANGE NOT NULL,                -- the minimal interval containing all of client timestamps included in this aggregation job
@@ -163,37 +163,37 @@ CREATE TABLE batch_aggregations(
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
 
--- Specifies the possible state of a collect job.
-CREATE TYPE COLLECT_JOB_STATE AS ENUM(
-    'START',     -- the aggregator is waiting to run this collect job
-    'FINISHED',  -- this collect job has run successfully and is ready for collection
-    'ABANDONED', -- this collect job has been abandoned & will never be run again
-    'DELETED'    -- this collect job has been deleted
+-- Specifies the possible state of a collection job.
+CREATE TYPE COLLECTION_JOB_STATE AS ENUM(
+    'START',     -- the aggregator is waiting to run this collection job
+    'FINISHED',  -- this collection job has run successfully and is ready for collection
+    'ABANDONED', -- this collection job has been abandoned & will never be run again
+    'DELETED'    -- this collection job has been deleted
 );
 
 -- The leader's view of collect requests from the Collector.
-CREATE TABLE collect_jobs(
+CREATE TABLE collection_jobs(
     id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
-    collect_job_id          UUID NOT NULL,               -- UUID used by collector to refer to this job
+    collection_job_id       BYTEA NOT NULL,              -- 16 byte identifier used by collector to refer to this job
     task_id                 BIGINT NOT NULL,             -- the task ID being collected
     batch_identifier        BYTEA NOT NULL,              -- encoded query-type-specific batch identifier (corresponds to identifier in BatchSelector)
     batch_interval          TSRANGE,                     -- batch interval, as a TSRANGE, populated only for time-interval tasks. (will always match batch_identifier)
     aggregation_param       BYTEA NOT NULL,              -- the aggregation parameter (opaque VDAF message)
-    state                   COLLECT_JOB_STATE NOT NULL,  -- the current state of this collect job
-    report_count            BIGINT,                      -- the number of reports included in this collect job (only if in state FINISHED)
+    state                   COLLECTION_JOB_STATE NOT NULL,  -- the current state of this collection job
+    report_count            BIGINT,                      -- the number of reports included in this collection job (only if in state FINISHED)
     helper_aggregate_share  BYTEA,                       -- the helper's encrypted aggregate share (HpkeCiphertext, only if in state FINISHED)
     leader_aggregate_share  BYTEA,                       -- the leader's unencrypted aggregate share (opaque VDAF message, only if in state FINISHED)
 
-    lease_expiry            TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collect job expires; -infinity implies no current lease
+    lease_expiry            TIMESTAMP NOT NULL DEFAULT TIMESTAMP '-infinity',  -- when lease on this collection job expires; -infinity implies no current lease
     lease_token             BYTEA,                                             -- a value identifying the current leaseholder; NULL implies no current lease
     lease_attempts          BIGINT NOT NULL DEFAULT 0,                         -- the number of lease acquiries since the last successful lease release
 
-    CONSTRAINT collect_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
+    CONSTRAINT collection_jobs_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param),
     CONSTRAINT fk_task_id FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
--- TODO(#224): verify that this index is optimal for purposes of acquiring collect jobs.
-CREATE INDEX collect_jobs_lease_expiry ON collect_jobs(lease_expiry);
-CREATE INDEX collect_jobs_interval_containment_index ON collect_jobs USING gist (task_id, batch_interval);
+-- TODO(#224): verify that this index is optimal for purposes of acquiring collection jobs.
+CREATE INDEX collection_jobs_lease_expiry ON collection_jobs(lease_expiry);
+CREATE INDEX collection_jobs_interval_containment_index ON collection_jobs USING gist (task_id, batch_interval);
 
 -- The helper's view of aggregate share jobs.
 CREATE TABLE aggregate_share_jobs(

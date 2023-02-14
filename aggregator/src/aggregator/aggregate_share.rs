@@ -20,7 +20,7 @@ where
     for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
 {
     // At the moment we construct an aggregate share (either handling AggregateShareReq in the
-    // helper or driving a collect job in the leader), there could be some incomplete aggregation
+    // helper or driving a collection job in the leader), there could be some incomplete aggregation
     // jobs whose results not been accumulated into the batch aggregations we just queried from the
     // datastore, meaning we will aggregate over an incomplete view of data, which:
     //
@@ -35,7 +35,7 @@ where
     // unfinished aggregation jobs were intentionally abandoned by the leader (see issue #104 for
     // more discussion).
     //
-    // On the leader side, we know/assume that we would not be stepping a collect job unless we had
+    // On the leader side, we know/assume that we would not be stepping a collection job unless we had
     // verified that the constituent aggregation jobs were finished.
     //
     // In either case, we go ahead and service the aggregate share request with whatever batch

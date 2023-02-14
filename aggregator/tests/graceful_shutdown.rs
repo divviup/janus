@@ -279,7 +279,7 @@ async fn aggregation_job_driver_shutdown() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(not(target_os = "linux"), ignore)]
-async fn collect_job_driver_shutdown() {
+async fn collection_job_driver_shutdown() {
     let mut config = Mapping::new();
     config.insert("min_job_discovery_delay_secs".into(), 10u64.into());
     config.insert("max_job_discovery_delay_secs".into(), 60u64.into());
@@ -291,5 +291,5 @@ async fn collect_job_driver_shutdown() {
     );
     config.insert("maximum_attempts_before_failure".into(), 5u64.into());
 
-    graceful_shutdown(trycmd::cargo::cargo_bin!("collect_job_driver"), config).await;
+    graceful_shutdown(trycmd::cargo::cargo_bin!("collection_job_driver"), config).await;
 }

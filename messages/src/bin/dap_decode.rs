@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
-    AggregateShareReq, AggregateShareResp, CollectReq, CollectResp, HpkeConfig, Report,
+    AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobInitializeReq,
+    AggregationJobResp, Collection, CollectionReq, HpkeConfig, Report,
 };
 use prio::codec::Decode;
 use std::{
@@ -42,27 +42,25 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
             let message: Report = Report::get_decoded(&message_buf)?;
             Box::new(message)
         }
-        MediaType::AggregateInitializeReq => {
-            if let Ok(decoded) = AggregateInitializeReq::<TimeInterval>::get_decoded(&message_buf) {
-                let message: AggregateInitializeReq<TimeInterval> = decoded;
+        MediaType::AggregationJobInitializeReq => {
+            if let Ok(decoded) =
+                AggregationJobInitializeReq::<TimeInterval>::get_decoded(&message_buf)
+            {
+                let message: AggregationJobInitializeReq<TimeInterval> = decoded;
                 Box::new(message)
             } else {
-                let message: AggregateInitializeReq<FixedSize> =
-                    AggregateInitializeReq::<FixedSize>::get_decoded(&message_buf)?;
+                let message: AggregationJobInitializeReq<FixedSize> =
+                    AggregationJobInitializeReq::<FixedSize>::get_decoded(&message_buf)?;
                 Box::new(message)
             }
         }
-        MediaType::AggregateInitializeResp => {
-            let message: AggregateInitializeResp =
-                AggregateInitializeResp::get_decoded(&message_buf)?;
+        MediaType::AggregationJobContinueReq => {
+            let message: AggregationJobContinueReq =
+                AggregationJobContinueReq::get_decoded(&message_buf)?;
             Box::new(message)
         }
-        MediaType::AggregateContinueReq => {
-            let message: AggregateContinueReq = AggregateContinueReq::get_decoded(&message_buf)?;
-            Box::new(message)
-        }
-        MediaType::AggregateContinueResp => {
-            let message: AggregateContinueResp = AggregateContinueResp::get_decoded(&message_buf)?;
+        MediaType::AggregationJobResp => {
+            let message: AggregationJobResp = AggregationJobResp::get_decoded(&message_buf)?;
             Box::new(message)
         }
         MediaType::AggregateShareReq => {
@@ -75,27 +73,27 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
                 Box::new(message)
             }
         }
-        MediaType::AggregateShareResp => {
-            let message: AggregateShareResp = AggregateShareResp::get_decoded(&message_buf)?;
+        MediaType::AggregateShare => {
+            let message: AggregateShare = AggregateShare::get_decoded(&message_buf)?;
             Box::new(message)
         }
-        MediaType::CollectReq => {
-            if let Ok(decoded) = CollectReq::<TimeInterval>::get_decoded(&message_buf) {
-                let message: CollectReq<TimeInterval> = decoded;
+        MediaType::CollectionReq => {
+            if let Ok(decoded) = CollectionReq::<TimeInterval>::get_decoded(&message_buf) {
+                let message: CollectionReq<TimeInterval> = decoded;
                 Box::new(message)
             } else {
-                let message: CollectReq<FixedSize> =
-                    CollectReq::<FixedSize>::get_decoded(&message_buf)?;
+                let message: CollectionReq<FixedSize> =
+                    CollectionReq::<FixedSize>::get_decoded(&message_buf)?;
                 Box::new(message)
             }
         }
-        MediaType::CollectResp => {
-            if let Ok(decoded) = CollectResp::<TimeInterval>::get_decoded(&message_buf) {
-                let message: CollectResp<TimeInterval> = decoded;
+        MediaType::Collection => {
+            if let Ok(decoded) = Collection::<TimeInterval>::get_decoded(&message_buf) {
+                let message: Collection<TimeInterval> = decoded;
                 Box::new(message)
             } else {
-                let message: CollectResp<FixedSize> =
-                    CollectResp::<FixedSize>::get_decoded(&message_buf)?;
+                let message: Collection<FixedSize> =
+                    Collection::<FixedSize>::get_decoded(&message_buf)?;
                 Box::new(message)
             }
         }
@@ -111,22 +109,20 @@ enum MediaType {
     HpkeConfig,
     #[value(name = "report")]
     Report,
-    #[value(name = "aggregate-initialize-req")]
-    AggregateInitializeReq,
-    #[value(name = "aggregate-initialize-resp")]
-    AggregateInitializeResp,
-    #[value(name = "aggregate-continue-req")]
-    AggregateContinueReq,
-    #[value(name = "aggregate-continue-resp")]
-    AggregateContinueResp,
+    #[value(name = "aggregation-job-init-req")]
+    AggregationJobInitializeReq,
+    #[value(name = "aggregation-job-resp")]
+    AggregationJobResp,
+    #[value(name = "aggregation-job-continue-req")]
+    AggregationJobContinueReq,
     #[value(name = "aggregate-share-req")]
     AggregateShareReq,
-    #[value(name = "aggregate-share-resp")]
-    AggregateShareResp,
+    #[value(name = "aggregate-share")]
+    AggregateShare,
     #[value(name = "collect-req")]
-    CollectReq,
-    #[value(name = "collect-resp")]
-    CollectResp,
+    CollectionReq,
+    #[value(name = "collection")]
+    Collection,
 }
 
 #[derive(Debug, Parser)]

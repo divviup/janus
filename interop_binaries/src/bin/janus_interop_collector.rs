@@ -122,7 +122,7 @@ struct TaskState {
     auth_token: AuthenticationToken,
 }
 
-/// A collect job handle.
+/// A collection job handle.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Handle(String);
 
@@ -132,7 +132,7 @@ impl Distribution<Handle> for Standard {
     }
 }
 
-enum CollectJobState {
+enum CollectionJobState {
     InProgress(Option<JoinHandle<anyhow::Result<CollectResult>>>),
     Completed(CollectResult),
     Error,
@@ -203,7 +203,7 @@ enum ParsedQuery {
 async fn handle_collect_start(
     http_client: &reqwest::Client,
     tasks: &Mutex<HashMap<TaskId, TaskState>>,
-    collect_jobs: &Mutex<HashMap<Handle, CollectJobState>>,
+    collection_jobs: &Mutex<HashMap<Handle, CollectionJobState>>,
     request: CollectStartRequest,
 ) -> anyhow::Result<Handle> {
     let task_id_bytes = URL_SAFE_NO_PAD
@@ -575,13 +575,13 @@ async fn handle_collect_start(
         }
     };
 
-    let mut collect_jobs_guard = collect_jobs.lock().await;
+    let mut collection_jobs_guard = collection_jobs.lock().await;
     Ok(loop {
-        match collect_jobs_guard.entry(random()) {
+        match collection_jobs_guard.entry(random()) {
             Entry::Occupied(_) => continue,
             entry @ Entry::Vacant(_) => {
                 let key = entry.key().clone();
-                entry.or_insert(CollectJobState::InProgress(Some(task_handle)));
+                entry.or_insert(CollectionJobState::InProgress(Some(task_handle)));
                 break key;
             }
         }
@@ -589,14 +589,14 @@ async fn handle_collect_start(
 }
 
 async fn handle_collect_poll(
-    collect_jobs: &Mutex<HashMap<Handle, CollectJobState>>,
+    collection_jobs: &Mutex<HashMap<Handle, CollectionJobState>>,
     request: CollectPollRequest,
 ) -> anyhow::Result<Option<CollectResult>> {
-    let mut collect_jobs_guard = collect_jobs.lock().await;
-    let collect_job_state_entry = collect_jobs_guard.entry(Handle(request.handle.clone()));
-    match collect_job_state_entry {
+    let mut collection_jobs_guard = collection_jobs.lock().await;
+    let collection_job_state_entry = collection_jobs_guard.entry(Handle(request.handle.clone()));
+    match collection_job_state_entry {
         Entry::Occupied(mut occupied_entry) => match occupied_entry.get_mut() {
-            CollectJobState::InProgress(join_handle_opt) => {
+            CollectionJobState::InProgress(join_handle_opt) => {
                 if join_handle_opt.as_ref().unwrap().is_finished() {
                     // Awaiting on the JoinHandle requires owning it. We take it out of the Option,
                     // and ensure that a different enum variant is stored over it before dropping
@@ -606,18 +606,18 @@ async fn handle_collect_poll(
                     let collect_result = match task_result {
                         Ok(collect_result) => collect_result,
                         Err(e) => {
-                            occupied_entry.insert(CollectJobState::Error);
+                            occupied_entry.insert(CollectionJobState::Error);
                             return Err(e).context("panic while handling collection");
                         }
                     };
                     match collect_result {
                         Ok(collect_result) => {
                             occupied_entry
-                                .insert(CollectJobState::Completed(collect_result.clone()));
+                                .insert(CollectionJobState::Completed(collect_result.clone()));
                             Ok(Some(collect_result))
                         }
                         Err(e) => {
-                            occupied_entry.insert(CollectJobState::Error);
+                            occupied_entry.insert(CollectionJobState::Error);
                             Err(e)
                         }
                     }
@@ -625,8 +625,8 @@ async fn handle_collect_poll(
                     Ok(None)
                 }
             }
-            CollectJobState::Completed(collect_result) => Ok(Some(collect_result.clone())),
-            CollectJobState::Error => Err(anyhow::anyhow!(
+            CollectionJobState::Completed(collect_result) => Ok(Some(collect_result.clone())),
+            CollectionJobState::Error => Err(anyhow::anyhow!(
                 "collection previously resulted in an error"
             )),
         },
@@ -641,7 +641,7 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let tasks: Arc<Mutex<HashMap<TaskId, TaskState>>> = Arc::new(Mutex::new(HashMap::new()));
-    let collect_jobs: Arc<Mutex<HashMap<Handle, CollectJobState>>> =
+    let collection_jobs: Arc<Mutex<HashMap<Handle, CollectionJobState>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let keyring = Arc::new(Mutex::new(HpkeConfigRegistry::new()));
 
@@ -675,40 +675,39 @@ fn make_filter() -> anyhow::Result<impl Filter<Extract = (Response,)> + Clone> {
             }
         }
     });
-    let collect_start_filter =
-        warp::path!("collect_start").and(warp::body::json()).then({
+    let collect_start_filter = warp::path!("collect_start").and(warp::body::json()).then({
+        let tasks = Arc::clone(&tasks);
+        let collection_jobs = Arc::clone(&collection_jobs);
+        move |request: CollectStartRequest| {
+            let http_client = http_client.clone();
             let tasks = Arc::clone(&tasks);
-            let collect_jobs = Arc::clone(&collect_jobs);
-            move |request: CollectStartRequest| {
-                let http_client = http_client.clone();
-                let tasks = Arc::clone(&tasks);
-                let collect_jobs = Arc::clone(&collect_jobs);
-                async move {
-                    let response =
-                        match handle_collect_start(&http_client, &tasks, &collect_jobs, request)
-                            .await
-                        {
-                            Ok(handle) => CollectStartResponse {
-                                status: SUCCESS,
-                                error: None,
-                                handle: Some(handle.0),
-                            },
-                            Err(e) => CollectStartResponse {
-                                status: ERROR,
-                                error: Some(format!("{e:?}")),
-                                handle: None,
-                            },
-                        };
-                    warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                        .into_response()
-                }
+            let collection_jobs = Arc::clone(&collection_jobs);
+            async move {
+                let response =
+                    match handle_collect_start(&http_client, &tasks, &collection_jobs, request)
+                        .await
+                    {
+                        Ok(handle) => CollectStartResponse {
+                            status: SUCCESS,
+                            error: None,
+                            handle: Some(handle.0),
+                        },
+                        Err(e) => CollectStartResponse {
+                            status: ERROR,
+                            error: Some(format!("{e:?}")),
+                            handle: None,
+                        },
+                    };
+                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
+                    .into_response()
             }
-        });
+        }
+    });
     let collect_poll_filter = warp::path!("collect_poll").and(warp::body::json()).then({
         move |request: CollectPollRequest| {
-            let collect_jobs = Arc::clone(&collect_jobs);
+            let collection_jobs = Arc::clone(&collection_jobs);
             async move {
-                let response = match handle_collect_poll(&collect_jobs, request).await {
+                let response = match handle_collect_poll(&collection_jobs, request).await {
                     Ok(Some(collect_result)) => CollectPollResponse {
                         status: COMPLETE,
                         error: None,

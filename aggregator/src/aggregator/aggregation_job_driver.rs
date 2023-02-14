@@ -1,6 +1,8 @@
-use super::query_type::AccumulableQueryType;
 use crate::{
-    aggregator::{accumulator::Accumulator, aggregate_step_failure_counter, post_to_helper},
+    aggregator::{
+        accumulator::Accumulator, aggregate_step_failure_counter, query_type::AccumulableQueryType,
+        send_request_to_helper,
+    },
     datastore::{
         self, gather_errors,
         models::{
@@ -22,7 +24,7 @@ use futures::future::{join_all, BoxFuture, FutureExt};
 use janus_core::{task::VdafInstance, time::Clock};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
-    AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq, AggregateInitializeResp,
+    AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
     PartialBatchSelector, PrepareStep, PrepareStepResult, ReportShare, ReportShareError, Role,
 };
 use opentelemetry::{
@@ -42,6 +44,7 @@ use prio::{
         PrepareTransition,
     },
 };
+use reqwest::Method;
 use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -459,25 +462,24 @@ impl AggregationJobDriver {
 
         // Construct request, send it to the helper, and process the response.
         // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
-        // unexepected cases such as unknown/unexpected content type.
-        let req = AggregateInitializeReq::<Q>::new(
-            *task.id(),
-            *aggregation_job.id(),
+        // unexpected cases such as unknown/unexpected content type.
+        let req = AggregationJobInitializeReq::<Q>::new(
             aggregation_job.aggregation_parameter().get_encoded(),
             PartialBatchSelector::new(aggregation_job.partial_batch_identifier().clone()),
             report_shares,
         );
 
-        let resp_bytes = post_to_helper(
+        let resp_bytes = send_request_to_helper(
             &self.http_client,
-            task.aggregator_url(&Role::Helper)?.join("aggregate")?,
-            AggregateInitializeReq::<Q>::MEDIA_TYPE,
+            Method::PUT,
+            task.aggregation_job_uri(aggregation_job.id())?,
+            AggregationJobInitializeReq::<Q>::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),
             &self.http_request_duration_histogram,
         )
         .await?;
-        let resp = AggregateInitializeResp::get_decoded(&resp_bytes)?;
+        let resp = AggregationJobResp::get_decoded(&resp_bytes)?;
 
         self.process_response_from_helper(
             datastore,
@@ -562,19 +564,20 @@ impl AggregationJobDriver {
 
         // Construct request, send it to the helper, and process the response.
         // TODO(#235): abandon work immediately on "terminal" failures from helper, or other
-        // unexepected cases such as unknown/unexpected content type.
-        let req = AggregateContinueReq::new(*task.id(), *aggregation_job.id(), prepare_steps);
+        // unexpected cases such as unknown/unexpected content type.
+        let req = AggregationJobResp::new(prepare_steps);
 
-        let resp_bytes = post_to_helper(
+        let resp_bytes = send_request_to_helper(
             &self.http_client,
-            task.aggregator_url(&Role::Helper)?.join("aggregate")?,
-            AggregateContinueReq::MEDIA_TYPE,
+            Method::POST,
+            task.aggregation_job_uri(aggregation_job.id())?,
+            AggregationJobContinueReq::MEDIA_TYPE,
             req,
             task.primary_aggregator_auth_token(),
             &self.http_request_duration_histogram,
         )
         .await?;
-        let resp = AggregateContinueResp::get_decoded(&resp_bytes)?;
+        let resp = AggregationJobResp::get_decoded(&resp_bytes)?;
 
         self.process_response_from_helper(
             datastore,
@@ -1007,10 +1010,10 @@ mod tests {
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
-        AggregateContinueReq, AggregateContinueResp, AggregateInitializeReq,
-        AggregateInitializeResp, Duration, Extension, ExtensionType, HpkeConfig, InputShareAad,
-        Interval, PartialBatchSelector, PlaintextInputShare, PrepareStep, PrepareStepResult,
-        ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
+        AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp, Duration,
+        Extension, ExtensionType, HpkeConfig, InputShareAad, Interval, PartialBatchSelector,
+        PlaintextInputShare, PrepareStep, PrepareStepResult, ReportIdChecksum, ReportMetadata,
+        ReportShare, ReportShareError, Role, TaskId, Time,
     };
     use mockito::mock;
     use opentelemetry::global::meter;
@@ -1122,18 +1125,20 @@ mod tests {
         let helper_vdaf_msg = transcript.helper_prep_share(0);
         let helper_responses = Vec::from([
             (
-                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
-                AggregateInitializeResp::MEDIA_TYPE,
-                AggregateInitializeResp::new(Vec::from([PrepareStep::new(
+                "PUT",
+                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+                AggregationJobResp::MEDIA_TYPE,
+                AggregationJobResp::new(Vec::from([PrepareStep::new(
                     *report.metadata().id(),
                     PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
                 )]))
                 .get_encoded(),
             ),
             (
-                AggregateContinueReq::MEDIA_TYPE,
-                AggregateContinueResp::MEDIA_TYPE,
-                AggregateContinueResp::new(Vec::from([PrepareStep::new(
+                "POST",
+                AggregationJobContinueReq::MEDIA_TYPE,
+                AggregationJobResp::MEDIA_TYPE,
+                AggregationJobResp::new(Vec::from([PrepareStep::new(
                     *report.metadata().id(),
                     PrepareStepResult::Finished,
                 )]))
@@ -1142,8 +1147,14 @@ mod tests {
         ]);
         let mocked_aggregates: Vec<_> = helper_responses
             .into_iter()
-            .map(|(req_content_type, resp_content_type, resp_body)| {
-                mock("POST", "/aggregate")
+            .map(
+                |(req_method, req_content_type, resp_content_type, resp_body)| {
+                    mock(
+                        req_method,
+                        task.aggregation_job_uri(&aggregation_job_id)
+                            .unwrap()
+                            .path(),
+                    )
                     .match_header(
                         "DAP-Auth-Token",
                         str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
@@ -1153,7 +1164,8 @@ mod tests {
                     .with_header(CONTENT_TYPE.as_str(), resp_content_type)
                     .with_body(resp_body)
                     .create()
-            })
+                },
+            )
             .collect();
         let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
@@ -1369,9 +1381,7 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let leader_request = AggregateInitializeReq::new(
-            *task.id(),
-            aggregation_job_id,
+        let leader_request = AggregationJobInitializeReq::new(
             ().get_encoded(),
             PartialBatchSelector::new_time_interval(),
             Vec::from([ReportShare::new(
@@ -1381,29 +1391,39 @@ mod tests {
             )]),
         );
         let helper_vdaf_msg = transcript.helper_prep_share(0);
-        let helper_response = AggregateInitializeResp::new(Vec::from([PrepareStep::new(
+        let helper_response = AggregationJobResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
         )]));
-        let mocked_aggregate_failure = mock("POST", "/aggregate")
-            .with_status(500)
-            .with_header("Content-Type", "application/problem+json")
-            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
-            .create();
-        let mocked_aggregate_success = mock("POST", "/aggregate")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .match_body(leader_request.get_encoded())
-            .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateInitializeResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
-            .create();
+        let mocked_aggregate_failure = mock(
+            "PUT",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .with_status(500)
+        .with_header("Content-Type", "application/problem+json")
+        .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
+        .create();
+        let mocked_aggregate_success = mock(
+            "PUT",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(
+            CONTENT_TYPE.as_str(),
+            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+        )
+        .match_body(leader_request.get_encoded())
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
+        .with_body(helper_response.get_encoded())
+        .create();
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
@@ -1597,9 +1617,7 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let leader_request = AggregateInitializeReq::new(
-            *task.id(),
-            aggregation_job_id,
+        let leader_request = AggregationJobInitializeReq::new(
             ().get_encoded(),
             PartialBatchSelector::new_fixed_size(batch_id),
             Vec::from([ReportShare::new(
@@ -1609,29 +1627,39 @@ mod tests {
             )]),
         );
         let helper_vdaf_msg = transcript.helper_prep_share(0);
-        let helper_response = AggregateInitializeResp::new(Vec::from([PrepareStep::new(
+        let helper_response = AggregationJobResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
         )]));
-        let mocked_aggregate_failure = mock("POST", "/aggregate")
-            .with_status(500)
-            .with_header("Content-Type", "application/problem+json")
-            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
-            .create();
-        let mocked_aggregate_success = mock("POST", "/aggregate")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateInitializeReq::<FixedSize>::MEDIA_TYPE,
-            )
-            .match_body(leader_request.get_encoded())
-            .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateInitializeResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
-            .create();
+        let mocked_aggregate_failure = mock(
+            "PUT",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .with_status(500)
+        .with_header("Content-Type", "application/problem+json")
+        .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unauthorizedRequest\"}")
+        .create();
+        let mocked_aggregate_success = mock(
+            "PUT",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(
+            CONTENT_TYPE.as_str(),
+            AggregationJobInitializeReq::<FixedSize>::MEDIA_TYPE,
+        )
+        .match_body(leader_request.get_encoded())
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
+        .with_body(helper_response.get_encoded())
+        .create();
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
@@ -1820,34 +1848,40 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let leader_request = AggregateContinueReq::new(
-            *task.id(),
-            aggregation_job_id,
-            Vec::from([PrepareStep::new(
-                *report.metadata().id(),
-                PrepareStepResult::Continued(prep_msg.get_encoded()),
-            )]),
-        );
-        let helper_response = AggregateContinueResp::new(Vec::from([PrepareStep::new(
+        let leader_request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
+            *report.metadata().id(),
+            PrepareStepResult::Continued(prep_msg.get_encoded()),
+        )]));
+        let helper_response = AggregationJobResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Finished,
         )]));
-        let mocked_aggregate_failure = mock("POST", "/aggregate")
-            .with_status(500)
-            .with_header("Content-Type", "application/problem+json")
-            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
-            .create();
-        let mocked_aggregate_success = mock("POST", "/aggregate")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(CONTENT_TYPE.as_str(), AggregateContinueReq::MEDIA_TYPE)
-            .match_body(leader_request.get_encoded())
-            .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateContinueResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
-            .create();
+        let mocked_aggregate_failure = mock(
+            "POST",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .with_status(500)
+        .with_header("Content-Type", "application/problem+json")
+        .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
+        .create();
+        let mocked_aggregate_success = mock(
+            "POST",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
+        .match_body(leader_request.get_encoded())
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
+        .with_body(helper_response.get_encoded())
+        .create();
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
@@ -2061,34 +2095,40 @@ mod tests {
         // (This is fragile in that it expects the leader request to be deterministically encoded.
         // It would be nicer to retrieve the request bytes from the mock, then do our own parsing &
         // verification -- but mockito does not expose this functionality at time of writing.)
-        let leader_request = AggregateContinueReq::new(
-            *task.id(),
-            aggregation_job_id,
-            Vec::from([PrepareStep::new(
-                *report.metadata().id(),
-                PrepareStepResult::Continued(prep_msg.get_encoded()),
-            )]),
-        );
-        let helper_response = AggregateContinueResp::new(Vec::from([PrepareStep::new(
+        let leader_request = AggregationJobContinueReq::new(Vec::from([PrepareStep::new(
+            *report.metadata().id(),
+            PrepareStepResult::Continued(prep_msg.get_encoded()),
+        )]));
+        let helper_response = AggregationJobResp::new(Vec::from([PrepareStep::new(
             *report.metadata().id(),
             PrepareStepResult::Finished,
         )]));
-        let mocked_aggregate_failure = mock("POST", "/aggregate")
-            .with_status(500)
-            .with_header("Content-Type", "application/problem+json")
-            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
-            .create();
-        let mocked_aggregate_success = mock("POST", "/aggregate")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(CONTENT_TYPE.as_str(), AggregateContinueReq::MEDIA_TYPE)
-            .match_body(leader_request.get_encoded())
-            .with_status(200)
-            .with_header(CONTENT_TYPE.as_str(), AggregateContinueResp::MEDIA_TYPE)
-            .with_body(helper_response.get_encoded())
-            .create();
+        let mocked_aggregate_failure = mock(
+            "POST",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .with_status(500)
+        .with_header("Content-Type", "application/problem+json")
+        .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:unrecognizedTask\"}")
+        .create();
+        let mocked_aggregate_success = mock(
+            "POST",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(CONTENT_TYPE.as_str(), AggregationJobContinueReq::MEDIA_TYPE)
+        .match_body(leader_request.get_encoded())
+        .with_status(200)
+        .with_header(CONTENT_TYPE.as_str(), AggregationJobResp::MEDIA_TYPE)
+        .with_body(helper_response.get_encoded())
+        .create();
 
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
@@ -2480,40 +2520,50 @@ mod tests {
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
-        let failure_mock = mock("POST", "/aggregate")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_status(500)
-            .expect(3)
-            .create();
+        let failure_mock = mock(
+            "PUT",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(
+            CONTENT_TYPE.as_str(),
+            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+        )
+        .with_status(500)
+        .expect(3)
+        .create();
         // Set up an extra response that should never be used, to make sure the job driver doesn't
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
-        let no_more_requests_mock = mock("POST", "/aggregate")
-            .match_header(
-                "DAP-Auth-Token",
-                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-            )
-            .match_header(
-                CONTENT_TYPE.as_str(),
-                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .with_status(500)
-            .expect(1)
-            .create();
+        let no_more_requests_mock = mock(
+            "PUT",
+            task.aggregation_job_uri(&aggregation_job_id)
+                .unwrap()
+                .path(),
+        )
+        .match_header(
+            "DAP-Auth-Token",
+            str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+        )
+        .match_header(
+            CONTENT_TYPE.as_str(),
+            AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
+        )
+        .with_status(500)
+        .expect(1)
+        .create();
 
         // Start up the job driver.
         let task_handle = runtime_manager
             .with_label("driver")
             .spawn(async move { job_driver.run().await });
 
-        // Run the job driver until we try to step the collect job four times. The first three
+        // Run the job driver until we try to step the collection job four times. The first three
         // attempts make network requests and fail, while the fourth attempt just marks the job
         // as abandoned.
         for i in 1..=4 {

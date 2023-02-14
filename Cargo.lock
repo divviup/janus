@@ -1604,6 +1604,7 @@ dependencies = [
  "prio",
  "prometheus",
  "rand",
+ "regex",
  "reqwest",
  "ring",
  "serde",

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use janus_aggregator::{
-    aggregator::collect_job_driver::CollectJobDriver,
+    aggregator::collection_job_driver::CollectionJobDriver,
     binary_utils::{
         janus_main, job_driver::JobDriver, setup_signal_handler, BinaryOptions, CommonBinaryOptions,
     },
@@ -18,13 +18,13 @@ async fn main() -> anyhow::Result<()> {
         env!("CARGO_PKG_NAME"),
         "/",
         env!("CARGO_PKG_VERSION"),
-        "/collect_job_driver"
+        "/collection_job_driver"
     );
 
     janus_main::<_, Options, Config, _, _>(RealClock::default(), |ctx| async move {
-        let meter = opentelemetry::global::meter("collect_job_driver");
+        let meter = opentelemetry::global::meter("collection_job_driver");
         let datastore = Arc::new(ctx.datastore);
-        let collect_job_driver = Arc::new(CollectJobDriver::new(
+        let collection_job_driver = Arc::new(CollectionJobDriver::new(
             reqwest::Client::builder()
                 .user_agent(CLIENT_USER_AGENT)
                 .build()
@@ -49,9 +49,9 @@ async fn main() -> anyhow::Result<()> {
                     .job_driver_config
                     .worker_lease_clock_skew_allowance_secs,
             ),
-            collect_job_driver
+            collection_job_driver
                 .make_incomplete_job_acquirer_callback(Arc::clone(&datastore), lease_duration),
-            collect_job_driver.make_job_stepper_callback(
+            collection_job_driver.make_job_stepper_callback(
                 Arc::clone(&datastore),
                 ctx.config.job_driver_config.maximum_attempts_before_failure,
             ),
@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
 #[derive(Debug, Parser)]
 #[clap(
     name = "janus-collect-job-driver",
-    about = "Janus collect job driver",
+    about = "Janus collection job driver",
     rename_all = "kebab-case",
     version = env!("CARGO_PKG_VERSION"),
 )]
@@ -84,7 +84,7 @@ impl BinaryOptions for Options {
     }
 }
 
-/// Non-secret configuration options for Janus Collect Job Driver jobs.
+/// Non-secret configuration options for Janus collection job driver jobs.
 ///
 /// # Examples
 ///
