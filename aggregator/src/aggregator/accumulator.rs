@@ -2,11 +2,11 @@
 
 use super::{query_type::AccumulableQueryType, Error};
 use crate::{
-    datastore::{self, gather_errors, models::BatchAggregation, Transaction},
+    datastore::{self, models::BatchAggregation, Transaction},
     task::Task,
 };
 use derivative::Derivative;
-use futures::future::join_all;
+use futures::future::try_join_all;
 use janus_core::{report_id::ReportIdChecksumExt, time::Clock};
 use janus_messages::{ReportId, ReportIdChecksum, Time};
 use prio::vdaf::{self, Aggregatable};
@@ -77,42 +77,40 @@ where
         &self,
         tx: &Transaction<'_, C>,
     ) -> Result<(), datastore::Error> {
-        gather_errors(
-            join_all(self.accumulations.iter().map(
-                |(batch_identifier, accumulation)| async move {
-                    let batch_aggregation = tx
-                        .get_batch_aggregation::<L, Q, A>(
-                            self.task.id(),
-                            batch_identifier,
-                            &self.aggregation_param,
-                        )
+        try_join_all(self.accumulations.iter().map(
+            |(batch_identifier, accumulation)| async move {
+                let batch_aggregation = tx
+                    .get_batch_aggregation::<L, Q, A>(
+                        self.task.id(),
+                        batch_identifier,
+                        &self.aggregation_param,
+                    )
+                    .await?;
+                match batch_aggregation {
+                    Some(batch_aggregation) => {
+                        tx.update_batch_aggregation(&batch_aggregation.merged_with(
+                            &accumulation.aggregate_share,
+                            accumulation.report_count,
+                            &accumulation.checksum,
+                        )?)
                         .await?;
-                    match batch_aggregation {
-                        Some(batch_aggregation) => {
-                            tx.update_batch_aggregation(&batch_aggregation.merged_with(
-                                &accumulation.aggregate_share,
-                                accumulation.report_count,
-                                &accumulation.checksum,
-                            )?)
-                            .await?;
-                        }
-                        None => {
-                            tx.put_batch_aggregation(&BatchAggregation::<L, Q, A>::new(
-                                *self.task.id(),
-                                batch_identifier.clone(),
-                                self.aggregation_param.clone(),
-                                accumulation.aggregate_share.clone(),
-                                accumulation.report_count,
-                                accumulation.checksum,
-                            ))
-                            .await?;
-                        }
                     }
-                    Ok::<(), datastore::Error>(())
-                },
-            ))
-            .await,
-        )?;
+                    None => {
+                        tx.put_batch_aggregation(&BatchAggregation::<L, Q, A>::new(
+                            *self.task.id(),
+                            batch_identifier.clone(),
+                            self.aggregation_param.clone(),
+                            accumulation.aggregate_share.clone(),
+                            accumulation.report_count,
+                            accumulation.checksum,
+                        ))
+                        .await?;
+                    }
+                }
+                Ok::<(), datastore::Error>(())
+            },
+        ))
+        .await?;
         Ok(())
     }
 }

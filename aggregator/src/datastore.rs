@@ -16,7 +16,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use chrono::NaiveDateTime;
-use futures::future::join_all;
+use futures::future::try_join_all;
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
     task::{AuthenticationToken, VdafInstance},
@@ -47,91 +47,17 @@ use std::{
     mem::size_of,
     ops::RangeInclusive,
     pin::Pin,
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration as StdDuration, Instant},
 };
-use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row};
+use tokio::try_join;
+use tokio_postgres::{error::SqlState, row::RowIndex, IsolationLevel, Row, Statement, ToStatement};
+use tracing::error;
 use url::Url;
 
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util;
-
-/// A replacement for [`tokio::try_join!`] that is safe to use on datastore errors.
-///
-/// This macro concurrently awaits on multiple fallible futures, and returns a `Result` holding
-/// either a tuple of the future's unwrapped outputs, or a single error. If any future yields an
-/// error, the remaining futures will _not_ be cancelled. Once all futures have resolved, the error
-/// to be returned will be chosen using [`Error::combine`]. This will ensure that any transaction
-/// serialization failure is propagated out, no matter the order that the futures are polled in.
-#[macro_export]
-macro_rules! try_join {
-    // External-facing syntax: take a comma-separated list of arguments, where each is a future.
-    ( $a:expr, $b:expr $(,)? ) => {{
-        let (a, b) = ::tokio::join!($a, $b);
-        $crate::try_join!(
-            :fold
-            a.map_err($crate::datastore::Error::from),
-            b.map_err($crate::datastore::Error::from)
-        )
-    }};
-    ( $a:expr, $b:expr, $c:expr $(,)? ) => {{
-        let (a, b, c) = ::tokio::join!($a, $b, $c);
-        match $crate::try_join!(
-            :fold
-            a.map_err($crate::datastore::Error::from),
-            b.map_err($crate::datastore::Error::from),
-            c.map_err($crate::datastore::Error::from)
-        ) {
-            Ok((a, (b, c))) => Ok((a, b, c)),
-            Err(err) => Err(err),
-        }
-    }};
-    ( $a:expr, $b:expr, $c:expr, $d:expr $(,)? ) => {{
-        let (a, b, c, d) = ::tokio::join!($a, $b, $c, $d);
-        match $crate::try_join!(
-            :fold
-            a.map_err($crate::datastore::Error::from),
-            b.map_err($crate::datastore::Error::from),
-            c.map_err($crate::datastore::Error::from),
-            d.map_err($crate::datastore::Error::from)
-        ) {
-            Ok((a, (b, (c, d)))) => Ok((a, b, c, d)),
-            Err(err) => Err(err),
-        }
-    }};
-    ( $a:expr, $b:expr, $c:expr, $d:expr, $e:expr $(,)? ) => {{
-        let (a, b, c, d, e) = ::tokio::join!($a, $b, $c, $d, $e);
-        match $crate::try_join!(
-            :fold
-            a.map_err($crate::datastore::Error::from),
-            b.map_err($crate::datastore::Error::from),
-            c.map_err($crate::datastore::Error::from),
-            d.map_err($crate::datastore::Error::from),
-            e.map_err($crate::datastore::Error::from)
-        ) {
-            Ok((a, (b, (c, (d, e))))) => Ok((a, b, c, d, e)),
-            Err(err) => Err(err),
-        }
-    }};
-
-    // Internal syntax, base case: fold two results together.
-    ( : fold $a:expr, $b:expr ) => {
-        match ($a, $b) {
-            (Ok(a_out), Ok(b_out)) => Ok((a_out, b_out)),
-            (Ok(_), Err(e)) | (Err(e), Ok(_)) => Err(e),
-            (Err(a_err), Err(b_err)) => Err($crate::datastore::Error::combine(a_err, b_err)),
-        }
-    };
-
-    // Internal syntax, induction step: fold n results into n - 1 results.
-    ( : fold $a:expr, $b:expr, $($rest:expr),+ ) => {
-        $crate::try_join!(
-            :fold
-            $a,
-            $crate::try_join!(:fold $b, $($rest),+)
-        )
-    }
-}
 
 // TODO(#196): retry network-related & other transient failures once we know what they look like
 
@@ -204,15 +130,20 @@ impl<C: Clock> Datastore<C> {
     {
         loop {
             let before = Instant::now();
-            let rslt = self.run_tx_once(&f).await;
+            let (rslt, retry) = self.run_tx_once(&f).await;
             let elapsed = before.elapsed();
             self.transaction_duration_histogram.record(
                 &Context::current(),
                 elapsed.as_secs_f64(),
                 &[KeyValue::new("tx", name)],
             );
-            match rslt.as_ref() {
-                Ok(_) => self.transaction_status_counter.add(
+            match (rslt.as_ref(), retry) {
+                (_, true) => self.transaction_status_counter.add(
+                    &Context::current(),
+                    1,
+                    &[KeyValue::new("status", "retry"), KeyValue::new("tx", name)],
+                ),
+                (Ok(_), _) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
                     &[
@@ -220,37 +151,17 @@ impl<C: Clock> Datastore<C> {
                         KeyValue::new("tx", name),
                     ],
                 ),
-                Err(err) if err.is_serialization_failure() => {
+                (Err(Error::Db(_)), _) | (Err(Error::Pool(_)), _) => {
                     self.transaction_status_counter.add(
                         &Context::current(),
                         1,
                         &[
-                            KeyValue::new("status", "error_conflict"),
+                            KeyValue::new("status", "error_db"),
                             KeyValue::new("tx", name),
                         ],
-                    );
-                    continue;
+                    )
                 }
-                Err(err) if err.is_deadlock_failure() => {
-                    self.transaction_status_counter.add(
-                        &Context::current(),
-                        1,
-                        &[
-                            KeyValue::new("status", "error_deadlock"),
-                            KeyValue::new("tx", name),
-                        ],
-                    );
-                    continue;
-                }
-                Err(Error::Db(_)) | Err(Error::Pool(_)) => self.transaction_status_counter.add(
-                    &Context::current(),
-                    1,
-                    &[
-                        KeyValue::new("status", "error_db"),
-                        KeyValue::new("tx", name),
-                    ],
-                ),
-                Err(_) => self.transaction_status_counter.add(
+                (Err(_), _) => self.transaction_status_counter.add(
                     &Context::current(),
                     1,
                     &[
@@ -259,54 +170,73 @@ impl<C: Clock> Datastore<C> {
                     ],
                 ),
             }
+            if retry {
+                continue;
+            }
             return rslt;
         }
     }
 
-    #[tracing::instrument(skip(self, f), err)]
-    async fn run_tx_once<F, T>(&self, f: &F) -> Result<T, Error>
+    async fn run_tx_once<F, T>(&self, f: &F) -> (Result<T, Error>, bool)
     where
         for<'a> F:
             Fn(&'a Transaction<C>) -> Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>,
     {
         // Open transaction.
-        let mut client = self.pool.get().await?;
+        let mut client = match self.pool.get().await {
+            Ok(client) => client,
+            Err(err) => return (Err(err.into()), false),
+        };
+        let raw_tx = match client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .await
+        {
+            Ok(raw_tx) => raw_tx,
+            Err(err) => return (Err(err.into()), false),
+        };
         let tx = Transaction {
-            tx: client
-                .build_transaction()
-                .isolation_level(IsolationLevel::Serializable)
-                .start()
-                .await?,
+            raw_tx,
+            retry: AtomicBool::new(false),
             crypter: &self.crypter,
             clock: &self.clock,
         };
 
-        // Run user-provided function with the transaction.
-        match f(&tx).await {
-            Ok(rslt) => {
-                // Commit.
-                tx.tx.commit().await?;
-                Ok(rslt)
-            }
-            Err(error) => match tx.tx.rollback().await {
-                Ok(()) => Err(error),
-                Err(rollback_error) => {
+        // Run user-provided function with the transaction, then commit/rollback based on result.
+        let rslt = f(&tx).await;
+        let (raw_tx, retry) = (tx.raw_tx, tx.retry);
+        let rslt = match (rslt, retry.load(Ordering::Acquire)) {
+            // Commit.
+            (Ok(val), false) => match check_error(&retry, raw_tx.commit().await) {
+                Ok(()) => Ok(val),
+                Err(err) => Err(err.into()),
+            },
+
+            // Rollback.
+            (rslt, _) => {
+                if let Err(rollback_err) = check_error(&retry, raw_tx.rollback().await) {
+                    error!("Couldn't roll back transaction: {rollback_err}");
                     self.rollback_error_counter.add(
                         &Context::current(),
                         1,
                         &[KeyValue::new(
                             "code",
-                            rollback_error
+                            rollback_err
                                 .code()
                                 .map(SqlState::code)
                                 .unwrap_or("N/A")
                                 .to_string(),
                         )],
                     );
-                    Err(error.combine(rollback_error.into()))
-                }
-            },
-        }
+                };
+                // We return `rslt` unconditionally here: it will either be an error, or we have the
+                // retry flag set so that if `rslt` is a success we will be retrying the entire
+                // transaction & the result of this attempt doesn't matter.
+                rslt
+            }
+        };
+        (rslt, retry.load(Ordering::Acquire))
     }
 
     /// Write a task into the datastore.
@@ -321,14 +251,86 @@ impl<C: Clock> Datastore<C> {
     }
 }
 
+fn check_error<T>(
+    retry: &AtomicBool,
+    rslt: Result<T, tokio_postgres::Error>,
+) -> Result<T, tokio_postgres::Error> {
+    if let Err(err) = &rslt {
+        if let Some(code) = err.code() {
+            if code == &SqlState::T_R_SERIALIZATION_FAILURE
+                || code == &SqlState::T_R_DEADLOCK_DETECTED
+            {
+                retry.store(true, Ordering::Release);
+            }
+        }
+    }
+    rslt
+}
+
 /// Transaction represents an ongoing datastore transaction.
 pub struct Transaction<'a, C: Clock> {
-    tx: deadpool_postgres::Transaction<'a>,
+    raw_tx: deadpool_postgres::Transaction<'a>,
+    retry: AtomicBool,
     crypter: &'a Crypter,
     clock: &'a C,
 }
 
 impl<C: Clock> Transaction<'_, C> {
+    fn check_error<T>(
+        &self,
+        rslt: Result<T, tokio_postgres::Error>,
+    ) -> Result<T, tokio_postgres::Error> {
+        check_error(&self.retry, rslt)
+    }
+
+    async fn execute<T>(
+        &self,
+        statement: &T,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> Result<u64, tokio_postgres::Error>
+    where
+        T: ?Sized + ToStatement,
+    {
+        self.check_error(self.raw_tx.execute(statement, params).await)
+    }
+
+    async fn prepare_cached(&self, query: &str) -> Result<Statement, tokio_postgres::Error> {
+        self.check_error(self.raw_tx.prepare_cached(query).await)
+    }
+
+    async fn query<T>(
+        &self,
+        statement: &T,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> Result<Vec<Row>, tokio_postgres::Error>
+    where
+        T: ?Sized + ToStatement,
+    {
+        self.check_error(self.raw_tx.query(statement, params).await)
+    }
+
+    async fn query_one<T>(
+        &self,
+        statement: &T,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> Result<Row, tokio_postgres::Error>
+    where
+        T: ?Sized + ToStatement,
+    {
+        self.check_error(self.raw_tx.query_one(statement, params).await)
+    }
+
+    async fn query_opt<T>(
+        &self,
+        statement: &T,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> Result<Option<Row>, tokio_postgres::Error>
+    where
+        T: ?Sized + ToStatement,
+    {
+        self.check_error(self.raw_tx.query_opt(statement, params).await)
+    }
+
     /// Writes a task into the datastore.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     pub async fn put_task(&self, task: &Task) -> Result<(), Error> {
@@ -340,7 +342,6 @@ impl<C: Clock> Transaction<'_, C> {
 
         // Main task insert.
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO tasks (
                     task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
@@ -349,33 +350,32 @@ impl<C: Clock> Transaction<'_, C> {
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ &task.id().as_ref(),
-                    /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
-                    /* aggregator_endpoints */ &endpoints,
-                    /* query_type */ &Json(task.query_type()),
-                    /* vdaf */ &Json(task.vdaf()),
-                    /* max_batch_query_count */
-                    &i64::try_from(task.max_batch_query_count())?,
-                    /* task_expiration */ &task.task_expiration().as_naive_date_time()?,
-                    /* report_expiry_age */
-                    &task
-                        .report_expiry_age()
-                        .map(Duration::as_seconds)
-                        .map(i64::try_from)
-                        .transpose()?,
-                    /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
-                    /* time_precision */
-                    &i64::try_from(task.time_precision().as_seconds())?,
-                    /* tolerable_clock_skew */
-                    &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
-                    /* collector_hpke_config */ &task.collector_hpke_config().get_encoded(),
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ &task.id().as_ref(),
+                /* aggregator_role */ &AggregatorRole::from_role(*task.role())?,
+                /* aggregator_endpoints */ &endpoints,
+                /* query_type */ &Json(task.query_type()),
+                /* vdaf */ &Json(task.vdaf()),
+                /* max_batch_query_count */
+                &i64::try_from(task.max_batch_query_count())?,
+                /* task_expiration */ &task.task_expiration().as_naive_date_time()?,
+                /* report_expiry_age */
+                &task
+                    .report_expiry_age()
+                    .map(Duration::as_seconds)
+                    .map(i64::try_from)
+                    .transpose()?,
+                /* min_batch_size */ &i64::try_from(task.min_batch_size())?,
+                /* time_precision */
+                &i64::try_from(task.time_precision().as_seconds())?,
+                /* tolerable_clock_skew */
+                &i64::try_from(task.tolerable_clock_skew().as_seconds())?,
+                /* collector_hpke_config */ &task.collector_hpke_config().get_encoded(),
+            ],
+        )
+        .await?;
 
         // Aggregator auth tokens.
         let mut aggregator_auth_token_ords = Vec::new();
@@ -397,7 +397,7 @@ impl<C: Clock> Transaction<'_, C> {
             aggregator_auth_token_ords.push(ord);
             aggregator_auth_tokens.push(encrypted_aggregator_auth_token);
         }
-        let stmt = self.tx.prepare_cached(
+        let stmt = self.prepare_cached(
                 "INSERT INTO task_aggregator_auth_tokens (task_id, ord, token)
                 SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], $3::BYTEA[])"
             )
@@ -407,7 +407,7 @@ impl<C: Clock> Transaction<'_, C> {
             /* ords */ &aggregator_auth_token_ords,
             /* tokens */ &aggregator_auth_tokens,
         ];
-        let aggregator_auth_tokens_future = self.tx.execute(&stmt, aggregator_auth_tokens_params);
+        let aggregator_auth_tokens_future = self.execute(&stmt, aggregator_auth_tokens_params);
 
         // Collector auth tokens.
         let mut collector_auth_token_ords = Vec::new();
@@ -429,7 +429,7 @@ impl<C: Clock> Transaction<'_, C> {
             collector_auth_token_ords.push(ord);
             collector_auth_tokens.push(encrypted_collector_auth_token);
         }
-        let stmt = self.tx.prepare_cached(
+        let stmt = self.prepare_cached(
             "INSERT INTO task_collector_auth_tokens (task_id, ord, token)
             SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BIGINT[], $3::BYTEA[])"
         ).await?;
@@ -438,7 +438,7 @@ impl<C: Clock> Transaction<'_, C> {
             /* ords */ &collector_auth_token_ords,
             /* tokens */ &collector_auth_tokens,
         ];
-        let collector_auth_tokens_future = self.tx.execute(&stmt, collector_auth_tokens_params);
+        let collector_auth_tokens_future = self.execute(&stmt, collector_auth_tokens_params);
 
         // HPKE keys.
         let mut hpke_config_ids: Vec<i16> = Vec::new();
@@ -462,7 +462,6 @@ impl<C: Clock> Transaction<'_, C> {
             hpke_private_keys.push(encrypted_hpke_private_key);
         }
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO task_hpke_keys (task_id, config_id, config, private_key)
                 SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::SMALLINT[], $3::BYTEA[], $4::BYTEA[])",
@@ -474,7 +473,7 @@ impl<C: Clock> Transaction<'_, C> {
             /* configs */ &hpke_configs,
             /* private_keys */ &hpke_private_keys,
         ];
-        let hpke_configs_future = self.tx.execute(&stmt, hpke_configs_params);
+        let hpke_configs_future = self.execute(&stmt, hpke_configs_params);
 
         // VDAF verification keys.
         let mut vdaf_verify_keys: Vec<Vec<u8>> = Vec::new();
@@ -488,7 +487,6 @@ impl<C: Clock> Transaction<'_, C> {
             vdaf_verify_keys.push(encrypted_vdaf_verify_key);
         }
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO task_vdaf_verify_keys (task_id, vdaf_verify_key)
                 SELECT (SELECT id FROM tasks WHERE task_id = $1), * FROM UNNEST($2::BYTEA[])",
@@ -498,7 +496,7 @@ impl<C: Clock> Transaction<'_, C> {
             /* task_id */ &task.id().as_ref(),
             /* vdaf_verify_keys */ &vdaf_verify_keys,
         ];
-        let vdaf_verify_keys_future = self.tx.execute(&stmt, vdaf_verify_keys_params);
+        let vdaf_verify_keys_future = self.execute(&stmt, vdaf_verify_keys_params);
 
         try_join!(
             aggregator_auth_tokens_future,
@@ -518,40 +516,36 @@ impl<C: Clock> Transaction<'_, C> {
 
         // Clean up dependent tables first.
         let stmt = self
-            .tx
             .prepare_cached(
                 "DELETE FROM task_aggregator_auth_tokens
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        let task_aggregator_auth_tokens_future = self.tx.execute(&stmt, params);
+        let task_aggregator_auth_tokens_future = self.execute(&stmt, params);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "DELETE FROM task_collector_auth_tokens
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        let task_collector_auth_tokens_future = self.tx.execute(&stmt, params);
+        let task_collector_auth_tokens_future = self.execute(&stmt, params);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "DELETE FROM task_hpke_keys
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        let task_hpke_keys_future = self.tx.execute(&stmt, params);
+        let task_hpke_keys_future = self.execute(&stmt, params);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "DELETE FROM task_vdaf_verify_keys
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        let task_vdaf_verify_keys_future = self.tx.execute(&stmt, params);
+        let task_vdaf_verify_keys_future = self.execute(&stmt, params);
 
         try_join!(
             task_aggregator_auth_tokens_future,
@@ -562,10 +556,9 @@ impl<C: Clock> Transaction<'_, C> {
 
         // Then clean up tasks table itself.
         let stmt = self
-            .tx
             .prepare_cached("DELETE FROM tasks WHERE task_id = $1")
             .await?;
-        check_single_row_mutation(self.tx.execute(&stmt, params).await?)?;
+        check_single_row_mutation(self.execute(&stmt, params).await?)?;
         Ok(())
     }
 
@@ -574,7 +567,6 @@ impl<C: Clock> Transaction<'_, C> {
     pub async fn get_task(&self, task_id: &TaskId) -> Result<Option<Task>, Error> {
         let params: &[&(dyn ToSql + Sync)] = &[&task_id.as_ref()];
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
@@ -582,43 +574,39 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM tasks WHERE task_id = $1",
             )
             .await?;
-        let task_row = self.tx.query_opt(&stmt, params);
+        let task_row = self.query_opt(&stmt, params);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT ord, token FROM task_aggregator_auth_tokens
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
             )
             .await?;
-        let aggregator_auth_token_rows = self.tx.query(&stmt, params);
+        let aggregator_auth_token_rows = self.query(&stmt, params);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT ord, token FROM task_collector_auth_tokens
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) ORDER BY ord ASC",
             )
             .await?;
-        let collector_auth_token_rows = self.tx.query(&stmt, params);
+        let collector_auth_token_rows = self.query(&stmt, params);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT config_id, config, private_key FROM task_hpke_keys
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        let hpke_key_rows = self.tx.query(&stmt, params);
+        let hpke_key_rows = self.query(&stmt, params);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT vdaf_verify_key FROM task_vdaf_verify_keys
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        let vdaf_verify_key_rows = self.tx.query(&stmt, params);
+        let vdaf_verify_key_rows = self.query(&stmt, params);
 
         let (
             task_row,
@@ -651,7 +639,6 @@ impl<C: Clock> Transaction<'_, C> {
     #[tracing::instrument(skip(self), err)]
     pub async fn get_tasks(&self) -> Result<Vec<Task>, Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT task_id, aggregator_role, aggregator_endpoints, query_type, vdaf,
                     max_batch_query_count, task_expiration, report_expiry_age, min_batch_size,
@@ -659,40 +646,37 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM tasks",
             )
             .await?;
-        let task_rows = self.tx.query(&stmt, &[]);
+        let task_rows = self.query(&stmt, &[]);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_aggregator_auth_tokens.task_id),
                 ord, token FROM task_aggregator_auth_tokens ORDER BY ord ASC",
             )
             .await?;
-        let aggregator_auth_token_rows = self.tx.query(&stmt, &[]);
+        let aggregator_auth_token_rows = self.query(&stmt, &[]);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_collector_auth_tokens.task_id),
                 ord, token FROM task_collector_auth_tokens ORDER BY ord ASC",
             )
             .await?;
-        let collector_auth_token_rows = self.tx.query(&stmt, &[]);
+        let collector_auth_token_rows = self.query(&stmt, &[]);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_hpke_keys.task_id),
                 config_id, config, private_key FROM task_hpke_keys",
             )
             .await?;
-        let hpke_config_rows = self.tx.query(&stmt, &[]);
+        let hpke_config_rows = self.query(&stmt, &[]);
 
-        let stmt = self.tx.prepare_cached(
+        let stmt = self.prepare_cached(
             "SELECT (SELECT tasks.task_id FROM tasks WHERE tasks.id = task_vdaf_verify_keys.task_id),
             vdaf_verify_key FROM task_vdaf_verify_keys"
         ).await?;
-        let vdaf_verify_key_rows = self.tx.query(&stmt, &[]);
+        let vdaf_verify_key_rows = self.query(&stmt, &[]);
 
         let (
             task_rows,
@@ -910,7 +894,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     client_reports.client_timestamp,
@@ -923,17 +906,16 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.task_id = $1 AND client_reports.report_id = $2",
             )
             .await?;
-        self.tx
-            .query_opt(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* report_id */ &report_id.as_ref(),
-                ],
-            )
-            .await?
-            .map(|row| Self::client_report_from_row(vdaf, *task_id, *report_id, row))
-            .transpose()
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* report_id */ &report_id.as_ref(),
+            ],
+        )
+        .await?
+        .map(|row| Self::client_report_from_row(vdaf, *task_id, *report_id, row))
+        .transpose()
     }
 
     #[cfg(feature = "test-util")]
@@ -948,7 +930,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     client_reports.report_id,
@@ -962,8 +943,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.task_id = $1",
             )
             .await?;
-        self.tx
-            .query(&stmt, &[/* task_id */ &task_id.as_ref()])
+        self.query(&stmt, &[/* task_id */ &task_id.as_ref()])
             .await?
             .into_iter()
             .map(|row| {
@@ -1034,7 +1014,6 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<Vec<(ReportId, Time)>, Error> {
         // TODO(#269): allow the number of returned results to be controlled?
         let stmt = self
-            .tx
             .prepare_cached(
                 "UPDATE client_reports SET aggregation_started = TRUE
                 WHERE id IN (
@@ -1046,7 +1025,7 @@ impl<C: Clock> Transaction<'_, C> {
                 RETURNING report_id, client_timestamp",
             )
             .await?;
-        let rows = self.tx.query(&stmt, &[&task_id.as_ref()]).await?;
+        let rows = self.query(&stmt, &[&task_id.as_ref()]).await?;
 
         rows.into_iter()
             .map(|row| {
@@ -1080,7 +1059,6 @@ impl<C: Clock> Transaction<'_, C> {
     {
         // TODO(#269): allow the number of returned results to be controlled?
         let stmt = self
-            .tx
             .prepare_cached(
                 "WITH unaggregated_client_report_ids AS (
                     SELECT DISTINCT report_id, client_timestamp, collection_jobs.aggregation_param
@@ -1115,7 +1093,7 @@ impl<C: Clock> Transaction<'_, C> {
                 FROM unaggregated_client_report_ids",
             )
             .await?;
-        let rows = self.tx.query(&stmt, &[&task_id.as_ref()]).await?;
+        let rows = self.query(&stmt, &[&task_id.as_ref()]).await?;
 
         rows.into_iter()
             .map(|row| {
@@ -1140,7 +1118,6 @@ impl<C: Clock> Transaction<'_, C> {
     ) -> Result<(), Error> {
         let report_ids: Vec<_> = report_ids.iter().map(ReportId::get_encoded).collect();
         let stmt = self
-            .tx
             .prepare_cached(
                 "UPDATE client_reports SET aggregation_started = FALSE
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
@@ -1148,7 +1125,6 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         let row_count = self
-            .tx
             .execute(
                 &stmt,
                 &[
@@ -1173,7 +1149,6 @@ impl<C: Clock> Transaction<'_, C> {
         batch_interval: &Interval,
     ) -> Result<u64, Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT COUNT(1) AS count FROM client_reports
                 WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
@@ -1182,7 +1157,6 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         let row = self
-            .tx
             .query_one(
                 &stmt,
                 &[
@@ -1205,7 +1179,6 @@ impl<C: Clock> Transaction<'_, C> {
         batch_id: &BatchId,
     ) -> Result<u64, Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT COUNT(DISTINCT report_aggregations.client_report_id) AS count
                 FROM report_aggregations
@@ -1215,7 +1188,6 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         let row = self
-            .tx
             .query_one(
                 &stmt,
                 &[
@@ -1251,7 +1223,6 @@ impl<C: Clock> Transaction<'_, C> {
         encode_u16_items(&mut encoded_extensions, &(), report.leader_extensions());
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO client_reports (
                     task_id,
@@ -1267,7 +1238,6 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         let rows_affected = self
-            .tx
             .execute(
                 &stmt,
                 &[
@@ -1298,7 +1268,6 @@ impl<C: Clock> Transaction<'_, C> {
         report_id: &ReportId,
     ) -> Result<bool, Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT 1 FROM client_reports JOIN tasks ON tasks.id = client_reports.task_id
                 WHERE tasks.task_id = $1
@@ -1306,7 +1275,6 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         Ok(self
-            .tx
             .query_opt(
                 &stmt,
                 &[
@@ -1331,23 +1299,21 @@ impl<C: Clock> Transaction<'_, C> {
         report_share: &ReportShare,
     ) -> Result<(), Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO client_reports (task_id, report_id, client_timestamp)
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3)",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.get_encoded(),
-                    /* report_id */ &report_share.metadata().id().as_ref(),
-                    /* client_timestamp */
-                    &report_share.metadata().time().as_naive_date_time()?,
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ &task_id.get_encoded(),
+                /* report_id */ &report_share.metadata().id().as_ref(),
+                /* client_timestamp */
+                &report_share.metadata().time().as_naive_date_time()?,
+            ],
+        )
+        .await?;
         Ok(())
     }
 
@@ -1362,24 +1328,22 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT aggregation_param, batch_id, client_timestamp_interval, state
                 FROM aggregation_jobs JOIN tasks ON tasks.id = aggregation_jobs.task_id
                 WHERE tasks.task_id = $1 AND aggregation_jobs.aggregation_job_id = $2",
             )
             .await?;
-        self.tx
-            .query_opt(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* aggregation_job_id */ &aggregation_job_id.as_ref(),
-                ],
-            )
-            .await?
-            .map(|row| Self::aggregation_job_from_row(task_id, aggregation_job_id, &row))
-            .transpose()
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
+            ],
+        )
+        .await?
+        .map(|row| Self::aggregation_job_from_row(task_id, aggregation_job_id, &row))
+        .transpose()
     }
 
     /// get_aggregation_jobs_for_task returns all aggregation jobs for a given task ID.
@@ -1398,7 +1362,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     aggregation_job_id, aggregation_param, batch_id, client_timestamp_interval,
@@ -1407,8 +1370,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.task_id = $1",
             )
             .await?;
-        self.tx
-            .query(&stmt, &[/* task_id */ &task_id.as_ref()])
+        self.query(&stmt, &[/* task_id */ &task_id.as_ref()])
             .await?
             .into_iter()
             .map(|row| {
@@ -1460,7 +1422,6 @@ impl<C: Clock> Transaction<'_, C> {
         // token. This is not strictly necessary as we only care about token collisions on a
         // per-row basis.
         let stmt = self
-            .tx
             .prepare_cached(
                 "UPDATE aggregation_jobs SET
                     lease_expiry = $1,
@@ -1479,33 +1440,32 @@ impl<C: Clock> Transaction<'_, C> {
                           aggregation_jobs.lease_attempts",
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* lease_expiry */ &lease_expiry_time,
-                    /* now */ &now,
-                    /* limit */ &maximum_acquire_count,
-                ],
-            )
-            .await?
-            .into_iter()
-            .map(|row| {
-                let task_id = TaskId::get_decoded(row.get("task_id"))?;
-                let aggregation_job_id =
-                    row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?;
-                let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
-                let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-                let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
-                let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
-                Ok(Lease::new(
-                    AcquiredAggregationJob::new(task_id, aggregation_job_id, query_type, vdaf),
-                    lease_expiry_time,
-                    lease_token,
-                    lease_attempts,
-                ))
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* lease_expiry */ &lease_expiry_time,
+                /* now */ &now,
+                /* limit */ &maximum_acquire_count,
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            let aggregation_job_id =
+                row.get_bytea_and_convert::<AggregationJobId>("aggregation_job_id")?;
+            let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
+            let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+            let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
+            let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
+            Ok(Lease::new(
+                AcquiredAggregationJob::new(task_id, aggregation_job_id, query_type, vdaf),
+                lease_expiry_time,
+                lease_token,
+                lease_attempts,
+            ))
+        })
+        .collect()
     }
 
     /// release_aggregation_job releases an acquired (via e.g. acquire_incomplete_aggregation_jobs)
@@ -1515,7 +1475,6 @@ impl<C: Clock> Transaction<'_, C> {
         lease: &Lease<AcquiredAggregationJob>,
     ) -> Result<(), Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "UPDATE aggregation_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = NULL, lease_attempts = 0
                 FROM tasks
@@ -1527,18 +1486,17 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         check_single_row_mutation(
-            self.tx
-                .execute(
-                    &stmt,
-                    &[
-                        /* task_id */ &lease.leased().task_id().as_ref(),
-                        /* aggregation_job_id */
-                        &lease.leased().aggregation_job_id().as_ref(),
-                        /* lease_expiry */ &lease.lease_expiry_time(),
-                        /* lease_token */ &lease.lease_token().as_ref(),
-                    ],
-                )
-                .await?,
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &lease.leased().task_id().as_ref(),
+                    /* aggregation_job_id */
+                    &lease.leased().aggregation_job_id().as_ref(),
+                    /* lease_expiry */ &lease.lease_expiry_time(),
+                    /* lease_token */ &lease.lease_token().as_ref(),
+                ],
+            )
+            .await?,
         )
     }
 
@@ -1552,7 +1510,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO aggregation_jobs
                 (
@@ -1566,22 +1523,21 @@ impl<C: Clock> Transaction<'_, C> {
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ &aggregation_job.task_id().as_ref(),
-                    /* aggregation_job_id */ &aggregation_job.id().as_ref(),
-                    /* aggregation_param */
-                    &aggregation_job.aggregation_parameter().get_encoded(),
-                    /* batch_id */
-                    &aggregation_job.partial_batch_identifier().get_encoded(),
-                    /* client_timestamp_interval */
-                    &SqlInterval::from(aggregation_job.client_timestamp_interval()),
-                    /* state */ &aggregation_job.state(),
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ &aggregation_job.task_id().as_ref(),
+                /* aggregation_job_id */ &aggregation_job.id().as_ref(),
+                /* aggregation_param */
+                &aggregation_job.aggregation_parameter().get_encoded(),
+                /* batch_id */
+                &aggregation_job.partial_batch_identifier().get_encoded(),
+                /* client_timestamp_interval */
+                &SqlInterval::from(aggregation_job.client_timestamp_interval()),
+                /* state */ &aggregation_job.state(),
+            ],
+        )
+        .await?;
         Ok(())
     }
 
@@ -1595,7 +1551,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "UPDATE aggregation_jobs SET
                     state = $1
@@ -1604,17 +1559,16 @@ impl<C: Clock> Transaction<'_, C> {
             )
             .await?;
         check_single_row_mutation(
-            self.tx
-                .execute(
-                    &stmt,
-                    &[
-                        /* state */ &aggregation_job.state(),
-                        /* task_id */ &aggregation_job.task_id().as_ref(),
-                        /* aggregation_job_id */
-                        &aggregation_job.id().as_ref(),
-                    ],
-                )
-                .await?,
+            self.execute(
+                &stmt,
+                &[
+                    /* state */ &aggregation_job.state(),
+                    /* task_id */ &aggregation_job.task_id().as_ref(),
+                    /* aggregation_job_id */
+                    &aggregation_job.id().as_ref(),
+                ],
+            )
+            .await?,
         )
     }
 
@@ -1634,7 +1588,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT client_reports.report_id, client_reports.client_timestamp,
                 report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
@@ -1646,27 +1599,26 @@ impl<C: Clock> Transaction<'_, C> {
                   AND client_reports.report_id = $3",
             )
             .await?;
-        self.tx
-            .query_opt(
-                &stmt,
-                &[
-                    /* aggregation_job_id */ &aggregation_job_id.as_ref(),
-                    /* task_id */ &task_id.as_ref(),
-                    /* report_id */ &report_id.as_ref(),
-                ],
+        self.query_opt(
+            &stmt,
+            &[
+                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
+                /* task_id */ &task_id.as_ref(),
+                /* report_id */ &report_id.as_ref(),
+            ],
+        )
+        .await?
+        .map(|row| {
+            Self::report_aggregation_from_row(
+                vdaf,
+                role,
+                task_id,
+                aggregation_job_id,
+                report_id,
+                &row,
             )
-            .await?
-            .map(|row| {
-                Self::report_aggregation_from_row(
-                    vdaf,
-                    role,
-                    task_id,
-                    aggregation_job_id,
-                    report_id,
-                    &row,
-                )
-            })
-            .transpose()
+        })
+        .transpose()
     }
 
     /// get_report_aggregations_for_aggregation_job retrieves all report aggregations associated
@@ -1688,7 +1640,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT client_reports.report_id, client_reports.client_timestamp,
                 report_aggregations.ord, report_aggregations.state, report_aggregations.prep_state,
@@ -1700,27 +1651,26 @@ impl<C: Clock> Transaction<'_, C> {
                 ORDER BY report_aggregations.ord ASC"
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* aggregation_job_id */ &aggregation_job_id.as_ref(),
-                    /* task_id */ &task_id.as_ref(),
-                ],
+        self.query(
+            &stmt,
+            &[
+                /* aggregation_job_id */ &aggregation_job_id.as_ref(),
+                /* task_id */ &task_id.as_ref(),
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            Self::report_aggregation_from_row(
+                vdaf,
+                role,
+                task_id,
+                aggregation_job_id,
+                &row.get_bytea_and_convert::<ReportId>("report_id")?,
+                &row,
             )
-            .await?
-            .into_iter()
-            .map(|row| {
-                Self::report_aggregation_from_row(
-                    vdaf,
-                    role,
-                    task_id,
-                    aggregation_job_id,
-                    &row.get_bytea_and_convert::<ReportId>("report_id")?,
-                    &row,
-                )
-            })
-            .collect()
+        })
+        .collect()
     }
 
     /// get_report_aggregations_for_task retrieves all report aggregations associated with a given
@@ -1738,7 +1688,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     aggregation_jobs.aggregation_job_id, client_reports.report_id,
@@ -1752,8 +1701,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE aggregation_jobs.task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
-        self.tx
-            .query(&stmt, &[/* task_id */ &task_id.as_ref()])
+        self.query(&stmt, &[/* task_id */ &task_id.as_ref()])
             .await?
             .into_iter()
             .map(|row| {
@@ -1865,7 +1813,7 @@ impl<C: Clock> Transaction<'_, C> {
     {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
 
-        let stmt = self.tx.prepare_cached(
+        let stmt = self.prepare_cached(
             "INSERT INTO report_aggregations
             (aggregation_job_id, client_report_id, ord, state, prep_state, prep_msg, out_share, error_code)
             VALUES ((SELECT id FROM aggregation_jobs WHERE aggregation_job_id = $1),
@@ -1874,23 +1822,22 @@ impl<C: Clock> Transaction<'_, C> {
                      AND report_id = $3),
                     $4, $5, $6, $7, $8, $9)"
         ).await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* aggregation_job_id */
-                    &report_aggregation.aggregation_job_id().as_ref(),
-                    /* task_id */ &report_aggregation.task_id().as_ref(),
-                    /* report_id */ &report_aggregation.report_id().as_ref(),
-                    /* ord */ &report_aggregation.ord(),
-                    /* state */ &report_aggregation.state().state_code(),
-                    /* prep_state */ &encoded_state_values.prep_state,
-                    /* prep_msg */ &encoded_state_values.prep_msg,
-                    /* out_share */ &encoded_state_values.output_share,
-                    /* error_code */ &encoded_state_values.report_share_err,
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* aggregation_job_id */
+                &report_aggregation.aggregation_job_id().as_ref(),
+                /* task_id */ &report_aggregation.task_id().as_ref(),
+                /* report_id */ &report_aggregation.report_id().as_ref(),
+                /* ord */ &report_aggregation.ord(),
+                /* state */ &report_aggregation.state().state_code(),
+                /* prep_state */ &encoded_state_values.prep_state,
+                /* prep_msg */ &encoded_state_values.prep_msg,
+                /* out_share */ &encoded_state_values.output_share,
+                /* error_code */ &encoded_state_values.report_share_err,
+            ],
+        )
+        .await?;
         Ok(())
     }
 
@@ -1907,7 +1854,6 @@ impl<C: Clock> Transaction<'_, C> {
         let encoded_state_values = report_aggregation.state().encoded_values_from_state();
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "UPDATE report_aggregations SET ord = $1, state = $2, prep_state = $3,
                 prep_msg = $4, out_share = $5, error_code = $6
@@ -1917,23 +1863,22 @@ impl<C: Clock> Transaction<'_, C> {
                     AND report_id = $9)")
             .await?;
         check_single_row_mutation(
-            self.tx
-                .execute(
-                    &stmt,
-                    &[
-                        /* ord */ &report_aggregation.ord(),
-                        /* state */ &report_aggregation.state().state_code(),
-                        /* prep_state */ &encoded_state_values.prep_state,
-                        /* prep_msg */ &encoded_state_values.prep_msg,
-                        /* out_share */ &encoded_state_values.output_share,
-                        /* error_code */ &encoded_state_values.report_share_err,
-                        /* aggregation_job_id */
-                        &report_aggregation.aggregation_job_id().as_ref(),
-                        /* task_id */ &report_aggregation.task_id().as_ref(),
-                        /* report_id */ &report_aggregation.report_id().as_ref(),
-                    ],
-                )
-                .await?,
+            self.execute(
+                &stmt,
+                &[
+                    /* ord */ &report_aggregation.ord(),
+                    /* state */ &report_aggregation.state().state_code(),
+                    /* prep_state */ &encoded_state_values.prep_state,
+                    /* prep_msg */ &encoded_state_values.prep_msg,
+                    /* out_share */ &encoded_state_values.output_share,
+                    /* error_code */ &encoded_state_values.report_share_err,
+                    /* aggregation_job_id */
+                    &report_aggregation.aggregation_job_id().as_ref(),
+                    /* task_id */ &report_aggregation.task_id().as_ref(),
+                    /* report_id */ &report_aggregation.report_id().as_ref(),
+                ],
+            )
+            .await?,
         )
     }
 
@@ -1948,7 +1893,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     tasks.task_id,
@@ -1962,8 +1906,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE collection_jobs.collection_job_id = $1",
             )
             .await?;
-        self.tx
-            .query_opt(&stmt, &[&collection_job_id.as_ref()])
+        self.query_opt(&stmt, &[&collection_job_id.as_ref()])
             .await?
             .map(|row| {
                 let task_id = TaskId::get_decoded(row.get("task_id"))?;
@@ -1986,7 +1929,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     collection_jobs.collection_job_id,
@@ -2001,23 +1943,22 @@ impl<C: Clock> Transaction<'_, C> {
                   AND collection_jobs.batch_interval @> $2::TIMESTAMP",
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* task_id */ task_id.as_ref(),
-                    /* timestamp */ &timestamp.as_naive_date_time()?,
-                ],
-            )
-            .await?
-            .into_iter()
-            .map(|row| {
-                let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
-                let collection_job_id =
-                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-                Self::collection_job_from_row(*task_id, batch_identifier, collection_job_id, &row)
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* timestamp */ &timestamp.as_naive_date_time()?,
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
+            let collection_job_id =
+                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            Self::collection_job_from_row(*task_id, batch_identifier, collection_job_id, &row)
+        })
+        .collect()
     }
 
     /// Returns all collection jobs for the given task whose collect intervals intersect with the given
@@ -2032,7 +1973,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     collection_jobs.collection_job_id,
@@ -2047,28 +1987,27 @@ impl<C: Clock> Transaction<'_, C> {
                   AND collection_jobs.batch_interval && $2",
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* task_id */ task_id.as_ref(),
-                    /* batch_interval */ &SqlInterval::from(batch_interval),
-                ],
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* batch_interval */ &SqlInterval::from(batch_interval),
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
+            let collection_job_id =
+                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            Self::collection_job_from_row::<L, TimeInterval, A>(
+                *task_id,
+                batch_identifier,
+                collection_job_id,
+                &row,
             )
-            .await?
-            .into_iter()
-            .map(|row| {
-                let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
-                let collection_job_id =
-                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-                Self::collection_job_from_row::<L, TimeInterval, A>(
-                    *task_id,
-                    batch_identifier,
-                    collection_job_id,
-                    &row,
-                )
-            })
-            .collect()
+        })
+        .collect()
     }
 
     /// Retrieves all collection jobs for the given batch identifier. Multiple collection jobs may be
@@ -2087,7 +2026,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     collection_jobs.collection_job_id,
@@ -2101,27 +2039,26 @@ impl<C: Clock> Transaction<'_, C> {
                   AND collection_jobs.batch_identifier = $2",
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* task_id */ task_id.as_ref(),
-                    /* batch_identifier */ &batch_identifier.get_encoded(),
-                ],
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* batch_identifier */ &batch_identifier.get_encoded(),
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let collection_job_id =
+                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            Self::collection_job_from_row(
+                *task_id,
+                batch_identifier.clone(),
+                collection_job_id,
+                &row,
             )
-            .await?
-            .into_iter()
-            .map(|row| {
-                let collection_job_id =
-                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-                Self::collection_job_from_row(
-                    *task_id,
-                    batch_identifier.clone(),
-                    collection_job_id,
-                    &row,
-                )
-            })
-            .collect()
+        })
+        .collect()
     }
 
     #[cfg(feature = "test-util")]
@@ -2138,7 +2075,6 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     collection_jobs.collection_job_id,
@@ -2152,8 +2088,7 @@ impl<C: Clock> Transaction<'_, C> {
                 WHERE tasks.task_id = $1",
             )
             .await?;
-        self.tx
-            .query(&stmt, &[/* task_id */ task_id.as_ref()])
+        self.query(&stmt, &[/* task_id */ task_id.as_ref()])
             .await?
             .into_iter()
             .map(|row| {
@@ -2251,7 +2186,6 @@ impl<C: Clock> Transaction<'_, C> {
             Q::to_batch_interval(collection_job.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO collection_jobs
                     (collection_job_id, task_id, batch_identifier, batch_interval, aggregation_param,
@@ -2259,20 +2193,19 @@ impl<C: Clock> Transaction<'_, C> {
                 VALUES ($1, (SELECT id FROM tasks WHERE task_id = $2), $3, $4, $5, $6)",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* collection_job_id */ collection_job.collection_job_id().as_ref(),
-                    /* task_id */ collection_job.task_id().as_ref(),
-                    /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
-                    /* batch_interval */ &batch_interval,
-                    /* aggregation_param */
-                    &collection_job.aggregation_parameter().get_encoded(),
-                    /* state */ &collection_job.state().collection_job_state_code(),
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* collection_job_id */ collection_job.collection_job_id().as_ref(),
+                /* task_id */ collection_job.task_id().as_ref(),
+                /* batch_identifier */ &collection_job.batch_identifier().get_encoded(),
+                /* batch_interval */ &batch_interval,
+                /* aggregation_param */
+                &collection_job.aggregation_parameter().get_encoded(),
+                /* state */ &collection_job.state().collection_job_state_code(),
+            ],
+        )
+        .await?;
 
         Ok(())
     }
@@ -2291,7 +2224,6 @@ impl<C: Clock> Transaction<'_, C> {
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "
 WITH updated as (
@@ -2329,33 +2261,32 @@ ORDER BY id DESC
 ",
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* lease_expiry */ &lease_expiry_time,
-                    /* now */ &now,
-                    /* limit */ &maximum_acquire_count,
-                ],
-            )
-            .await?
-            .into_iter()
-            .map(|row| {
-                let task_id = TaskId::get_decoded(row.get("task_id"))?;
-                let collection_job_id =
-                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-                let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
-                let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-                let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
-                let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
-                Ok(Lease::new(
-                    AcquiredCollectionJob::new(task_id, collection_job_id, query_type, vdaf),
-                    lease_expiry_time,
-                    lease_token,
-                    lease_attempts,
-                ))
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* lease_expiry */ &lease_expiry_time,
+                /* now */ &now,
+                /* limit */ &maximum_acquire_count,
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            let collection_job_id =
+                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
+            let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+            let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
+            let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
+            Ok(Lease::new(
+                AcquiredCollectionJob::new(task_id, collection_job_id, query_type, vdaf),
+                lease_expiry_time,
+                lease_token,
+                lease_attempts,
+            ))
+        })
+        .collect()
     }
 
     /// acquire_incomplete_fixed_size_collection_jobs retrieves & acquires the IDs of unclaimed
@@ -2372,7 +2303,6 @@ ORDER BY id DESC
         let maximum_acquire_count: i64 = maximum_acquire_count.try_into()?;
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "
 WITH updated as (
@@ -2410,33 +2340,32 @@ ORDER BY id DESC
 ",
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* lease_expiry */ &lease_expiry_time,
-                    /* now */ &now,
-                    /* limit */ &maximum_acquire_count,
-                ],
-            )
-            .await?
-            .into_iter()
-            .map(|row| {
-                let task_id = TaskId::get_decoded(row.get("task_id"))?;
-                let collection_job_id =
-                    row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
-                let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
-                let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
-                let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
-                let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
-                Ok(Lease::new(
-                    AcquiredCollectionJob::new(task_id, collection_job_id, query_type, vdaf),
-                    lease_expiry_time,
-                    lease_token,
-                    lease_attempts,
-                ))
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* lease_expiry */ &lease_expiry_time,
+                /* now */ &now,
+                /* limit */ &maximum_acquire_count,
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let task_id = TaskId::get_decoded(row.get("task_id"))?;
+            let collection_job_id =
+                row.get_bytea_and_convert::<CollectionJobId>("collection_job_id")?;
+            let query_type = row.try_get::<_, Json<task::QueryType>>("query_type")?.0;
+            let vdaf = row.try_get::<_, Json<VdafInstance>>("vdaf")?.0;
+            let lease_token = row.get_bytea_and_convert::<LeaseToken>("lease_token")?;
+            let lease_attempts = row.get_bigint_and_convert("lease_attempts")?;
+            Ok(Lease::new(
+                AcquiredCollectionJob::new(task_id, collection_job_id, query_type, vdaf),
+                lease_expiry_time,
+                lease_token,
+                lease_attempts,
+            ))
+        })
+        .collect()
     }
 
     /// release_collection_job releases an acquired (via e.g. acquire_incomplete_collection_jobs) collect
@@ -2446,7 +2375,6 @@ ORDER BY id DESC
         lease: &Lease<AcquiredCollectionJob>,
     ) -> Result<(), Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "UPDATE collection_jobs SET lease_expiry = TIMESTAMP '-infinity', lease_token = NULL, lease_attempts = 0
                 FROM tasks
@@ -2458,17 +2386,16 @@ ORDER BY id DESC
             )
             .await?;
         check_single_row_mutation(
-            self.tx
-                .execute(
-                    &stmt,
-                    &[
-                        /* task_id */ &lease.leased().task_id().as_ref(),
-                        /* collection_job_id */ &lease.leased().collection_job_id().as_ref(),
-                        /* lease_expiry */ &lease.lease_expiry_time(),
-                        /* lease_token */ &lease.lease_token().as_ref(),
-                    ],
-                )
-                .await?,
+            self.execute(
+                &stmt,
+                &[
+                    /* task_id */ &lease.leased().task_id().as_ref(),
+                    /* collection_job_id */ &lease.leased().collection_job_id().as_ref(),
+                    /* lease_expiry */ &lease.lease_expiry_time(),
+                    /* lease_token */ &lease.lease_token().as_ref(),
+                ],
+            )
+            .await?,
         )
     }
 
@@ -2509,7 +2436,6 @@ ORDER BY id DESC
         };
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "UPDATE collection_jobs SET
                     state = $1,
@@ -2521,18 +2447,17 @@ ORDER BY id DESC
             .await?;
 
         check_single_row_mutation(
-            self.tx
-                .execute(
-                    &stmt,
-                    &[
-                        /* state */ &collection_job.state().collection_job_state_code(),
-                        /* report_count */ &report_count,
-                        /* leader_aggregate_share */ &leader_aggregate_share,
-                        /* helper_aggregate_share */ &helper_aggregate_share,
-                        /* collection_job_id */ &collection_job.collection_job_id().as_ref(),
-                    ],
-                )
-                .await?,
+            self.execute(
+                &stmt,
+                &[
+                    /* state */ &collection_job.state().collection_job_state_code(),
+                    /* report_count */ &report_count,
+                    /* leader_aggregate_share */ &leader_aggregate_share,
+                    /* helper_aggregate_share */ &helper_aggregate_share,
+                    /* collection_job_id */ &collection_job.collection_job_id().as_ref(),
+                ],
+            )
+            .await?,
         )
     }
 
@@ -2547,7 +2472,6 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT aggregate_share, report_count, checksum
                 FROM batch_aggregations
@@ -2558,25 +2482,24 @@ ORDER BY id DESC
             )
             .await?;
 
-        self.tx
-            .query_opt(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* batch_identifier */ &batch_identifier.get_encoded(),
-                    /* aggregation_param */ &aggregation_parameter.get_encoded(),
-                ],
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* batch_identifier */ &batch_identifier.get_encoded(),
+                /* aggregation_param */ &aggregation_parameter.get_encoded(),
+            ],
+        )
+        .await?
+        .map(|row| {
+            Self::batch_aggregation_from_row(
+                *task_id,
+                batch_identifier.clone(),
+                aggregation_parameter.clone(),
+                row,
             )
-            .await?
-            .map(|row| {
-                Self::batch_aggregation_from_row(
-                    *task_id,
-                    batch_identifier.clone(),
-                    aggregation_parameter.clone(),
-                    row,
-                )
-            })
-            .transpose()
+        })
+        .transpose()
     }
 
     #[cfg(feature = "test-util")]
@@ -2593,7 +2516,6 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     batch_identifier, aggregation_param, aggregate_share, report_count, checksum
@@ -2602,8 +2524,7 @@ ORDER BY id DESC
             )
             .await?;
 
-        self.tx
-            .query(&stmt, &[/* task_id */ &task_id.as_ref()])
+        self.query(&stmt, &[/* task_id */ &task_id.as_ref()])
             .await?
             .into_iter()
             .map(|row| {
@@ -2660,7 +2581,6 @@ ORDER BY id DESC
             Q::to_batch_interval(batch_aggregation.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO batch_aggregations (
                     task_id, batch_identifier, batch_interval, aggregation_param, aggregate_share,
@@ -2668,23 +2588,22 @@ ORDER BY id DESC
                 ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ &batch_aggregation.task_id().as_ref(),
-                    /* batch_identifier */
-                    &batch_aggregation.batch_identifier().get_encoded(),
-                    /* batch_interval */ &batch_interval,
-                    /* aggregation_param */
-                    &batch_aggregation.aggregation_parameter().get_encoded(),
-                    /* aggregate_share */ &batch_aggregation.aggregate_share().into(),
-                    /* report_count */
-                    &i64::try_from(batch_aggregation.report_count())?,
-                    /* checksum */ &batch_aggregation.checksum().get_encoded(),
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ &batch_aggregation.task_id().as_ref(),
+                /* batch_identifier */
+                &batch_aggregation.batch_identifier().get_encoded(),
+                /* batch_interval */ &batch_interval,
+                /* aggregation_param */
+                &batch_aggregation.aggregation_parameter().get_encoded(),
+                /* aggregate_share */ &batch_aggregation.aggregate_share().into(),
+                /* report_count */
+                &i64::try_from(batch_aggregation.report_count())?,
+                /* checksum */ &batch_aggregation.checksum().get_encoded(),
+            ],
+        )
+        .await?;
 
         Ok(())
     }
@@ -2702,7 +2621,6 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "UPDATE batch_aggregations
                 SET aggregate_share = $1, report_count = $2, checksum = $3
@@ -2713,23 +2631,22 @@ ORDER BY id DESC
             )
             .await?;
         check_single_row_mutation(
-            self.tx
-                .execute(
-                    &stmt,
-                    &[
-                        /* aggregate_share */
-                        &batch_aggregation.aggregate_share().into(),
-                        /* report_count */
-                        &i64::try_from(batch_aggregation.report_count())?,
-                        /* checksum */ &batch_aggregation.checksum().get_encoded(),
-                        /* task_id */ &batch_aggregation.task_id().as_ref(),
-                        /* batch_identifier */
-                        &batch_aggregation.batch_identifier().get_encoded(),
-                        /* aggregation_param */
-                        &batch_aggregation.aggregation_parameter().get_encoded(),
-                    ],
-                )
-                .await?,
+            self.execute(
+                &stmt,
+                &[
+                    /* aggregate_share */
+                    &batch_aggregation.aggregate_share().into(),
+                    /* report_count */
+                    &i64::try_from(batch_aggregation.report_count())?,
+                    /* checksum */ &batch_aggregation.checksum().get_encoded(),
+                    /* task_id */ &batch_aggregation.task_id().as_ref(),
+                    /* batch_identifier */
+                    &batch_aggregation.batch_identifier().get_encoded(),
+                    /* aggregation_param */
+                    &batch_aggregation.aggregation_parameter().get_encoded(),
+                ],
+            )
+            .await?,
         )?;
 
         Ok(())
@@ -2749,7 +2666,6 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT helper_aggregate_share, report_count, checksum FROM aggregate_share_jobs
                 WHERE
@@ -2758,25 +2674,24 @@ ORDER BY id DESC
                     AND aggregation_param = $3",
             )
             .await?;
-        self.tx
-            .query_opt(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* batch_identifier */ &batch_identifier.get_encoded(),
-                    /* aggregation_param */ &aggregation_parameter.get_encoded(),
-                ],
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* batch_identifier */ &batch_identifier.get_encoded(),
+                /* aggregation_param */ &aggregation_parameter.get_encoded(),
+            ],
+        )
+        .await?
+        .map(|row| {
+            Self::aggregate_share_job_from_row(
+                task_id,
+                batch_identifier.clone(),
+                aggregation_parameter.clone(),
+                &row,
             )
-            .await?
-            .map(|row| {
-                Self::aggregate_share_job_from_row(
-                    task_id,
-                    batch_identifier.clone(),
-                    aggregation_parameter.clone(),
-                    &row,
-                )
-            })
-            .transpose()
+        })
+        .transpose()
     }
 
     /// Returns all aggregate share jobs for the given task which include the given timestamp.
@@ -2791,7 +2706,6 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     aggregate_share_jobs.batch_identifier,
@@ -2804,28 +2718,21 @@ ORDER BY id DESC
                   AND aggregate_share_jobs.batch_interval @> $2::TIMESTAMP",
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* timestamp */ &timestamp.as_naive_date_time()?,
-                ],
-            )
-            .await?
-            .into_iter()
-            .map(|row| {
-                let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
-                let aggregation_param =
-                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                Self::aggregate_share_job_from_row(
-                    task_id,
-                    batch_identifier,
-                    aggregation_param,
-                    &row,
-                )
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* timestamp */ &timestamp.as_naive_date_time()?,
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
+            let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+            Self::aggregate_share_job_from_row(task_id, batch_identifier, aggregation_param, &row)
+        })
+        .collect()
     }
 
     /// Returns all aggregate share jobs for the given task whose collect intervals intersect with
@@ -2843,7 +2750,6 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     aggregate_share_jobs.batch_identifier,
@@ -2856,28 +2762,21 @@ ORDER BY id DESC
                   AND aggregate_share_jobs.batch_interval && $2",
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* interval */ &SqlInterval::from(interval),
-                ],
-            )
-            .await?
-            .into_iter()
-            .map(|row| {
-                let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
-                let aggregation_param =
-                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                Self::aggregate_share_job_from_row(
-                    task_id,
-                    batch_identifier,
-                    aggregation_param,
-                    &row,
-                )
-            })
-            .collect()
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* interval */ &SqlInterval::from(interval),
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let batch_identifier = Interval::get_decoded(row.get("batch_identifier"))?;
+            let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+            Self::aggregate_share_job_from_row(task_id, batch_identifier, aggregation_param, &row)
+        })
+        .collect()
     }
 
     /// Returns all aggregate share jobs for the given task with the given batch identifier.
@@ -2896,7 +2795,6 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     aggregate_share_jobs.aggregation_param,
@@ -2908,27 +2806,25 @@ ORDER BY id DESC
                   AND aggregate_share_jobs.batch_identifier = $2",
             )
             .await?;
-        self.tx
-            .query(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.as_ref(),
-                    /* batch_identifier */ &batch_identifier.get_encoded(),
-                ],
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* batch_identifier */ &batch_identifier.get_encoded(),
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            let aggregation_param = A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+            Self::aggregate_share_job_from_row(
+                task_id,
+                batch_identifier.clone(),
+                aggregation_param,
+                &row,
             )
-            .await?
-            .into_iter()
-            .map(|row| {
-                let aggregation_param =
-                    A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
-                Self::aggregate_share_job_from_row(
-                    task_id,
-                    batch_identifier.clone(),
-                    aggregation_param,
-                    &row,
-                )
-            })
-            .collect()
+        })
+        .collect()
     }
 
     #[cfg(feature = "test-util")]
@@ -2945,7 +2841,6 @@ ORDER BY id DESC
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT
                     aggregate_share_jobs.batch_identifier,
@@ -2957,8 +2852,7 @@ ORDER BY id DESC
                 WHERE tasks.task_id = $1",
             )
             .await?;
-        self.tx
-            .query(&stmt, &[/* task_id */ &task_id.as_ref()])
+        self.query(&stmt, &[/* task_id */ &task_id.as_ref()])
             .await?
             .into_iter()
             .map(|row| {
@@ -3013,7 +2907,6 @@ ORDER BY id DESC
         let batch_interval = Q::to_batch_interval(job.batch_identifier()).map(SqlInterval::from);
 
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO aggregate_share_jobs (
                     task_id, batch_identifier, batch_interval, aggregation_param,
@@ -3022,20 +2915,19 @@ ORDER BY id DESC
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ &job.task_id().as_ref(),
-                    /* batch_identifier */ &job.batch_identifier().get_encoded(),
-                    /* batch_interval */ &batch_interval,
-                    /* aggregation_param */ &job.aggregation_parameter().get_encoded(),
-                    /* helper_aggregate_share */ &job.helper_aggregate_share().into(),
-                    /* report_count */ &i64::try_from(job.report_count())?,
-                    /* checksum */ &job.checksum().get_encoded(),
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ &job.task_id().as_ref(),
+                /* batch_identifier */ &job.batch_identifier().get_encoded(),
+                /* batch_interval */ &batch_interval,
+                /* aggregation_param */ &job.aggregation_parameter().get_encoded(),
+                /* helper_aggregate_share */ &job.helper_aggregate_share().into(),
+                /* report_count */ &i64::try_from(job.report_count())?,
+                /* checksum */ &job.checksum().get_encoded(),
+            ],
+        )
+        .await?;
 
         Ok(())
     }
@@ -3048,22 +2940,20 @@ ORDER BY id DESC
         batch_id: &BatchId,
     ) -> Result<(), Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "INSERT INTO outstanding_batches (task_id, batch_id)
                 VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2)",
             )
             .await?;
 
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ task_id.as_ref(),
-                    /* batch_id */ batch_id.as_ref(),
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* batch_id */ batch_id.as_ref(),
+            ],
+        )
+        .await?;
 
         Ok(())
     }
@@ -3074,27 +2964,23 @@ ORDER BY id DESC
         task_id: &TaskId,
     ) -> Result<Vec<OutstandingBatch>, Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "SELECT batch_id FROM outstanding_batches
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
             .await?;
 
-        gather_errors(
-            join_all(
-                self.tx
-                    .query(&stmt, &[/* task_id */ task_id.as_ref()])
-                    .await?
-                    .into_iter()
-                    .map(|row| async move {
-                        let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
-                        let size = self.read_batch_size(task_id, &batch_id).await?;
-                        Ok(OutstandingBatch::new(*task_id, batch_id, size))
-                    }),
-            )
-            .await,
+        try_join_all(
+            self.query(&stmt, &[/* task_id */ task_id.as_ref()])
+                .await?
+                .into_iter()
+                .map(|row| async move {
+                    let batch_id = BatchId::get_decoded(row.get("batch_id"))?;
+                    let size = self.read_batch_size(task_id, &batch_id).await?;
+                    Ok(OutstandingBatch::new(*task_id, batch_id, size))
+                }),
         )
+        .await
     }
 
     // Return value is an inclusive range [min_size, max_size], where:
@@ -3108,7 +2994,6 @@ ORDER BY id DESC
         batch_id: &BatchId,
     ) -> Result<RangeInclusive<usize>, Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "WITH batch_report_aggregation_statuses AS
                     (SELECT report_aggregations.state, COUNT(*) AS count FROM report_aggregations
@@ -3125,7 +3010,6 @@ ORDER BY id DESC
             .await?;
 
         let row = self
-            .tx
             .query_one(
                 &stmt,
                 &[
@@ -3152,7 +3036,6 @@ ORDER BY id DESC
         batch_id: &BatchId,
     ) -> Result<(), Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "DELETE FROM outstanding_batches
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
@@ -3160,15 +3043,14 @@ ORDER BY id DESC
             )
             .await?;
 
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ task_id.as_ref(),
-                    /* batch_id */ batch_id.as_ref(),
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* batch_id */ batch_id.as_ref(),
+            ],
+        )
+        .await?;
         Ok(())
     }
 
@@ -3181,7 +3063,6 @@ ORDER BY id DESC
         min_report_count: u64,
     ) -> Result<Option<BatchId>, Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "WITH batches AS (
                     SELECT
@@ -3199,17 +3080,16 @@ ORDER BY id DESC
                 SELECT batch_id FROM batches WHERE count >= $2 LIMIT 1",
             )
             .await?;
-        self.tx
-            .query_opt(
-                &stmt,
-                &[
-                    /* task_id */ task_id.as_ref(),
-                    /* min_report_count */ &i64::try_from(min_report_count)?,
-                ],
-            )
-            .await?
-            .map(|row| Ok(BatchId::get_decoded(row.get("batch_id"))?))
-            .transpose()
+        self.query_opt(
+            &stmt,
+            &[
+                /* task_id */ task_id.as_ref(),
+                /* min_report_count */ &i64::try_from(min_report_count)?,
+            ],
+        )
+        .await?
+        .map(|row| Ok(BatchId::get_decoded(row.get("batch_id"))?))
+        .transpose()
     }
 
     /// Deletes old client reports for a given task, that is, client reports whose timestamp is
@@ -3221,7 +3101,6 @@ ORDER BY id DESC
         oldest_allowed_report_timestamp: Time,
     ) -> Result<(), Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "DELETE FROM client_reports
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1) AND client_timestamp < $2
@@ -3230,16 +3109,15 @@ ORDER BY id DESC
                     WHERE report_aggregations.client_report_id = client_reports.id)",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.get_encoded(),
-                    /* client_timestamp */
-                    &oldest_allowed_report_timestamp.as_naive_date_time()?,
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ &task_id.get_encoded(),
+                /* client_timestamp */
+                &oldest_allowed_report_timestamp.as_naive_date_time()?,
+            ],
+        )
+        .await?;
         Ok(())
     }
 
@@ -3257,7 +3135,6 @@ ORDER BY id DESC
         oldest_allowed_report_timestamp: Time,
     ) -> Result<(), Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "WITH aggregation_jobs_to_delete AS (
                     SELECT id FROM aggregation_jobs
@@ -3314,16 +3191,15 @@ ORDER BY id DESC
                 WHERE id IN (SELECT id FROM aggregation_jobs_to_delete)",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.get_encoded(),
-                    /* client_timestamp */
-                    &oldest_allowed_report_timestamp.as_naive_date_time()?,
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ &task_id.get_encoded(),
+                /* client_timestamp */
+                &oldest_allowed_report_timestamp.as_naive_date_time()?,
+            ],
+        )
+        .await?;
         Ok(())
     }
 
@@ -3340,7 +3216,6 @@ ORDER BY id DESC
         oldest_allowed_report_timestamp: Time,
     ) -> Result<(), Error> {
         let stmt = self
-            .tx
             .prepare_cached(
                 "WITH collection_jobs_to_delete AS (
                     SELECT id FROM collection_jobs
@@ -3403,16 +3278,15 @@ ORDER BY id DESC
                 DELETE FROM collection_jobs WHERE id IN (SELECT id FROM collection_jobs_to_delete)",
             )
             .await?;
-        self.tx
-            .execute(
-                &stmt,
-                &[
-                    /* task_id */ &task_id.get_encoded(),
-                    /* client_timestamp */
-                    &oldest_allowed_report_timestamp.as_naive_date_time()?,
-                ],
-            )
-            .await?;
+        self.execute(
+            &stmt,
+            &[
+                /* task_id */ &task_id.get_encoded(),
+                /* client_timestamp */
+                &oldest_allowed_report_timestamp.as_naive_date_time()?,
+            ],
+        )
+        .await?;
         Ok(())
     }
 }
@@ -3666,95 +3540,9 @@ pub enum Error {
     TimeOverflow(&'static str),
 }
 
-impl Error {
-    /// is_serialization_failure determines if a given error corresponds to a Postgres
-    /// "serialization" failure, which requires the entire transaction to be aborted & retried from
-    /// the beginning per <https://www.postgresql.org/docs/current/transaction-iso.html>.
-    pub fn is_serialization_failure(&self) -> bool {
-        if let Error::Db(err) = self {
-            // T_R_SERIALIZATION_FAILURE (40001) is documented as the error code which is always used
-            // for serialization failures which require rollback-and-retry.
-            err.code()
-                .map_or(false, |c| c == &SqlState::T_R_SERIALIZATION_FAILURE)
-        } else {
-            false
-        }
-    }
-
-    /// Check if this error is due to a Postgres deadlock failure.
-    ///
-    /// The documentation recommends retrying these errors in addition to serialization failures.
-    /// See <https://www.postgresql.org/docs/15/mvcc-serialization-failure-handling.html>
-    pub fn is_deadlock_failure(&self) -> bool {
-        if let Error::Db(err) = self {
-            err.code()
-                .map_or(false, |c| c == &SqlState::T_R_DEADLOCK_DETECTED)
-        } else {
-            false
-        }
-    }
-
-    /// Check if this error is due to the current SQL transaction being in a failed state, because
-    /// of an error in a preceding statement.
-    ///
-    /// The corresponding Postgres error message is "current transaction is aborted, commands
-    /// ignored until end of transaction block".
-    fn is_in_failed_transaction(&self) -> bool {
-        if let Error::Db(err) = self {
-            err.code()
-                .map_or(false, |c| c == &SqlState::IN_FAILED_SQL_TRANSACTION)
-        } else {
-            false
-        }
-    }
-
-    /// Select one error out of a pair to propagate.
-    ///
-    /// If one error is due to a serialization failure or deadlock failure, that error will be
-    /// returned, as it indicates the transaction should be retried. If one error is due to the
-    /// transaction already being in a failed state, the opposite error will be returned, to provide
-    /// more useful diagnostic information. If neither of these cases applies, `self` will be
-    /// returned.
-    pub fn combine(self, other: Error) -> Error {
-        if self.is_serialization_failure() || self.is_deadlock_failure() {
-            self
-        } else if other.is_serialization_failure()
-            || other.is_deadlock_failure()
-            || self.is_in_failed_transaction()
-        {
-            other
-        } else {
-            self
-        }
-    }
-}
-
 impl From<ring::error::Unspecified> for Error {
     fn from(_: ring::error::Unspecified) -> Self {
         Error::Crypt
-    }
-}
-
-/// Transform a vector of results into a result holding a vector, while following the error
-/// precedence order of [`Error::combine`].
-pub fn gather_errors<T>(results: Vec<Result<T, Error>>) -> Result<Vec<T>, Error> {
-    let mut error_opt = None;
-    let mut outputs = Vec::with_capacity(results.len());
-    for result in results {
-        match (result, error_opt) {
-            (Ok(output), previous_error_opt) => {
-                outputs.push(output);
-                error_opt = previous_error_opt;
-            }
-            (Err(new_error), None) => error_opt = Some(new_error),
-            (Err(new_error), Some(previous_error)) => {
-                error_opt = Some(previous_error.combine(new_error))
-            }
-        }
-    }
-    match error_opt {
-        Some(error) => Err(error),
-        None => Ok(outputs),
     }
 }
 
@@ -5157,7 +4945,6 @@ mod tests {
     use crate::{
         aggregator::query_type::CollectableQueryType,
         datastore::{
-            gather_errors,
             models::{
                 AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregationJobState,
                 BatchAggregation, CollectionJob, CollectionJobState, LeaderStoredReport, Lease,
@@ -5172,7 +4959,7 @@ mod tests {
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use chrono::NaiveDate;
-    use futures::future::join_all;
+    use futures::future::try_join_all;
     use janus_core::{
         hpke::{self, HpkeApplicationInfo, Label},
         task::VdafInstance,
@@ -5492,17 +5279,16 @@ mod tests {
 
                 // Mark aggregated_report as aggregated. (we use SQL here as there is no standard
                 // datastore operation to manually mark a client report as aggregated)
-                tx.tx
-                    .execute(
-                        "UPDATE client_reports SET aggregation_started = TRUE
+                tx.execute(
+                    "UPDATE client_reports SET aggregation_started = TRUE
                         WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
                           AND report_id = $2",
-                        &[
-                            &task.id().as_ref(),
-                            &aggregated_report.metadata().id().as_ref(),
-                        ],
-                    )
-                    .await?;
+                    &[
+                        &task.id().as_ref(),
+                        &aggregated_report.metadata().id().as_ref(),
+                    ],
+                )
+                .await?;
                 Ok(())
             })
         })
@@ -6136,7 +5922,6 @@ mod tests {
                         .check_report_share_exists(task.id(), report_share_metadata.id())
                         .await?;
                     let row = tx
-                        .tx
                         .query_one(
                             "SELECT
                                 tasks.task_id,
@@ -6398,23 +6183,21 @@ mod tests {
             assert!(MAXIMUM_ACQUIRE_COUNT.checked_mul(TX_COUNT).unwrap() >= AGGREGATION_JOB_COUNT);
         }
 
-        let results = gather_errors(
-            join_all(
-                iter::repeat_with(|| {
-                    ds.run_tx(|tx| {
-                        Box::pin(async move {
-                            tx.acquire_incomplete_aggregation_jobs(
-                                &LEASE_DURATION,
-                                MAXIMUM_ACQUIRE_COUNT,
-                            )
-                            .await
-                        })
+        let results = try_join_all(
+            iter::repeat_with(|| {
+                ds.run_tx(|tx| {
+                    Box::pin(async move {
+                        tx.acquire_incomplete_aggregation_jobs(
+                            &LEASE_DURATION,
+                            MAXIMUM_ACQUIRE_COUNT,
+                        )
+                        .await
                     })
                 })
-                .take(TX_COUNT),
-            )
-            .await,
+            })
+            .take(TX_COUNT),
         )
+        .await
         .unwrap();
 
         // Verify: check that we got all of the desired aggregation jobs, with no duplication, and
@@ -10331,7 +10114,6 @@ mod tests {
             .run_tx(|tx| {
                 Box::pin(async move {
                     let interval = tx
-                        .tx
                         .query_one(
                             "SELECT '[2020-01-01 10:00, 2020-01-01 10:30)'::tsrange AS interval",
                             &[],
@@ -10351,7 +10133,6 @@ mod tests {
                     assert_eq!(interval.as_interval(), ref_interval);
 
                     let interval = tx
-                        .tx
                         .query_one(
                             "SELECT '[1970-02-03 23:00, 1970-02-04 00:00)'::tsrange AS interval",
                             &[],
@@ -10370,7 +10151,6 @@ mod tests {
                     assert_eq!(interval.as_interval(), ref_interval);
 
                     let res = tx
-                        .tx
                         .query_one(
                             "SELECT '[1969-01-01 00:00, 1970-01-01 00:00)'::tsrange AS interval",
                             &[],
@@ -10380,7 +10160,6 @@ mod tests {
                     assert!(res.is_err());
 
                     let ok = tx
-                        .tx
                         .query_one(
                             "SELECT (lower(interval) = '1972-07-21 05:30:00' AND
                             upper(interval) = '1972-07-21 06:00:00' AND
@@ -10405,7 +10184,6 @@ mod tests {
                     assert!(ok);
 
                     let ok = tx
-                        .tx
                         .query_one(
                             "SELECT (lower(interval) = '2021-10-05 00:00:00' AND
                             upper(interval) = '2021-10-06 00:00:00' AND
