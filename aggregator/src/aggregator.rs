@@ -4079,7 +4079,6 @@ mod tests {
         PlaintextInputShare, PrepareStep, PrepareStepResult, Query, Report, ReportId,
         ReportIdChecksum, ReportMetadata, ReportShare, ReportShareError, Role, TaskId, Time,
     };
-    use mockito::mock;
     use opentelemetry::global::meter;
     use prio::{
         codec::{Decode, Encode},
@@ -8815,7 +8814,6 @@ mod tests {
         let request_histogram = meter
             .f64_histogram("janus_http_request_duration_seconds")
             .init();
-        let server_url: Url = mockito::server_url().parse().unwrap();
         let auth_token = AuthenticationToken::from("auth".as_bytes().to_vec());
         let http_client = Client::new();
 
@@ -8936,14 +8934,16 @@ mod tests {
                 .await;
 
             // Serve the response via mockito, and run it through post_to_helper's error handling.
-            let error_mock = mock("POST", "/")
+            let mut server = mockito::Server::new();
+            let error_mock = server
+                .mock("POST", "/")
                 .with_status(response.status().as_u16().into())
                 .with_header("Content-Type", "application/problem+json")
                 .with_body(response.body())
                 .create();
             let actual_error = post_to_helper(
                 &http_client,
-                server_url.clone(),
+                server.url().parse().unwrap(),
                 "text/plain",
                 (),
                 &auth_token,

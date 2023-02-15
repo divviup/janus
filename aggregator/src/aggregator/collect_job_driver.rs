@@ -726,7 +726,6 @@ mod tests {
         query_type::TimeInterval, AggregateShareReq, AggregateShareResp, BatchSelector, Duration,
         HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
-    use mockito::mock;
     use opentelemetry::global::meter;
     use prio::codec::{Decode, Encode};
     use rand::random;
@@ -735,6 +734,7 @@ mod tests {
     use uuid::Uuid;
 
     async fn setup_collect_job_test_case(
+        server: &mut mockito::Server,
         clock: MockClock,
         datastore: Arc<Datastore<MockClock>>,
         acquire_lease: bool,
@@ -746,7 +746,7 @@ mod tests {
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_aggregator_endpoints(Vec::from([
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&mockito::server_url()).unwrap(),
+                Url::parse(&server.url()).unwrap(),
             ]))
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
@@ -857,6 +857,7 @@ mod tests {
     #[tokio::test]
     async fn drive_collect_job() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
@@ -865,7 +866,7 @@ mod tests {
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_aggregator_endpoints(Vec::from([
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&mockito::server_url()).unwrap(),
+                Url::parse(&server.url()).unwrap(),
             ]))
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
@@ -999,7 +1000,8 @@ mod tests {
         );
 
         // Simulate helper failing to service the aggregate share request.
-        let mocked_failed_aggregate_share = mock("POST", "/aggregate_share")
+        let mocked_failed_aggregate_share = server
+            .mock("POST", "/aggregate_share")
             .match_header(
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
@@ -1052,7 +1054,8 @@ mod tests {
             Vec::new(),
         ));
 
-        let mocked_aggregate_share = mock("POST", "/aggregate_share")
+        let mocked_aggregate_share = server
+            .mock("POST", "/aggregate_share")
             .match_header(
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
@@ -1105,11 +1108,13 @@ mod tests {
     async fn abandon_collect_job() {
         // Setup: insert a collect job into the datastore.
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        let (lease, collect_job) = setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
+        let (lease, collect_job) =
+            setup_collect_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
 
         let collect_job_driver = CollectJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
@@ -1156,13 +1161,14 @@ mod tests {
     #[tokio::test]
     async fn abandon_failing_collect_job() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new();
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
         let (_, collect_job) =
-            setup_collect_job_test_case(clock.clone(), Arc::clone(&ds), false).await;
+            setup_collect_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), false).await;
 
         // Set up the collect job driver
         let meter = meter("collect_job_driver");
@@ -1184,14 +1190,16 @@ mod tests {
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
-        let failure_mock = mock("POST", "/aggregate_share")
+        let failure_mock = server
+            .mock("POST", "/aggregate_share")
             .with_status(500)
             .expect(3)
             .create();
         // Set up an extra response that should never be used, to make sure the job driver doesn't
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
-        let no_more_requests_mock = mock("POST", "/aggregate_share")
+        let no_more_requests_mock = server
+            .mock("POST", "/aggregate_share")
             .with_status(500)
             .expect(1)
             .create();
@@ -1242,11 +1250,13 @@ mod tests {
     async fn delete_collect_job() {
         // Setup: insert a collect job into the datastore.
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new();
         let clock = MockClock::default();
         let (ds, _db_handle) = ephemeral_datastore(clock.clone()).await;
         let ds = Arc::new(ds);
 
-        let (lease, collect_job) = setup_collect_job_test_case(clock, Arc::clone(&ds), true).await;
+        let (lease, collect_job) =
+            setup_collect_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
 
         // Delete the collect job
         let collect_job = collect_job.with_state(CollectJobState::Deleted);
@@ -1268,7 +1278,8 @@ mod tests {
             Vec::new(),
         ));
 
-        let mocked_aggregate_share = mock("POST", "/aggregate_share")
+        let mocked_aggregate_share = server
+            .mock("POST", "/aggregate_share")
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateShareResp::MEDIA_TYPE)
             .with_body(helper_response.get_encoded())

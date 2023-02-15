@@ -668,7 +668,6 @@ mod tests {
         AggregateShareAad, BatchId, BatchSelector, CollectReq, CollectResp, Duration,
         FixedSizeQuery, HpkeCiphertext, Interval, PartialBatchSelector, Query, Role, Time,
     };
-    use mockito::mock;
     use prio::{
         codec::Encode,
         field::Field64,
@@ -681,11 +680,14 @@ mod tests {
     };
     use retry_after::RetryAfter;
 
-    fn setup_collector<V: vdaf::Collector>(vdaf_collector: V) -> Collector<V>
+    fn setup_collector<V: vdaf::Collector>(
+        server: &mut mockito::Server,
+        vdaf_collector: V,
+    ) -> Collector<V>
     where
         for<'a> Vec<u8>: From<&'a V::AggregateShare>,
     {
-        let server_url = Url::parse(&mockito::server_url()).unwrap();
+        let server_url = Url::parse(&server.url()).unwrap();
         let hpke_keypair = generate_test_hpke_config_and_private_key();
         let parameters = CollectorParameters::new(
             random(),
@@ -697,10 +699,6 @@ mod tests {
         .with_http_request_backoff(test_http_request_exponential_backoff())
         .with_collect_poll_backoff(test_http_request_exponential_backoff());
         Collector::new(parameters, vdaf_collector, default_http_client().unwrap())
-    }
-
-    fn random_verify_key() -> [u8; 16] {
-        random()
     }
 
     fn build_collect_response_time<const L: usize, V: vdaf::Aggregator<L>>(
@@ -818,10 +816,10 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_prio3_count() {
         install_test_trace_subscriber();
-
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), &random(), &1);
-        let collector = setup_collector(vdaf);
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
+        let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -831,8 +829,9 @@ mod tests {
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
-        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mocked_collect_start_error = mock("POST", "/collect")
+        let collect_job_url = format!("{}/collect_job/1", server.url());
+        let mocked_collect_start_error = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -840,7 +839,8 @@ mod tests {
             .with_status(500)
             .expect(1)
             .create();
-        let mocked_collect_start_success = mock("POST", "/collect")
+        let mocked_collect_start_success = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -849,15 +849,18 @@ mod tests {
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
             .create();
-        let mocked_collect_error = mock("GET", "/collect_job/1")
+        let mocked_collect_error = server
+            .mock("GET", "/collect_job/1")
             .with_status(500)
             .expect(1)
             .create();
-        let mocked_collect_accepted = mock("GET", "/collect_job/1")
+        let mocked_collect_accepted = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .expect(2)
             .create();
-        let mocked_collect_complete = mock("GET", "/collect_job/1")
+        let mocked_collect_complete = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -893,10 +896,10 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_prio3_sum() {
         install_test_trace_subscriber();
-
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_sum(2, 8).unwrap();
-        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), &random(), &144);
-        let collector = setup_collector(vdaf);
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &144);
+        let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -906,8 +909,9 @@ mod tests {
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
-        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mocked_collect_start_success = mock("POST", "/collect")
+        let collect_job_url = format!("{}/collect_job/1", server.url());
+        let mocked_collect_start_success = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -916,7 +920,8 @@ mod tests {
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
             .create();
-        let mocked_collect_complete = mock("GET", "/collect_job/1")
+        let mocked_collect_complete = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -946,10 +951,10 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_prio3_histogram() {
         install_test_trace_subscriber();
-
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_histogram(2, &[25, 50, 75, 100]).unwrap();
-        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), &random(), &80);
-        let collector = setup_collector(vdaf);
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &80);
+        let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -959,8 +964,9 @@ mod tests {
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
-        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mocked_collect_start_success = mock("POST", "/collect")
+        let collect_job_url = format!("{}/collect_job/1", server.url());
+        let mocked_collect_start_success = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -969,7 +975,8 @@ mod tests {
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
             .create();
-        let mocked_collect_complete = mock("GET", "/collect_job/1")
+        let mocked_collect_complete = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1003,19 +1010,19 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_prio3_fixedpoint_boundedl2_vec_sum() {
         install_test_trace_subscriber();
-
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, 3).unwrap();
         let fp32_4_inv = fixed!(0.25: I1F31);
         let fp32_8_inv = fixed!(0.125: I1F31);
         let fp32_16_inv = fixed!(0.0625: I1F31);
         let transcript = run_vdaf(
             &vdaf,
-            &random_verify_key(),
+            &random(),
             &(),
             &random(),
             &vec![fp32_16_inv, fp32_8_inv, fp32_4_inv],
         );
-        let collector = setup_collector(vdaf);
+        let collector = setup_collector(&mut server, vdaf);
 
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
@@ -1025,8 +1032,9 @@ mod tests {
         let collect_resp =
             build_collect_response_time(&transcript, &collector.parameters, batch_interval);
 
-        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mocked_collect_start_success = mock("POST", "/collect")
+        let collect_job_url = format!("{}/collect_job/1", server.url());
+        let mocked_collect_start_success = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1035,7 +1043,8 @@ mod tests {
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
             .create();
-        let mocked_collect_complete = mock("GET", "/collect_job/1")
+        let mocked_collect_complete = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1069,23 +1078,25 @@ mod tests {
     #[tokio::test]
     async fn successful_collect_fixed_size() {
         install_test_trace_subscriber();
-
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let transcript = run_vdaf(&vdaf, &random_verify_key(), &(), &random(), &1);
-        let collector = setup_collector(vdaf);
+        let transcript = run_vdaf(&vdaf, &random(), &(), &random(), &1);
+        let collector = setup_collector(&mut server, vdaf);
 
         let batch_id = random();
         let collect_resp =
             build_collect_response_fixed(&transcript, &collector.parameters, batch_id);
 
-        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mocked_collect_start_success = mock("POST", "/collect")
+        let collect_job_url = format!("{}/collect_job/1", server.url());
+        let mocked_collect_start_success = server
+            .mock("POST", "/collect")
             .match_header(CONTENT_TYPE.as_str(), CollectReq::<FixedSize>::MEDIA_TYPE)
             .with_status(303)
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
             .create();
-        let mocked_collect_complete = mock("GET", "/collect_job/1")
+        let mocked_collect_complete = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), CollectResp::<FixedSize>::MEDIA_TYPE)
             .with_body(collect_resp.get_encoded())
@@ -1118,11 +1129,12 @@ mod tests {
     #[tokio::test]
     async fn failed_collect_start() {
         install_test_trace_subscriber();
-
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let collector = setup_collector(vdaf);
+        let collector = setup_collector(&mut server, vdaf);
 
-        let mock_server_error = mock("POST", "/collect")
+        let mock_server_error = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1147,7 +1159,8 @@ mod tests {
 
         mock_server_error.assert();
 
-        let mock_server_error_details = mock("POST", "/collect")
+        let mock_server_error_details = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1170,7 +1183,8 @@ mod tests {
 
         mock_server_error_details.assert();
 
-        let mock_server_no_location = mock("POST", "/collect")
+        let mock_server_no_location = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1187,7 +1201,7 @@ mod tests {
 
         mock_server_no_location.assert();
 
-        let mock_bad_request = mock("POST", "/collect")
+        let mock_bad_request = server.mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1220,12 +1234,13 @@ mod tests {
     #[tokio::test]
     async fn failed_collect_poll() {
         install_test_trace_subscriber();
-
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let collector = setup_collector(vdaf);
+        let collector = setup_collector(&mut server, vdaf);
 
-        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mock_collect_start = mock("POST", "/collect")
+        let collect_job_url = format!("{}/collect_job/1", server.url());
+        let mock_collect_start = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1234,7 +1249,8 @@ mod tests {
             .with_header(LOCATION.as_str(), &collect_job_url)
             .expect(1)
             .create();
-        let mock_collect_job_server_error = mock("GET", "/collect_job/1")
+        let mock_collect_job_server_error = server
+            .mock("GET", "/collect_job/1")
             .with_status(500)
             .expect_at_least(1)
             .create();
@@ -1257,7 +1273,8 @@ mod tests {
         mock_collect_start.assert();
         mock_collect_job_server_error.assert();
 
-        let mock_collect_job_server_error_details = mock("GET", "/collect_job/1")
+        let mock_collect_job_server_error_details = server
+            .mock("GET", "/collect_job/1")
             .with_status(500)
             .with_header("Content-Type", "application/problem+json")
             .with_body("{\"type\": \"http://example.com/test_server_error\"}")
@@ -1273,7 +1290,7 @@ mod tests {
 
         mock_collect_job_server_error_details.assert();
 
-        let mock_collect_job_bad_request = mock("GET", "/collect_job/1")
+        let mock_collect_job_bad_request = server.mock("GET", "/collect_job/1")
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
             .with_body(concat!(
@@ -1293,7 +1310,8 @@ mod tests {
 
         mock_collect_job_bad_request.assert();
 
-        let mock_collect_job_bad_message_bytes = mock("GET", "/collect_job/1")
+        let mock_collect_job_bad_message_bytes = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1308,7 +1326,8 @@ mod tests {
 
         mock_collect_job_bad_message_bytes.assert();
 
-        let mock_collect_job_bad_share_count = mock("GET", "/collect_job/1")
+        let mock_collect_job_bad_share_count = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1326,7 +1345,8 @@ mod tests {
 
         mock_collect_job_bad_share_count.assert();
 
-        let mock_collect_job_bad_ciphertext = mock("GET", "/collect_job/1")
+        let mock_collect_job_bad_ciphertext = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1391,7 +1411,8 @@ mod tests {
                 .unwrap(),
             ]),
         );
-        let mock_collect_job_bad_shares = mock("GET", "/collect_job/1")
+        let mock_collect_job_bad_shares = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1437,7 +1458,8 @@ mod tests {
                 .unwrap(),
             ]),
         );
-        let mock_collect_job_unshard_failure = mock("GET", "/collect_job/1")
+        let mock_collect_job_unshard_failure = server
+            .mock("GET", "/collect_job/1")
             .with_status(200)
             .with_header(
                 CONTENT_TYPE.as_str(),
@@ -1452,7 +1474,8 @@ mod tests {
 
         mock_collect_job_unshard_failure.assert();
 
-        let mock_collect_job_always_fail = mock("GET", "/collect_job/1")
+        let mock_collect_job_always_fail = server
+            .mock("GET", "/collect_job/1")
             .with_status(500)
             .expect_at_least(3)
             .create();
@@ -1467,12 +1490,13 @@ mod tests {
     #[tokio::test]
     async fn collect_poll_retry_after() {
         install_test_trace_subscriber();
-
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let collector = setup_collector(vdaf);
+        let collector = setup_collector(&mut server, vdaf);
 
-        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
-        let mock_collect_start = mock("POST", "/collect")
+        let collect_job_url = format!("{}/collect_job/1", server.url());
+        let mock_collect_start = server
+            .mock("POST", "/collect")
             .match_header(
                 CONTENT_TYPE.as_str(),
                 CollectReq::<TimeInterval>::MEDIA_TYPE,
@@ -1492,7 +1516,8 @@ mod tests {
             .unwrap();
         mock_collect_start.assert();
 
-        let mock_collect_poll_no_retry_after = mock("GET", "/collect_job/1")
+        let mock_collect_poll_no_retry_after = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .expect(1)
             .create();
@@ -1502,7 +1527,8 @@ mod tests {
         );
         mock_collect_poll_no_retry_after.assert();
 
-        let mock_collect_poll_retry_after_60s = mock("GET", "/collect_job/1")
+        let mock_collect_poll_retry_after_60s = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .with_header("Retry-After", "60")
             .expect(1)
@@ -1513,7 +1539,8 @@ mod tests {
         );
         mock_collect_poll_retry_after_60s.assert();
 
-        let mock_collect_poll_retry_after_date_time = mock("GET", "/collect_job/1")
+        let mock_collect_poll_retry_after_date_time = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .with_header("Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT")
             .expect(1)
@@ -1532,15 +1559,15 @@ mod tests {
         // the amount of time that poll_until_complete() sleeps. `tokio::time::pause()` cannot be
         // used for this because hyper uses `tokio::time::Interval` internally, see issue #234.
         install_test_trace_subscriber();
-
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let mut collector = setup_collector(vdaf);
+        let mut collector = setup_collector(&mut server, vdaf);
         collector
             .parameters
             .collect_poll_wait_parameters
             .max_elapsed_time = Some(std::time::Duration::from_secs(3));
 
-        let collect_job_url = format!("{}/collect_job/1", mockito::server_url());
+        let collect_job_url = format!("{}/collect_job/1", server.url());
         let batch_interval = Interval::new(
             Time::from_seconds_since_epoch(1_000_000),
             Duration::from_seconds(3600),
@@ -1552,12 +1579,14 @@ mod tests {
             (),
         );
 
-        let mock_collect_poll_retry_after_1s = mock("GET", "/collect_job/1")
+        let mock_collect_poll_retry_after_1s = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .with_header("Retry-After", "1")
             .expect(1)
             .create();
-        let mock_collect_poll_retry_after_10s = mock("GET", "/collect_job/1")
+        let mock_collect_poll_retry_after_10s = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .with_header("Retry-After", "10")
             .expect(1)
@@ -1572,17 +1601,20 @@ mod tests {
         let near_future =
             Utc::now() + chrono::Duration::from_std(std::time::Duration::from_secs(1)).unwrap();
         let near_future_formatted = near_future.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-        let mock_collect_poll_retry_after_near_future = mock("GET", "/collect_job/1")
+        let mock_collect_poll_retry_after_near_future = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .with_header("Retry-After", &near_future_formatted)
             .expect(1)
             .create();
-        let mock_collect_poll_retry_after_past = mock("GET", "/collect_job/1")
+        let mock_collect_poll_retry_after_past = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .with_header("Retry-After", "Mon, 01 Jan 1900 00:00:00 GMT")
             .expect(1)
             .create();
-        let mock_collect_poll_retry_after_far_future = mock("GET", "/collect_job/1")
+        let mock_collect_poll_retry_after_far_future = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .with_header("Retry-After", "Wed, 01 Jan 3000 00:00:00 GMT")
             .expect(1)
@@ -1604,7 +1636,8 @@ mod tests {
             .parameters
             .collect_poll_wait_parameters
             .initial_interval = std::time::Duration::from_millis(10);
-        let mock_collect_poll_no_retry_after = mock("GET", "/collect_job/1")
+        let mock_collect_poll_no_retry_after = server
+            .mock("GET", "/collect_job/1")
             .with_status(202)
             .expect_at_least(1)
             .create();
