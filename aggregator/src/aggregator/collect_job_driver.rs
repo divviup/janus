@@ -1116,7 +1116,7 @@ mod tests {
 
         // Check that the job driver made the HTTP requests we expected.
         failure_mock.assert_async().await;
-        assert!(!no_more_requests_mock.matched());
+        assert!(!no_more_requests_mock.matched_async().await);
 
         // Confirm that the collect job was abandoned.
         let collect_job_after = ds

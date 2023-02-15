@@ -392,7 +392,8 @@ mod tests {
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(501)
             .expect(1)
-            .create();
+            .create_async()
+            .await;
 
         let client = setup_client(&mut server, Prio3::new_aes128_count(2).unwrap());
         assert_matches!(
@@ -421,7 +422,7 @@ mod tests {
                 )
             )
             .expect(1)
-            .create();
+            .create_async().await;
 
         let client = setup_client(&mut server, Prio3::new_aes128_count(2).unwrap());
         assert_matches!(

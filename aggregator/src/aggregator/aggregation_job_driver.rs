@@ -1003,28 +1003,29 @@ mod tests {
         let helper_vdaf_msg = assert_matches!(
             &transcript.prepare_transitions[Role::Helper.index().unwrap()][0],
             PrepareTransition::Continue(_, prep_share) => prep_share);
-        let helper_responses = Vec::from([
-            (
-                AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
-                AggregateInitializeResp::MEDIA_TYPE,
-                AggregateInitializeResp::new(Vec::from([PrepareStep::new(
-                    *report.metadata().id(),
-                    PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
-                )]))
-                .get_encoded(),
-            ),
-            (
-                AggregateContinueReq::MEDIA_TYPE,
-                AggregateContinueResp::MEDIA_TYPE,
-                AggregateContinueResp::new(Vec::from([PrepareStep::new(
-                    *report.metadata().id(),
-                    PrepareStepResult::Finished,
-                )]))
-                .get_encoded(),
-            ),
-        ]);
-        let mocked_aggregates = join_all(helper_responses.into_iter().map(
-            |(req_content_type, resp_content_type, resp_body)| {
+        let mocked_aggregates = join_all(
+            [
+                (
+                    AggregateInitializeReq::<TimeInterval>::MEDIA_TYPE,
+                    AggregateInitializeResp::MEDIA_TYPE,
+                    AggregateInitializeResp::new(Vec::from([PrepareStep::new(
+                        *report.metadata().id(),
+                        PrepareStepResult::Continued(helper_vdaf_msg.get_encoded()),
+                    )]))
+                    .get_encoded(),
+                ),
+                (
+                    AggregateContinueReq::MEDIA_TYPE,
+                    AggregateContinueResp::MEDIA_TYPE,
+                    AggregateContinueResp::new(Vec::from([PrepareStep::new(
+                        *report.metadata().id(),
+                        PrepareStepResult::Finished,
+                    )]))
+                    .get_encoded(),
+                ),
+            ]
+            .into_iter()
+            .map(|(req_content_type, resp_content_type, resp_body)| {
                 server
                     .mock("POST", "/aggregate")
                     .match_header(
@@ -1036,9 +1037,10 @@ mod tests {
                     .with_header(CONTENT_TYPE.as_str(), resp_content_type)
                     .with_body(resp_body)
                     .create_async()
-            },
-        ))
+            }),
+        )
         .await;
+
         let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
             Arc::new(AggregationJobDriver::new(reqwest::Client::new(), &meter));
@@ -1071,9 +1073,12 @@ mod tests {
         task_handle.abort();
 
         // Verify.
-        for mocked_aggregate in mocked_aggregates {
-            mocked_aggregate.assert_async().await;
-        }
+        join_all(
+            mocked_aggregates
+                .iter()
+                .map(|mock| async move { mock.assert_async().await }),
+        )
+        .await;
 
         let want_aggregation_job =
             AggregationJob::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
@@ -2392,7 +2397,7 @@ mod tests {
 
         // Check that the job driver made the HTTP requests we expected.
         failure_mock.assert_async().await;
-        assert!(!no_more_requests_mock.matched());
+        assert!(!no_more_requests_mock.matched_async().await);
 
         // Confirm in the database that the job was abandoned.
         let aggregation_job_after = ds
