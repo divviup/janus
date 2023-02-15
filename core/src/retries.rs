@@ -122,7 +122,6 @@ mod tests {
         retries::{retry_http_request, test_http_request_exponential_backoff},
         test_util::install_test_trace_subscriber,
     };
-    use mockito::mock;
     use reqwest::StatusCode;
     use std::time::Duration;
     use tokio::net::TcpListener;
@@ -131,20 +130,23 @@ mod tests {
     #[tokio::test]
     async fn http_retry_client_error() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
 
-        let mock_404 = mock("GET", "/")
+        let mock_404 = server
+            .mock("GET", "/")
             .with_status(StatusCode::NOT_FOUND.as_u16().into())
             .with_header("some-header", "some-value")
             .with_body("some-body")
             .expect(1)
-            .create();
+            .create_async()
+            .await;
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
         // HTTP 404 should cause the client to give up after a single attempt, and the caller should
         // get `Ok(reqwest::Response)`.
         let response = retry_http_request(test_http_request_exponential_backoff(), || async {
-            http_client.get(mockito::server_url()).send().await
+            http_client.get(server.url()).send().await
         })
         .await
         .unwrap();
@@ -156,19 +158,22 @@ mod tests {
         );
         assert_eq!(response.text().await.unwrap(), "some-body".to_string());
 
-        mock_404.assert();
+        mock_404.assert_async().await;
     }
 
     #[tokio::test]
     async fn http_retry_server_error() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
 
-        let mock_500 = mock("GET", "/")
+        let mock_500 = server
+            .mock("GET", "/")
             .with_status(StatusCode::INTERNAL_SERVER_ERROR.as_u16().into())
             .with_header("some-header", "some-value")
             .with_body("some-body")
             .expect_at_least(2)
-            .create();
+            .create_async()
+            .await;
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
@@ -176,7 +181,7 @@ mod tests {
         // a `reqwest::Response` so they can examine the status code, headers and response body,
         // which you can't get from a `reqwest::Error`.
         let response = retry_http_request(test_http_request_exponential_backoff(), || async {
-            http_client.get(mockito::server_url()).send().await
+            http_client.get(server.url()).send().await
         })
         .await
         .unwrap_err()
@@ -188,50 +193,61 @@ mod tests {
             &"some-value"
         );
         assert_eq!(response.text().await.unwrap(), "some-body".to_string());
-        mock_500.assert();
+        mock_500.assert_async().await;
     }
 
     #[tokio::test]
     async fn http_retry_server_error_unimplemented() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
 
-        let mock_501 = mock("GET", "/")
+        let mock_501 = server
+            .mock("GET", "/")
             .with_status(StatusCode::NOT_IMPLEMENTED.as_u16().into())
             .expect(1)
-            .create();
+            .create_async()
+            .await;
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
         let response = retry_http_request(test_http_request_exponential_backoff(), || async {
-            http_client.get(mockito::server_url()).send().await
+            http_client.get(server.url()).send().await
         })
         .await
         .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-        mock_501.assert();
+        mock_501.assert_async().await;
     }
 
     #[tokio::test]
     async fn http_retry_server_error_eventually_succeeds() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
 
-        let mock_500 = mock("GET", "/")
+        let mock_500 = server
+            .mock("GET", "/")
             .with_status(500)
             .expect_at_least(1)
-            .create();
-        let mock_200 = mock("GET", "/").with_status(200).expect(1).create();
+            .create_async()
+            .await;
+        let mock_200 = server
+            .mock("GET", "/")
+            .with_status(200)
+            .expect(1)
+            .create_async()
+            .await;
 
         let http_client = reqwest::Client::builder().build().unwrap();
 
         retry_http_request(test_http_request_exponential_backoff(), || async {
-            http_client.get(mockito::server_url()).send().await
+            http_client.get(server.url()).send().await
         })
         .await
         .unwrap();
 
-        mock_200.assert();
-        mock_500.assert();
+        mock_200.assert_async().await;
+        mock_500.assert_async().await;
     }
 
     #[tokio::test]
