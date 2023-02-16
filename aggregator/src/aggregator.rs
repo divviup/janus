@@ -4378,7 +4378,7 @@ mod tests {
         },
     };
     use assert_matches::assert_matches;
-    use futures::future::try_join_all;
+    use futures::future::{join_all, try_join_all};
     use http::{
         header::{CACHE_CONTROL, CONTENT_TYPE},
         Method, StatusCode,
@@ -4405,7 +4405,6 @@ mod tests {
         PrepareStepResult, Query, Report, ReportId, ReportIdChecksum, ReportMetadata, ReportShare,
         ReportShareError, Role, TaskId, Time,
     };
-    use mockito::mock;
     use opentelemetry::global::meter;
     use prio::{
         codec::{Decode, Encode},
@@ -4426,7 +4425,6 @@ mod tests {
         sync::Arc,
         time::Duration as StdDuration,
     };
-    use url::Url;
     use warp::{
         cors::CorsForbidden,
         filters::BoxedFilter,
@@ -9233,9 +9231,6 @@ mod tests {
         let request_histogram = meter
             .f64_histogram("janus_http_request_duration_seconds")
             .init();
-        let server_url: Url = mockito::server_url().parse().unwrap();
-        let auth_token = AuthenticationToken::from("auth".as_bytes().to_vec());
-        let http_client = Client::new();
 
         struct TestCase {
             error_factory: Box<dyn Fn() -> Error + Send + Sync>,
@@ -9254,131 +9249,144 @@ mod tests {
             }
         }
 
-        let test_cases = [
-            TestCase::new(Box::new(|| Error::InvalidConfiguration("test")), None),
-            TestCase::new(
-                Box::new(|| Error::ReportRejected(random(), random(), RealClock::default().now())),
-                Some(DapProblemType::ReportRejected),
-            ),
-            TestCase::new(
-                Box::new(|| Error::UnrecognizedMessage(Some(random()), "test")),
-                Some(DapProblemType::UnrecognizedMessage),
-            ),
-            TestCase::new(
-                Box::new(|| Error::UnrecognizedTask(random())),
-                Some(DapProblemType::UnrecognizedTask),
-            ),
-            TestCase::new(
-                Box::new(|| Error::MissingTaskId),
-                Some(DapProblemType::MissingTaskId),
-            ),
-            TestCase::new(
-                Box::new(|| Error::UnrecognizedAggregationJob(random(), random())),
-                Some(DapProblemType::UnrecognizedAggregationJob),
-            ),
-            TestCase::new(
-                Box::new(|| Error::OutdatedHpkeConfig(random(), HpkeConfigId::from(0))),
-                Some(DapProblemType::OutdatedConfig),
-            ),
-            TestCase::new(
-                Box::new(|| Error::ReportTooEarly(random(), random(), RealClock::default().now())),
-                Some(DapProblemType::ReportTooEarly),
-            ),
-            TestCase::new(
-                Box::new(|| Error::UnauthorizedRequest(random())),
-                Some(DapProblemType::UnauthorizedRequest),
-            ),
-            TestCase::new(
-                Box::new(|| Error::InvalidBatchSize(random(), 8)),
-                Some(DapProblemType::InvalidBatchSize),
-            ),
-            TestCase::new(
-                Box::new(|| {
-                    Error::BatchInvalid(
-                        random(),
-                        format!(
-                            "{}",
-                            Interval::new(RealClock::default().now(), Duration::from_seconds(3600))
+        join_all(
+            [
+                TestCase::new(Box::new(|| Error::InvalidConfiguration("test")), None),
+                TestCase::new(
+                    Box::new(|| {
+                        Error::ReportRejected(random(), random(), RealClock::default().now())
+                    }),
+                    Some(DapProblemType::ReportRejected),
+                ),
+                TestCase::new(
+                    Box::new(|| Error::UnrecognizedMessage(Some(random()), "test")),
+                    Some(DapProblemType::UnrecognizedMessage),
+                ),
+                TestCase::new(
+                    Box::new(|| Error::UnrecognizedTask(random())),
+                    Some(DapProblemType::UnrecognizedTask),
+                ),
+                TestCase::new(
+                    Box::new(|| Error::MissingTaskId),
+                    Some(DapProblemType::MissingTaskId),
+                ),
+                TestCase::new(
+                    Box::new(|| Error::UnrecognizedAggregationJob(random(), random())),
+                    Some(DapProblemType::UnrecognizedAggregationJob),
+                ),
+                TestCase::new(
+                    Box::new(|| Error::OutdatedHpkeConfig(random(), HpkeConfigId::from(0))),
+                    Some(DapProblemType::OutdatedConfig),
+                ),
+                TestCase::new(
+                    Box::new(|| {
+                        Error::ReportTooEarly(random(), random(), RealClock::default().now())
+                    }),
+                    Some(DapProblemType::ReportTooEarly),
+                ),
+                TestCase::new(
+                    Box::new(|| Error::UnauthorizedRequest(random())),
+                    Some(DapProblemType::UnauthorizedRequest),
+                ),
+                TestCase::new(
+                    Box::new(|| Error::InvalidBatchSize(random(), 8)),
+                    Some(DapProblemType::InvalidBatchSize),
+                ),
+                TestCase::new(
+                    Box::new(|| {
+                        Error::BatchInvalid(
+                            random(),
+                            format!(
+                                "{}",
+                                Interval::new(
+                                    RealClock::default().now(),
+                                    Duration::from_seconds(3600)
+                                )
                                 .unwrap()
-                        ),
+                            ),
+                        )
+                    }),
+                    Some(DapProblemType::BatchInvalid),
+                ),
+                TestCase::new(
+                    Box::new(|| {
+                        Error::BatchOverlap(
+                            random(),
+                            Interval::new(RealClock::default().now(), Duration::from_seconds(3600))
+                                .unwrap(),
+                        )
+                    }),
+                    Some(DapProblemType::BatchOverlap),
+                ),
+                TestCase::new(
+                    Box::new(|| {
+                        Error::BatchMismatch(Box::new(BatchMismatch {
+                            task_id: random(),
+                            own_checksum: ReportIdChecksum::from([0; 32]),
+                            own_report_count: 100,
+                            peer_checksum: ReportIdChecksum::from([1; 32]),
+                            peer_report_count: 99,
+                        }))
+                    }),
+                    Some(DapProblemType::BatchMismatch),
+                ),
+                TestCase::new(
+                    Box::new(|| Error::BatchQueriedTooManyTimes(random(), 99)),
+                    Some(DapProblemType::BatchQueriedTooManyTimes),
+                ),
+            ]
+            .into_iter()
+            .map(|test_case| {
+                let request_histogram = request_histogram.clone();
+                let response_histogram = response_histogram.clone();
+                async move {
+                    // Run error_handler() on the given error, and capture its response.
+                    let error_factory = Arc::new(test_case.error_factory);
+                    let base_filter = warp::post().map({
+                        let error_factory = Arc::clone(&error_factory);
+                        move || -> Result<Response, Arc<Error>> { Err(Arc::new(error_factory())) }
+                    });
+                    let wrapped_filter = base_filter.with(warp::wrap_fn(error_handler(
+                        response_histogram.clone(),
+                        "test",
+                    )));
+                    let response = warp::test::request()
+                        .method("POST")
+                        .reply(&wrapped_filter)
+                        .await;
+
+                    // Serve the response via mockito, and run it through post_to_helper's error handling.
+                    let mut server = mockito::Server::new_async().await;
+                    let error_mock = server
+                        .mock("POST", "/")
+                        .with_status(response.status().as_u16().into())
+                        .with_header("Content-Type", "application/problem+json")
+                        .with_body(response.body())
+                        .create_async()
+                        .await;
+                    let actual_error = send_request_to_helper(
+                        &Client::new(),
+                        Method::POST,
+                        server.url().parse().unwrap(),
+                        "text/plain",
+                        (),
+                        &AuthenticationToken::from("auth".as_bytes().to_vec()),
+                        &request_histogram,
                     )
-                }),
-                Some(DapProblemType::BatchInvalid),
-            ),
-            TestCase::new(
-                Box::new(|| {
-                    Error::BatchOverlap(
-                        random(),
-                        Interval::new(RealClock::default().now(), Duration::from_seconds(3600))
-                            .unwrap(),
-                    )
-                }),
-                Some(DapProblemType::BatchOverlap),
-            ),
-            TestCase::new(
-                Box::new(|| {
-                    Error::BatchMismatch(Box::new(BatchMismatch {
-                        task_id: random(),
-                        own_checksum: ReportIdChecksum::from([0; 32]),
-                        own_report_count: 100,
-                        peer_checksum: ReportIdChecksum::from([1; 32]),
-                        peer_report_count: 99,
-                    }))
-                }),
-                Some(DapProblemType::BatchMismatch),
-            ),
-            TestCase::new(
-                Box::new(|| Error::BatchQueriedTooManyTimes(random(), 99)),
-                Some(DapProblemType::BatchQueriedTooManyTimes),
-            ),
-        ];
+                    .await
+                    .unwrap_err();
+                    error_mock.assert_async().await;
 
-        for TestCase {
-            error_factory,
-            expected_problem_type,
-        } in test_cases
-        {
-            // Run error_handler() on the given error, and capture its response.
-            let error_factory = Arc::new(error_factory);
-            let base_filter = warp::post().map({
-                let error_factory = Arc::clone(&error_factory);
-                move || -> Result<Response, Arc<Error>> { Err(Arc::new(error_factory())) }
-            });
-            let wrapped_filter = base_filter.with(warp::wrap_fn(error_handler(
-                response_histogram.clone(),
-                "test",
-            )));
-            let response = warp::test::request()
-                .method("POST")
-                .reply(&wrapped_filter)
-                .await;
-
-            // Serve the response via mockito, and run it through post_to_helper's error handling.
-            let error_mock = mock("POST", "/")
-                .with_status(response.status().as_u16().into())
-                .with_header("Content-Type", "application/problem+json")
-                .with_body(response.body())
-                .create();
-            let actual_error = send_request_to_helper(
-                &http_client,
-                Method::POST,
-                server_url.clone(),
-                "text/plain",
-                (),
-                &auth_token,
-                &request_histogram,
-            )
-            .await
-            .unwrap_err();
-            error_mock.assert();
-
-            // Confirm that post_to_helper() correctly parsed the error type from error_handler().
-            assert_matches!(
-                actual_error,
-                Error::Http { dap_problem_type: problem_type, .. } => {
-                    assert_eq!(problem_type, expected_problem_type);
+                    // Confirm that post_to_helper() correctly parsed the error type from error_handler().
+                    assert_matches!(
+                        actual_error,
+                        Error::Http { dap_problem_type: problem_type, .. } => {
+                            assert_eq!(problem_type, test_case.expected_problem_type);
+                        }
+                    );
                 }
-            );
-        }
+            }),
+        )
+        .await;
     }
 }

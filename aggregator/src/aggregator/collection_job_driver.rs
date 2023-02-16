@@ -732,7 +732,6 @@ mod tests {
         query_type::TimeInterval, AggregateShare, AggregateShareReq, BatchSelector, Duration,
         HpkeCiphertext, HpkeConfigId, Interval, ReportIdChecksum, Role,
     };
-    use mockito::mock;
     use opentelemetry::global::meter;
     use prio::codec::{Decode, Encode};
     use rand::random;
@@ -740,6 +739,7 @@ mod tests {
     use url::Url;
 
     async fn setup_collection_job_test_case(
+        server: &mut mockito::Server,
         clock: MockClock,
         datastore: Arc<Datastore<MockClock>>,
         acquire_lease: bool,
@@ -752,7 +752,7 @@ mod tests {
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_aggregator_endpoints(Vec::from([
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&mockito::server_url()).unwrap(),
+                Url::parse(&server.url()).unwrap(),
             ]))
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
@@ -864,6 +864,7 @@ mod tests {
     #[tokio::test]
     async fn drive_collection_job() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
@@ -872,7 +873,7 @@ mod tests {
         let task = TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader)
             .with_aggregator_endpoints(Vec::from([
                 Url::parse("http://irrelevant").unwrap(), // leader URL doesn't matter
-                Url::parse(&mockito::server_url()).unwrap(),
+                Url::parse(&server.url()).unwrap(),
             ]))
             .with_time_precision(time_precision)
             .with_min_batch_size(10)
@@ -1007,21 +1008,22 @@ mod tests {
         );
 
         // Simulate helper failing to service the aggregate share request.
-        let mocked_failed_aggregate_share =
-            mock("POST", task.aggregate_shares_uri().unwrap().path())
-                .match_header(
-                    "DAP-Auth-Token",
-                    str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
-                )
-                .match_header(
-                    CONTENT_TYPE.as_str(),
-                    AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
-                )
-                .match_body(leader_request.get_encoded())
-                .with_status(500)
-                .with_header("Content-Type", "application/problem+json")
-                .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes\"}")
-                .create();
+        let mocked_failed_aggregate_share = server
+            .mock("POST", task.aggregate_shares_uri().unwrap().path())
+            .match_header(
+                "DAP-Auth-Token",
+                str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
+            )
+            .match_header(
+                CONTENT_TYPE.as_str(),
+                AggregateShareReq::<TimeInterval>::MEDIA_TYPE,
+            )
+            .match_body(leader_request.get_encoded())
+            .with_status(500)
+            .with_header("Content-Type", "application/problem+json")
+            .with_body("{\"type\": \"urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes\"}")
+            .create_async()
+            .await;
 
         let error = collection_job_driver
             .step_collection_job(ds.clone(), Arc::clone(&lease))
@@ -1037,7 +1039,7 @@ mod tests {
             }
         );
 
-        mocked_failed_aggregate_share.assert();
+        mocked_failed_aggregate_share.assert_async().await;
 
         // collection job in datastore should be unchanged.
         ds.run_tx(|tx| {
@@ -1061,7 +1063,8 @@ mod tests {
             Vec::new(),
         ));
 
-        let mocked_aggregate_share = mock("POST", task.aggregate_shares_uri().unwrap().path())
+        let mocked_aggregate_share = server
+            .mock("POST", task.aggregate_shares_uri().unwrap().path())
             .match_header(
                 "DAP-Auth-Token",
                 str::from_utf8(agg_auth_token.as_bytes()).unwrap(),
@@ -1074,14 +1077,15 @@ mod tests {
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
             .with_body(helper_response.get_encoded())
-            .create();
+            .create_async()
+            .await;
 
         collection_job_driver
             .step_collection_job(ds.clone(), Arc::clone(&lease))
             .await
             .unwrap();
 
-        mocked_aggregate_share.assert();
+        mocked_aggregate_share.assert_async().await;
 
         // Should now have recorded helper encrypted aggregate share, too.
         ds.run_tx(|tx| {
@@ -1114,12 +1118,13 @@ mod tests {
     async fn abandon_collection_job() {
         // Setup: insert a collection job into the datastore.
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let (_, lease, collection_job) =
-            setup_collection_job_test_case(clock, Arc::clone(&ds), true).await;
+            setup_collection_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
 
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
@@ -1166,13 +1171,15 @@ mod tests {
     #[tokio::test]
     async fn abandon_failing_collection_job() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let mut runtime_manager = TestRuntimeManager::new();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let (task, _, collection_job) =
-            setup_collection_job_test_case(clock.clone(), Arc::clone(&ds), false).await;
+            setup_collection_job_test_case(&mut server, clock.clone(), Arc::clone(&ds), false)
+                .await;
 
         // Set up the collection job driver
         let meter = meter("collection_job_driver");
@@ -1195,17 +1202,21 @@ mod tests {
 
         // Set up three error responses from our mock helper. These will cause errors in the
         // leader, because the response body is empty and cannot be decoded.
-        let failure_mock = mock("POST", task.aggregate_shares_uri().unwrap().path())
+        let failure_mock = server
+            .mock("POST", task.aggregate_shares_uri().unwrap().path())
             .with_status(500)
             .expect(3)
-            .create();
+            .create_async()
+            .await;
         // Set up an extra response that should never be used, to make sure the job driver doesn't
         // make more requests than we expect. If there were no remaining mocks, mockito would have
         // respond with a fallback error response instead.
-        let no_more_requests_mock = mock("POST", task.aggregate_shares_uri().unwrap().path())
+        let no_more_requests_mock = server
+            .mock("POST", task.aggregate_shares_uri().unwrap().path())
             .with_status(500)
             .expect(1)
-            .create();
+            .create_async()
+            .await;
 
         // Start up the job driver.
         let task_handle = runtime_manager
@@ -1226,8 +1237,8 @@ mod tests {
         task_handle.abort();
 
         // Check that the job driver made the HTTP requests we expected.
-        failure_mock.assert();
-        assert!(!no_more_requests_mock.matched());
+        failure_mock.assert_async().await;
+        assert!(!no_more_requests_mock.matched_async().await);
 
         // Confirm that the collection job was abandoned.
         let collection_job_after = ds
@@ -1253,12 +1264,13 @@ mod tests {
     async fn delete_collection_job() {
         // Setup: insert a collection job into the datastore.
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = Arc::new(ephemeral_datastore.datastore(clock.clone()));
 
         let (task, lease, collection_job) =
-            setup_collection_job_test_case(clock, Arc::clone(&ds), true).await;
+            setup_collection_job_test_case(&mut server, clock, Arc::clone(&ds), true).await;
 
         // Delete the collection job
         let collection_job = collection_job.with_state(CollectionJobState::Deleted);
@@ -1280,11 +1292,13 @@ mod tests {
             Vec::new(),
         ));
 
-        let mocked_aggregate_share = mock("POST", task.aggregate_shares_uri().unwrap().path())
+        let mocked_aggregate_share = server
+            .mock("POST", task.aggregate_shares_uri().unwrap().path())
             .with_status(200)
             .with_header(CONTENT_TYPE.as_str(), AggregateShare::MEDIA_TYPE)
             .with_body(helper_response.get_encoded())
-            .create();
+            .create_async()
+            .await;
 
         let collection_job_driver = CollectionJobDriver::new(
             reqwest::Client::builder().build().unwrap(),
@@ -1298,7 +1312,7 @@ mod tests {
             .await
             .unwrap();
 
-        mocked_aggregate_share.assert();
+        mocked_aggregate_share.assert_async().await;
 
         // Verify: check that the collection job was abandoned, and that it can no longer be acquired.
         ds.run_tx(|tx| {

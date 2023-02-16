@@ -308,16 +308,18 @@ mod tests {
         time::MockClock,
     };
     use janus_messages::{Duration, Report, Time};
-    use mockito::mock;
     use prio::vdaf::{self, prio3::Prio3};
     use rand::random;
     use url::Url;
 
-    fn setup_client<V: vdaf::Client>(vdaf_client: V) -> Client<V, MockClock>
+    fn setup_client<V: vdaf::Client>(
+        server: &mut mockito::Server,
+        vdaf_client: V,
+    ) -> Client<V, MockClock>
     where
         for<'a> &'a V::AggregateShare: Into<Vec<u8>>,
     {
-        let server_url = Url::parse(&mockito::server_url()).unwrap();
+        let server_url = Url::parse(&server.url()).unwrap();
         Client::new(
             ClientParameters::new_with_backoff(
                 random(),
@@ -356,29 +358,32 @@ mod tests {
     #[tokio::test]
     async fn upload_prio3_count() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let client = setup_client(&mut server, Prio3::new_aes128_count(2).unwrap());
 
-        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
-
-        let mocked_upload = mock(
-            "PUT",
-            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
-        )
-        .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
-        .with_status(200)
-        .expect(1)
-        .create();
+        let mocked_upload = server
+            .mock(
+                "PUT",
+                format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+            )
+            .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+            .with_status(200)
+            .expect(1)
+            .create_async()
+            .await;
 
         client.upload(&1).await.unwrap();
 
-        mocked_upload.assert();
+        mocked_upload.assert_async().await;
     }
 
     #[tokio::test]
     async fn upload_prio3_invalid_measurement() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
         let vdaf = Prio3::new_aes128_sum(2, 16).unwrap();
+        let client = setup_client(&mut server, vdaf);
 
-        let client = setup_client(vdaf);
         // 65536 is too big for a 16 bit sum and will be rejected by the VDAF.
         // Make sure we get the right error variant but otherwise we aren't
         // picky about its contents.
@@ -388,17 +393,19 @@ mod tests {
     #[tokio::test]
     async fn upload_prio3_http_status_code() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let client = setup_client(&mut server, Prio3::new_aes128_count(2).unwrap());
 
-        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
-
-        let mocked_upload = mock(
-            "PUT",
-            format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
-        )
-        .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
-        .with_status(501)
-        .expect(1)
-        .create();
+        let mocked_upload = server
+            .mock(
+                "PUT",
+                format!("/tasks/{}/reports", client.parameters.task_id).as_str(),
+            )
+            .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
+            .with_status(501)
+            .expect(1)
+            .create_async()
+            .await;
 
         assert_matches!(
             client.upload(&1).await,
@@ -407,16 +414,16 @@ mod tests {
             }
         );
 
-        mocked_upload.assert();
+        mocked_upload.assert_async().await;
     }
 
     #[tokio::test]
     async fn upload_problem_details() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new_async().await;
+        let client = setup_client(&mut server, Prio3::new_aes128_count(2).unwrap());
 
-        let client = setup_client(Prio3::new_aes128_count(2).unwrap());
-
-        let mocked_upload = mock("PUT", format!("/tasks/{}/reports", client.parameters.task_id).as_str())
+        let mocked_upload = server.mock("PUT", format!("/tasks/{}/reports", client.parameters.task_id).as_str())
             .match_header(CONTENT_TYPE.as_str(), Report::MEDIA_TYPE)
             .with_status(400)
             .with_header("Content-Type", "application/problem+json")
@@ -427,7 +434,7 @@ mod tests {
                 )
             )
             .expect(1)
-            .create();
+            .create_async().await;
 
         assert_matches!(
             client.upload(&1).await,
@@ -444,7 +451,7 @@ mod tests {
             }
         );
 
-        mocked_upload.assert();
+        mocked_upload.assert_async().await;
     }
 
     #[tokio::test]
@@ -468,8 +475,9 @@ mod tests {
     #[test]
     fn report_timestamp() {
         install_test_trace_subscriber();
+        let mut server = mockito::Server::new();
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        let mut client = setup_client(vdaf);
+        let mut client = setup_client(&mut server, vdaf);
 
         client.parameters.time_precision = Duration::from_seconds(100);
         client.clock = MockClock::new(Time::from_seconds_since_epoch(101));
