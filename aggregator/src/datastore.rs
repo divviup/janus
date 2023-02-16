@@ -1820,24 +1820,31 @@ impl<C: Clock> Transaction<'_, C> {
                     (SELECT id FROM client_reports
                      WHERE task_id = (SELECT id FROM tasks WHERE task_id = $2)
                      AND report_id = $3),
-                    $4, $5, $6, $7, $8, $9)"
+                    $4, $5, $6, $7, $8, $9)
+            ON CONFLICT DO NOTHING"
         ).await?;
-        self.execute(
-            &stmt,
-            &[
-                /* aggregation_job_id */
-                &report_aggregation.aggregation_job_id().as_ref(),
-                /* task_id */ &report_aggregation.task_id().as_ref(),
-                /* report_id */ &report_aggregation.report_id().as_ref(),
-                /* ord */ &report_aggregation.ord(),
-                /* state */ &report_aggregation.state().state_code(),
-                /* prep_state */ &encoded_state_values.prep_state,
-                /* prep_msg */ &encoded_state_values.prep_msg,
-                /* out_share */ &encoded_state_values.output_share,
-                /* error_code */ &encoded_state_values.report_share_err,
-            ],
-        )
-        .await?;
+        let rows_affected = self
+            .execute(
+                &stmt,
+                &[
+                    /* aggregation_job_id */
+                    &report_aggregation.aggregation_job_id().as_ref(),
+                    /* task_id */ &report_aggregation.task_id().as_ref(),
+                    /* report_id */ &report_aggregation.report_id().as_ref(),
+                    /* ord */ &report_aggregation.ord(),
+                    /* state */ &report_aggregation.state().state_code(),
+                    /* prep_state */ &encoded_state_values.prep_state,
+                    /* prep_msg */ &encoded_state_values.prep_msg,
+                    /* out_share */ &encoded_state_values.output_share,
+                    /* error_code */ &encoded_state_values.report_share_err,
+                ],
+            )
+            .await?;
+
+        if rows_affected == 0 {
+            return Err(Error::MutationTargetAlreadyExisted);
+        }
+
         Ok(())
     }
 
@@ -6485,6 +6492,120 @@ mod tests {
 
         // Verify.
         assert_eq!(want_agg_jobs, got_agg_jobs);
+    }
+
+    #[tokio::test]
+    async fn report_id_unique_per_aggregation_job() {
+        // Setup: create an aggregation job, a report share, and associate a report aggregation with
+        // the aggregation job.
+        install_test_trace_subscriber();
+        let ephemeral_datastore = ephemeral_datastore().await;
+        let ds = ephemeral_datastore.datastore(MockClock::default());
+
+        let task = TaskBuilder::new(
+            task::QueryType::TimeInterval,
+            VdafInstance::Fake,
+            Role::Leader,
+        )
+        .build();
+
+        let aggregation_job_id = random();
+        let report_id = random();
+        let report_time = Time::from_seconds_since_epoch(12345);
+
+        let report_aggregation = ReportAggregation::new(
+            *task.id(),
+            aggregation_job_id,
+            report_id,
+            report_time,
+            0,
+            ReportAggregationState::<0, dummy_vdaf::Vdaf>::Start,
+        );
+
+        ds.run_tx(|tx| {
+            let (task, report_aggregation) = (task.clone(), report_aggregation.clone());
+            Box::pin(async move {
+                tx.put_task(&task).await.unwrap();
+
+                tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&AggregationJob::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    AggregationParam(0),
+                    (),
+                    Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1))
+                        .unwrap(),
+                    AggregationJobState::InProgress,
+                ))
+                .await?;
+
+                tx.put_report_share(
+                    task.id(),
+                    &ReportShare::new(
+                        ReportMetadata::new(report_id, report_time),
+                        Vec::from("public_share"),
+                        HpkeCiphertext::new(
+                            HpkeConfigId::from(12),
+                            Vec::from("encapsulated_context"),
+                            Vec::from("payload"),
+                        ),
+                    ),
+                )
+                .await?;
+
+                tx.put_report_aggregation(&report_aggregation).await?;
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // A report ID should only occur once in an aggregation job
+        ds.run_tx(|tx| {
+            let task = task.clone();
+            Box::pin(async move {
+                let report_aggregation = ReportAggregation::new(
+                    *task.id(),
+                    aggregation_job_id,
+                    report_id,
+                    report_time,
+                    1, // same report ID, different order
+                    ReportAggregationState::<0, dummy_vdaf::Vdaf>::Start,
+                );
+                let error = tx
+                    .put_report_aggregation(&report_aggregation)
+                    .await
+                    .unwrap_err();
+                assert_matches!(error, Error::MutationTargetAlreadyExisted);
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+        // Verify that only one report aggregation is associated with the aggregation job
+        let got_report_aggregations = ds
+            .run_tx(|tx| {
+                let task = task.clone();
+                Box::pin(async move {
+                    let report_aggregations = tx
+                        .get_report_aggregations_for_aggregation_job(
+                            &dummy_vdaf::Vdaf::new(),
+                            &Role::Leader,
+                            task.id(),
+                            &aggregation_job_id,
+                        )
+                        .await
+                        .unwrap();
+
+                    Ok(report_aggregations)
+                })
+            })
+            .await
+            .unwrap();
+
+        assert!(got_report_aggregations.len() == 1);
+        assert_eq!(got_report_aggregations[0], report_aggregation);
     }
 
     #[tokio::test]

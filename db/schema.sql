@@ -140,6 +140,7 @@ CREATE TABLE report_aggregations(
     out_share           BYTEA,                              -- the output share (opaque VDAF message, only if in state FINISHED)
     error_code          SMALLINT,                           -- error code corresponding to a DAP ReportShareError value; null if in a state other than FAILED
 
+    CONSTRAINT report_aggregations_unique_per_aggregation_job UNIQUE(aggregation_job_id, client_report_id),
     CONSTRAINT report_aggregations_unique_ord UNIQUE(aggregation_job_id, ord),
     CONSTRAINT fk_aggregation_job_id FOREIGN KEY(aggregation_job_id) REFERENCES aggregation_jobs(id),
     CONSTRAINT fk_client_report_id FOREIGN KEY(client_report_id) REFERENCES client_reports(id)
