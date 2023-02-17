@@ -3,7 +3,7 @@ use clap::{Parser, ValueEnum};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregateShare, AggregateShareReq, AggregationJobContinueReq, AggregationJobInitializeReq,
-    AggregationJobResp, Collection, CollectionReq, HpkeConfig, Report,
+    AggregationJobResp, Collection, CollectionReq, HpkeConfig, HpkeConfigList, Report,
 };
 use prio::codec::Decode;
 use std::{
@@ -36,6 +36,10 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
     let decoded: Box<dyn Debug> = match media_type {
         MediaType::HpkeConfig => {
             let message: HpkeConfig = HpkeConfig::get_decoded(&message_buf)?;
+            Box::new(message)
+        }
+        MediaType::HpkeConfigList => {
+            let message: HpkeConfigList = HpkeConfigList::get_decoded(&message_buf)?;
             Box::new(message)
         }
         MediaType::Report => {
@@ -107,6 +111,8 @@ fn decode_dap_message(message_file: &str, media_type: &MediaType) -> Result<Box<
 enum MediaType {
     #[value(name = "hpke-config")]
     HpkeConfig,
+    #[value(name = "hpke-config-list")]
+    HpkeConfigList,
     #[value(name = "report")]
     Report,
     #[value(name = "aggregation-job-init-req")]
