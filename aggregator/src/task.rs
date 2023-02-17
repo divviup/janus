@@ -278,6 +278,15 @@ impl Task {
         &self.hpke_keys
     }
 
+    /// Retrieve the "current" HPKE in use for this task.
+    #[cfg(test)]
+    pub(crate) fn current_hpke_key(&self) -> &HpkeKeypair {
+        self.hpke_keys
+            .values()
+            .max_by_key(|keypair| u8::from(*keypair.config().id()))
+            .unwrap()
+    }
+
     /// Returns true if the `batch_size` is valid given this task's query type and batch size
     /// parameters, per
     /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
