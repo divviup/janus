@@ -1971,7 +1971,7 @@ impl VdafOps {
         );
 
         report_writer
-            .write_report(WritableReport::<L, Q, A>::new(report))
+            .write_report(WritableReport::<L, Q, A>::new(vdaf, report))
             .await
     }
 
@@ -4604,12 +4604,12 @@ mod tests {
         );
     }
 
-    fn create_report(task: &Task, report_timestamp: Time) -> Report {
+    fn create_report_with_id(task: &Task, report_timestamp: Time, id: ReportId) -> Report {
         assert_eq!(task.vdaf(), &VdafInstance::Prio3Aes128Count);
 
         let vdaf = Prio3Aes128Count::new_aes128_count(2).unwrap();
         let hpke_key = current_hpke_key(task.hpke_keys());
-        let report_metadata = ReportMetadata::new(random(), report_timestamp);
+        let report_metadata = ReportMetadata::new(id, report_timestamp);
 
         let (public_share, measurements) = vdaf.shard(&1).unwrap();
 
@@ -4641,6 +4641,10 @@ mod tests {
         )
     }
 
+    fn create_report(task: &Task, report_timestamp: Time) -> Report {
+        create_report_with_id(task, report_timestamp, random())
+    }
+
     /// Convenience method to handle interaction with `warp::test` for typical DAP requests.
     async fn drive_filter(
         method: Method,
@@ -4660,6 +4664,28 @@ mod tests {
 
     #[tokio::test]
     async fn upload_filter() {
+        async fn check_response(
+            response: &mut Response,
+            desired_status: StatusCode,
+            desired_type: &str,
+            desired_title: &str,
+            desired_task_id: &TaskId,
+        ) {
+            assert_eq!(response.status(), desired_status);
+            let problem_details: serde_json::Value =
+                serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap())
+                    .unwrap();
+            assert_eq!(
+                problem_details,
+                json!({
+                    "status": desired_status.as_u16(),
+                    "type": format!("urn:ietf:params:ppm:dap:error:{desired_type}"),
+                    "title": desired_title,
+                    "taskid": format!("{desired_task_id}"),
+                }),
+            )
+        }
+
         install_test_trace_subscriber();
 
         const REPORT_EXPIRY_AGE: u64 = 1_000_000;
@@ -4679,42 +4705,44 @@ mod tests {
         let filter =
             aggregator_filter(Arc::clone(&datastore), clock.clone(), Config::default()).unwrap();
 
-        let response = drive_filter(
-            Method::PUT,
-            task.report_upload_uri().unwrap().path(),
-            &report.get_encoded(),
-            &filter,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(body::to_bytes(response.into_body())
+        // Upload a report. Do this twice to prove that PUT is idempotent.
+        for _ in 0..2 {
+            let response = drive_filter(
+                Method::PUT,
+                task.report_upload_uri().unwrap().path(),
+                &report.get_encoded(),
+                &filter,
+            )
             .await
-            .unwrap()
-            .is_empty());
+            .unwrap();
 
-        // Verify that we reject duplicate reports with the reportRejected type.
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(body::to_bytes(response.into_body())
+                .await
+                .unwrap()
+                .is_empty());
+        }
+
+        let accepted_report_id = report.metadata().id();
+
+        // Verify that new reports using an existing report ID are rejected with reportRejected
+        let duplicate_id_report = create_report_with_id(&task, clock.now(), *accepted_report_id);
         let mut response = drive_filter(
             Method::PUT,
             task.report_upload_uri().unwrap().path(),
-            &report.get_encoded(),
+            &duplicate_id_report.get_encoded(),
             &filter,
         )
         .await
         .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:reportRejected",
-                "title": "Report could not be processed.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
+        check_response(
+            &mut response,
+            StatusCode::BAD_REQUEST,
+            "reportRejected",
+            "Report could not be processed.",
+            task.id(),
+        )
+        .await;
 
         // Verify that reports older than the report expiry age are rejected with the reportRejected
         // error type.
@@ -4737,18 +4765,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:reportRejected",
-                "title": "Report could not be processed.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
+        check_response(
+            &mut response,
+            StatusCode::BAD_REQUEST,
+            "reportRejected",
+            "Report could not be processed.",
+            task.id(),
+        )
+        .await;
 
         // should reject a report with only one share with the unrecognizedMessage type.
         let bad_report = Report::new(
@@ -4764,18 +4788,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:unrecognizedMessage",
-                "title": "The message type for a response was incorrect or the payload was malformed.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
+        check_response(
+            &mut response,
+            StatusCode::BAD_REQUEST,
+            "unrecognizedMessage",
+            "The message type for a response was incorrect or the payload was malformed.",
+            task.id(),
+        )
+        .await;
 
         // should reject a report using the wrong HPKE config for the leader, and reply with
         // the error type outdatedConfig.
@@ -4805,18 +4825,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:outdatedConfig",
-                "title": "The message was generated using an outdated configuration.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
+        check_response(
+            &mut response,
+            StatusCode::BAD_REQUEST,
+            "outdatedConfig",
+            "The message was generated using an outdated configuration.",
+            task.id(),
+        )
+        .await;
 
         // Reports from the future should be rejected.
         let bad_report_time = clock
@@ -4838,18 +4854,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:reportTooEarly",
-                "title": "Report could not be processed because it arrived too early.",
-                "taskid": format!("{}", task.id()),
-            })
-        );
+        check_response(
+            &mut response,
+            StatusCode::BAD_REQUEST,
+            "reportTooEarly",
+            "Report could not be processed because it arrived too early.",
+            task.id(),
+        )
+        .await;
 
         // Reports with timestamps past the task's expiration should be rejected.
         let task_expire_soon = TaskBuilder::new(
@@ -4872,18 +4884,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let problem_details: serde_json::Value =
-            serde_json::from_slice(&body::to_bytes(response.body_mut()).await.unwrap()).unwrap();
-        assert_eq!(
-            problem_details,
-            json!({
-                "status": 400u16,
-                "type": "urn:ietf:params:ppm:dap:error:reportRejected",
-                "title": "Report could not be processed.",
-                "taskid": format!("{}", task_expire_soon.id()),
-            })
-        );
+        check_response(
+            &mut response,
+            StatusCode::BAD_REQUEST,
+            "reportRejected",
+            "Report could not be processed.",
+            task_expire_soon.id(),
+        )
+        .await;
 
         // Check for appropriate CORS headers in response to a preflight request.
         let response = warp::test::request()
@@ -5068,11 +5076,22 @@ mod tests {
         assert_eq!(task.id(), got_report.task_id());
         assert_eq!(report.metadata(), got_report.metadata());
 
-        // should reject duplicate reports.
-        assert_matches!(aggregator.handle_upload(task.id(),&report.get_encoded()).await.unwrap_err().as_ref(), Error::ReportRejected(task_id, stale_report_id, stale_time) => {
+        // Report uploads are idempotent
+        aggregator
+            .handle_upload(task.id(), &report.get_encoded())
+            .await
+            .unwrap();
+
+        // Reports may not be mutated
+        let mutated_report = create_report_with_id(&task, clock.now(), *report.metadata().id());
+        let error = aggregator
+            .handle_upload(task.id(), &mutated_report.get_encoded())
+            .await
+            .unwrap_err();
+        assert_matches!(error.as_ref(), Error::ReportRejected(task_id, report_id, timestamp) => {
             assert_eq!(task.id(), task_id);
-            assert_eq!(report.metadata().id(), stale_report_id);
-            assert_eq!(report.metadata().time(), stale_time);
+            assert_eq!(mutated_report.metadata().id(), report_id);
+            assert_eq!(mutated_report.metadata().time(), timestamp);
         });
     }
 

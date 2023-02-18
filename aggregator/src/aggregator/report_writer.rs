@@ -168,6 +168,7 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     Q: UploadableQueryType,
 {
+    vdaf: Arc<A>,
     report: LeaderStoredReport<L, A>,
     _phantom_q: PhantomData<Q>,
 }
@@ -183,8 +184,9 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     Q: UploadableQueryType,
 {
-    pub fn new(report: LeaderStoredReport<L, A>) -> Self {
+    pub fn new(vdaf: Arc<A>, report: LeaderStoredReport<L, A>) -> Self {
         Self {
+            vdaf,
             report,
             _phantom_q: PhantomData::<Q>,
         }
@@ -208,7 +210,7 @@ where
         Q::validate_uploaded_report(tx, &self.report).await?;
 
         // Store the report.
-        match tx.put_client_report::<L, A>(&self.report).await {
+        match tx.put_client_report::<L, A>(&self.vdaf, &self.report).await {
             Ok(()) => Ok(()),
 
             // Reject reports whose report IDs have been seen before.

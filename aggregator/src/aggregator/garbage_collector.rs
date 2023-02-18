@@ -119,7 +119,7 @@ mod tests {
         // Setup.
         let task = ds
             .run_tx(|tx| {
-                let clock = clock.clone();
+                let (clock, vdaf) = (clock.clone(), vdaf.clone());
                 Box::pin(async move {
                     const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
                     let task = TaskBuilder::new(
@@ -138,7 +138,7 @@ mod tests {
                         .sub(&Duration::from_seconds(1))
                         .unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
-                    tx.put_client_report(&report).await.unwrap();
+                    tx.put_client_report(&vdaf, &report).await.unwrap();
 
                     let batch_identifier =
                         Interval::new(client_timestamp, Duration::from_seconds(1)).unwrap();
@@ -428,7 +428,7 @@ mod tests {
         // Setup.
         let task = ds
             .run_tx(|tx| {
-                let clock = clock.clone();
+                let (clock, vdaf) = (clock.clone(), vdaf.clone());
                 Box::pin(async move {
                     const REPORT_EXPIRY_AGE: Duration = Duration::from_seconds(3600);
                     let task = TaskBuilder::new(
@@ -447,7 +447,7 @@ mod tests {
                         .sub(&Duration::from_seconds(1))
                         .unwrap();
                     let report = LeaderStoredReport::new_dummy(*task.id(), client_timestamp);
-                    tx.put_client_report(&report).await.unwrap();
+                    tx.put_client_report(&vdaf, &report).await.unwrap();
 
                     let batch_identifier = random();
                     let aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(

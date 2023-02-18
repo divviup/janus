@@ -1021,7 +1021,7 @@ mod tests {
     };
     use rand::random;
     use reqwest::Url;
-    use std::{str, sync::Arc, time::Duration as StdDuration};
+    use std::{borrow::Borrow, str, sync::Arc, time::Duration as StdDuration};
 
     #[tokio::test]
     async fn aggregation_job_driver() {
@@ -1080,10 +1080,10 @@ mod tests {
         let aggregation_job_id = random();
 
         ds.run_tx(|tx| {
-            let (task, report) = (task.clone(), report.clone());
+            let (vdaf, task, report) = (vdaf.clone(), task.clone(), report.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                tx.put_client_report(&report).await?;
+                tx.put_client_report(vdaf.borrow(), &report).await?;
 
                 tx.put_aggregation_job(&AggregationJob::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1312,15 +1312,17 @@ mod tests {
 
         let lease = ds
             .run_tx(|tx| {
-                let (task, report, repeated_extension_report) = (
+                let (vdaf, task, report, repeated_extension_report) = (
+                    vdaf.clone(),
                     task.clone(),
                     report.clone(),
                     repeated_extension_report.clone(),
                 );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
-                    tx.put_client_report(&report).await?;
-                    tx.put_client_report(&repeated_extension_report).await?;
+                    tx.put_client_report(vdaf.borrow(), &report).await?;
+                    tx.put_client_report(vdaf.borrow(), &repeated_extension_report)
+                        .await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1570,10 +1572,10 @@ mod tests {
 
         let lease = ds
             .run_tx(|tx| {
-                let (task, report) = (task.clone(), report.clone());
+                let (vdaf, task, report) = (vdaf.clone(), task.clone(), report.clone());
                 Box::pin(async move {
                     tx.put_task(&task).await?;
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -1801,7 +1803,8 @@ mod tests {
 
         let lease = ds
             .run_tx(|tx| {
-                let (task, report, leader_prep_state, prep_msg) = (
+                let (vdaf, task, report, leader_prep_state, prep_msg) = (
+                    vdaf.clone(),
                     task.clone(),
                     report.clone(),
                     leader_prep_state.clone(),
@@ -1809,7 +1812,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -2053,7 +2056,8 @@ mod tests {
 
         let lease = ds
             .run_tx(|tx| {
-                let (task, report, leader_prep_state, prep_msg) = (
+                let (vdaf, task, report, leader_prep_state, prep_msg) = (
+                    vdaf.clone(),
                     task.clone(),
                     report.clone(),
                     leader_prep_state.clone(),
@@ -2061,7 +2065,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report(vdaf.borrow(), &report).await?;
 
                     tx.put_aggregation_job(&AggregationJob::<
                         PRIO3_AES128_VERIFY_KEY_LENGTH,
@@ -2303,7 +2307,8 @@ mod tests {
 
         let lease = ds
             .run_tx(|tx| {
-                let (task, report, aggregation_job, report_aggregation) = (
+                let (vdaf, task, report, aggregation_job, report_aggregation) = (
+                    vdaf.clone(),
                     task.clone(),
                     report.clone(),
                     aggregation_job.clone(),
@@ -2311,7 +2316,7 @@ mod tests {
                 );
                 Box::pin(async move {
                     tx.put_task(&task).await?;
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report(vdaf.borrow(), &report).await?;
                     tx.put_aggregation_job(&aggregation_job).await?;
                     tx.put_report_aggregation(&report_aggregation).await?;
 
@@ -2467,6 +2472,7 @@ mod tests {
 
         // Set up fixtures in the database.
         ds.run_tx(|tx| {
+            let vdaf = vdaf.clone();
             let task = task.clone();
             let report = report.clone();
             Box::pin(async move {
@@ -2474,7 +2480,7 @@ mod tests {
 
                 // We need to store a well-formed report, as it will get parsed by the leader and
                 // run through initial VDAF preparation before sending a request to the helper.
-                tx.put_client_report(&report).await?;
+                tx.put_client_report(&vdaf, &report).await?;
 
                 tx.put_aggregation_job(&AggregationJob::<
                     PRIO3_AES128_VERIFY_KEY_LENGTH,

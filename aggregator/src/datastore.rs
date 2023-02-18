@@ -1203,12 +1203,14 @@ impl<C: Clock> Transaction<'_, C> {
     }
 
     /// `put_client_report` stores a client report, the associated plaintext leader input share and
-    /// the associated encrypted helper share. If the client report was already stored, returns
-    /// a `MutationTargetAlreadyExisted` error.
+    /// the associated encrypted helper share. Returns `Ok(())` if the write succeeds, or if there
+    /// was already a row in the table matching `new_report`. Returns an error if something goes
+    /// wrong or if the report ID is already in use with different values.
     #[tracing::instrument(skip(self), err)]
     pub(crate) async fn put_client_report<const L: usize, A>(
         &self,
-        report: &LeaderStoredReport<L, A>,
+        vdaf: &A,
+        new_report: &LeaderStoredReport<L, A>,
     ) -> Result<(), Error>
     where
         A: vdaf::Aggregator<L>,
@@ -1216,11 +1218,11 @@ impl<C: Clock> Transaction<'_, C> {
         A::PublicShare: PartialEq,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        let encoded_public_share = report.public_share().get_encoded();
-        let encoded_leader_share = report.leader_input_share().get_encoded();
-        let encoded_helper_share = report.helper_encrypted_input_share().get_encoded();
+        let encoded_public_share = new_report.public_share().get_encoded();
+        let encoded_leader_share = new_report.leader_input_share().get_encoded();
+        let encoded_helper_share = new_report.helper_encrypted_input_share().get_encoded();
         let mut encoded_extensions = Vec::new();
-        encode_u16_items(&mut encoded_extensions, &(), report.leader_extensions());
+        encode_u16_items(&mut encoded_extensions, &(), new_report.leader_extensions());
 
         let stmt = self
             .prepare_cached(
@@ -1241,9 +1243,10 @@ impl<C: Clock> Transaction<'_, C> {
             .execute(
                 &stmt,
                 &[
-                    /* task_id */ &report.task_id().get_encoded(),
-                    /* report_id */ &report.metadata().id().get_encoded(),
-                    /* client_timestamp */ &report.metadata().time().as_naive_date_time()?,
+                    /* task_id */ &new_report.task_id().get_encoded(),
+                    /* report_id */ &new_report.metadata().id().get_encoded(),
+                    /* client_timestamp */
+                    &new_report.metadata().time().as_naive_date_time()?,
                     /* extensions */ &encoded_extensions,
                     /* public_share */ &encoded_public_share,
                     /* leader_input_share */ &encoded_leader_share,
@@ -1251,9 +1254,49 @@ impl<C: Clock> Transaction<'_, C> {
                 ],
             )
             .await?;
-        if rows_affected == 0 {
+
+        if rows_affected > 1 {
+            // This should never happen, because the INSERT should affect 0 or 1 rows.
+            panic!(
+                "INSERT for task ID {} and report ID {} affected multiple rows?",
+                new_report.task_id(),
+                new_report.metadata().id()
+            );
+        }
+
+        if rows_affected == 1 {
+            // Fast path: one row was affected, meaning there was no conflict and we wrote a new
+            // report
+            return Ok(());
+        }
+
+        // Slow path: no rows were affected, meaning a row with the new report ID already existed
+        // and we hit the query's ON CONFLICT DO NOTHING clause. We need to check whether the new
+        // report matches the existing one.
+        let existing_report = match self
+            .get_client_report(vdaf, new_report.task_id(), new_report.metadata().id())
+            .await?
+        {
+            Some(e) => e,
+            None => {
+                // This should never happen: if we got 0 affected rows earlier, there must be a row
+                // matching the task ID and report ID.
+                panic!(
+                    "found no existing report for task ID {} and report ID {}",
+                    new_report.task_id(),
+                    new_report.metadata().id(),
+                )
+            }
+        };
+
+        // If the existing report does not match the new report, then someone is trying to mutate an
+        // existing report, which is forbidden.
+        if !existing_report.eq(new_report) {
             return Err(Error::MutationTargetAlreadyExisted);
         }
+
+        // If the existing report does match the new one, then there is no error (PUTting a report
+        // is idempotent).
         Ok(())
     }
 
@@ -5122,6 +5165,13 @@ mod tests {
         )
         .build();
 
+        ds.run_tx(|tx| {
+            let task = task.clone();
+            Box::pin(async move { tx.put_task(&task).await })
+        })
+        .await
+        .unwrap();
+
         let report_id = ReportId::from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
         let report: LeaderStoredReport<0, dummy_vdaf::Vdaf> = LeaderStoredReport::new(
             *task.id(),
@@ -5140,56 +5190,62 @@ mod tests {
             ),
         );
 
-        ds.run_tx(|tx| {
-            let (task, report) = (task.clone(), report.clone());
-            Box::pin(async move {
-                tx.put_task(&task).await?;
-                tx.put_client_report(&report).await
-            })
-        })
-        .await
-        .unwrap();
-
-        let retrieved_report = ds
-            .run_tx(|tx| {
-                let task_id = *report.task_id();
+        // Write a report twice to prove it is idempotent
+        for _ in 0..2 {
+            ds.run_tx(|tx| {
+                let report = report.clone();
                 Box::pin(async move {
-                    tx.get_client_report::<0, dummy_vdaf::Vdaf>(
-                        &dummy_vdaf::Vdaf::new(),
-                        &task_id,
-                        &report_id,
-                    )
-                    .await
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                        .await
                 })
             })
             .await
-            .unwrap()
             .unwrap();
 
-        assert_eq!(report.task_id(), retrieved_report.task_id());
-        assert_eq!(report.metadata(), retrieved_report.metadata());
+            let retrieved_report = ds
+                .run_tx(|tx| {
+                    let task_id = *report.task_id();
+                    Box::pin(async move {
+                        tx.get_client_report::<0, dummy_vdaf::Vdaf>(
+                            &dummy_vdaf::Vdaf::new(),
+                            &task_id,
+                            &report_id,
+                        )
+                        .await
+                    })
+                })
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(report.task_id(), retrieved_report.task_id());
+            assert_eq!(report.metadata(), retrieved_report.metadata());
+        }
 
         // Try to write a different report with the same ID, and verify we get the expected error.
         let result = ds
             .run_tx(|tx| {
                 let task_id = *report.task_id();
                 Box::pin(async move {
-                    tx.put_client_report(&LeaderStoredReport::<0, dummy_vdaf::Vdaf>::new(
-                        task_id,
-                        ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321)),
-                        (), // public share
-                        Vec::from([
-                            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_2")),
-                            Extension::new(ExtensionType::Tbd, Vec::from("extension_data_3")),
-                        ]),
-                        (), // leader input share
-                        /* Dummy ciphertext for the helper share */
-                        HpkeCiphertext::new(
-                            HpkeConfigId::from(14),
-                            Vec::from("encapsulated_context_2"),
-                            Vec::from("payload_2"),
+                    tx.put_client_report(
+                        &dummy_vdaf::Vdaf::new(),
+                        &LeaderStoredReport::<0, dummy_vdaf::Vdaf>::new(
+                            task_id,
+                            ReportMetadata::new(report_id, Time::from_seconds_since_epoch(54321)),
+                            (), // public share
+                            Vec::from([
+                                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_2")),
+                                Extension::new(ExtensionType::Tbd, Vec::from("extension_data_3")),
+                            ]),
+                            (), // leader input share
+                            /* Dummy ciphertext for the helper share */
+                            HpkeCiphertext::new(
+                                HpkeConfigId::from(14),
+                                Vec::from("encapsulated_context_2"),
+                                Vec::from("payload_2"),
+                            ),
                         ),
-                    ))
+                    )
                     .await
                 })
             })
@@ -5272,10 +5328,14 @@ mod tests {
                 tx.put_task(&task).await?;
                 tx.put_task(&unrelated_task).await?;
 
-                tx.put_client_report(&first_unaggregated_report).await?;
-                tx.put_client_report(&second_unaggregated_report).await?;
-                tx.put_client_report(&aggregated_report).await?;
-                tx.put_client_report(&unrelated_report).await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &first_unaggregated_report)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &second_unaggregated_report)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &aggregated_report)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &unrelated_report)
+                    .await?;
 
                 // Mark aggregated_report as aggregated. (we use SQL here as there is no standard
                 // datastore operation to manually mark a client report as aggregated)
@@ -5426,10 +5486,14 @@ mod tests {
                 tx.put_task(&task).await?;
                 tx.put_task(&unrelated_task).await?;
 
-                tx.put_client_report(&first_unaggregated_report).await?;
-                tx.put_client_report(&second_unaggregated_report).await?;
-                tx.put_client_report(&aggregated_report).await?;
-                tx.put_client_report(&unrelated_report).await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &first_unaggregated_report)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &second_unaggregated_report)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &aggregated_report)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &unrelated_report)
+                    .await?;
 
                 // There are no client reports submitted under this task, so we shouldn't see
                 // this aggregation parameter at all.
@@ -5691,10 +5755,14 @@ mod tests {
                 tx.put_task(&unrelated_task).await?;
                 tx.put_task(&no_reports_task).await?;
 
-                tx.put_client_report(&first_report_in_interval).await?;
-                tx.put_client_report(&second_report_in_interval).await?;
-                tx.put_client_report(&report_outside_interval).await?;
-                tx.put_client_report(&report_for_other_task).await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &first_report_in_interval)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &second_report_in_interval)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report_outside_interval)
+                    .await?;
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report_for_other_task)
+                    .await?;
 
                 Ok(())
             })
@@ -5833,8 +5901,10 @@ mod tests {
                             ReportAggregationState::Start,
                         );
 
-                    tx.put_client_report(&report_0).await?;
-                    tx.put_client_report(&report_1).await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report_0)
+                        .await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report_1)
+                        .await?;
 
                     tx.put_aggregation_job(&aggregation_job_0).await?;
                     tx.put_report_aggregation(&aggregation_job_0_report_aggregation_0)
@@ -7089,7 +7159,8 @@ mod tests {
                 }
 
                 for report in &test_case.reports {
-                    tx.put_client_report(report).await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), report)
+                        .await?;
                 }
 
                 for aggregation_job in &test_case.aggregation_jobs {
@@ -8556,22 +8627,25 @@ mod tests {
                         report_aggregation_1_2,
                         report_aggregation_1_3,
                     ] {
-                        tx.put_client_report::<0, dummy_vdaf::Vdaf>(&LeaderStoredReport::new(
-                            *report_aggregation.task_id(),
-                            ReportMetadata::new(
-                                *report_aggregation.report_id(),
-                                *report_aggregation.time(),
+                        tx.put_client_report(
+                            &dummy_vdaf::Vdaf::new(),
+                            &LeaderStoredReport::new(
+                                *report_aggregation.task_id(),
+                                ReportMetadata::new(
+                                    *report_aggregation.report_id(),
+                                    *report_aggregation.time(),
+                                ),
+                                (), // Dummy public share
+                                Vec::new(),
+                                (), // Dummy leader input share
+                                // Dummy helper encrypted input share
+                                HpkeCiphertext::new(
+                                    HpkeConfigId::from(13),
+                                    Vec::from("encapsulated_context_0"),
+                                    Vec::from("payload_0"),
+                                ),
                             ),
-                            (), // Dummy public share
-                            Vec::new(),
-                            (), // Dummy leader input share
-                            // Dummy helper encrypted input share
-                            HpkeCiphertext::new(
-                                HpkeConfigId::from(13),
-                                Vec::from("encapsulated_context_0"),
-                                Vec::from("payload_0"),
-                            ),
-                        ))
+                        )
                         .await?;
                         tx.put_report_aggregation(report_aggregation).await?;
                     }
@@ -8756,10 +8830,14 @@ mod tests {
                             .sub(&Duration::from_seconds(1))
                             .unwrap(),
                     );
-                    tx.put_client_report(&old_report).await?;
-                    tx.put_client_report(&new_report).await?;
-                    tx.put_client_report(&attached_report).await?;
-                    tx.put_client_report(&other_task_report).await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &old_report)
+                        .await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &new_report)
+                        .await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &attached_report)
+                        .await?;
+                    tx.put_client_report(&dummy_vdaf::Vdaf::new(), &other_task_report)
+                        .await?;
 
                     let aggregation_job = AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -8857,7 +8935,9 @@ mod tests {
             let mut report_ids_and_timestamps = Vec::new();
             for client_timestamp in client_timestamps {
                 let report = LeaderStoredReport::new_dummy(*task_id, *client_timestamp);
-                tx.put_client_report(&report).await.unwrap();
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                    .await
+                    .unwrap();
                 report_ids_and_timestamps.push((*report.metadata().id(), *client_timestamp));
             }
 
@@ -9586,7 +9666,9 @@ mod tests {
             let batch_identifier = Q::batch_identifier_for_client_timestamps(client_timestamps);
             for client_timestamp in client_timestamps {
                 let report = LeaderStoredReport::new_dummy(*task.id(), *client_timestamp);
-                tx.put_client_report(&report).await.unwrap();
+                tx.put_client_report(&dummy_vdaf::Vdaf::new(), &report)
+                    .await
+                    .unwrap();
 
                 let aggregation_job = AggregationJob::<0, Q, dummy_vdaf::Vdaf>::new(
                     *task.id(),

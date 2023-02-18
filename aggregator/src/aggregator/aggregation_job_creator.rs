@@ -806,6 +806,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone());
+        let vdaf = dummy_vdaf::Vdaf::new();
 
         // TODO(#234): consider using tokio::time::pause() to make time deterministic, and allow
         // this test to run without the need for a (racy, wallclock-consuming) real sleep.
@@ -831,14 +832,15 @@ mod tests {
         let helper_report = LeaderStoredReport::new_dummy(*helper_task.id(), report_time);
 
         ds.run_tx(|tx| {
+            let vdaf = vdaf.clone();
             let (leader_task, helper_task) = (leader_task.clone(), helper_task.clone());
             let (leader_report, helper_report) = (leader_report.clone(), helper_report.clone());
             Box::pin(async move {
                 tx.put_task(&leader_task).await?;
                 tx.put_task(&helper_task).await?;
 
-                tx.put_client_report(&leader_report).await?;
-                tx.put_client_report(&helper_report).await
+                tx.put_client_report(&vdaf, &leader_report).await?;
+                tx.put_client_report(&vdaf, &helper_report).await
             })
         })
         .await
@@ -913,7 +915,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone());
-
+        let vdaf = dummy_vdaf::Vdaf::new();
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
 
@@ -939,11 +941,11 @@ mod tests {
             .collect();
 
         ds.run_tx(|tx| {
-            let (task, reports) = (Arc::clone(&task), reports.clone());
+            let (vdaf, task, reports) = (vdaf.clone(), Arc::clone(&task), reports.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 for report in reports.iter() {
-                    tx.put_client_report(report).await?;
+                    tx.put_client_report(&vdaf, report).await?;
                 }
                 Ok(())
             })
@@ -1007,6 +1009,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone());
+        let vdaf = dummy_vdaf::Vdaf::new();
         let task = Arc::new(
             TaskBuilder::new(
                 TaskQueryType::TimeInterval,
@@ -1019,10 +1022,11 @@ mod tests {
         let second_report = LeaderStoredReport::new_dummy(*task.id(), clock.now());
 
         ds.run_tx(|tx| {
-            let (task, first_report) = (Arc::clone(&task), first_report.clone());
+            let (vdaf, task, first_report) =
+                (vdaf.clone(), Arc::clone(&task), first_report.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
-                tx.put_client_report(&first_report).await
+                tx.put_client_report(&vdaf, &first_report).await
             })
         })
         .await
@@ -1064,8 +1068,8 @@ mod tests {
         job_creator
             .datastore
             .run_tx(|tx| {
-                let second_report = second_report.clone();
-                Box::pin(async move { tx.put_client_report(&second_report).await })
+                let (vdaf, second_report) = (vdaf.clone(), second_report.clone());
+                Box::pin(async move { tx.put_client_report(&vdaf, &second_report).await })
             })
             .await
             .unwrap();
@@ -1117,6 +1121,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let ds = ephemeral_datastore.datastore(clock.clone());
+        let vdaf = dummy_vdaf::Vdaf::new();
 
         const MIN_AGGREGATION_JOB_SIZE: usize = 50;
         const MAX_AGGREGATION_JOB_SIZE: usize = 60;
@@ -1148,11 +1153,11 @@ mod tests {
             .collect();
 
         ds.run_tx(|tx| {
-            let (task, reports) = (task.clone(), reports.clone());
+            let (vdaf, task, reports) = (vdaf.clone(), task.clone(), reports.clone());
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 for report in &reports {
-                    tx.put_client_report(report).await?;
+                    tx.put_client_report(&vdaf, report).await?;
                 }
                 Ok(())
             })
@@ -1269,7 +1274,8 @@ mod tests {
                 .collect();
 
         ds.run_tx(|tx| {
-            let (task, batch_1_reports, batch_2_reports) = (
+            let (vdaf, task, batch_1_reports, batch_2_reports) = (
+                vdaf.clone(),
                 Arc::clone(&task),
                 batch_1_reports.clone(),
                 batch_2_reports.clone(),
@@ -1277,10 +1283,10 @@ mod tests {
             Box::pin(async move {
                 tx.put_task(&task).await?;
                 for report in batch_1_reports {
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report(&vdaf, &report).await?;
                 }
                 for report in batch_2_reports {
-                    tx.put_client_report(&report).await?;
+                    tx.put_client_report(&vdaf, &report).await?;
                 }
                 Ok(())
             })
