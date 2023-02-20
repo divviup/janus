@@ -95,5 +95,5 @@ janus_aggregator = { path = ".", features = ["kube-openssl", "test-util"] }
 mockito = "0.32.3"
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
-trycmd = "0.14.11"
+trycmd = "0.14.12"
 wait-timeout = "0.2.0"
