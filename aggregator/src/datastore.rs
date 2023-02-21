@@ -137,39 +137,17 @@ impl<C: Clock> Datastore<C> {
                 elapsed.as_secs_f64(),
                 &[KeyValue::new("tx", name)],
             );
-            match (rslt.as_ref(), retry) {
-                (_, true) => self.transaction_status_counter.add(
-                    &Context::current(),
-                    1,
-                    &[KeyValue::new("status", "retry"), KeyValue::new("tx", name)],
-                ),
-                (Ok(_), _) => self.transaction_status_counter.add(
-                    &Context::current(),
-                    1,
-                    &[
-                        KeyValue::new("status", "success"),
-                        KeyValue::new("tx", name),
-                    ],
-                ),
-                (Err(Error::Db(_)), _) | (Err(Error::Pool(_)), _) => {
-                    self.transaction_status_counter.add(
-                        &Context::current(),
-                        1,
-                        &[
-                            KeyValue::new("status", "error_db"),
-                            KeyValue::new("tx", name),
-                        ],
-                    )
-                }
-                (Err(_), _) => self.transaction_status_counter.add(
-                    &Context::current(),
-                    1,
-                    &[
-                        KeyValue::new("status", "error_other"),
-                        KeyValue::new("tx", name),
-                    ],
-                ),
-            }
+            let status = match (rslt.as_ref(), retry) {
+                (_, true) => "retry",
+                (Ok(_), _) => "success",
+                (Err(Error::Db(_)), _) | (Err(Error::Pool(_)), _) => "error_db",
+                (Err(_), _) => "error_other",
+            };
+            self.transaction_status_counter.add(
+                &Context::current(),
+                1,
+                &[KeyValue::new("status", status), KeyValue::new("tx", name)],
+            );
             if retry {
                 continue;
             }
@@ -206,7 +184,7 @@ impl<C: Clock> Datastore<C> {
         // Run user-provided function with the transaction, then commit/rollback based on result.
         let rslt = f(&tx).await;
         let (raw_tx, retry) = (tx.raw_tx, tx.retry);
-        let rslt = match (rslt, retry.load(Ordering::Acquire)) {
+        let rslt = match (rslt, retry.load(Ordering::Relaxed)) {
             // Commit.
             (Ok(val), false) => match check_error(&retry, raw_tx.commit().await) {
                 Ok(()) => Ok(val),
@@ -231,12 +209,12 @@ impl<C: Clock> Datastore<C> {
                     );
                 };
                 // We return `rslt` unconditionally here: it will either be an error, or we have the
-                // retry flag set so that if `rslt` is a success we will be retrying the entire
+                // retry flag set so that even if `rslt` is a success we will be retrying the entire
                 // transaction & the result of this attempt doesn't matter.
                 rslt
             }
         };
-        (rslt, retry.load(Ordering::Acquire))
+        (rslt, retry.load(Ordering::Relaxed))
     }
 
     /// Write a task into the datastore.
@@ -260,7 +238,7 @@ fn check_error<T>(
             if code == &SqlState::T_R_SERIALIZATION_FAILURE
                 || code == &SqlState::T_R_DEADLOCK_DETECTED
             {
-                retry.store(true, Ordering::Release);
+                retry.store(true, Ordering::Relaxed);
             }
         }
     }
@@ -276,13 +254,6 @@ pub struct Transaction<'a, C: Clock> {
 }
 
 impl<C: Clock> Transaction<'_, C> {
-    fn check_error<T>(
-        &self,
-        rslt: Result<T, tokio_postgres::Error>,
-    ) -> Result<T, tokio_postgres::Error> {
-        check_error(&self.retry, rslt)
-    }
-
     async fn execute<T>(
         &self,
         statement: &T,
@@ -291,11 +262,11 @@ impl<C: Clock> Transaction<'_, C> {
     where
         T: ?Sized + ToStatement,
     {
-        self.check_error(self.raw_tx.execute(statement, params).await)
+        check_error(&self.retry, self.raw_tx.execute(statement, params).await)
     }
 
     async fn prepare_cached(&self, query: &str) -> Result<Statement, tokio_postgres::Error> {
-        self.check_error(self.raw_tx.prepare_cached(query).await)
+        check_error(&self.retry, self.raw_tx.prepare_cached(query).await)
     }
 
     async fn query<T>(
@@ -306,7 +277,7 @@ impl<C: Clock> Transaction<'_, C> {
     where
         T: ?Sized + ToStatement,
     {
-        self.check_error(self.raw_tx.query(statement, params).await)
+        check_error(&self.retry, self.raw_tx.query(statement, params).await)
     }
 
     async fn query_one<T>(
@@ -317,7 +288,7 @@ impl<C: Clock> Transaction<'_, C> {
     where
         T: ?Sized + ToStatement,
     {
-        self.check_error(self.raw_tx.query_one(statement, params).await)
+        check_error(&self.retry, self.raw_tx.query_one(statement, params).await)
     }
 
     async fn query_opt<T>(
@@ -328,7 +299,7 @@ impl<C: Clock> Transaction<'_, C> {
     where
         T: ?Sized + ToStatement,
     {
-        self.check_error(self.raw_tx.query_opt(statement, params).await)
+        check_error(&self.retry, self.raw_tx.query_opt(statement, params).await)
     }
 
     /// Writes a task into the datastore.
