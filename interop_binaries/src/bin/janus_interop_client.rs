@@ -23,94 +23,35 @@ use prio::{
     vdaf::{prio3::Prio3, Vdaf},
 };
 use serde::{Deserialize, Serialize};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::{
+    fmt::Display,
+    net::{Ipv4Addr, SocketAddr},
+    str::FromStr,
+};
 use url::Url;
 use warp::{hyper::StatusCode, reply::Response, Filter, Reply};
 
-/// Helper enum for tagging a mesurement vector with the fixed point type for deserialization.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-#[cfg(feature = "fpvec_bounded_l2")]
-enum TaggedFixedVec {
-    Fixed16 {
-        vec: Vec<NumberAsString<FixedI16<U15>>>,
-    },
-    Fixed32 {
-        vec: Vec<NumberAsString<FixedI32<U31>>>,
-    },
-    Fixed64 {
-        vec: Vec<NumberAsString<FixedI64<U63>>>,
-    },
+/// Parse a numeric measurement from its intermediate JSON representation.
+fn parse_primitive_measurement<T>(value: serde_json::Value) -> anyhow::Result<T>
+where
+    T: FromStr,
+    T::Err: Display,
+{
+    Ok(serde_json::value::from_value::<NumberAsString<T>>(value)?.0)
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum Measurement {
-    Number(NumberAsString<u128>),
-    NumberVec(Vec<NumberAsString<u128>>),
-    #[cfg(feature = "fpvec_bounded_l2")]
-    FixedVec(TaggedFixedVec),
-}
-
-impl Measurement {
-    fn as_primitive<T: TryFrom<u128>>(&self) -> anyhow::Result<T> {
-        match self {
-            Measurement::Number(m) => {
-                T::try_from(m.0).map_err(|_| anyhow!("could not convert primitive"))
-            }
-            m => Err(anyhow!(
-                "cannot represent measurement {m:?} as a primitive value"
-            )),
-        }
-    }
-
-    fn as_primitive_vec<T: TryFrom<u128>>(&self) -> anyhow::Result<Vec<T>> {
-        match self {
-            Measurement::NumberVec(vec) => vec
-                .iter()
-                .map(|item| T::try_from(item.0).map_err(|_| anyhow!("could not convert primitive")))
-                .collect::<anyhow::Result<Vec<_>>>(),
-            m => Err(anyhow!(
-                "cannot represent measurement {m:?} as a vector of primitives"
-            )),
-        }
-    }
-
-    #[cfg(feature = "fpvec_bounded_l2")]
-    fn as_fixed16_vec(&self) -> anyhow::Result<Vec<FixedI16<U15>>> {
-        match self {
-            Measurement::FixedVec(TaggedFixedVec::Fixed16 { vec }) => {
-                Ok(vec.iter().map(|item| item.0).collect())
-            }
-            m => Err(anyhow!(
-                "cannot represent measurement {m:?} as a vector of 16 bit fixed point numbers"
-            )),
-        }
-    }
-
-    #[cfg(feature = "fpvec_bounded_l2")]
-    fn as_fixed32_vec(&self) -> anyhow::Result<Vec<FixedI32<U31>>> {
-        match self {
-            Measurement::FixedVec(TaggedFixedVec::Fixed32 { vec }) => {
-                Ok(vec.iter().map(|item| item.0).collect())
-            }
-            m => Err(anyhow!(
-                "cannot represent measurement {m:?} as a vector of 32 bit fixed point numbers"
-            )),
-        }
-    }
-
-    #[cfg(feature = "fpvec_bounded_l2")]
-    fn as_fixed64_vec(&self) -> anyhow::Result<Vec<FixedI64<U63>>> {
-        match self {
-            Measurement::FixedVec(TaggedFixedVec::Fixed64 { vec }) => {
-                Ok(vec.iter().map(|item| item.0).collect())
-            }
-            m => Err(anyhow!(
-                "cannot represent measurement {m:?} as a vector of 64 bit fixed point numbers"
-            )),
-        }
-    }
+/// Parse a vector measurement from its intermediate JSON representation.
+fn parse_vector_measurement<T>(value: serde_json::Value) -> anyhow::Result<Vec<T>>
+where
+    T: FromStr,
+    T::Err: Display,
+{
+    Ok(
+        serde_json::value::from_value::<Vec<NumberAsString<T>>>(value)?
+            .into_iter()
+            .map(|elem| elem.0)
+            .collect(),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -119,7 +60,7 @@ struct UploadRequest {
     leader: Url,
     helper: Url,
     vdaf: VdafObject,
-    measurement: Measurement,
+    measurement: serde_json::Value,
     #[serde(default)]
     time: Option<u64>,
     time_precision: u64,
@@ -209,28 +150,28 @@ async fn handle_upload(
     let vdaf_instance = request.vdaf.clone().into();
     match vdaf_instance {
         VdafInstance::Prio3Aes128Count {} => {
-            let measurement = request.measurement.as_primitive()?;
+            let measurement = parse_primitive_measurement::<u64>(request.measurement.clone())?;
             let vdaf_client =
                 Prio3::new_aes128_count(2).context("failed to construct Prio3Aes128Count VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
         VdafInstance::Prio3Aes128CountVec { length } => {
-            let measurement = request.measurement.as_primitive_vec()?;
+            let measurement = parse_vector_measurement::<u128>(request.measurement.clone())?;
             let vdaf_client = Prio3::new_aes128_count_vec_multithreaded(2, length)
                 .context("failed to construct Prio3Aes128CountVec VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
         VdafInstance::Prio3Aes128Sum { bits } => {
-            let measurement = request.measurement.as_primitive()?;
+            let measurement = parse_primitive_measurement::<u128>(request.measurement.clone())?;
             let vdaf_client = Prio3::new_aes128_sum(2, bits)
                 .context("failed to construct Prio3Aes128Sum VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
         }
 
         VdafInstance::Prio3Aes128Histogram { ref buckets } => {
-            let measurement = request.measurement.as_primitive()?;
+            let measurement = parse_primitive_measurement::<u128>(request.measurement.clone())?;
             let vdaf_client = Prio3::new_aes128_histogram(2, buckets)
                 .context("failed to construct Prio3Aes128Histogram VDAF")?;
             handle_upload_generic(http_client, vdaf_client, request, measurement).await?;
@@ -238,7 +179,8 @@ async fn handle_upload(
 
         #[cfg(feature = "fpvec_bounded_l2")]
         VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { length } => {
-            let measurement = request.measurement.as_fixed16_vec()?;
+            let measurement =
+                parse_vector_measurement::<FixedI16<U15>>(request.measurement.clone())?;
             let vdaf_client: Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>> =
                 Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, length).context(
                     "failed to construct Prio3Aes128FixedPoint16BitBoundedL2VecSum VDAF",
@@ -248,7 +190,8 @@ async fn handle_upload(
 
         #[cfg(feature = "fpvec_bounded_l2")]
         VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { length } => {
-            let measurement = request.measurement.as_fixed32_vec()?;
+            let measurement =
+                parse_vector_measurement::<FixedI32<U31>>(request.measurement.clone())?;
             let vdaf_client: Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>> =
                 Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, length).context(
                     "failed to construct Prio3Aes128FixedPoint32BitBoundedL2VecSum VDAF",
@@ -258,7 +201,8 @@ async fn handle_upload(
 
         #[cfg(feature = "fpvec_bounded_l2")]
         VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { length } => {
-            let measurement = request.measurement.as_fixed64_vec()?;
+            let measurement =
+                parse_vector_measurement::<FixedI64<U63>>(request.measurement.clone())?;
             let vdaf_client: Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>> =
                 Prio3::new_aes128_fixedpoint_boundedl2_vec_sum(2, length).context(
                     "failed to construct Prio3Aes128FixedPoint64BitBoundedL2VecSum VDAF",
