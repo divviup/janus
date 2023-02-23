@@ -28,6 +28,14 @@ compiler, `protoc`, be installed on the machine performing the build.
 To build Janus, execute `cargo build`. There is also support for building containers with the Janus
 components; see `.github/workflows/ci-build.yml` for example Docker invocations.
 
+### Container image
+
+To build a container image, run the following command.
+
+```bash
+DOCKER_BUILDKIT=1 docker build --tag=janus_aggregator .
+```
+
 ## Running tests
 
 Tests require that [`docker`](https://www.docker.com) & [`kind`](https://kind.sigs.k8s.io) be installed on the machine running the tests and in the `PATH` of the test-runner's environment. The `docker` daemon must be running. CI tests currently use [`kind` 0.17.0](https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0) and the corresponding Kubernetes 1.24 node image (kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315) and using the same versions for local development is recommended.
@@ -62,14 +70,6 @@ aggregator --config-file <config-file> --role <role>
 * `prometheus`: Enables metrics support and a Prometheus exporter; [see below](#prometheus).
 * `test-util`: Enables miscellaneous test-only APIs. This should not be used outside of tests, and any such APIs do not carry any stability guarantees.
 * `tokio-console`: Enables a tracing subscriber and server to support [`tokio-console`](https://github.com/tokio-rs/console). [See below](#monitoring-with-tokio-console) for additional instructions.
-
-## Container image
-
-To build a container image, run the following command.
-
-```bash
-DOCKER_BUILDKIT=1 docker build --tag=janus_aggregator .
-```
 
 ## Monitoring with `tokio-console`
 
