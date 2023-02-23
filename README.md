@@ -26,20 +26,22 @@ branch.
 
 ## Building
 
-Building Janus with `janus_aggregator`'s `otlp` feature enabled requires the
-Protocol Buffers compiler, `protoc`, be installed on the machine performing the
-build.
+[`docker`](https://www.docker.com) must be installed at build time, and the
+`docker` daemon must be running. To build Janus, execute `cargo build`.
 
-To build Janus, execute `cargo build`. There is also support for building
-containers with the Janus components; see `.github/workflows/ci-build.yml` for
-example Docker invocations.
+Building Janus with `janus_aggregator`'s `otlp` feature enabled currently
+requires the Protocol Buffers compiler, `protoc`, be installed on the machine
+performing the build.
 
 ### Container image
 
-To build a container image, run the following command.
+To build container images, run the following commands.
 
 ```bash
 DOCKER_BUILDKIT=1 docker build --tag=janus_aggregator .
+DOCKER_BUILDKIT=1 docker build --tag=janus_aggregation_job_creator --build-arg BINARY=aggregation_job_creator .
+DOCKER_BUILDKIT=1 docker build --tag=janus_aggregation_job_driver --build-arg BINARY=aggregation_job_driver .
+DOCKER_BUILDKIT=1 docker build --tag=janus_collection_job_driver --build-arg BINARY=collection_job_driver .
 ```
 
 ## Running tests
@@ -50,8 +52,8 @@ and in the `PATH` of the test-runner's environment. The `docker` daemon must be
 running. CI tests currently use [`kind`
 0.17.0](https://github.com/kubernetes-sigs/kind/releases/tag/v0.17.0) and the
 corresponding Kubernetes 1.24 node image
-(kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315)
-and using the same versions for local development is recommended.
+(kindest/node:v1.24.7@sha256:577c630ce8e509131eab1aea12c022190978dd2f745aac5eb1fe65c0807eb315).
+Using the same versions for local development is recommended.
 
 To run Janus tests, execute `cargo test`.
 
