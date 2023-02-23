@@ -93,7 +93,8 @@ aggregator --config-file <config-file> --role <role>
 
 `janus_aggregator` has the following features available.
 
-* `jaeger`: Enables tracing support and a Jaeger exporter; [see below](#jaeger).
+* `jaeger`: Enables tracing support and a Jaeger exporter; see the
+  [documentation](docs/CONFIGURING_TRACING.md) for configuration instructions.
 * `kube-rustls`: Sets the `kube/rustls-tls` feature. This is enabled by default.
   Note that if both `kube/rustls-tls` and `kube/openssl-tls` are set, OpenSSL
   will take precedence.
@@ -103,12 +104,15 @@ aggregator --config-file <config-file> --role <role>
   cluster, i.e. `cargo run --bin janus_cli --features kube-openssl --
   <SUBCOMMAND> ...`. (this works around an issue with rustls and IP addresses as
   names in certificates)
-* `otlp`: Enables OTLP exporter support for both metrics ([see
-  below](#honeycomb-1)) and tracing ([see below](#honeycomb)).
-* `prometheus`: Enables metrics support and a Prometheus exporter; [see
-  below](#prometheus).
+* `otlp`: Enables OTLP exporter support for both metrics and tracing. See the
+  [metrics](docs/CONFIGURING_METRICS.md) and
+  [tracing](docs/CONFIGURING_TRACING.md) documentation for configuration
+  instructions.
+* `prometheus`: Enables a Prometheus metrics exporter; see the
+  [documentation](docs/CONFIGURING_METRICS.md) for configuration instructions.
 * `test-util`: Enables miscellaneous test-only APIs. This should not be used
   outside of tests, and any such APIs do not carry any stability guarantees.
 * `tokio-console`: Enables a tracing subscriber and server to support
-  [`tokio-console`](https://github.com/tokio-rs/console). [See
-  below](#monitoring-with-tokio-console) for additional instructions.
+  [`tokio-console`](https://github.com/tokio-rs/console). See the
+  [documentation](docs/CONFIGURING_TOKIO_CONSOLE.md) for configuration
+  instructions.
