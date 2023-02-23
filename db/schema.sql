@@ -148,7 +148,7 @@ CREATE INDEX report_aggregations_aggregation_job_id_index ON report_aggregations
 CREATE INDEX report_aggregations_client_report_id_index ON report_aggregations(client_report_id);
 
 -- Information on aggregation for a single batch. This information may be incremental if the VDAF
--- supports incremental aggregation. Each batch's aggregation is sharded via
+-- supports incremental aggregation. Each batch's aggregation is sharded via the `ord` column.
 CREATE TABLE batch_aggregations(
     id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- artificial ID, internal-only
     task_id               BIGINT NOT NULL,     -- the task ID
