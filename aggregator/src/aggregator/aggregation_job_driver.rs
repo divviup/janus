@@ -51,6 +51,7 @@ use tracing::{info, warn};
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub struct AggregationJobDriver {
+    batch_aggregation_shard_count: u64,
     http_client: reqwest::Client,
     #[derivative(Debug = "ignore")]
     aggregate_step_failure_counter: Counter<u64>,
@@ -61,7 +62,11 @@ pub struct AggregationJobDriver {
 }
 
 impl AggregationJobDriver {
-    pub fn new(http_client: reqwest::Client, meter: &Meter) -> AggregationJobDriver {
+    pub fn new(
+        http_client: reqwest::Client,
+        meter: &Meter,
+        batch_aggregation_shard_count: u64,
+    ) -> AggregationJobDriver {
         let aggregate_step_failure_counter = aggregate_step_failure_counter(meter);
 
         let job_cancel_counter = meter
@@ -79,6 +84,7 @@ impl AggregationJobDriver {
             .init();
 
         AggregationJobDriver {
+            batch_aggregation_shard_count,
             http_client,
             aggregate_step_failure_counter,
             job_cancel_counter,
@@ -627,6 +633,7 @@ impl AggregationJobDriver {
         }
         let mut accumulator = Accumulator::<L, Q, A>::new(
             Arc::clone(&task),
+            self.batch_aggregation_shard_count,
             aggregation_job.aggregation_parameter().clone(),
         );
         for (stepped_aggregation, helper_prep_step) in stepped_aggregations.iter().zip(prep_steps) {
@@ -1162,8 +1169,11 @@ mod tests {
         ))
         .await;
         let meter = meter("aggregation_job_driver");
-        let aggregation_job_driver =
-            Arc::new(AggregationJobDriver::new(reqwest::Client::new(), &meter));
+        let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
+            reqwest::Client::new(),
+            &meter,
+            32,
+        ));
 
         // Run. Let the aggregation job driver step aggregation jobs, then kill it.
         let aggregation_job_driver = Arc::new(JobDriver::new(
@@ -1429,7 +1439,7 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter);
+            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         let error = aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
@@ -1670,7 +1680,7 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter);
+            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         let error = aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
@@ -1898,7 +1908,7 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter);
+            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         let error = aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
@@ -1951,6 +1961,7 @@ mod tests {
             *task.id(),
             Interval::new(batch_interval_start, *task.time_precision()).unwrap(),
             (),
+            0,
             leader_aggregate_share,
             1,
             ReportIdChecksum::for_report_id(report.metadata().id()),
@@ -1990,6 +2001,22 @@ mod tests {
             })
             .await
             .unwrap();
+
+        // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
+        let got_batch_aggregations: Vec<_> = got_batch_aggregations
+            .into_iter()
+            .map(|agg| {
+                BatchAggregation::new(
+                    *agg.task_id(),
+                    *agg.batch_identifier(),
+                    (),
+                    0,
+                    agg.aggregate_share().clone(),
+                    agg.report_count(),
+                    *agg.checksum(),
+                )
+            })
+            .collect();
 
         assert_eq!(want_aggregation_job, got_aggregation_job);
         assert_eq!(want_report_aggregation, got_report_aggregation);
@@ -2151,7 +2178,7 @@ mod tests {
         // Run: create an aggregation job driver & try to step the aggregation we've created twice.
         let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter);
+            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         let error = aggregation_job_driver
             .step_aggregation_job(ds.clone(), Arc::new(lease.clone()))
             .await
@@ -2200,6 +2227,7 @@ mod tests {
             *task.id(),
             batch_id,
             (),
+            0,
             leader_aggregate_share,
             1,
             ReportIdChecksum::for_report_id(report.metadata().id()),
@@ -2237,6 +2265,22 @@ mod tests {
             })
             .await
             .unwrap();
+
+        // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
+        let got_batch_aggregations: Vec<_> = got_batch_aggregations
+            .into_iter()
+            .map(|agg| {
+                BatchAggregation::new(
+                    *agg.task_id(),
+                    *agg.batch_identifier(),
+                    (),
+                    0,
+                    agg.aggregate_share().clone(),
+                    agg.report_count(),
+                    *agg.checksum(),
+                )
+            })
+            .collect();
 
         assert_eq!(want_aggregation_job, got_aggregation_job);
         assert_eq!(want_report_aggregation, got_report_aggregation);
@@ -2334,7 +2378,7 @@ mod tests {
         // Run: create an aggregation job driver & cancel the aggregation job.
         let meter = meter("aggregation_job_driver");
         let aggregation_job_driver =
-            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter);
+            AggregationJobDriver::new(reqwest::Client::builder().build().unwrap(), &meter, 32);
         aggregation_job_driver
             .cancel_aggregation_job(Arc::clone(&ds), lease)
             .await
@@ -2518,8 +2562,11 @@ mod tests {
 
         // Set up the aggregation job driver.
         let meter = meter("aggregation_job_driver");
-        let aggregation_job_driver =
-            Arc::new(AggregationJobDriver::new(reqwest::Client::new(), &meter));
+        let aggregation_job_driver = Arc::new(AggregationJobDriver::new(
+            reqwest::Client::new(),
+            &meter,
+            32,
+        ));
         let job_driver = Arc::new(JobDriver::new(
             clock.clone(),
             runtime_manager.with_label("stepper"),

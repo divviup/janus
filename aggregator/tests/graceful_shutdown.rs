@@ -230,7 +230,7 @@ async fn graceful_shutdown(binary: &Path, mut config: Mapping) {
 
 #[tokio::test(flavor = "multi_thread")]
 #[cfg_attr(not(target_os = "linux"), ignore)]
-async fn server_shutdown() {
+async fn aggregator_shutdown() {
     let aggregator_port = select_open_port().await.unwrap();
     let aggregator_listen_address = SocketAddr::from((Ipv4Addr::LOCALHOST, aggregator_port));
 
@@ -241,6 +241,7 @@ async fn server_shutdown() {
     );
     config.insert("max_upload_batch_size".into(), 100.into());
     config.insert("max_upload_batch_write_delay_ms".into(), 250.into());
+    config.insert("batch_aggregation_shard_count".into(), 32u64.into());
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregator"), config).await;
 }
@@ -273,6 +274,7 @@ async fn aggregation_job_driver_shutdown() {
         60u64.into(),
     );
     config.insert("maximum_attempts_before_failure".into(), 5u64.into());
+    config.insert("batch_aggregation_shard_count".into(), 32u64.into());
 
     graceful_shutdown(trycmd::cargo::cargo_bin!("aggregation_job_driver"), config).await;
 }

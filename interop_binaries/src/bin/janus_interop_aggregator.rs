@@ -119,6 +119,7 @@ fn make_filter(
         aggregator::Config {
             max_upload_batch_size: 100,
             max_upload_batch_write_delay: std::time::Duration::from_millis(100),
+            batch_aggregation_shard_count: 32,
         },
     )?;
 

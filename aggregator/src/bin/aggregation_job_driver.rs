@@ -30,6 +30,7 @@ async fn main() -> anyhow::Result<()> {
                 .build()
                 .context("couldn't create HTTP client")?,
             &meter,
+            ctx.config.batch_aggregation_shard_count,
         ));
         let lease_duration =
             Duration::from_secs(ctx.config.job_driver_config.worker_lease_duration_secs);
@@ -101,6 +102,7 @@ impl BinaryOptions for Options {
 /// worker_lease_duration_secs: 600
 /// worker_lease_clock_skew_allowance_secs: 60
 /// maximum_attempts_before_failure: 5
+/// batch_aggregation_shard_count: 32
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
@@ -111,6 +113,11 @@ struct Config {
     common_config: CommonConfig,
     #[serde(flatten)]
     job_driver_config: JobDriverConfig,
+
+    /// Defines the number of shards to break each batch aggregation into. Increasing this value
+    /// will reduce the amount of database contention during leader aggregation, while increasing
+    /// the cost of collection.
+    batch_aggregation_shard_count: u64,
 }
 
 impl BinaryConfig for Config {
@@ -157,6 +164,7 @@ mod tests {
                 worker_lease_clock_skew_allowance_secs: 60,
                 maximum_attempts_before_failure: 5,
             },
+            batch_aggregation_shard_count: 32,
         })
     }
 }

@@ -68,6 +68,7 @@ use std::{
     future::Future,
     io::Cursor,
     net::SocketAddr,
+    num::TryFromIntError,
     sync::Arc,
     time::{Duration as StdDuration, Instant},
 };
@@ -252,6 +253,12 @@ impl From<datastore::Error> for Error {
     }
 }
 
+impl From<TryFromIntError> for Error {
+    fn from(err: TryFromIntError) -> Self {
+        Error::Internal(format!("couldn't convert numeric type: {err:?}"))
+    }
+}
+
 /// Details of a [`Error::BatchMismatch`] error.
 #[derive(Debug)]
 pub struct BatchMismatch {
@@ -321,6 +328,8 @@ pub struct Aggregator<C: Clock> {
     datastore: Arc<Datastore<C>>,
     /// Clock used to sample time.
     clock: C,
+    /// Configuration used for this aggregator.
+    cfg: Config,
     /// Report writer, with support for batching.
     report_writer: Arc<ReportWriteBatcher<C>>,
     /// Cache of task aggregators.
@@ -347,6 +356,11 @@ pub struct Config {
     /// reached `max_batch_upload_size`. This is the maximum delay added to the /upload endpoint due
     /// to write-batching.
     pub max_upload_batch_write_delay: StdDuration,
+
+    /// Defines the number of shards to break each batch aggregation into. Increasing this value
+    /// will reduce the amount of database contention during helper aggregation, while increasing
+    /// the cost of collection.
+    pub batch_aggregation_shard_count: u64,
 }
 
 impl Default for Config {
@@ -354,6 +368,7 @@ impl Default for Config {
         Self {
             max_upload_batch_size: 1,
             max_upload_batch_write_delay: StdDuration::ZERO,
+            batch_aggregation_shard_count: 1,
         }
     }
 }
@@ -384,6 +399,7 @@ impl<C: Clock> Aggregator<C> {
         Self {
             datastore,
             clock,
+            cfg,
             report_writer,
             task_aggregators: Mutex::new(HashMap::new()),
             upload_decrypt_failure_counter,
@@ -449,6 +465,7 @@ impl<C: Clock> Aggregator<C> {
             .handle_aggregate_init(
                 &self.datastore,
                 &self.aggregate_step_failure_counter,
+                self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 req_bytes,
             )
@@ -484,6 +501,7 @@ impl<C: Clock> Aggregator<C> {
             .handle_aggregate_continue(
                 &self.datastore,
                 &self.aggregate_step_failure_counter,
+                self.cfg.batch_aggregation_shard_count,
                 aggregation_job_id,
                 req,
             )
@@ -774,6 +792,7 @@ impl<C: Clock> TaskAggregator<C> {
         &self,
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
+        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
@@ -782,6 +801,7 @@ impl<C: Clock> TaskAggregator<C> {
                 datastore,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
+                batch_aggregation_shard_count,
                 aggregation_job_id,
                 req_bytes,
             )
@@ -792,6 +812,7 @@ impl<C: Clock> TaskAggregator<C> {
         &self,
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
+        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: AggregationJobContinueReq,
     ) -> Result<AggregationJobResp, Error> {
@@ -800,6 +821,7 @@ impl<C: Clock> TaskAggregator<C> {
                 datastore,
                 aggregate_step_failure_counter,
                 Arc::clone(&self.task),
+                batch_aggregation_shard_count,
                 aggregation_job_id,
                 Arc::new(req),
             )
@@ -1205,6 +1227,7 @@ impl VdafOps {
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
+        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
@@ -1220,6 +1243,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1238,6 +1262,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1256,6 +1281,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1274,6 +1300,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1295,6 +1322,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1316,6 +1344,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1337,6 +1366,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1351,6 +1381,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     &VerifyKey::new([]),
                     req_bytes,
@@ -1369,6 +1400,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1387,6 +1419,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1405,6 +1438,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1426,6 +1460,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1448,6 +1483,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1470,6 +1506,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1492,6 +1529,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     verify_key,
                     req_bytes,
@@ -1506,6 +1544,7 @@ impl VdafOps {
                     vdaf,
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     &VerifyKey::new([]),
                     req_bytes,
@@ -1520,6 +1559,7 @@ impl VdafOps {
         datastore: &Datastore<C>,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
+        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: Arc<AggregationJobContinueReq>,
     ) -> Result<AggregationJobResp, Error> {
@@ -1535,6 +1575,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1552,6 +1593,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1569,6 +1611,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1586,6 +1629,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1607,6 +1651,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1628,6 +1673,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1649,6 +1695,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1662,6 +1709,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1679,6 +1727,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1696,6 +1745,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1713,6 +1763,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1730,6 +1781,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1751,6 +1803,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1772,6 +1825,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1793,6 +1847,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -1806,6 +1861,7 @@ impl VdafOps {
                     Arc::clone(vdaf),
                     aggregate_step_failure_counter,
                     task,
+                    batch_aggregation_shard_count,
                     aggregation_job_id,
                     req,
                 )
@@ -2105,6 +2161,7 @@ impl VdafOps {
         vdaf: &A,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
+        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         verify_key: &VerifyKey<L>,
         req_bytes: &[u8],
@@ -2252,7 +2309,6 @@ impl VdafOps {
             report_share_data.push(match init_rslt {
                 Ok((prep_state, prep_share)) => {
                     saw_continue = true;
-
                     ReportShareData::new(
                         report_share.clone(),
                         ReportAggregation::<L, A>::new(
@@ -2260,7 +2316,7 @@ impl VdafOps {
                             *aggregation_job_id,
                             *report_share.metadata().id(),
                             *report_share.metadata().time(),
-                            ord as i64,
+                            ord.try_into()?,
                             ReportAggregationState::<L, A>::Waiting(prep_state, None),
                         ),
                         PrepareStepResult::Continued(prep_share.get_encoded()),
@@ -2274,7 +2330,7 @@ impl VdafOps {
                         *aggregation_job_id,
                         *report_share.metadata().id(),
                         *report_share.metadata().time(),
-                        ord as i64,
+                        ord.try_into()?,
                         ReportAggregationState::<L, A>::Failed(err),
                     ),
                     PrepareStepResult::Failed(err),
@@ -2381,6 +2437,7 @@ impl VdafOps {
                     // as we go.
                     let mut accumulator = Accumulator::<L, Q, A>::new(
                         Arc::clone(&task),
+                        batch_aggregation_shard_count,
                         aggregation_job.aggregation_parameter().clone(),
                     );
 
@@ -2461,6 +2518,7 @@ impl VdafOps {
         vdaf: Arc<A>,
         aggregate_step_failure_counter: &Counter<u64>,
         task: Arc<Task>,
+        batch_aggregation_shard_count: u64,
         aggregation_job_id: &AggregationJobId,
         req: Arc<AggregationJobContinueReq>,
     ) -> Result<AggregationJobResp, Error>
@@ -2500,7 +2558,7 @@ impl VdafOps {
                     let mut report_aggregations = report_aggregations.into_iter();
                     let (mut saw_continue, mut saw_finish) = (false, false);
                     let mut response_prep_steps = Vec::new();
-                    let mut accumulator = Accumulator::<L, Q, A>::new(Arc::clone(&task), aggregation_job.aggregation_parameter().clone());
+                    let mut accumulator = Accumulator::<L, Q, A>::new(Arc::clone(&task), batch_aggregation_shard_count, aggregation_job.aggregation_parameter().clone());
 
                     for prep_step in req.prepare_steps().iter() {
                         // Match preparation step received from leader to stored report aggregation,
@@ -4560,6 +4618,7 @@ mod tests {
         Method, StatusCode,
     };
     use hyper::body;
+    use itertools::Itertools;
     use janus_core::{
         hpke::{
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
@@ -4603,6 +4662,16 @@ mod tests {
 
     const DUMMY_VERIFY_KEY_LENGTH: usize = dummy_vdaf::Vdaf::VERIFY_KEY_LENGTH;
 
+    fn default_aggregator_config() -> Config {
+        // Enable upload write batching & batch aggregation sharding by default, in hopes that we
+        // can shake out any bugs.
+        Config {
+            max_upload_batch_size: 5,
+            max_upload_batch_write_delay: StdDuration::from_millis(100),
+            batch_aggregation_shard_count: 32,
+        }
+    }
+
     #[tokio::test]
     async fn hpke_config() {
         install_test_trace_subscriber();
@@ -4622,7 +4691,8 @@ mod tests {
 
         let want_hpke_key = task.current_hpke_key().clone();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         // No task ID provided
         let mut response = warp::test::request()
@@ -4733,7 +4803,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         // Check for appropriate CORS headers in response to a preflight request.
         let response = warp::test::request()
@@ -4871,8 +4942,12 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
-        let filter =
-            aggregator_filter(Arc::clone(&datastore), clock.clone(), Config::default()).unwrap();
+        let filter = aggregator_filter(
+            Arc::clone(&datastore),
+            clock.clone(),
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         // Upload a report. Do this twice to prove that PUT is idempotent.
         for _ in 0..2 {
@@ -5138,7 +5213,8 @@ mod tests {
         datastore.put_task(&task).await.unwrap();
         let report = create_report(&task, clock.now());
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let (part, body) = warp::test::request()
             .method("PUT")
@@ -5224,6 +5300,7 @@ mod tests {
             setup_upload_test(Config {
                 max_upload_batch_size: 1000,
                 max_upload_batch_write_delay: StdDuration::from_millis(500),
+                ..Default::default()
             })
             .await;
         let report = create_report(&task, clock.now());
@@ -5273,6 +5350,7 @@ mod tests {
             setup_upload_test(Config {
                 max_upload_batch_size: BATCH_SIZE,
                 max_upload_batch_write_delay: StdDuration::from_secs(86400),
+                ..Default::default()
             })
             .await;
 
@@ -5311,7 +5389,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let (_, aggregator, clock, task, _, _ephemeral_datastore) =
-            setup_upload_test(Config::default()).await;
+            setup_upload_test(default_aggregator_config()).await;
         let report = create_report(&task, clock.now());
         let report = Report::new(
             report.metadata().clone(),
@@ -5334,7 +5412,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let (_, aggregator, clock, task, _, _ephemeral_datastore) =
-            setup_upload_test(Config::default()).await;
+            setup_upload_test(default_aggregator_config()).await;
         let report = create_report(&task, clock.now());
 
         let unused_hpke_config_id = (0..)
@@ -5368,7 +5446,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let (vdaf, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(Config::default()).await;
+            setup_upload_test(default_aggregator_config()).await;
         let report = create_report(&task, clock.now().add(task.tolerable_clock_skew()).unwrap());
 
         aggregator
@@ -5394,7 +5472,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let (_, aggregator, clock, task, _, _ephemeral_datastore) =
-            setup_upload_test(Config::default()).await;
+            setup_upload_test(default_aggregator_config()).await;
         let report = create_report(
             &task,
             clock
@@ -5422,7 +5500,7 @@ mod tests {
         install_test_trace_subscriber();
 
         let (_, aggregator, clock, task, datastore, _ephemeral_datastore) =
-            setup_upload_test(Config::default()).await;
+            setup_upload_test(default_aggregator_config()).await;
         let report = create_report(&task, clock.now());
 
         // Insert a collection job for the batch interval including our report.
@@ -5486,7 +5564,8 @@ mod tests {
             Vec::new(),
         );
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let (part, body) = put_aggregation_job(&task, &aggregation_job_id, &request, &filter)
@@ -5558,7 +5637,8 @@ mod tests {
             Vec::new(),
         );
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let (parts, body) = warp::test::request()
@@ -6002,7 +6082,8 @@ mod tests {
 
         // Create aggregator filter, send request, and parse response. Do this twice to prove that
         // the request is idempotent.
-        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         for _ in 0..2 {
@@ -6221,7 +6302,8 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
@@ -6283,7 +6365,8 @@ mod tests {
         );
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
@@ -6342,7 +6425,8 @@ mod tests {
             Vec::from([report_share.clone(), report_share]),
         );
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
         let (parts, body) = put_aggregation_job(&task, &aggregation_job_id, &request, &filter)
@@ -6571,7 +6655,8 @@ mod tests {
         ]));
 
         // Create aggregator filter, send request, and parse response.
-        let filter = aggregator_filter(datastore.clone(), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
 
         let mut response = warp::test::request()
             .method("POST")
@@ -6892,7 +6977,7 @@ mod tests {
         let filter = aggregator_filter(
             datastore.clone(),
             first_batch_interval_clock.clone(),
-            Config::default(),
+            default_aggregator_config(),
         )
         .unwrap();
 
@@ -6921,7 +7006,8 @@ mod tests {
             AggregationJobResp::MEDIA_TYPE
         );
 
-        let batch_aggregations = datastore
+        // Map the batch aggregation ordinal value to 0, as it may vary due to sharding.
+        let batch_aggregations: Vec<_> = datastore
             .run_tx(|tx| {
                 let (task, report_metadata_0) = (task.clone(), report_metadata_0.clone());
                 Box::pin(async move {
@@ -6947,7 +7033,20 @@ mod tests {
                 })
             })
             .await
-            .unwrap();
+            .unwrap()
+            .into_iter()
+            .map(|agg| {
+                BatchAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
+                    *agg.task_id(),
+                    *agg.batch_identifier(),
+                    (),
+                    0,
+                    agg.aggregate_share().clone(),
+                    agg.report_count(),
+                    *agg.checksum(),
+                )
+            })
+            .collect();
 
         let aggregate_share = vdaf
             .aggregate(&(), [out_share_0.clone(), out_share_1.clone()])
@@ -6957,48 +7056,40 @@ mod tests {
 
         assert_eq!(
             batch_aggregations,
-            Vec::from(
-                [
-                    BatchAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Aes128Count,
-                    >::new(
-                        *task.id(),
-                        Interval::new(
-                            report_metadata_0
-                                .time()
-                                .to_batch_interval_start(task.time_precision())
-                                .unwrap(),
-                            *task.time_precision()
-                        )
-                        .unwrap(),
-                        (),
-                        aggregate_share,
-                        2,
-                        checksum,
-                    ),
-                    BatchAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Aes128Count,
-                    >::new(
-                        *task.id(),
-                        Interval::new(
-                            report_metadata_2
-                                .time()
-                                .to_batch_interval_start(task.time_precision())
-                                .unwrap(),
-                            *task.time_precision()
-                        )
-                        .unwrap(),
-                        (),
-                        AggregateShare::from(out_share_2.clone()),
-                        1,
-                        ReportIdChecksum::for_report_id(report_metadata_2.id()),
-                    ),
-                ]
-            )
+            Vec::from([
+                BatchAggregation::new(
+                    *task.id(),
+                    Interval::new(
+                        report_metadata_0
+                            .time()
+                            .to_batch_interval_start(task.time_precision())
+                            .unwrap(),
+                        *task.time_precision()
+                    )
+                    .unwrap(),
+                    (),
+                    0,
+                    aggregate_share,
+                    2,
+                    checksum,
+                ),
+                BatchAggregation::new(
+                    *task.id(),
+                    Interval::new(
+                        report_metadata_2
+                            .time()
+                            .to_batch_interval_start(task.time_precision())
+                            .unwrap(),
+                        *task.time_precision()
+                    )
+                    .unwrap(),
+                    (),
+                    0,
+                    AggregateShare::from(out_share_2.clone()),
+                    1,
+                    ReportIdChecksum::for_report_id(report_metadata_2.id()),
+                ),
+            ])
         );
 
         // Aggregate some more reports, which should get accumulated into the
@@ -7185,7 +7276,7 @@ mod tests {
         let filter = aggregator_filter(
             datastore.clone(),
             first_batch_interval_clock,
-            Config::default(),
+            default_aggregator_config(),
         )
         .unwrap();
 
@@ -7212,7 +7303,10 @@ mod tests {
             AggregationJobResp::MEDIA_TYPE
         );
 
-        let batch_aggregations = datastore
+        // Map the batch aggregation ordinal value to 0, as it may vary due to sharding, and merge
+        // batch aggregations over the same interval. (the task & aggregation parameter will always
+        // be the same)
+        let mut batch_aggregations: Vec<_> = datastore
             .run_tx(|tx| {
                 let (task, report_metadata_0) = (task.clone(), report_metadata_0.clone());
                 Box::pin(async move {
@@ -7238,7 +7332,24 @@ mod tests {
                 })
             })
             .await
-            .unwrap();
+            .unwrap()
+            .into_iter()
+            .map(|agg| {
+                BatchAggregation::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>::new(
+                    *agg.task_id(),
+                    *agg.batch_identifier(),
+                    (),
+                    0,
+                    agg.aggregate_share().clone(),
+                    agg.report_count(),
+                    *agg.checksum(),
+                )
+            })
+            .into_grouping_map_by(|agg| *agg.batch_interval())
+            .fold_first(|left, _, right| left.merged_with(&right).unwrap())
+            .into_values()
+            .collect();
+        batch_aggregations.sort_by_key(|agg| *agg.batch_interval().start());
 
         let first_aggregate_share = vdaf
             .aggregate(
@@ -7262,48 +7373,40 @@ mod tests {
 
         assert_eq!(
             batch_aggregations,
-            Vec::from(
-                [
-                    BatchAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Aes128Count,
-                    >::new(
-                        *task.id(),
-                        Interval::new(
-                            report_metadata_0
-                                .time()
-                                .to_batch_interval_start(task.time_precision())
-                                .unwrap(),
-                            *task.time_precision()
-                        )
-                        .unwrap(),
-                        (),
-                        first_aggregate_share,
-                        3,
-                        first_checksum,
-                    ),
-                    BatchAggregation::<
-                        PRIO3_AES128_VERIFY_KEY_LENGTH,
-                        TimeInterval,
-                        Prio3Aes128Count,
-                    >::new(
-                        *task.id(),
-                        Interval::new(
-                            report_metadata_2
-                                .time()
-                                .to_batch_interval_start(task.time_precision())
-                                .unwrap(),
-                            *task.time_precision()
-                        )
-                        .unwrap(),
-                        (),
-                        second_aggregate_share,
-                        3,
-                        second_checksum,
-                    ),
-                ]
-            )
+            Vec::from([
+                BatchAggregation::new(
+                    *task.id(),
+                    Interval::new(
+                        report_metadata_0
+                            .time()
+                            .to_batch_interval_start(task.time_precision())
+                            .unwrap(),
+                        *task.time_precision()
+                    )
+                    .unwrap(),
+                    (),
+                    0,
+                    first_aggregate_share,
+                    3,
+                    first_checksum,
+                ),
+                BatchAggregation::new(
+                    *task.id(),
+                    Interval::new(
+                        report_metadata_2
+                            .time()
+                            .to_batch_interval_start(task.time_precision())
+                            .unwrap(),
+                        *task.time_precision()
+                    )
+                    .unwrap(),
+                    (),
+                    0,
+                    second_aggregate_share,
+                    3,
+                    second_checksum,
+                ),
+            ])
         );
     }
 
@@ -7381,7 +7484,8 @@ mod tests {
             PrepareStepResult::Finished,
         )]));
 
-        let filter = aggregator_filter(datastore.clone(), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -7495,7 +7599,8 @@ mod tests {
             PrepareStepResult::Continued(Vec::new()),
         )]));
 
-        let filter = aggregator_filter(datastore.clone(), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -7659,7 +7764,8 @@ mod tests {
             PrepareStepResult::Continued(Vec::new()),
         )]));
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -7813,7 +7919,8 @@ mod tests {
             ),
         ]));
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -7923,7 +8030,8 @@ mod tests {
             PrepareStepResult::Continued(Vec::new()),
         )]));
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let (parts, body) = warp::test::request()
             .method("POST")
@@ -7972,7 +8080,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -8021,7 +8130,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -8078,7 +8188,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -8137,7 +8248,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -8201,7 +8313,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let req = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
@@ -8307,7 +8420,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
@@ -8428,7 +8542,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
@@ -8565,9 +8680,12 @@ mod tests {
             TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
 
         datastore.put_task(&task).await.unwrap();
-        let filter =
-            aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
-                .unwrap();
+        let filter = aggregator_filter(
+            Arc::new(datastore),
+            MockClock::default(),
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         let no_such_collection_job_id: CollectionJobId = random();
 
@@ -8613,6 +8731,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
                             .unwrap(),
                         dummy_vdaf::AggregationParam(0),
+                        0,
                         dummy_vdaf::AggregateShare(0),
                         10,
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
@@ -8623,9 +8742,12 @@ mod tests {
             .await
             .unwrap();
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
-                .unwrap();
+        let filter = aggregator_filter(
+            Arc::new(datastore),
+            MockClock::default(),
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         // Sending this request will consume a query for [0, time_precision).
         let request = CollectionReq::new(
@@ -8712,6 +8834,7 @@ mod tests {
                         Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
                             .unwrap(),
                         dummy_vdaf::AggregationParam(0),
+                        0,
                         dummy_vdaf::AggregateShare(0),
                         10,
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
@@ -8722,9 +8845,12 @@ mod tests {
             .await
             .unwrap();
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
-                .unwrap();
+        let filter = aggregator_filter(
+            Arc::new(datastore),
+            MockClock::default(),
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         // Sending this request will consume a query for [0, 2 * time_precision).
         let request = CollectionReq::new(
@@ -8818,7 +8944,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::clone(&datastore), clock, default_aggregator_config()).unwrap();
         let collection_job_id: CollectionJobId = random();
 
         // Try to delete a collection job that doesn't exist
@@ -8896,7 +9023,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(Arc::new(datastore), clock, default_aggregator_config()).unwrap();
 
         let request = AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -8951,8 +9079,12 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), clock.clone(), Config::default()).unwrap();
+        let filter = aggregator_filter(
+            Arc::new(datastore),
+            clock.clone(),
+            default_aggregator_config(),
+        )
+        .unwrap();
 
         let request = AggregateShareReq::new(
             BatchSelector::new_time_interval(
@@ -9046,7 +9178,8 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let filter = aggregator_filter(datastore.clone(), clock, Config::default()).unwrap();
+        let filter =
+            aggregator_filter(datastore.clone(), clock, default_aggregator_config()).unwrap();
 
         // There are no batch aggregations in the datastore yet
         let request = AggregateShareReq::new(
@@ -9107,6 +9240,7 @@ mod tests {
                             )
                             .unwrap(),
                             aggregation_param,
+                            0,
                             dummy_vdaf::AggregateShare(64),
                             5,
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
@@ -9125,6 +9259,7 @@ mod tests {
                             )
                             .unwrap(),
                             aggregation_param,
+                            0,
                             dummy_vdaf::AggregateShare(128),
                             5,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
@@ -9143,6 +9278,7 @@ mod tests {
                             )
                             .unwrap(),
                             aggregation_param,
+                            0,
                             dummy_vdaf::AggregateShare(256),
                             5,
                             ReportIdChecksum::get_decoded(&[4; 32]).unwrap(),
@@ -9161,6 +9297,7 @@ mod tests {
                             )
                             .unwrap(),
                             aggregation_param,
+                            0,
                             dummy_vdaf::AggregateShare(512),
                             5,
                             ReportIdChecksum::get_decoded(&[8; 32]).unwrap(),

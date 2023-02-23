@@ -38,6 +38,7 @@ use std::{
     collections::HashMap,
     convert::Infallible,
     iter,
+    num::TryFromIntError,
     ops::RangeInclusive,
     sync::Arc,
     time::Duration,
@@ -409,7 +410,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                 aggregation_job_id,
                                 *report_id,
                                 *time,
-                                i64::try_from(ord)?,
+                                ord.try_into()?,
                                 ReportAggregationState::Start,
                             ));
                         }
@@ -560,16 +561,16 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                         Some(max_client_timestamp.map_or(client_timestamp, |ts| {
                                             max(ts, client_timestamp)
                                         }));
-
-                                    ReportAggregation::new(
+                                    Ok(ReportAggregation::new(
                                         *task.id(),
                                         aggregation_job_id,
                                         report_id,
                                         client_timestamp,
-                                        ord as i64,
+                                        ord.try_into()?,
                                         ReportAggregationState::Start,
-                                    )
-                                }),
+                                    ))
+                                })
+                                .collect::<Result<Vec<_>, TryFromIntError>>()?,
                         );
 
                         let min_client_timestamp = min_client_timestamp.unwrap(); // unwrap safety: aggregation_job_size > 0
@@ -722,7 +723,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                                     aggregation_job_id,
                                     *report_id,
                                     *time,
-                                    i64::try_from(ord)?,
+                                    ord.try_into()?,
                                     ReportAggregationState::Start,
                                 ));
                             }

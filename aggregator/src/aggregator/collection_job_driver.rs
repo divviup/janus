@@ -815,6 +815,7 @@ mod tests {
                             *task.id(),
                             Interval::new(clock.now(), time_precision).unwrap(),
                             aggregation_param,
+                            0,
                             dummy_vdaf::AggregateShare(0),
                             5,
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
@@ -830,6 +831,7 @@ mod tests {
                             )
                             .unwrap(),
                             aggregation_param,
+                            0,
                             dummy_vdaf::AggregateShare(0),
                             5,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
@@ -973,6 +975,7 @@ mod tests {
                         *task.id(),
                         Interval::new(clock.now(), time_precision).unwrap(),
                         aggregation_param,
+                        0,
                         dummy_vdaf::AggregateShare(0),
                         5,
                         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
@@ -989,6 +992,7 @@ mod tests {
                         )
                         .unwrap(),
                         aggregation_param,
+                        0,
                         dummy_vdaf::AggregateShare(0),
                         5,
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),

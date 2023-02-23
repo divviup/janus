@@ -1800,7 +1800,7 @@ impl<C: Clock> Transaction<'_, C> {
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
         let time = Time::from_naive_date_time(&row.get("client_timestamp"));
-        let ord: i64 = row.get("ord");
+        let ord: u64 = row.get_bigint_and_convert("ord")?;
         let state: ReportAggregationStateCode = row.get("state");
         let prep_state_bytes: Option<Vec<u8>> = row.get("prep_state");
         let prep_msg_bytes: Option<Vec<u8>> = row.get("prep_msg");
@@ -1898,7 +1898,7 @@ impl<C: Clock> Transaction<'_, C> {
                 &report_aggregation.aggregation_job_id().as_ref(),
                 /* task_id */ &report_aggregation.task_id().as_ref(),
                 /* report_id */ &report_aggregation.report_id().as_ref(),
-                /* ord */ &report_aggregation.ord(),
+                /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                 /* state */ &report_aggregation.state().state_code(),
                 /* prep_state */ &encoded_state_values.prep_state,
                 /* prep_msg */ &encoded_state_values.prep_msg,
@@ -1935,7 +1935,7 @@ impl<C: Clock> Transaction<'_, C> {
             self.execute(
                 &stmt,
                 &[
-                    /* ord */ &report_aggregation.ord(),
+                    /* ord */ &TryInto::<i64>::try_into(report_aggregation.ord())?,
                     /* state */ &report_aggregation.state().state_code(),
                     /* prep_state */ &encoded_state_values.prep_state,
                     /* prep_msg */ &encoded_state_values.prep_msg,
@@ -2530,11 +2530,13 @@ ORDER BY id DESC
         )
     }
 
+    /// Retrieves an existing batch aggregation.
     pub async fn get_batch_aggregation<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
         &self,
         task_id: &TaskId,
         batch_identifier: &Q::BatchIdentifier,
         aggregation_parameter: &A::AggregationParam,
+        ord: u64,
     ) -> Result<Option<BatchAggregation<L, Q, A>>, Error>
     where
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
@@ -2547,7 +2549,8 @@ ORDER BY id DESC
                 WHERE
                     task_id = (SELECT id FROM tasks WHERE task_id = $1)
                     AND batch_identifier = $2
-                    AND aggregation_param = $3",
+                    AND aggregation_param = $3
+                    AND ord = $4",
             )
             .await?;
 
@@ -2557,6 +2560,7 @@ ORDER BY id DESC
                 /* task_id */ &task_id.as_ref(),
                 /* batch_identifier */ &batch_identifier.get_encoded(),
                 /* aggregation_param */ &aggregation_parameter.get_encoded(),
+                /* ord */ &TryInto::<i64>::try_into(ord)?,
             ],
         )
         .await?
@@ -2565,10 +2569,60 @@ ORDER BY id DESC
                 *task_id,
                 batch_identifier.clone(),
                 aggregation_parameter.clone(),
+                ord,
                 row,
             )
         })
         .transpose()
+    }
+
+    /// Retrieves all batch aggregations stored for a given batch, identified by task ID, batch
+    /// identifier, and aggregation parameter.
+    pub async fn get_batch_aggregations_for_batch<
+        const L: usize,
+        Q: QueryType,
+        A: vdaf::Aggregator<L>,
+    >(
+        &self,
+        task_id: &TaskId,
+        batch_identifier: &Q::BatchIdentifier,
+        aggregation_parameter: &A::AggregationParam,
+    ) -> Result<Vec<BatchAggregation<L, Q, A>>, Error>
+    where
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    {
+        let stmt = self
+            .prepare_cached(
+                "SELECT ord, aggregate_share, report_count, checksum
+                FROM batch_aggregations
+                WHERE
+                    task_id = (SELECT id FROM tasks WHERE task_id = $1)
+                    AND batch_identifier = $2
+                    AND aggregation_param = $3",
+            )
+            .await?;
+
+        self.query(
+            &stmt,
+            &[
+                /* task_id */ &task_id.as_ref(),
+                /* batch_identifier */ &batch_identifier.get_encoded(),
+                /* aggregation_param */ &aggregation_parameter.get_encoded(),
+            ],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            Self::batch_aggregation_from_row(
+                *task_id,
+                batch_identifier.clone(),
+                aggregation_parameter.clone(),
+                row.get_bigint_and_convert("ord")?,
+                row,
+            )
+        })
+        .collect()
     }
 
     #[cfg(feature = "test-util")]
@@ -2587,7 +2641,8 @@ ORDER BY id DESC
         let stmt = self
             .prepare_cached(
                 "SELECT
-                    batch_identifier, aggregation_param, aggregate_share, report_count, checksum
+                    batch_identifier, aggregation_param, ord, aggregate_share, report_count,
+                    checksum
                 FROM batch_aggregations
                 WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)",
             )
@@ -2601,8 +2656,15 @@ ORDER BY id DESC
                     Q::BatchIdentifier::get_decoded(row.get("batch_identifier"))?;
                 let aggregation_param =
                     A::AggregationParam::get_decoded(row.get("aggregation_param"))?;
+                let ord = row.get_bigint_and_convert("ord")?;
 
-                Self::batch_aggregation_from_row(*task_id, batch_identifier, aggregation_param, row)
+                Self::batch_aggregation_from_row(
+                    *task_id,
+                    batch_identifier,
+                    aggregation_param,
+                    ord,
+                    row,
+                )
             })
             .collect()
     }
@@ -2611,6 +2673,7 @@ ORDER BY id DESC
         task_id: TaskId,
         batch_identifier: Q::BatchIdentifier,
         aggregation_parameter: A::AggregationParam,
+        ord: u64,
         row: Row,
     ) -> Result<BatchAggregation<L, Q, A>, Error>
     where
@@ -2625,6 +2688,7 @@ ORDER BY id DESC
             task_id,
             batch_identifier,
             aggregation_parameter,
+            ord,
             aggregate_share,
             report_count,
             checksum,
@@ -2652,9 +2716,9 @@ ORDER BY id DESC
         let stmt = self
             .prepare_cached(
                 "INSERT INTO batch_aggregations (
-                    task_id, batch_identifier, batch_interval, aggregation_param, aggregate_share,
-                    report_count, checksum
-                ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7)",
+                    task_id, batch_identifier, batch_interval, aggregation_param, ord,
+                    aggregate_share, report_count, checksum
+                ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8)",
             )
             .await?;
         self.execute(
@@ -2666,6 +2730,7 @@ ORDER BY id DESC
                 /* batch_interval */ &batch_interval,
                 /* aggregation_param */
                 &batch_aggregation.aggregation_parameter().get_encoded(),
+                /* ord */ &TryInto::<i64>::try_into(batch_aggregation.ord())?,
                 /* aggregate_share */ &batch_aggregation.aggregate_share().into(),
                 /* report_count */
                 &i64::try_from(batch_aggregation.report_count())?,
@@ -2696,7 +2761,8 @@ ORDER BY id DESC
                 WHERE
                     task_id = (SELECT id from TASKS WHERE task_id = $4)
                     AND batch_identifier = $5
-                    AND aggregation_param = $6",
+                    AND aggregation_param = $6
+                    AND ord = $7",
             )
             .await?;
         check_single_row_mutation(
@@ -2713,6 +2779,7 @@ ORDER BY id DESC
                     &batch_aggregation.batch_identifier().get_encoded(),
                     /* aggregation_param */
                     &batch_aggregation.aggregation_parameter().get_encoded(),
+                    /* ord */ &TryInto::<i64>::try_into(batch_aggregation.ord())?,
                 ],
             )
             .await?,
@@ -4131,7 +4198,7 @@ pub mod models {
         aggregation_job_id: AggregationJobId,
         report_id: ReportId,
         time: Time,
-        ord: i64,
+        ord: u64,
         state: ReportAggregationState<L, A>,
     }
 
@@ -4145,7 +4212,7 @@ pub mod models {
             aggregation_job_id: AggregationJobId,
             report_id: ReportId,
             time: Time,
-            ord: i64,
+            ord: u64,
             state: ReportAggregationState<L, A>,
         ) -> Self {
             Self {
@@ -4178,13 +4245,13 @@ pub mod models {
             &self.time
         }
 
-        /// Returns a [`ReportMetadata`] corresponding to this aggregation.
+        /// Returns a [`ReportMetadata`] corresponding to this report.
         pub fn report_metadata(&self) -> ReportMetadata {
             ReportMetadata::new(self.report_id, self.time)
         }
 
-        /// Returns the order of this report aggregation in its batch.
-        pub fn ord(&self) -> i64 {
+        /// Returns the order of this report aggregation in its aggregation job.
+        pub fn ord(&self) -> u64 {
             self.ord
         }
 
@@ -4369,6 +4436,9 @@ pub mod models {
         /// The VDAF aggregation parameter used to prepare and accumulate input shares.
         #[derivative(Debug = "ignore")]
         aggregation_parameter: A::AggregationParam,
+        /// The index of this batch aggregation among all batch aggregations for
+        /// this (task_id, batch_identifier, aggregation_parameter).
+        ord: u64,
         /// The aggregate over all the input shares that have been prepared so far by this
         /// aggregator.
         #[derivative(Debug = "ignore")]
@@ -4389,6 +4459,7 @@ pub mod models {
             task_id: TaskId,
             batch_identifier: Q::BatchIdentifier,
             aggregation_parameter: A::AggregationParam,
+            ord: u64,
             aggregate_share: A::AggregateShare,
             report_count: u64,
             checksum: ReportIdChecksum,
@@ -4397,6 +4468,7 @@ pub mod models {
                 task_id,
                 batch_identifier,
                 aggregation_parameter,
+                ord,
                 aggregate_share,
                 report_count,
                 checksum,
@@ -4422,6 +4494,12 @@ pub mod models {
             &self.aggregation_parameter
         }
 
+        /// Returns the index of this batch aggregations among all batch aggregations for this
+        /// (task_id, batch_identifier, aggregation_parameter).
+        pub fn ord(&self) -> u64 {
+            self.ord
+        }
+
         /// Returns the aggregate share associated with this batch aggregation.
         pub fn aggregate_share(&self) -> &A::AggregateShare {
             &self.aggregate_share
@@ -4438,21 +4516,16 @@ pub mod models {
         }
 
         /// Returns a new [`BatchAggregation`] corresponding to the current batch aggregation
-        /// merged with the given parameters.
-        pub fn merged_with(
-            self,
-            aggregate_share: &A::AggregateShare,
-            report_count: u64,
-            checksum: &ReportIdChecksum,
-        ) -> Result<Self, Error> {
+        /// merged with the given batch aggregation.
+        pub fn merged_with(self, other: &Self) -> Result<Self, Error> {
             let mut merged_aggregate_share = self.aggregate_share;
             merged_aggregate_share
-                .merge(aggregate_share)
+                .merge(other.aggregate_share())
                 .map_err(|err| Error::User(err.into()))?;
             Ok(Self {
                 aggregate_share: merged_aggregate_share,
-                report_count: self.report_count + report_count,
-                checksum: self.checksum.combined_with(checksum),
+                report_count: self.report_count + other.report_count(),
+                checksum: self.checksum.combined_with(other.checksum()),
                 ..self
             })
         }
@@ -4488,6 +4561,7 @@ pub mod models {
             self.task_id == other.task_id
                 && self.batch_identifier == other.batch_identifier
                 && self.aggregation_parameter == other.aggregation_parameter
+                && self.ord == other.ord
                 && self.aggregate_share == other.aggregate_share
                 && self.report_count == other.report_count
                 && self.checksum == other.checksum
@@ -6690,7 +6764,7 @@ mod tests {
                             aggregation_job_id,
                             report_id,
                             time,
-                            ord as i64,
+                            ord.try_into().unwrap(),
                             state,
                         );
                         tx.put_report_aggregation(&report_aggregation).await?;
@@ -7001,7 +7075,7 @@ mod tests {
                             aggregation_job_id,
                             report_id,
                             time,
-                            ord as i64,
+                            ord.try_into().unwrap(),
                             state.clone(),
                         );
                         tx.put_report_aggregation(&report_aggregation).await?;
@@ -8327,6 +8401,7 @@ mod tests {
                         *task.id(),
                         Interval::new(Time::from_seconds_since_epoch(100), time_precision).unwrap(),
                         aggregation_param,
+                        0,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -8337,6 +8412,7 @@ mod tests {
                         *task.id(),
                         Interval::new(Time::from_seconds_since_epoch(200), time_precision).unwrap(),
                         aggregation_param,
+                        1,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -8347,6 +8423,7 @@ mod tests {
                         *task.id(),
                         Interval::new(Time::from_seconds_since_epoch(300), time_precision).unwrap(),
                         aggregation_param,
+                        2,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -8358,6 +8435,7 @@ mod tests {
                         *task.id(),
                         Interval::new(Time::from_seconds_since_epoch(0), time_precision).unwrap(),
                         aggregation_param,
+                        3,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -8376,6 +8454,7 @@ mod tests {
                         *task.id(),
                         Interval::new(Time::from_seconds_since_epoch(100), time_precision).unwrap(),
                         AggregationParam(13),
+                        4,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -8389,6 +8468,7 @@ mod tests {
                         *task.id(),
                         Interval::new(Time::from_seconds_since_epoch(400), time_precision).unwrap(),
                         aggregation_param,
+                        5,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -8402,6 +8482,7 @@ mod tests {
                         *other_task.id(),
                         Interval::new(Time::from_seconds_since_epoch(200), time_precision).unwrap(),
                         aggregation_param,
+                        6,
                         aggregate_share.clone(),
                         0,
                         ReportIdChecksum::default(),
@@ -8443,6 +8524,7 @@ mod tests {
                         *first_batch_aggregation.task_id(),
                         *first_batch_aggregation.batch_interval(),
                         *first_batch_aggregation.aggregation_parameter(),
+                        first_batch_aggregation.ord(),
                         AggregateShare(92),
                         1,
                         ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
@@ -8518,12 +8600,13 @@ mod tests {
                     *task.id(),
                     batch_id,
                     aggregation_param,
+                    0,
                     aggregate_share.clone(),
                     0,
                     ReportIdChecksum::default(),
                 );
 
-                // Following three batches are within the interval queried below.
+                // Following batch aggregations have the batch ID queried below.
                 tx.put_batch_aggregation(&batch_aggregation).await?;
 
                 // Wrong batch ID.
@@ -8531,6 +8614,7 @@ mod tests {
                     *task.id(),
                     random(),
                     AggregationParam(13),
+                    1,
                     aggregate_share.clone(),
                     0,
                     ReportIdChecksum::default(),
@@ -8542,6 +8626,19 @@ mod tests {
                     *other_task.id(),
                     batch_id,
                     aggregation_param,
+                    2,
+                    aggregate_share.clone(),
+                    0,
+                    ReportIdChecksum::default(),
+                ))
+                .await?;
+
+                // Index differs from that queried below.
+                tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+                    *task.id(),
+                    batch_id,
+                    aggregation_param,
+                    3,
                     aggregate_share.clone(),
                     0,
                     ReportIdChecksum::default(),
@@ -8553,6 +8650,7 @@ mod tests {
                         task.id(),
                         &batch_id,
                         &aggregation_param,
+                        0,
                     )
                     .await?;
                 assert_eq!(got_batch_aggregation.as_ref(), Some(&batch_aggregation));
@@ -8561,6 +8659,7 @@ mod tests {
                     *batch_aggregation.task_id(),
                     *batch_aggregation.batch_id(),
                     *batch_aggregation.aggregation_parameter(),
+                    batch_aggregation.ord(),
                     AggregateShare(92),
                     1,
                     ReportIdChecksum::get_decoded(&[1; 32]).unwrap(),
@@ -8572,6 +8671,7 @@ mod tests {
                         task.id(),
                         &batch_id,
                         &aggregation_param,
+                        0,
                     )
                     .await?;
                 assert_eq!(got_batch_aggregation, Some(batch_aggregation));
@@ -9178,6 +9278,7 @@ mod tests {
                 *task_id,
                 shortened_batch_identifier.clone(),
                 AggregationParam(0),
+                0,
                 AggregateShare(0),
                 0,
                 ReportIdChecksum::default(),
