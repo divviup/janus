@@ -13,7 +13,7 @@ use crate::{
             AggregateShareJob, AggregationJob, AggregationJobState, CollectionJob,
             CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
-        Datastore,
+        Datastore, Transaction,
     },
     messages::{DurationExt, IntervalExt, TimeExt},
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
@@ -61,6 +61,7 @@ use prio::{
 use regex::Regex;
 use reqwest::Client;
 use std::{
+    borrow::Borrow,
     collections::{HashMap, HashSet},
     convert::Infallible,
     fmt::{self, Debug, Display, Formatter},
@@ -85,6 +86,8 @@ use fixed::{
 use janus_core::test_util::dummy_vdaf;
 
 pub mod accumulator;
+#[cfg(test)]
+mod aggregate_init_tests;
 pub mod aggregate_share;
 pub mod aggregation_job_creator;
 pub mod aggregation_job_driver;
@@ -1974,15 +1977,130 @@ impl VdafOps {
             .write_report(WritableReport::<L, Q, A>::new(vdaf, report))
             .await
     }
+}
+
+/// Used by the aggregation job initialization handler to represent initialization of a report
+/// share.
+#[derive(Clone, Debug)]
+struct ReportShareData<const L: usize, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    A: vdaf::Aggregator<L>,
+{
+    report_share: ReportShare,
+    report_aggregation: ReportAggregation<L, A>,
+    prep_result: PrepareStepResult,
+    existing_report_aggregation: bool,
+    conflicting_aggregate_share: bool,
+}
+
+impl<const L: usize, A: vdaf::Aggregator<L>> ReportShareData<L, A>
+where
+    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+    A: vdaf::Aggregator<L>,
+{
+    fn new(
+        report_share: ReportShare,
+        report_aggregation: ReportAggregation<L, A>,
+        prep_result: PrepareStepResult,
+    ) -> Self {
+        Self {
+            report_share,
+            report_aggregation,
+            prep_result,
+            existing_report_aggregation: false,
+            conflicting_aggregate_share: false,
+        }
+    }
+}
+
+impl VdafOps {
+    /// Returns true if the incoming aggregation job matches existing contents of the datastore, in
+    /// the sense that no new rows would need to be written to service the job.
+    async fn check_aggregation_job_idempotence<'b, const L: usize, Q, A, C>(
+        tx: &Transaction<'b, C>,
+        vdaf: &A,
+        task: &Task,
+        incoming_aggregation_job: &AggregationJob<L, Q, A>,
+        incoming_report_share_data: &[ReportShareData<L, A>],
+    ) -> Result<bool, Error>
+    where
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<L> + 'static + Send + Sync,
+        C: Clock,
+        A::AggregationParam: Send + Sync + PartialEq,
+        A::AggregateShare: Send + Sync,
+        for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
+        for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
+        A::PrepareMessage: Send + Sync + PartialEq,
+        for<'a> A::PrepareState:
+            Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
+        A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]> + PartialEq,
+        for<'a> &'a A::OutputShare: Into<Vec<u8>>,
+    {
+        let existing_aggregation_job = tx
+            .get_aggregation_job(task.id(), incoming_aggregation_job.id())
+            .await?
+            .unwrap_or_else(|| {
+                panic!(
+                    "found no existing aggregation job for task ID {} and aggregation job ID {}",
+                    task.id(),
+                    incoming_aggregation_job.id()
+                )
+            });
+
+        if !existing_aggregation_job.eq(incoming_aggregation_job) {
+            return Ok(false);
+        }
+
+        // Check the existing report aggregations for this job against the ones in the incoming
+        // message.
+        let existing_report_aggregations = tx
+            .get_report_aggregations_for_aggregation_job(
+                vdaf,
+                &Role::Helper,
+                task.id(),
+                incoming_aggregation_job.id(),
+            )
+            .await?;
+
+        // Filter out any report shares in the incoming message that wouldn't get written out: we
+        // don't expect to see those in the datastore.
+        let incoming_report_share_data: Vec<_> = incoming_report_share_data
+            .iter()
+            .filter(|report_share_data| {
+                !report_share_data.existing_report_aggregation
+                    && !report_share_data.conflicting_aggregate_share
+            })
+            .collect();
+
+        if existing_report_aggregations.len() != incoming_report_share_data.len() {
+            return Ok(false);
+        }
+
+        // Check each report share in the incoming aggregation job against the already recorded
+        // report aggregations. `existing_report_aggregations` preserves the order in which the
+        // report shares were seen in the previous `AggregationJobInitReq`, and that order should be
+        // preserved in the repeated message, so it's OK to just zip the iterators together.
+        if incoming_report_share_data
+            .iter()
+            .zip(existing_report_aggregations)
+            .any(|(incoming_report_share, existing_report_share)| {
+                !existing_report_share
+                    .report_metadata()
+                    .eq(incoming_report_share.report_share.metadata())
+                    || !existing_report_share.eq(&incoming_report_share.report_aggregation)
+            })
+        {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
 
     /// Implements the aggregate initialization request portion of the `/aggregate` endpoint for the
     /// helper, described in §4.4.4.1 of draft-gpew-priv-ppm.
-    async fn handle_aggregate_init_generic<
-        const L: usize,
-        Q: AccumulableQueryType,
-        A: vdaf::Aggregator<L>,
-        C: Clock,
-    >(
+    async fn handle_aggregate_init_generic<const L: usize, Q, A, C>(
         datastore: &Datastore<C>,
         vdaf: &A,
         aggregate_step_failure_counter: &Counter<u64>,
@@ -1992,14 +2110,17 @@ impl VdafOps {
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error>
     where
-        A: 'static + Send + Sync,
-        A::AggregationParam: Send + Sync,
+        Q: AccumulableQueryType,
+        A: vdaf::Aggregator<L> + 'static + Send + Sync,
+        C: Clock,
+        A::AggregationParam: Send + Sync + PartialEq,
         A::AggregateShare: Send + Sync,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: fmt::Debug,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        A::PrepareMessage: Send + Sync,
-        A::PrepareState: Send + Sync + Encode,
-        A::OutputShare: Send + Sync,
+        A::PrepareMessage: Send + Sync + PartialEq,
+        for<'a> A::PrepareState:
+            Send + Sync + Encode + ParameterizedDecode<(&'a A, usize)> + PartialEq,
+        A::OutputShare: Send + Sync + for<'a> TryFrom<&'a [u8]> + PartialEq,
         for<'a> &'a A::OutputShare: Into<Vec<u8>>,
     {
         let req = AggregationJobInitializeReq::<Q>::get_decoded(req_bytes)?;
@@ -2017,18 +2138,10 @@ impl VdafOps {
         }
 
         // Decrypt shares & prepare initialization states. (§4.4.4.1)
-        struct ReportShareData<const L: usize, A: vdaf::Aggregator<L>>
-        where
-            for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-        {
-            report_share: ReportShare,
-            prep_result: PrepareStepResult,
-            agg_state: ReportAggregationState<L, A>,
-        }
         let mut saw_continue = false;
         let mut report_share_data = Vec::new();
         let agg_param = A::AggregationParam::get_decoded(req.aggregation_parameter())?;
-        for report_share in req.report_shares() {
+        for (ord, report_share) in req.report_shares().iter().enumerate() {
             let hpke_keypair = task
                 .hpke_keys()
                 .get(report_share.encrypted_input_share().config_id())
@@ -2139,18 +2252,33 @@ impl VdafOps {
             report_share_data.push(match init_rslt {
                 Ok((prep_state, prep_share)) => {
                     saw_continue = true;
-                    ReportShareData {
-                        report_share: report_share.clone(),
-                        prep_result: PrepareStepResult::Continued(prep_share.get_encoded()),
-                        agg_state: ReportAggregationState::<L, A>::Waiting(prep_state, None),
-                    }
+
+                    ReportShareData::new(
+                        report_share.clone(),
+                        ReportAggregation::<L, A>::new(
+                            *task.id(),
+                            *aggregation_job_id,
+                            *report_share.metadata().id(),
+                            *report_share.metadata().time(),
+                            ord as i64,
+                            ReportAggregationState::<L, A>::Waiting(prep_state, None),
+                        ),
+                        PrepareStepResult::Continued(prep_share.get_encoded()),
+                    )
                 }
 
-                Err(err) => ReportShareData {
-                    report_share: report_share.clone(),
-                    prep_result: PrepareStepResult::Failed(err),
-                    agg_state: ReportAggregationState::<L, A>::Failed(err),
-                },
+                Err(err) => ReportShareData::new(
+                    report_share.clone(),
+                    ReportAggregation::<L, A>::new(
+                        *task.id(),
+                        *aggregation_job_id,
+                        *report_share.metadata().id(),
+                        *report_share.metadata().time(),
+                        ord as i64,
+                        ReportAggregationState::<L, A>::Failed(err),
+                    ),
+                    PrepareStepResult::Failed(err),
+                ),
             });
         }
 
@@ -2186,34 +2314,28 @@ impl VdafOps {
                 AggregationJobState::Finished
             },
         ));
-        let report_share_data = Arc::new(report_share_data);
+
         let prep_steps = datastore
             .run_tx_with_name("aggregate_init", |tx| {
-                let (task, req, aggregation_job, report_share_data) = (
+                let (vdaf, task, req, aggregation_job, mut report_share_data) = (
+                    vdaf.clone(),
                     Arc::clone(&task),
                     Arc::clone(&req),
                     Arc::clone(&aggregation_job),
-                    Arc::clone(&report_share_data),
+                    report_share_data.clone(),
                 );
 
                 Box::pin(async move {
-                    // Write aggregation job.
-                    tx.put_aggregation_job(&aggregation_job).await?;
-
-                    let mut accumulator = Accumulator::<L, Q, A>::new(
-                        Arc::clone(&task),
-                        aggregation_job.aggregation_parameter().clone(),
-                    );
-
-                    let mut prep_steps = Vec::new();
-                    for (ord, share_data) in report_share_data.iter().enumerate() {
-                        // Verify that we haven't seen this report ID before, and that the report
-                        // isn't for a batch interval that has already started collection.
+                    for mut share_data in report_share_data.iter_mut() {
+                        // Verify that we haven't seen this report ID and aggregation parameter
+                        // before in another aggregation job, and that the report isn't for a batch
+                        // interval that has already started collection.
                         let (report_aggregation_exists, conflicting_aggregate_share_jobs) = try_join!(
-                            tx.check_report_aggregation_exists::<L, A>(
+                            tx.check_other_report_aggregation_exists::<L, A>(
                                 task.id(),
                                 share_data.report_share.metadata().id(),
                                 aggregation_job.aggregation_parameter(),
+                                aggregation_job.id(),
                             ),
                             Q::get_conflicting_aggregate_share_jobs::<L, C, A>(
                                 tx,
@@ -2222,66 +2344,104 @@ impl VdafOps {
                                 share_data.report_share.metadata()
                             ),
                         )?;
-                        if report_aggregation_exists {
+
+                        share_data.existing_report_aggregation = report_aggregation_exists;
+                        share_data.conflicting_aggregate_share = !conflicting_aggregate_share_jobs.is_empty();
+                    }
+
+                    // Write aggregation job.
+                    let replayed_request = match tx.put_aggregation_job(&aggregation_job).await {
+                        Ok(_) => false,
+                        Err(datastore::Error::MutationTargetAlreadyExisted) => {
+                            // Slow path: this request is writing an aggregation job that already
+                            // exists in the datastore. PUT to an aggregation job is idempotent, so
+                            // that's OK, provided the current request is equivalent to what's in
+                            // the datastore, which we must now check.
+                            if !Self::check_aggregation_job_idempotence(
+                                tx,
+                                &vdaf,
+                                task.borrow(),
+                                aggregation_job.borrow(),
+                                &report_share_data,
+                            )
+                            .await
+                            .map_err(|e| datastore::Error::User(e.into()))? {
+                                return Err(datastore::Error::User(Error::ForbiddenMutation {
+                                    resource_type: "aggregation job",
+                                    identifier: aggregation_job.id().to_string(),
+                                }.into()));
+                            }
+
+                            true
+                        }
+                        Err(e) => return Err(e),
+                    };
+
+                    // Construct a response and write any new report shares and report aggregations
+                    // as we go.
+                    let mut accumulator = Accumulator::<L, Q, A>::new(
+                        Arc::clone(&task),
+                        aggregation_job.aggregation_parameter().clone(),
+                    );
+
+                    let mut prep_steps = Vec::new();
+                    for report_share_data in report_share_data
+                    {
+                        if report_share_data.existing_report_aggregation {
                             prep_steps.push(PrepareStep::new(
-                                *share_data.report_share.metadata().id(),
+                                *report_share_data.report_share.metadata().id(),
                                 PrepareStepResult::Failed(ReportShareError::ReportReplayed),
                             ));
                             continue;
                         }
-                        if !conflicting_aggregate_share_jobs.is_empty() {
+                        if report_share_data.conflicting_aggregate_share {
                             prep_steps.push(PrepareStep::new(
-                                *share_data.report_share.metadata().id(),
+                                *report_share_data.report_share.metadata().id(),
                                 PrepareStepResult::Failed(ReportShareError::BatchCollected),
                             ));
                             continue;
                         }
 
-                        // Write client report & report aggregation.
-                        if let Err(error) = tx
-                            .put_report_share(task.id(), &share_data.report_share)
-                            .await
-                        {
-                            match error {
-                                datastore::Error::MutationTargetAlreadyExisted => {
-                                    prep_steps.push(PrepareStep::new(
-                                        *share_data.report_share.metadata().id(),
-                                        PrepareStepResult::Failed(ReportShareError::ReportReplayed),
-                                    ));
-                                    continue;
+                        if !replayed_request {
+                            // Write client report & report aggregation.
+                            if let Err(error) = tx.put_report_share(
+                                task.id(),
+                                &report_share_data.report_share
+                            ).await {
+                                match error {
+                                    datastore::Error::MutationTargetAlreadyExisted => {
+                                        prep_steps.push(PrepareStep::new(
+                                            *report_share_data.report_share.metadata().id(),
+                                            PrepareStepResult::Failed(ReportShareError::ReportReplayed),
+                                        ));
+                                        continue;
+                                    }
+                                    e => return Err(e),
                                 }
-
-                                e => return Err(e),
                             }
+                            tx.put_report_aggregation(&report_share_data.report_aggregation).await?;
                         }
-                        tx.put_report_aggregation(&ReportAggregation::<L, A>::new(
-                            *task.id(),
-                            *aggregation_job.id(),
-                            *share_data.report_share.metadata().id(),
-                            *share_data.report_share.metadata().time(),
-                            ord as i64,
-                            share_data.agg_state.clone(),
-                        ))
-                        .await?;
 
-                        if let ReportAggregationState::<L, A>::Finished(ref output_share) =
-                            share_data.agg_state
+                        if let ReportAggregationState::<L, A>::Finished(output_share) =
+                            report_share_data.report_aggregation.state()
                         {
                             accumulator.update(
                                 aggregation_job.partial_batch_identifier(),
-                                share_data.report_share.metadata().id(),
-                                share_data.report_share.metadata().time(),
+                                report_share_data.report_share.metadata().id(),
+                                report_share_data.report_share.metadata().time(),
                                 output_share,
                             )?;
                         }
 
                         prep_steps.push(PrepareStep::new(
-                            *share_data.report_share.metadata().id(),
-                            share_data.prep_result.clone(),
+                            *report_share_data.report_share.metadata().id(),
+                            report_share_data.prep_result.clone(),
                         ));
                     }
 
-                    accumulator.flush_to_datastore(tx).await?;
+                    if !replayed_request {
+                        accumulator.flush_to_datastore(tx).await?;
+                    }
                     Ok(prep_steps)
                 })
             })
@@ -4376,6 +4536,7 @@ async fn send_request_to_helper<T: Encode>(
 mod tests {
     use crate::{
         aggregator::{
+            aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
             aggregator_filter, error_handler, send_request_to_helper, Aggregator, BatchMismatch,
             CollectableQueryType, Config, Error,
         },
@@ -4401,8 +4562,7 @@ mod tests {
     use hyper::body;
     use janus_core::{
         hpke::{
-            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
-            HpkeKeypair, Label,
+            self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, VdafInstance},
@@ -4433,13 +4593,7 @@ mod tests {
     use rand::random;
     use reqwest::Client;
     use serde_json::json;
-    use std::{
-        collections::{HashMap, HashSet},
-        io::Cursor,
-        iter,
-        sync::Arc,
-        time::Duration as StdDuration,
-    };
+    use std::{collections::HashSet, io::Cursor, iter, sync::Arc, time::Duration as StdDuration};
     use warp::{
         cors::CorsForbidden,
         filters::BoxedFilter,
@@ -4466,7 +4620,7 @@ mod tests {
 
         datastore.put_task(&task).await.unwrap();
 
-        let want_hpke_key = current_hpke_key(task.hpke_keys()).clone();
+        let want_hpke_key = task.current_hpke_key().clone();
 
         let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
 
@@ -4623,7 +4777,7 @@ mod tests {
         assert_eq!(task.vdaf(), &VdafInstance::Prio3Aes128Count);
 
         let vdaf = Prio3Aes128Count::new_aes128_count(2).unwrap();
-        let hpke_key = current_hpke_key(task.hpke_keys());
+        let hpke_key = task.current_hpke_key();
         let report_metadata = ReportMetadata::new(id, report_timestamp);
 
         let (public_share, measurements) = vdaf.shard(&1).unwrap();
@@ -5335,26 +5489,8 @@ mod tests {
         let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let (part, body) = warp::test::request()
-            .method("PUT")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(
-                CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(request.get_encoded())
-            .filter(&filter)
+        let (part, body) = put_aggregation_job(&task, &aggregation_job_id, &request, &filter)
             .await
-            .unwrap()
-            .into_response()
             .into_parts();
 
         assert!(!part.status.is_success());
@@ -5507,7 +5643,7 @@ mod tests {
 
         let vdaf = dummy_vdaf::Vdaf::new();
         let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
-        let hpke_key = current_hpke_key(task.hpke_keys());
+        let hpke_key = task.current_hpke_key();
 
         // report_share_0 is a "happy path" report.
         let report_metadata_0 = ReportMetadata::new(
@@ -5864,228 +6000,142 @@ mod tests {
             ]),
         );
 
-        // Create aggregator filter, send request, and parse response.
+        // Create aggregator filter, send request, and parse response. Do this twice to prove that
+        // the request is idempotent.
         let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut response = warp::test::request()
-            .method("PUT")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(
-                CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobResp::MEDIA_TYPE
-        );
-        let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
-        let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
+        for _ in 0..2 {
+            tracing::error!("PUT agg job {aggregation_job_id}");
+            let mut response =
+                put_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers().get(CONTENT_TYPE).unwrap(),
+                AggregationJobResp::MEDIA_TYPE
+            );
+            let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
+            let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
-        // Validate response.
-        assert_eq!(aggregate_resp.prepare_steps().len(), 9);
+            // Validate response.
+            assert_eq!(aggregate_resp.prepare_steps().len(), 9);
 
-        let prepare_step_0 = aggregate_resp.prepare_steps().get(0).unwrap();
-        assert_eq!(prepare_step_0.report_id(), report_share_0.metadata().id());
-        assert_matches!(prepare_step_0.result(), &PrepareStepResult::Continued(..));
+            let prepare_step_0 = aggregate_resp.prepare_steps().get(0).unwrap();
+            assert_eq!(prepare_step_0.report_id(), report_share_0.metadata().id());
+            assert_matches!(prepare_step_0.result(), &PrepareStepResult::Continued(..));
 
-        let prepare_step_1 = aggregate_resp.prepare_steps().get(1).unwrap();
-        assert_eq!(prepare_step_1.report_id(), report_share_1.metadata().id());
-        assert_matches!(
-            prepare_step_1.result(),
-            &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
-        );
+            let prepare_step_1 = aggregate_resp.prepare_steps().get(1).unwrap();
+            assert_eq!(prepare_step_1.report_id(), report_share_1.metadata().id());
+            assert_matches!(
+                prepare_step_1.result(),
+                &PrepareStepResult::Failed(ReportShareError::HpkeDecryptError)
+            );
 
-        let prepare_step_2 = aggregate_resp.prepare_steps().get(2).unwrap();
-        assert_eq!(prepare_step_2.report_id(), report_share_2.metadata().id());
-        assert_matches!(
-            prepare_step_2.result(),
-            &PrepareStepResult::Failed(ReportShareError::VdafPrepError)
-        );
+            let prepare_step_2 = aggregate_resp.prepare_steps().get(2).unwrap();
+            assert_eq!(prepare_step_2.report_id(), report_share_2.metadata().id());
+            assert_matches!(
+                prepare_step_2.result(),
+                &PrepareStepResult::Failed(ReportShareError::VdafPrepError)
+            );
 
-        let prepare_step_3 = aggregate_resp.prepare_steps().get(3).unwrap();
-        assert_eq!(prepare_step_3.report_id(), report_share_3.metadata().id());
-        assert_matches!(
-            prepare_step_3.result(),
-            &PrepareStepResult::Failed(ReportShareError::HpkeUnknownConfigId)
-        );
+            let prepare_step_3 = aggregate_resp.prepare_steps().get(3).unwrap();
+            assert_eq!(prepare_step_3.report_id(), report_share_3.metadata().id());
+            assert_matches!(
+                prepare_step_3.result(),
+                &PrepareStepResult::Failed(ReportShareError::HpkeUnknownConfigId)
+            );
 
-        let prepare_step_4 = aggregate_resp.prepare_steps().get(4).unwrap();
-        assert_eq!(prepare_step_4.report_id(), report_share_4.metadata().id());
-        assert_eq!(
-            prepare_step_4.result(),
-            &PrepareStepResult::Failed(ReportShareError::ReportReplayed)
-        );
+            let prepare_step_4 = aggregate_resp.prepare_steps().get(4).unwrap();
+            assert_eq!(prepare_step_4.report_id(), report_share_4.metadata().id());
+            assert_eq!(
+                prepare_step_4.result(),
+                &PrepareStepResult::Failed(ReportShareError::ReportReplayed)
+            );
 
-        let prepare_step_5 = aggregate_resp.prepare_steps().get(5).unwrap();
-        assert_eq!(prepare_step_5.report_id(), report_share_5.metadata().id());
-        assert_eq!(
-            prepare_step_5.result(),
-            &PrepareStepResult::Failed(ReportShareError::BatchCollected)
-        );
+            let prepare_step_5 = aggregate_resp.prepare_steps().get(5).unwrap();
+            assert_eq!(prepare_step_5.report_id(), report_share_5.metadata().id());
+            assert_eq!(
+                prepare_step_5.result(),
+                &PrepareStepResult::Failed(ReportShareError::BatchCollected)
+            );
 
-        let prepare_step_6 = aggregate_resp.prepare_steps().get(6).unwrap();
-        assert_eq!(prepare_step_6.report_id(), report_share_6.metadata().id());
-        assert_eq!(
-            prepare_step_6.result(),
-            &PrepareStepResult::Failed(ReportShareError::VdafPrepError),
-        );
+            let prepare_step_6 = aggregate_resp.prepare_steps().get(6).unwrap();
+            assert_eq!(prepare_step_6.report_id(), report_share_6.metadata().id());
+            assert_eq!(
+                prepare_step_6.result(),
+                &PrepareStepResult::Failed(ReportShareError::VdafPrepError),
+            );
 
-        let prepare_step_7 = aggregate_resp.prepare_steps().get(7).unwrap();
-        assert_eq!(prepare_step_7.report_id(), report_share_7.metadata().id());
-        assert_eq!(
-            prepare_step_7.result(),
-            &PrepareStepResult::Failed(ReportShareError::UnrecognizedMessage),
-        );
+            let prepare_step_7 = aggregate_resp.prepare_steps().get(7).unwrap();
+            assert_eq!(prepare_step_7.report_id(), report_share_7.metadata().id());
+            assert_eq!(
+                prepare_step_7.result(),
+                &PrepareStepResult::Failed(ReportShareError::UnrecognizedMessage),
+            );
 
-        let prepare_step_8 = aggregate_resp.prepare_steps().get(8).unwrap();
-        assert_eq!(prepare_step_8.report_id(), report_share_8.metadata().id());
-        assert_matches!(prepare_step_8.result(), &PrepareStepResult::Continued(..));
+            let prepare_step_8 = aggregate_resp.prepare_steps().get(8).unwrap();
+            assert_eq!(prepare_step_8.report_id(), report_share_8.metadata().id());
+            assert_matches!(prepare_step_8.result(), &PrepareStepResult::Continued(..));
 
-        // Check aggregation job in datastore.
-        let aggregation_jobs = datastore
-            .run_tx(|tx| {
-                let task = task.clone();
-                Box::pin(async move {
-                    tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(task.id())
+            // Check aggregation job in datastore.
+            let aggregation_jobs = datastore
+                .run_tx(|tx| {
+                    let task = task.clone();
+                    Box::pin(async move {
+                        tx.get_aggregation_jobs_for_task::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            task.id(),
+                        )
                         .await
+                    })
                 })
-            })
-            .await
-            .unwrap();
+                .await
+                .unwrap();
 
-        assert_eq!(aggregation_jobs.len(), 3);
+            assert_eq!(aggregation_jobs.len(), 3);
 
-        let mut saw_conflicting_aggregation_job = false;
-        let mut saw_non_conflicting_aggregation_job = false;
-        let mut saw_new_aggregation_job = false;
-        for aggregation_job in aggregation_jobs {
-            if aggregation_job.eq(&conflicting_aggregation_job) {
-                saw_conflicting_aggregation_job = true;
-            } else if aggregation_job.eq(&non_conflicting_aggregation_job) {
-                saw_non_conflicting_aggregation_job = true;
-            } else if aggregation_job.task_id().eq(task.id())
-                && aggregation_job.id().eq(&aggregation_job_id)
-                && aggregation_job.partial_batch_identifier().eq(&())
-                && aggregation_job.state().eq(&AggregationJobState::InProgress)
-            {
-                saw_new_aggregation_job = true;
+            let mut saw_conflicting_aggregation_job = false;
+            let mut saw_non_conflicting_aggregation_job = false;
+            let mut saw_new_aggregation_job = false;
+            for aggregation_job in aggregation_jobs {
+                if aggregation_job.eq(&conflicting_aggregation_job) {
+                    saw_conflicting_aggregation_job = true;
+                } else if aggregation_job.eq(&non_conflicting_aggregation_job) {
+                    saw_non_conflicting_aggregation_job = true;
+                } else if aggregation_job.task_id().eq(task.id())
+                    && aggregation_job.id().eq(&aggregation_job_id)
+                    && aggregation_job.partial_batch_identifier().eq(&())
+                    && aggregation_job.state().eq(&AggregationJobState::InProgress)
+                {
+                    saw_new_aggregation_job = true;
+                }
             }
-        }
 
-        assert!(saw_conflicting_aggregation_job);
-        assert!(saw_non_conflicting_aggregation_job);
-        assert!(saw_new_aggregation_job);
+            assert!(saw_conflicting_aggregation_job);
+            assert!(saw_non_conflicting_aggregation_job);
+            assert!(saw_new_aggregation_job);
+        }
     }
 
     #[allow(clippy::unit_arg)]
     #[tokio::test]
     async fn aggregate_init_change_report_timestamp() {
-        install_test_trace_subscriber();
+        let test_case = setup_aggregate_init_test().await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
-        let filter =
-            aggregator_filter(Arc::clone(&datastore), clock.clone(), Config::default()).unwrap();
-
-        datastore.put_task(&task).await.unwrap();
-
-        let vdaf = dummy_vdaf::Vdaf::new();
-        let verify_key: VerifyKey<0> = task.primary_vdaf_verify_key().unwrap();
-        let hpke_key = current_hpke_key(task.hpke_keys());
-        let aggregation_parameter = dummy_vdaf::AggregationParam(0);
         let other_aggregation_parameter = dummy_vdaf::AggregationParam(1);
-        assert_ne!(aggregation_parameter, other_aggregation_parameter);
-
-        let report_metadata = ReportMetadata::new(
-            random(),
-            clock
-                .now()
-                .to_batch_interval_start(task.time_precision())
-                .unwrap(),
-        );
-        let transcript = run_vdaf(
-            &vdaf,
-            verify_key.as_bytes(),
-            &aggregation_parameter,
-            report_metadata.id(),
-            &(),
-        );
-        let report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            *task.id(),
-            report_metadata.clone(),
-            hpke_key.config(),
-            &transcript.public_share,
-            Vec::new(),
-            &transcript.input_shares[1].clone(),
-        );
+        assert_ne!(test_case.aggregation_param, other_aggregation_parameter);
 
         // This report has the same ID as the previous one, but a different timestamp.
         let mutated_timestamp_report_metadata = ReportMetadata::new(
-            *report_metadata.id(),
-            clock.now().add(task.time_precision()).unwrap(),
+            *test_case.report_shares[0].metadata().id(),
+            test_case
+                .clock
+                .now()
+                .add(test_case.task.time_precision())
+                .unwrap(),
         );
-        let transcript = run_vdaf(
-            &vdaf,
-            verify_key.as_bytes(),
-            &other_aggregation_parameter,
-            mutated_timestamp_report_metadata.id(),
-            &(),
-        );
-        let mutated_timestamp_report_share = generate_helper_report_share::<dummy_vdaf::Vdaf>(
-            *task.id(),
-            mutated_timestamp_report_metadata.clone(),
-            hpke_key.config(),
-            &transcript.public_share,
-            Vec::new(),
-            &transcript.input_shares[1].clone(),
-        );
-
-        // Send an aggregate job with the first report share in it
-        let request = AggregationJobInitializeReq::new(
-            aggregation_parameter.get_encoded(),
-            PartialBatchSelector::new_time_interval(),
-            Vec::from([report_share.clone()]),
-        );
-
-        let response = warp::test::request()
-            .method("PUT")
-            .path(task.aggregation_job_uri(&random()).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(
-                CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobResp::MEDIA_TYPE
-        );
+        let mutated_timestamp_report_share = test_case
+            .report_share_generator
+            .next_with_metadata(mutated_timestamp_report_metadata);
 
         // Send another aggregate job re-using the same report ID but with a different timestamp. It
         // should be flagged as a replay.
@@ -6095,34 +6145,19 @@ mod tests {
             Vec::from([mutated_timestamp_report_share.clone()]),
         );
 
-        let mut response = warp::test::request()
-            .method("PUT")
-            .path(task.aggregation_job_uri(&random()).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(
-                CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let mut response =
+            put_aggregation_job(&test_case.task, &random(), &request, &test_case.filter).await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(CONTENT_TYPE).unwrap(),
-            AggregationJobResp::MEDIA_TYPE
-        );
         let body_bytes = body::to_bytes(response.body_mut()).await.unwrap();
         let aggregate_resp = AggregationJobResp::get_decoded(&body_bytes).unwrap();
 
         assert_eq!(aggregate_resp.prepare_steps().len(), 1);
 
         let prepare_step = aggregate_resp.prepare_steps().get(0).unwrap();
-        assert_eq!(prepare_step.report_id(), report_share.metadata().id());
+        assert_eq!(
+            prepare_step.report_id(),
+            mutated_timestamp_report_share.metadata().id()
+        );
         assert_matches!(
             prepare_step.result(),
             &PrepareStepResult::Failed(ReportShareError::ReportReplayed)
@@ -6130,9 +6165,10 @@ mod tests {
 
         // The attempt to mutate the report share timestamp should not cause any change in the
         // datastore.
-        let client_reports = datastore
+        let client_reports = test_case
+            .datastore
             .run_tx(|tx| {
-                let task_id = *task.id();
+                let task_id = *test_case.task.id();
                 Box::pin(async move {
                     let reports = tx.get_report_metadatas_for_task(&task_id).await.unwrap();
 
@@ -6141,8 +6177,9 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(client_reports.len(), 1);
-        assert_eq!(client_reports[0], report_metadata);
+        assert_eq!(client_reports.len(), 2);
+        assert_eq!(&client_reports[0], test_case.report_shares[0].metadata());
+        assert_eq!(&client_reports[1], test_case.report_shares[1].metadata());
     }
 
     #[tokio::test]
@@ -6159,7 +6196,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = ephemeral_datastore.datastore(clock.clone());
-        let hpke_key = current_hpke_key(task.hpke_keys());
+        let hpke_key = task.current_hpke_key();
 
         datastore.put_task(&task).await.unwrap();
 
@@ -6175,7 +6212,7 @@ mod tests {
             hpke_key.config(),
             &(),
             Vec::new(),
-            &(),
+            &dummy_vdaf::InputShare::default(),
         );
         let request = AggregationJobInitializeReq::new(
             dummy_vdaf::AggregationParam(0).get_encoded(),
@@ -6187,26 +6224,7 @@ mod tests {
         let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut response = warp::test::request()
-            .method("PUT")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(
-                CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(CONTENT_TYPE).unwrap(),
@@ -6240,7 +6258,7 @@ mod tests {
         let clock = MockClock::default();
         let ephemeral_datastore = ephemeral_datastore().await;
         let datastore = ephemeral_datastore.datastore(clock.clone());
-        let hpke_key = current_hpke_key(task.hpke_keys());
+        let hpke_key = task.current_hpke_key();
 
         datastore.put_task(&task).await.unwrap();
 
@@ -6256,7 +6274,7 @@ mod tests {
             hpke_key.config(),
             &(),
             Vec::new(),
-            &(),
+            &dummy_vdaf::InputShare::default(),
         );
         let request = AggregationJobInitializeReq::new(
             dummy_vdaf::AggregationParam(0).get_encoded(),
@@ -6268,26 +6286,7 @@ mod tests {
         let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let mut response = warp::test::request()
-            .method("PUT")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(
-                CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let mut response = put_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(CONTENT_TYPE).unwrap(),
@@ -6346,26 +6345,8 @@ mod tests {
         let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
         let aggregation_job_id: AggregationJobId = random();
 
-        let (parts, body) = warp::test::request()
-            .method("PUT")
-            .path(
-                task.aggregation_job_uri(&aggregation_job_id)
-                    .unwrap()
-                    .path(),
-            )
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
-            )
-            .header(
-                CONTENT_TYPE,
-                AggregationJobInitializeReq::<TimeInterval>::MEDIA_TYPE,
-            )
-            .body(request.get_encoded())
-            .filter(&filter)
+        let (parts, body) = put_aggregation_job(&task, &aggregation_job_id, &request, &filter)
             .await
-            .unwrap()
-            .into_response()
             .into_parts();
 
         let want_status = 400;
@@ -6402,7 +6383,7 @@ mod tests {
         let vdaf = Arc::new(Prio3::new_aes128_count(2).unwrap());
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
-        let hpke_key = current_hpke_key(task.hpke_keys());
+        let hpke_key = task.current_hpke_key();
 
         // report_share_0 is a "happy path" report.
         let report_metadata_0 = ReportMetadata::new(
@@ -6724,7 +6705,7 @@ mod tests {
         let vdaf = Prio3::new_aes128_count(2).unwrap();
         let verify_key: VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH> =
             task.primary_vdaf_verify_key().unwrap();
-        let hpke_key = current_hpke_key(task.hpke_keys());
+        let hpke_key = task.current_hpke_key();
 
         // report_share_0 is a "happy path" report.
         let report_metadata_0 = ReportMetadata::new(
@@ -7386,7 +7367,7 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await
                 })
@@ -7500,7 +7481,7 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await
                 })
@@ -7662,7 +7643,7 @@ mod tests {
                         *report_metadata.id(),
                         *report_metadata.time(),
                         0,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await
                 })
@@ -7799,7 +7780,7 @@ mod tests {
                         *report_metadata_0.id(),
                         *report_metadata_0.time(),
                         0,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await?;
                     tx.put_report_aggregation(&ReportAggregation::<
@@ -7811,7 +7792,7 @@ mod tests {
                         *report_metadata_1.id(),
                         *report_metadata_1.time(),
                         1,
-                        ReportAggregationState::Waiting((), None),
+                        ReportAggregationState::Waiting(dummy_vdaf::PrepareState::default(), None),
                     ))
                     .await
                 })
@@ -9480,14 +9461,7 @@ mod tests {
         }
     }
 
-    fn current_hpke_key(hpke_keys: &HashMap<HpkeConfigId, HpkeKeypair>) -> &HpkeKeypair {
-        hpke_keys
-            .values()
-            .max_by_key(|keypair| u8::from(*keypair.config().id()))
-            .unwrap()
-    }
-
-    fn generate_helper_report_share<V: vdaf::Client>(
+    pub(crate) fn generate_helper_report_share<V: vdaf::Client>(
         task_id: TaskId,
         report_metadata: ReportMetadata,
         cfg: &HpkeConfig,

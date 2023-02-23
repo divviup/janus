@@ -1544,24 +1544,31 @@ impl<C: Clock> Transaction<'_, C> {
                     client_timestamp_interval,
                     state
                 )
-                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)",
+                VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6)
+                ON CONFLICT DO NOTHING",
             )
             .await?;
-        self.execute(
-            &stmt,
-            &[
-                /* task_id */ &aggregation_job.task_id().as_ref(),
-                /* aggregation_job_id */ &aggregation_job.id().as_ref(),
-                /* aggregation_param */
-                &aggregation_job.aggregation_parameter().get_encoded(),
-                /* batch_id */
-                &aggregation_job.partial_batch_identifier().get_encoded(),
-                /* client_timestamp_interval */
-                &SqlInterval::from(aggregation_job.client_timestamp_interval()),
-                /* state */ &aggregation_job.state(),
-            ],
-        )
-        .await?;
+        let rows_affected = self
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ &aggregation_job.task_id().as_ref(),
+                    /* aggregation_job_id */ &aggregation_job.id().as_ref(),
+                    /* aggregation_param */
+                    &aggregation_job.aggregation_parameter().get_encoded(),
+                    /* batch_id */
+                    &aggregation_job.partial_batch_identifier().get_encoded(),
+                    /* client_timestamp_interval */
+                    &SqlInterval::from(aggregation_job.client_timestamp_interval()),
+                    /* state */ &aggregation_job.state(),
+                ],
+            )
+            .await?;
+
+        if rows_affected == 0 {
+            return Err(Error::MutationTargetAlreadyExisted);
+        }
+
         Ok(())
     }
 
@@ -1596,13 +1603,15 @@ impl<C: Clock> Transaction<'_, C> {
         )
     }
 
-    /// Check whether the report has ever been aggregated with the given parameter.
+    /// Check whether the report has ever been aggregated with the given parameter, for an
+    /// aggregation job besides the given one.
     #[tracing::instrument(skip(self), err)]
-    pub async fn check_report_aggregation_exists<const L: usize, A>(
+    pub async fn check_other_report_aggregation_exists<const L: usize, A>(
         &self,
         task_id: &TaskId,
         report_id: &ReportId,
         aggregation_param: &A::AggregationParam,
+        aggregation_job_id: &AggregationJobId,
     ) -> Result<bool, Error>
     where
         A: vdaf::Aggregator<L>,
@@ -1614,7 +1623,8 @@ impl<C: Clock> Transaction<'_, C> {
                 JOIN aggregation_jobs ON aggregation_jobs.id = report_aggregations.aggregation_job_id
                 WHERE client_reports.task_id = (SELECT id FROM tasks WHERE task_id = $1)
                     AND client_reports.report_id = $2
-                    AND aggregation_jobs.aggregation_param = $3"
+                    AND aggregation_jobs.aggregation_param = $3
+                    AND aggregation_jobs.aggregation_job_id != $4"
             )
         .await?;
         Ok(self
@@ -1624,6 +1634,7 @@ impl<C: Clock> Transaction<'_, C> {
                     /* task_id */ &task_id.as_ref(),
                     /* report_id */ &report_id.as_ref(),
                     /* aggregation_param */ &aggregation_param.get_encoded(),
+                    /* aggregation_job_id */ &aggregation_job_id.as_ref(),
                 ],
             )
             .await
@@ -3742,7 +3753,7 @@ pub mod models {
                 ReportMetadata::new(random(), when),
                 (),
                 Vec::new(),
-                (),
+                janus_core::test_util::dummy_vdaf::InputShare::default(),
                 HpkeCiphertext::new(
                     HpkeConfigId::from(13),
                     Vec::from("encapsulated_context_0"),
@@ -4165,6 +4176,11 @@ pub mod models {
         /// Returns the client timestamp associated with this report aggregation.
         pub fn time(&self) -> &Time {
             &self.time
+        }
+
+        /// Returns a [`ReportMetadata`] corresponding to this aggregation.
+        pub fn report_metadata(&self) -> ReportMetadata {
+            ReportMetadata::new(self.report_id, self.time)
         }
 
         /// Returns the order of this report aggregation in its batch.
@@ -5196,7 +5212,7 @@ mod tests {
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_0")),
                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_1")),
             ]),
-            (), // leader input share
+            dummy_vdaf::InputShare::default(), // leader input share
             /* Dummy ciphertext for the helper share */
             HpkeCiphertext::new(
                 HpkeConfigId::from(13),
@@ -5252,7 +5268,7 @@ mod tests {
                                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_2")),
                                 Extension::new(ExtensionType::Tbd, Vec::from("extension_data_3")),
                             ]),
-                            (), // leader input share
+                            dummy_vdaf::InputShare::default(), // leader input share
                             /* Dummy ciphertext for the helper share */
                             HpkeCiphertext::new(
                                 HpkeConfigId::from(14),
@@ -6159,6 +6175,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(Some(new_aggregation_job), got_aggregation_job);
+
+        // Trying to write an aggregation job again should fail.
+        let new_leader_aggregation_job = AggregationJob::<0, FixedSize, dummy_vdaf::Vdaf>::new(
+            *task.id(),
+            *leader_aggregation_job.id(),
+            AggregationParam(24),
+            batch_id,
+            Interval::new(
+                Time::from_seconds_since_epoch(2345),
+                Duration::from_seconds(6789),
+            )
+            .unwrap(),
+            AggregationJobState::InProgress,
+        );
+        ds.run_tx(|tx| {
+            let new_leader_aggregation_job = new_leader_aggregation_job.clone();
+            Box::pin(async move {
+                let error = tx
+                    .put_aggregation_job(&new_leader_aggregation_job)
+                    .await
+                    .unwrap_err();
+                assert_matches!(error, Error::MutationTargetAlreadyExisted);
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -6772,40 +6816,55 @@ mod tests {
             let task_id = *task.id();
             Box::pin(async move {
                 assert!(tx
-                    .check_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
+                    .check_other_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
                         &task_id,
                         &report_id,
                         &dummy_vdaf::AggregationParam(0),
+                        &random(),
+                    )
+                    .await
+                    .unwrap());
+
+                // Aggregation job ID matches
+                assert!(!tx
+                    .check_other_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
+                        &task_id,
+                        &report_id,
+                        &dummy_vdaf::AggregationParam(0),
+                        &aggregation_job_id,
                     )
                     .await
                     .unwrap());
 
                 // Wrong task ID
                 assert!(!tx
-                    .check_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
+                    .check_other_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
                         &random(),
                         &report_id,
                         &dummy_vdaf::AggregationParam(0),
+                        &random(),
                     )
                     .await
                     .unwrap());
 
                 // Wrong report ID
                 assert!(!tx
-                    .check_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
+                    .check_other_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
                         &task_id,
                         &random(),
                         &dummy_vdaf::AggregationParam(0),
+                        &random(),
                     )
                     .await
                     .unwrap());
 
                 // Wrong aggregation param
                 assert!(!tx
-                    .check_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
+                    .check_other_report_aggregation_exists::<0, dummy_vdaf::Vdaf>(
                         &task_id,
                         &report_id,
                         &dummy_vdaf::AggregationParam(1),
+                        &random(),
                     )
                     .await
                     .unwrap());
@@ -8673,7 +8732,10 @@ mod tests {
                         random(),
                         clock.now(),
                         1,
-                        ReportAggregationState::Waiting((), Some(())), // Counted among max_size.
+                        ReportAggregationState::Waiting(
+                            dummy_vdaf::PrepareState::default(),
+                            Some(()),
+                        ), // Counted among max_size.
                     );
                     let report_aggregation_0_2 = ReportAggregation::<0, dummy_vdaf::Vdaf>::new(
                         *task.id(),
@@ -8757,7 +8819,7 @@ mod tests {
                                 ),
                                 (), // Dummy public share
                                 Vec::new(),
-                                (), // Dummy leader input share
+                                dummy_vdaf::InputShare::default(), // Dummy leader input share
                                 // Dummy helper encrypted input share
                                 HpkeCiphertext::new(
                                     HpkeConfigId::from(13),

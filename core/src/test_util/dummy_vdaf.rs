@@ -17,6 +17,7 @@ type ArcPrepStepFn =
 pub struct Vdaf {
     prep_init_fn: ArcPrepInitFn,
     prep_step_fn: ArcPrepStepFn,
+    input_share: InputShare,
 }
 
 impl Debug for Vdaf {
@@ -38,6 +39,7 @@ impl Vdaf {
             prep_step_fn: Arc::new(|| -> Result<PrepareTransition<Self, 0>, VdafError> {
                 Ok(PrepareTransition::Finish(OutputShare()))
             }),
+            input_share: InputShare::default(),
         }
     }
 
@@ -62,6 +64,11 @@ impl Vdaf {
         self.prep_step_fn = Arc::new(f);
         self
     }
+
+    pub fn with_input_share(mut self, input_share: InputShare) -> Self {
+        self.input_share = input_share;
+        self
+    }
 }
 
 impl Default for Vdaf {
@@ -77,7 +84,7 @@ impl vdaf::Vdaf for Vdaf {
     type AggregateResult = ();
     type AggregationParam = AggregationParam;
     type PublicShare = ();
-    type InputShare = ();
+    type InputShare = InputShare;
     type OutputShare = OutputShare;
     type AggregateShare = AggregateShare;
 
@@ -87,7 +94,7 @@ impl vdaf::Vdaf for Vdaf {
 }
 
 impl vdaf::Aggregator<0> for Vdaf {
-    type PrepareState = ();
+    type PrepareState = PrepareState;
     type PrepareShare = ();
     type PrepareMessage = ();
 
@@ -98,10 +105,10 @@ impl vdaf::Aggregator<0> for Vdaf {
         aggregation_param: &Self::AggregationParam,
         _: &[u8],
         _: &Self::PublicShare,
-        _: &Self::InputShare,
+        input_share: &Self::InputShare,
     ) -> Result<(Self::PrepareState, Self::PrepareShare), VdafError> {
         (self.prep_init_fn)(aggregation_param)?;
-        Ok(((), ()))
+        Ok((PrepareState(input_share.0), ()))
     }
 
     fn prepare_preprocess<M: IntoIterator<Item = Self::PrepareMessage>>(
@@ -137,7 +144,22 @@ impl vdaf::Client for Vdaf {
         &self,
         _: &Self::Measurement,
     ) -> Result<(Self::PublicShare, Vec<Self::InputShare>), VdafError> {
-        Ok(((), Vec::from([(), ()])))
+        Ok(((), Vec::from([self.input_share, self.input_share])))
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct InputShare(pub u8);
+
+impl Encode for InputShare {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.0.encode(bytes)
+    }
+}
+
+impl Decode for InputShare {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self(u8::decode(bytes)?))
     }
 }
 
@@ -170,6 +192,21 @@ impl TryFrom<&[u8]> for OutputShare {
 impl From<&OutputShare> for Vec<u8> {
     fn from(_: &OutputShare) -> Self {
         Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PrepareState(pub u8);
+
+impl Encode for PrepareState {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.0.encode(bytes);
+    }
+}
+
+impl Decode for PrepareState {
+    fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
+        Ok(Self(u8::decode(bytes)?))
     }
 }
 
