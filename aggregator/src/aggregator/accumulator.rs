@@ -75,7 +75,7 @@ where
         let mut rslt = Ok(());
         self.aggregations
             .entry(batch_identifier.clone())
-            .and_modify(|agg| match batch_aggregation_fn().merged_with(&agg) {
+            .and_modify(|agg| match batch_aggregation_fn().merged_with(agg) {
                 Ok(batch_aggregation) => *agg = batch_aggregation,
                 Err(err) => rslt = Err(err),
             })

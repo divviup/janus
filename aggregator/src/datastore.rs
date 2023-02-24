@@ -2728,7 +2728,8 @@ ORDER BY id DESC
                 "INSERT INTO batch_aggregations (
                     task_id, batch_identifier, batch_interval, aggregation_param, ord,
                     aggregate_share, report_count, checksum
-                ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8)",
+                ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT DO NOTHING",
             )
             .await?;
         let rows_affected = self
