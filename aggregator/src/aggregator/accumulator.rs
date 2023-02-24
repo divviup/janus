@@ -1,6 +1,6 @@
 //! In-memory accumulation of output shares.
 
-use super::{query_type::AccumulableQueryType, Error};
+use super::query_type::AccumulableQueryType;
 use crate::{
     datastore::{self, models::BatchAggregation, Transaction},
     task::Task,
@@ -9,7 +9,8 @@ use derivative::Derivative;
 use futures::future::try_join_all;
 use janus_core::{report_id::ReportIdChecksumExt, time::Clock};
 use janus_messages::{ReportId, ReportIdChecksum, Time};
-use prio::vdaf::{self, Aggregatable};
+use prio::vdaf::{self};
+use rand::{thread_rng, Rng};
 use std::{collections::HashMap, sync::Arc};
 
 /// Accumulates output shares in memory and eventually flushes accumulations to a datastore. We
@@ -22,9 +23,10 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
 {
     task: Arc<Task>,
+    shard_count: u64,
     #[derivative(Debug = "ignore")]
-    aggregation_param: A::AggregationParam,
-    accumulations: HashMap<Q::BatchIdentifier, Accumulation<L, A>>,
+    aggregation_parameter: A::AggregationParam,
+    aggregations: HashMap<Q::BatchIdentifier, BatchAggregation<L, Q, A>>,
 }
 
 impl<'t, const L: usize, Q: AccumulableQueryType, A: vdaf::Aggregator<L>> Accumulator<L, Q, A>
@@ -32,12 +34,17 @@ where
     for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: std::fmt::Debug,
 {
-    /// Create a new accumulator
-    pub fn new(task: Arc<Task>, aggregation_param: A::AggregationParam) -> Self {
+    /// Creates a new accumulator.
+    pub fn new(
+        task: Arc<Task>,
+        shard_count: u64,
+        aggregation_parameter: A::AggregationParam,
+    ) -> Self {
         Self {
             task,
-            aggregation_param,
-            accumulations: HashMap::new(),
+            shard_count,
+            aggregation_parameter,
+            aggregations: HashMap::new(),
         }
     }
 
@@ -51,21 +58,26 @@ where
     ) -> Result<(), datastore::Error> {
         let batch_identifier =
             Q::to_batch_identifier(&self.task, partial_batch_identifier, client_timestamp)?;
+        let batch_aggregation = BatchAggregation::new(
+            *self.task.id(),
+            batch_identifier.clone(),
+            self.aggregation_parameter.clone(),
+            thread_rng().gen_range(0..self.shard_count),
+            A::AggregateShare::from(output_share.clone()),
+            1,
+            ReportIdChecksum::for_report_id(report_id),
+        );
+
         // This slightly-awkward usage of `rslt` is due to the Entry API not having a fallible
         // interface -- we need some way to smuggle an error out of `and_modify`.
         let mut rslt = Ok(());
-        self.accumulations
+        self.aggregations
             .entry(batch_identifier)
-            .and_modify(|acc| {
-                rslt = acc
-                    .update(report_id, output_share)
-                    .map_err(|err| datastore::Error::User(err.into()))
+            .and_modify(|agg| match agg.clone().merged_with(&batch_aggregation) {
+                Ok(batch_aggregation) => *agg = batch_aggregation,
+                Err(err) => rslt = Err(err),
             })
-            .or_insert_with(|| Accumulation {
-                aggregate_share: A::AggregateShare::from(output_share.clone()),
-                report_count: 1,
-                checksum: ReportIdChecksum::for_report_id(report_id),
-            });
+            .or_insert_with(|| batch_aggregation);
         rslt
     }
 
@@ -77,64 +89,27 @@ where
         &self,
         tx: &Transaction<'_, C>,
     ) -> Result<(), datastore::Error> {
-        try_join_all(self.accumulations.iter().map(
-            |(batch_identifier, accumulation)| async move {
-                let batch_aggregation = tx
-                    .get_batch_aggregation::<L, Q, A>(
-                        self.task.id(),
-                        batch_identifier,
-                        &self.aggregation_param,
-                    )
-                    .await?;
-                match batch_aggregation {
-                    Some(batch_aggregation) => {
-                        tx.update_batch_aggregation(&batch_aggregation.merged_with(
-                            &accumulation.aggregate_share,
-                            accumulation.report_count,
-                            &accumulation.checksum,
-                        )?)
+        try_join_all(self.aggregations.values().map(|agg| async move {
+            match tx
+                .get_batch_aggregation::<L, Q, A>(
+                    agg.task_id(),
+                    agg.batch_identifier(),
+                    agg.aggregation_parameter(),
+                    agg.ord(),
+                )
+                .await?
+            {
+                Some(batch_aggregation) => {
+                    tx.update_batch_aggregation(&batch_aggregation.merged_with(agg)?)
                         .await?;
-                    }
-                    None => {
-                        tx.put_batch_aggregation(&BatchAggregation::<L, Q, A>::new(
-                            *self.task.id(),
-                            batch_identifier.clone(),
-                            self.aggregation_param.clone(),
-                            accumulation.aggregate_share.clone(),
-                            accumulation.report_count,
-                            accumulation.checksum,
-                        ))
-                        .await?;
-                    }
                 }
-                Ok::<(), datastore::Error>(())
-            },
-        ))
+                None => {
+                    tx.put_batch_aggregation(agg).await?;
+                }
+            }
+            Ok::<(), datastore::Error>(())
+        }))
         .await?;
-        Ok(())
-    }
-}
-
-#[derive(Derivative)]
-#[derivative(Debug)]
-struct Accumulation<const L: usize, A: vdaf::Aggregator<L>>
-where
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-{
-    #[derivative(Debug = "ignore")]
-    aggregate_share: A::AggregateShare,
-    report_count: u64,
-    checksum: ReportIdChecksum,
-}
-
-impl<const L: usize, A: vdaf::Aggregator<L>> Accumulation<L, A>
-where
-    for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
-{
-    fn update(&mut self, report_id: &ReportId, output_share: &A::OutputShare) -> Result<(), Error> {
-        self.aggregate_share.accumulate(output_share)?;
-        self.report_count += 1;
-        self.checksum = self.checksum.updated_with(report_id);
         Ok(())
     }
 }

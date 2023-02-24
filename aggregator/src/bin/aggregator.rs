@@ -78,6 +78,7 @@ pub struct HeaderEntry {
 ///   force_json_output: true
 /// max_upload_batch_size: 100
 /// max_upload_batch_write_delay_ms: 250
+/// batch_aggregation_shard_count: 32
 /// "#;
 ///
 /// let _decoded: Config = serde_yaml::from_str(yaml_config).unwrap();
@@ -103,6 +104,11 @@ struct Config {
     /// Defines the maximum delay in milliseconds before writing a batch of uploaded reports, even
     /// if it has not yet reached `max_batch_upload_size`.
     max_upload_batch_write_delay_ms: u64,
+
+    /// Defines the number of shards to break each batch aggregation into. Increasing this value
+    /// will reduce the amount of database contention during helper aggregation, while increasing
+    /// the cost of collection.
+    batch_aggregation_shard_count: u64,
 }
 
 impl Config {
@@ -124,6 +130,7 @@ impl Config {
             max_upload_batch_write_delay: Duration::from_millis(
                 self.max_upload_batch_write_delay_ms,
             ),
+            batch_aggregation_shard_count: self.batch_aggregation_shard_count,
         }
     }
 }
@@ -183,6 +190,7 @@ mod tests {
             }]),
             max_upload_batch_size: 100,
             max_upload_batch_write_delay_ms: 250,
+            batch_aggregation_shard_count: 32,
         })
     }
 
@@ -203,6 +211,7 @@ mod tests {
             listen_address: 127.0.0.1:6669
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
     "#
             )
             .unwrap()
@@ -232,6 +241,7 @@ mod tests {
             listen_address: 127.0.0.1:6669
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
     "#
             )
             .unwrap()
@@ -239,6 +249,7 @@ mod tests {
             aggregator::Config {
                 max_upload_batch_size: 100,
                 max_upload_batch_write_delay: Duration::from_millis(250),
+                batch_aggregation_shard_count: 32,
             }
         );
 
@@ -254,6 +265,7 @@ mod tests {
         open_telemetry_config: jaeger
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
     "#
             )
             .unwrap()
@@ -279,6 +291,7 @@ mod tests {
                     x-honeycomb-team: "YOUR_API_KEY"
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
     "#
             )
             .unwrap()
@@ -311,6 +324,7 @@ mod tests {
                 port: 9464
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
     "#
             )
             .unwrap()
@@ -340,6 +354,7 @@ mod tests {
                     x-honeycomb-dataset: "YOUR_METRICS_DATASET"
     max_upload_batch_size: 100
     max_upload_batch_write_delay_ms: 250
+    batch_aggregation_shard_count: 32
     "#
             )
             .unwrap()

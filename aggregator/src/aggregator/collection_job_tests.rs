@@ -128,8 +128,15 @@ pub(crate) async fn setup_collection_job_test_case(
 
     datastore.put_task(&task).await.unwrap();
 
-    let filter =
-        aggregator_filter(Arc::clone(&datastore), clock.clone(), Config::default()).unwrap();
+    let filter = aggregator_filter(
+        Arc::clone(&datastore),
+        clock.clone(),
+        Config {
+            batch_aggregation_shard_count: 32,
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     CollectionJobTestCase {
         task,
@@ -186,7 +193,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case() -> (
                             aggregation_job_id,
                             *report.metadata().id(),
                             time,
-                            ord as i64,
+                            ord,
                             ReportAggregationState::Finished(dummy_vdaf::OutputShare()),
                         ))
                         .await

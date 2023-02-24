@@ -294,8 +294,12 @@ pub trait CollectableQueryType: AccumulableQueryType {
                 |batch_identifier| {
                     let (task_id, aggregation_param) = (*task.id(), aggregation_param.clone());
                     async move {
-                        tx.get_batch_aggregation(&task_id, &batch_identifier, &aggregation_param)
-                            .await
+                        tx.get_batch_aggregations_for_batch(
+                            &task_id,
+                            &batch_identifier,
+                            &aggregation_param,
+                        )
+                        .await
                     }
                 },
             ),
