@@ -2410,7 +2410,7 @@ impl VdafOps {
                     // Write aggregation job.
                     let replayed_request = match tx.put_aggregation_job(&aggregation_job).await {
                         Ok(_) => false,
-                        Err(datastore::Error::MutationTargetAlreadyExisted) => {
+                        Err(datastore::Error::MutationTargetAlreadyExists) => {
                             // Slow path: this request is writing an aggregation job that already
                             // exists in the datastore. PUT to an aggregation job is idempotent, so
                             // that's OK, provided the current request is equivalent to what's in
@@ -2468,7 +2468,7 @@ impl VdafOps {
                                 &report_share_data.report_share
                             ).await {
                                 match error {
-                                    datastore::Error::MutationTargetAlreadyExisted => {
+                                    datastore::Error::MutationTargetAlreadyExists => {
                                         prep_steps.push(PrepareStep::new(
                                             *report_share_data.report_share.metadata().id(),
                                             PrepareStepResult::Failed(ReportShareError::ReportReplayed),
