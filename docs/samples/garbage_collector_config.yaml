@@ -1,0 +1,55 @@
+# Common configuration parameters:
+
+database:
+  # Database URL. (required)
+  url: "postgres://postgres:postgres@localhost:5432/postgres"
+
+  # Timeout for new database connections. Defaults to 60 seconds.
+  connection_pool_timeout_secs: 60
+
+# Socket address for /healthz HTTP requests. Defaults to 127.0.0.1:9001.
+health_check_listen_address: "0.0.0.0:8000"
+
+# Logging configuration. (optional)
+logging_config:
+  # Flag to output structured logs. (optional)
+  force_json_output: true
+
+  # Flag to output structured logs in Google Cloud Logging's format. (optional)
+  stackdriver_json_output: false
+
+  # Configuration for the tokio-console tracing subscriber. (optional)
+  tokio_console_config:
+    # Enable the subscriber. (optional)
+    enabled: true
+    # Socket address to listen on. (optional)
+    listen_address: "127.0.0.1:6669"
+
+  # OpenTelemetry tracing configuration. This can either contain the string
+  # "jaeger" or a map with an "otlp" key. (optional)
+  open_telemetry_config: "jaeger"
+
+  ##otlp:
+  ##  # OTLP gRPC endpoint.
+  ##  endpoint: "https://example.com/"
+  ##  # gRPC metadata to send with OTLP requests. (optional)
+  ##  metadata:
+  ##    key: "value"
+
+# Metrics configuration. (optional)
+metrics_config:
+  # Metrics exporter configuration. This contains a map with single key, either
+  # "prometheus" or "otlp". (optional)
+  exporter:
+    prometheus:
+      # Address on which to listen for Prometheus metrics scrape requests. (optional)
+      host: "0.0.0.0"
+      # Port number for metrics server. (optional)
+      port: 9464
+
+  ##otlp:
+  ##  # OTLP gRPC endpoint.
+  ##  endpoint: "https://example.com/"
+  ##  # gRPC metadata to send with OTLP requests. (optional)
+  ##  metadata:
+  ##    key: "value"

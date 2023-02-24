@@ -186,9 +186,10 @@ mod tests {
         })
     }
 
-    /// Check that configuration fragments in the README can be parsed correctly.
+    /// Check that configuration fragments in the README and other documentation can be parsed
+    /// correctly.
     #[test]
-    fn readme_config_examples() {
+    fn documentation_config_examples() {
         assert_eq!(
             serde_yaml::from_str::<Config>(
                 r#"---
@@ -359,5 +360,10 @@ mod tests {
                 },
             )),
         );
+
+        serde_yaml::from_str::<Config>(include_str!(
+            "../../../docs/samples/aggregator_config.yaml"
+        ))
+        .unwrap();
     }
 }

@@ -66,21 +66,10 @@ Both systemd and Kubernetes inside each Kind node make use of inotify. When
 combined with other services and desktop applications, they may exhaust per-user
 limits.
 
-## Running janus\_server
+## Deploying Janus
 
-The aggregator server requires a connection to a PostgreSQL 14 database. Prepare
-the database by executing the script at `db/schema.sql`. Most server
-configuration is done via a YAML file, following the structure documented on
-`aggregator::Config`. Record the database's connection URL, the address the
-aggregator server should listen on for incoming HTTP requests, and other
-settings in a YAML file, and pass the file's path on the command line as
-follows. (The database password can be passed through the command line or an
-environment variable rather than including it in the connection URL, see
-`aggregator --help`.)
-
-```bash
-aggregator --config-file <config-file> --role <role>
-```
+See the [documentation on deploying Janus](docs/DEPLOYING.md) for details about
+its configuration and operation.
 
 ## Cargo features
 
