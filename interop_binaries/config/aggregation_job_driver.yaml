@@ -9,3 +9,4 @@ max_concurrent_job_workers: 10
 worker_lease_clock_skew_allowance_secs: 1
 worker_lease_duration_secs: 10
 maximum_attempts_before_failure: 3
+batch_aggregation_shard_count: 32
