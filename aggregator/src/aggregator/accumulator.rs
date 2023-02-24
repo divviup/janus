@@ -58,26 +58,28 @@ where
     ) -> Result<(), datastore::Error> {
         let batch_identifier =
             Q::to_batch_identifier(&self.task, partial_batch_identifier, client_timestamp)?;
-        let batch_aggregation = BatchAggregation::new(
-            *self.task.id(),
-            batch_identifier.clone(),
-            self.aggregation_parameter.clone(),
-            thread_rng().gen_range(0..self.shard_count),
-            A::AggregateShare::from(output_share.clone()),
-            1,
-            ReportIdChecksum::for_report_id(report_id),
-        );
+        let batch_aggregation_fn = || {
+            BatchAggregation::new(
+                *self.task.id(),
+                batch_identifier.clone(),
+                self.aggregation_parameter.clone(),
+                thread_rng().gen_range(0..self.shard_count),
+                A::AggregateShare::from(output_share.clone()),
+                1,
+                ReportIdChecksum::for_report_id(report_id),
+            )
+        };
 
         // This slightly-awkward usage of `rslt` is due to the Entry API not having a fallible
         // interface -- we need some way to smuggle an error out of `and_modify`.
         let mut rslt = Ok(());
         self.aggregations
-            .entry(batch_identifier)
-            .and_modify(|agg| match agg.clone().merged_with(&batch_aggregation) {
+            .entry(batch_identifier.clone())
+            .and_modify(|agg| match batch_aggregation_fn().merged_with(&agg) {
                 Ok(batch_aggregation) => *agg = batch_aggregation,
                 Err(err) => rslt = Err(err),
             })
-            .or_insert_with(|| batch_aggregation);
+            .or_insert_with(batch_aggregation_fn);
         rslt
     }
 
