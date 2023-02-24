@@ -92,6 +92,8 @@ pub mod aggregate_share;
 pub mod aggregation_job_creator;
 pub mod aggregation_job_driver;
 pub mod collection_job_driver;
+#[cfg(test)]
+mod collection_job_tests;
 pub mod garbage_collector;
 pub mod query_type;
 pub mod report_writer;
@@ -4537,8 +4539,10 @@ mod tests {
     use crate::{
         aggregator::{
             aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
-            aggregator_filter, error_handler, send_request_to_helper, Aggregator, BatchMismatch,
-            CollectableQueryType, Config, Error,
+            aggregator_filter,
+            collection_job_tests::setup_collection_job_test_case,
+            error_handler, send_request_to_helper, Aggregator, BatchMismatch, CollectableQueryType,
+            Config, Error,
         },
         datastore::{
             models::{
@@ -7960,38 +7964,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_request_to_helper() {
-        install_test_trace_subscriber();
-
-        // Prepare parameters.
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Helper).build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone());
-
-        datastore.put_task(&task).await.unwrap();
-
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+    async fn collection_job_put_request_to_helper() {
+        let test_case = setup_collection_job_test_case(Role::Helper, QueryType::TimeInterval).await;
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(
-                Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
+                Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    *test_case.task.time_precision(),
+                )
+                .unwrap(),
             ),
-            Vec::new(),
+            dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let (parts, body) = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
+        let (parts, body) = test_case
+            .put_collection_job_with_auth_token(&collection_job_id, &request, Some(&random()))
             .await
-            .unwrap()
-            .into_response()
             .into_parts();
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
@@ -8003,25 +7993,14 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unrecognizedTask",
                 "title": "An endpoint received a message with an unknown task ID.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
     }
 
     #[tokio::test]
-    async fn collect_request_invalid_batch_interval() {
-        install_test_trace_subscriber();
-
-        // Prepare parameters.
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone());
-
-        datastore.put_task(&task).await.unwrap();
-
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+    async fn collection_job_put_request_invalid_batch_interval() {
+        let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
@@ -8029,26 +8008,16 @@ mod tests {
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
                     // Collect request will be rejected because batch interval is too small
-                    Duration::from_seconds(task.time_precision().as_seconds() - 1),
+                    Duration::from_seconds(test_case.task.time_precision().as_seconds() - 1),
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
-        let (parts, body) = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
+        let (parts, body) = test_case
+            .put_collection_job(&collection_job_id, &request)
             .await
-            .unwrap()
-            .into_response()
             .into_parts();
 
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
@@ -8060,53 +8029,32 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchInvalid",
                 "title": "The batch implied by the query is invalid.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
     }
 
     #[tokio::test]
-    async fn collect_request_invalid_aggregation_parameter() {
-        install_test_trace_subscriber();
-
-        // Prepare parameters.
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(clock.clone());
-
-        datastore.put_task(&task).await.unwrap();
-
-        let filter = aggregator_filter(Arc::new(datastore), clock, Config::default()).unwrap();
+    async fn collection_job_put_request_invalid_aggregation_parameter() {
+        let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
         let collection_job_id: CollectionJobId = random();
         let request = CollectionReq::new(
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
-                    Duration::from_seconds(task.time_precision().as_seconds()),
+                    Duration::from_seconds(test_case.task.time_precision().as_seconds()),
                 )
                 .unwrap(),
             ),
             // dummy_vdaf::AggregationParam is a tuple struct wrapping a u8, so this is not a valid
             // encoding of an aggregation parameter.
-            Vec::new(),
+            Vec::from([0u8, 0u8]),
         );
 
-        let (parts, body) = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
+        let (parts, body) = test_case
+            .put_collection_job(&collection_job_id, &request)
             .await
-            .unwrap()
-            .into_response()
             .into_parts();
 
         // Collect request will be rejected because the aggregation parameter can't be decoded
@@ -8124,7 +8072,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_request_invalid_batch_size() {
+    async fn collection_job_put_request_invalid_batch_size() {
         install_test_trace_subscriber();
 
         // Prepare parameters.
@@ -8148,7 +8096,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            dummy_vdaf::AggregationParam(0).get_encoded(),
+            dummy_vdaf::AggregationParam::default().get_encoded(),
         );
 
         let (parts, body) = warp::test::request()
@@ -8182,41 +8130,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_request_unauthenticated() {
-        install_test_trace_subscriber();
+    async fn collection_job_put_request_unauthenticated() {
+        let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
-        // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
-            Role::Leader,
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            *test_case.task.time_precision(),
         )
-        .build();
-        let batch_interval =
-            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
-
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
-
-        datastore.put_task(&task).await.unwrap();
-
-        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
-
+        .unwrap();
         let collection_job_id: CollectionJobId = random();
-        let req = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
+        let req = CollectionReq::new(
+            Query::new_time_interval(batch_interval),
+            dummy_vdaf::AggregationParam::default().get_encoded(),
+        );
 
         // Incorrect authentication token.
-        let mut response = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(req.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let mut response = test_case
+            .put_collection_job_with_auth_token(&collection_job_id, &req, Some(&random()))
+            .await;
 
         let want_status = StatusCode::BAD_REQUEST;
         let problem_details: serde_json::Value =
@@ -8227,25 +8158,19 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
         assert_eq!(want_status, response.status());
 
         // Aggregator authentication token.
-        let mut response = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+        let mut response = test_case
+            .put_collection_job_with_auth_token(
+                &collection_job_id,
+                &req,
+                Some(test_case.task.primary_aggregator_auth_token()),
             )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(req.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+            .await;
 
         let want_status = StatusCode::BAD_REQUEST;
         let problem_details: serde_json::Value =
@@ -8256,21 +8181,15 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
         assert_eq!(want_status, response.status());
 
         // Missing authentication token.
-        let mut response = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(req.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let mut response = test_case
+            .put_collection_job_with_auth_token(&collection_job_id, &req, None)
+            .await;
 
         let want_status = StatusCode::BAD_REQUEST;
         let problem_details: serde_json::Value =
@@ -8281,62 +8200,39 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
         assert_eq!(want_status, response.status());
     }
 
     #[tokio::test]
-    async fn collect_request_unauthenticated_collection_jobs() {
-        install_test_trace_subscriber();
+    async fn collection_job_post_request_unauthenticated_collection_jobs() {
+        let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
-        // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
-            Role::Leader,
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            *test_case.task.time_precision(),
         )
-        .build();
-        let batch_interval =
-            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
-
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
-
-        datastore.put_task(&task).await.unwrap();
-
-        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
+        .unwrap();
 
         let collection_job_id: CollectionJobId = random();
-        let request = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
+        let request = CollectionReq::new(
+            Query::new_time_interval(batch_interval),
+            dummy_vdaf::AggregationParam::default().get_encoded(),
+        );
 
-        let response = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
+        let response = test_case
+            .put_collection_job(&collection_job_id, &request)
             .await
-            .unwrap()
             .into_response();
 
         assert_eq!(response.status(), StatusCode::CREATED);
 
         // Incorrect authentication token.
-        let mut response = warp::test::request()
-            .method("POST")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header("DAP-Auth-Token", random::<AuthenticationToken>().as_bytes())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let mut response = test_case
+            .post_collection_job_with_auth_token(&collection_job_id, Some(&random()))
+            .await;
 
         let want_status = StatusCode::BAD_REQUEST;
         let problem_details: serde_json::Value =
@@ -8347,23 +8243,18 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
         assert_eq!(want_status, response.status());
 
         // Aggregator authentication token.
-        let mut response = warp::test::request()
-            .method("POST")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_aggregator_auth_token().as_bytes(),
+        let mut response = test_case
+            .post_collection_job_with_auth_token(
+                &collection_job_id,
+                Some(test_case.task.primary_aggregator_auth_token()),
             )
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+            .await;
 
         let want_status = StatusCode::BAD_REQUEST;
         let problem_details: serde_json::Value =
@@ -8374,19 +8265,15 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
         assert_eq!(want_status, response.status());
 
         // Missing authentication token.
-        let mut response = warp::test::request()
-            .method("POST")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let mut response = test_case
+            .post_collection_job_with_auth_token(&collection_job_id, None)
+            .await;
 
         let want_status = StatusCode::BAD_REQUEST;
         let problem_details: serde_json::Value =
@@ -8397,75 +8284,46 @@ mod tests {
                 "status": want_status.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:unauthorizedRequest",
                 "title": "The request's authorization is not valid.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
         assert_eq!(want_status, response.status());
     }
 
     #[tokio::test]
-    async fn collect_request() {
-        install_test_trace_subscriber();
+    async fn collection_job_success_time_interval() {
+        let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
-        // Prepare parameters.
-        let collector_hpke_keypair = generate_test_hpke_config_and_private_key();
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
-            Role::Leader,
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            *test_case.task.time_precision(),
         )
-        .with_collector_hpke_config(collector_hpke_keypair.config().clone())
-        .build();
-        let batch_interval =
-            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
+        .unwrap();
 
-        let leader_aggregate_share = AggregateShare::from(Vec::from([Field64::from(64)]));
-        let helper_aggregate_share = AggregateShare::from(Vec::from([Field64::from(32)]));
-
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
-
-        datastore.put_task(&task).await.unwrap();
-
-        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
+        let leader_aggregate_share = dummy_vdaf::AggregateShare(0);
+        let helper_aggregate_share = dummy_vdaf::AggregateShare(1);
 
         let collection_job_id: CollectionJobId = random();
-        let request = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
+        let request = CollectionReq::new(
+            Query::new_time_interval(batch_interval),
+            dummy_vdaf::AggregationParam::default().get_encoded(),
+        );
 
-        let response = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
+        let response = test_case
+            .put_collection_job(&collection_job_id, &request)
             .await
-            .unwrap()
             .into_response();
 
         assert_eq!(response.status(), StatusCode::CREATED);
 
-        let collection_job_response = warp::test::request()
-            .method("POST")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let collection_job_response = test_case.post_collection_job(&collection_job_id).await;
         assert_eq!(collection_job_response.status(), StatusCode::ACCEPTED);
 
         // Update the collection job with the aggregate shares. collection job should now be complete.
-        datastore
+        test_case
+            .datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let task = test_case.task.clone();
                 let helper_aggregate_share_bytes: Vec<u8> = (&helper_aggregate_share).into();
                 let leader_aggregate_share = leader_aggregate_share.clone();
                 Box::pin(async move {
@@ -8477,14 +8335,16 @@ mod tests {
                             &Role::Collector,
                         ),
                         &helper_aggregate_share_bytes,
-                        &AggregateShareAad::new(*task.id(), BatchSelector::new_time_interval(batch_interval)).get_encoded(),
+                        &AggregateShareAad::new(
+                            *task.id(),
+                            BatchSelector::new_time_interval(batch_interval),
+                        )
+                        .get_encoded(),
                     )
                     .unwrap();
 
                     let collection_job = tx
-                        .get_collection_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
-                            &collection_job_id,
-                        )
+                        .get_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collection_job_id)
                         .await
                         .unwrap()
                         .unwrap()
@@ -8494,28 +8354,18 @@ mod tests {
                             leader_aggregate_share,
                         });
 
-                    tx.update_collection_job::<PRIO3_AES128_VERIFY_KEY_LENGTH, TimeInterval, Prio3Aes128Count>(
-                        &collection_job,
-                    )
-                    .await
-                    .unwrap();
+                    tx.update_collection_job::<0, TimeInterval, dummy_vdaf::Vdaf>(&collection_job)
+                        .await
+                        .unwrap();
                     Ok(())
                 })
             })
             .await
             .unwrap();
 
-        let (parts, body) = warp::test::request()
-            .method("POST")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .filter(&filter)
+        let (parts, body) = test_case
+            .post_collection_job(&collection_job_id)
             .await
-            .unwrap()
-            .into_response()
             .into_parts();
 
         assert_eq!(parts.status, StatusCode::OK);
@@ -8528,46 +8378,45 @@ mod tests {
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
-            task.collector_hpke_config(),
-            collector_hpke_keypair.private_key(),
+            test_case.task.collector_hpke_config(),
+            test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Leader, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[0],
-            &AggregateShareAad::new(*task.id(), BatchSelector::new_time_interval(batch_interval))
-                .get_encoded(),
+            &AggregateShareAad::new(
+                *test_case.task.id(),
+                BatchSelector::new_time_interval(batch_interval),
+            )
+            .get_encoded(),
         )
         .unwrap();
         assert_eq!(
             leader_aggregate_share,
-            AggregateShare::try_from(decrypted_leader_aggregate_share.as_ref()).unwrap()
+            dummy_vdaf::AggregateShare::try_from(decrypted_leader_aggregate_share.as_ref())
+                .unwrap()
         );
 
         let decrypted_helper_aggregate_share = hpke::open(
-            task.collector_hpke_config(),
-            collector_hpke_keypair.private_key(),
+            test_case.task.collector_hpke_config(),
+            test_case.collector_hpke_keypair.private_key(),
             &HpkeApplicationInfo::new(&Label::AggregateShare, &Role::Helper, &Role::Collector),
             &collect_resp.encrypted_aggregate_shares()[1],
-            &AggregateShareAad::new(*task.id(), BatchSelector::new_time_interval(batch_interval))
-                .get_encoded(),
+            &AggregateShareAad::new(
+                *test_case.task.id(),
+                BatchSelector::new_time_interval(batch_interval),
+            )
+            .get_encoded(),
         )
         .unwrap();
         assert_eq!(
             helper_aggregate_share,
-            AggregateShare::try_from(decrypted_helper_aggregate_share.as_ref()).unwrap()
+            dummy_vdaf::AggregateShare::try_from(decrypted_helper_aggregate_share.as_ref())
+                .unwrap()
         );
     }
 
     #[tokio::test]
-    async fn no_such_collection_job() {
-        install_test_trace_subscriber();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(MockClock::default());
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-
-        datastore.put_task(&task).await.unwrap();
-        let filter =
-            aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
-                .unwrap();
+    async fn collection_job_post_request_no_such_collection_job() {
+        let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
         let no_such_collection_job_id: CollectionJobId = random();
 
@@ -8575,13 +8424,13 @@ mod tests {
             .method("POST")
             .path(&format!(
                 "/tasks/{}/collection_jobs/{no_such_collection_job_id}",
-                task.id(),
+                test_case.task.id(),
             ))
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                test_case.task.primary_collector_auth_token().as_bytes(),
             )
-            .filter(&filter)
+            .filter(&test_case.filter)
             .await
             .unwrap()
             .into_response();
@@ -8589,21 +8438,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_request_batch_queried_too_many_times() {
-        install_test_trace_subscriber();
+    async fn collection_job_put_request_batch_queried_too_many_times() {
+        let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(MockClock::default());
-
-        datastore
+        test_case
+            .datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let task = test_case.task.clone();
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
-
                     tx.put_batch_aggregation(&BatchAggregation::<
                         DUMMY_VERIFY_KEY_LENGTH,
                         TimeInterval,
@@ -8623,55 +8465,37 @@ mod tests {
             .await
             .unwrap();
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
-                .unwrap();
-
         // Sending this request will consume a query for [0, time_precision).
         let request = CollectionReq::new(
             Query::new_time_interval(
-                Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
+                Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    *test_case.task.time_precision(),
+                )
+                .unwrap(),
             ),
             dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
-        let response = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&random()).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let response = test_case.put_collection_job(&random(), &request).await;
 
         assert_eq!(response.status(), StatusCode::CREATED);
 
         // This request will not be allowed due to the query count already being consumed.
         let invalid_request = CollectionReq::new(
             Query::new_time_interval(
-                Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap(),
+                Interval::new(
+                    Time::from_seconds_since_epoch(0),
+                    *test_case.task.time_precision(),
+                )
+                .unwrap(),
             ),
             dummy_vdaf::AggregationParam(1).get_encoded(),
         );
 
-        let (parts, body) = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&random()).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(invalid_request.get_encoded())
-            .filter(&filter)
+        let (parts, body) = test_case
+            .put_collection_job(&random(), &invalid_request)
             .await
-            .unwrap()
-            .into_response()
             .into_parts();
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
@@ -8682,27 +8506,20 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchQueriedTooManyTimes",
                 "title": "The batch described by the query has been queried too many times.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
     }
 
     #[tokio::test]
-    async fn collect_request_batch_overlap() {
-        install_test_trace_subscriber();
+    async fn collection_job_put_request_batch_overlap() {
+        let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
 
-        let task =
-            TaskBuilder::new(QueryType::TimeInterval, VdafInstance::Fake, Role::Leader).build();
-
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = ephemeral_datastore.datastore(MockClock::default());
-
-        datastore
+        test_case
+            .datastore
             .run_tx(|tx| {
-                let task = task.clone();
+                let task = test_case.task.clone();
                 Box::pin(async move {
-                    tx.put_task(&task).await?;
-
                     tx.put_batch_aggregation(&BatchAggregation::<
                         DUMMY_VERIFY_KEY_LENGTH,
                         TimeInterval,
@@ -8722,17 +8539,13 @@ mod tests {
             .await
             .unwrap();
 
-        let filter =
-            aggregator_filter(Arc::new(datastore), MockClock::default(), Config::default())
-                .unwrap();
-
         // Sending this request will consume a query for [0, 2 * time_precision).
         let request = CollectionReq::new(
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0),
                     Duration::from_microseconds(
-                        2 * task.time_precision().as_microseconds().unwrap(),
+                        2 * test_case.task.time_precision().as_microseconds().unwrap(),
                     ),
                 )
                 .unwrap(),
@@ -8740,19 +8553,7 @@ mod tests {
             dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
-        let response = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&random()).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let response = test_case.put_collection_job(&random(), &request).await;
 
         assert_eq!(response.status(), StatusCode::CREATED);
 
@@ -8761,28 +8562,18 @@ mod tests {
             Query::new_time_interval(
                 Interval::new(
                     Time::from_seconds_since_epoch(0)
-                        .add(task.time_precision())
+                        .add(test_case.task.time_precision())
                         .unwrap(),
-                    *task.time_precision(),
+                    *test_case.task.time_precision(),
                 )
                 .unwrap(),
             ),
             dummy_vdaf::AggregationParam(1).get_encoded(),
         );
 
-        let (parts, body) = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&random()).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(invalid_request.get_encoded())
-            .filter(&filter)
+        let (parts, body) = test_case
+            .put_collection_job(&random(), &invalid_request)
             .await
-            .unwrap()
-            .into_response()
             .into_parts();
         assert_eq!(parts.status, StatusCode::BAD_REQUEST);
         let problem_details: serde_json::Value =
@@ -8793,93 +8584,76 @@ mod tests {
                 "status": StatusCode::BAD_REQUEST.as_u16(),
                 "type": "urn:ietf:params:ppm:dap:error:batchOverlap",
                 "title": "The queried batch overlaps with a previously queried batch.",
-                "taskid": format!("{}", task.id()),
+                "taskid": format!("{}", test_case.task.id()),
             })
         );
     }
 
     #[tokio::test]
     async fn delete_collection_job() {
-        install_test_trace_subscriber();
-
-        // Prepare parameters.
-        let task = TaskBuilder::new(
-            QueryType::TimeInterval,
-            VdafInstance::Prio3Aes128Count,
-            Role::Leader,
+        let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+        let batch_interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            *test_case.task.time_precision(),
         )
-        .build();
-        let batch_interval =
-            Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision()).unwrap();
+        .unwrap();
 
-        let clock = MockClock::default();
-        let ephemeral_datastore = ephemeral_datastore().await;
-        let datastore = Arc::new(ephemeral_datastore.datastore(clock.clone()));
-
-        datastore.put_task(&task).await.unwrap();
-
-        let filter = aggregator_filter(Arc::clone(&datastore), clock, Config::default()).unwrap();
         let collection_job_id: CollectionJobId = random();
 
         // Try to delete a collection job that doesn't exist
         let delete_job_response = warp::test::request()
             .method("DELETE")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
+            .path(
+                test_case
+                    .task
+                    .collection_job_uri(&collection_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                test_case.task.primary_collector_auth_token().as_bytes(),
             )
-            .filter(&filter)
+            .filter(&test_case.filter)
             .await
             .unwrap()
             .into_response();
         assert_eq!(delete_job_response.status(), StatusCode::NOT_FOUND);
 
         // Create a collection job
-        let request = CollectionReq::new(Query::new_time_interval(batch_interval), Vec::new());
+        let request = CollectionReq::new(
+            Query::new_time_interval(batch_interval),
+            dummy_vdaf::AggregationParam::default().get_encoded(),
+        );
 
-        let collect_response = warp::test::request()
-            .method("PUT")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .header(CONTENT_TYPE, CollectionReq::<TimeInterval>::MEDIA_TYPE)
-            .body(request.get_encoded())
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let collect_response = test_case
+            .put_collection_job(&collection_job_id, &request)
+            .await;
 
         assert_eq!(collect_response.status(), StatusCode::CREATED);
 
         // Cancel the job
         let delete_job_response = warp::test::request()
             .method("DELETE")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
+            .path(
+                test_case
+                    .task
+                    .collection_job_uri(&collection_job_id)
+                    .unwrap()
+                    .path(),
+            )
             .header(
                 "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
+                test_case.task.primary_collector_auth_token().as_bytes(),
             )
-            .filter(&filter)
+            .filter(&test_case.filter)
             .await
             .unwrap()
             .into_response();
         assert_eq!(delete_job_response.status(), StatusCode::NO_CONTENT);
 
         // Get the job again
-        let get_response = warp::test::request()
-            .method("POST")
-            .path(task.collection_job_uri(&collection_job_id).unwrap().path())
-            .header(
-                "DAP-Auth-Token",
-                task.primary_collector_auth_token().as_bytes(),
-            )
-            .filter(&filter)
-            .await
-            .unwrap()
-            .into_response();
+        let get_response = test_case.post_collection_job(&collection_job_id).await;
         assert_eq!(get_response.status(), StatusCode::NO_CONTENT);
     }
 
