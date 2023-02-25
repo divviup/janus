@@ -133,18 +133,14 @@ impl<C: Clock> ReportWriteBatcher<C> {
                 // Individual, per-request results.
                 assert_eq!(result_txs.len(), rslts.len()); // sanity check: should be guaranteed.
                 for (rslt_tx, rslt) in result_txs.into_iter().zip(rslts.into_iter()) {
-                    // Unwrap safety: rslt_rx is not closed or dropped until rslt_tx is sent on.
-                    rslt_tx
-                        .send(rslt.map_err(|err| Arc::new(Error::from(err))))
-                        .unwrap();
+                    let _ = rslt_tx.send(rslt.map_err(|err| Arc::new(Error::from(err))));
                 }
             }
             Err(err) => {
                 // Total-transaction failures are given to all waiting report uploaders.
                 let err = Arc::new(Error::from(err));
                 for rslt_tx in result_txs.into_iter() {
-                    // Unwrap safety: rslt_rx is not closed or dropped until rslt_tx is sent on.
-                    rslt_tx.send(Err(Arc::clone(&err))).unwrap();
+                    let _ = rslt_tx.send(Err(Arc::clone(&err)));
                 }
             }
         };
