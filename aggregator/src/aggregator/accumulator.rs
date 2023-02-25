@@ -58,26 +58,28 @@ where
     ) -> Result<(), datastore::Error> {
         let batch_identifier =
             Q::to_batch_identifier(&self.task, partial_batch_identifier, client_timestamp)?;
-        let batch_aggregation = BatchAggregation::new(
-            *self.task.id(),
-            batch_identifier.clone(),
-            self.aggregation_parameter.clone(),
-            thread_rng().gen_range(0..self.shard_count),
-            A::AggregateShare::from(output_share.clone()),
-            1,
-            ReportIdChecksum::for_report_id(report_id),
-        );
+        let batch_aggregation_fn = || {
+            BatchAggregation::new(
+                *self.task.id(),
+                batch_identifier.clone(),
+                self.aggregation_parameter.clone(),
+                thread_rng().gen_range(0..self.shard_count),
+                A::AggregateShare::from(output_share.clone()),
+                1,
+                ReportIdChecksum::for_report_id(report_id),
+            )
+        };
 
         // This slightly-awkward usage of `rslt` is due to the Entry API not having a fallible
         // interface -- we need some way to smuggle an error out of `and_modify`.
         let mut rslt = Ok(());
         self.aggregations
-            .entry(batch_identifier)
-            .and_modify(|agg| match agg.clone().merged_with(&batch_aggregation) {
+            .entry(batch_identifier.clone())
+            .and_modify(|agg| match batch_aggregation_fn().merged_with(agg) {
                 Ok(batch_aggregation) => *agg = batch_aggregation,
                 Err(err) => rslt = Err(err),
             })
-            .or_insert_with(|| batch_aggregation);
+            .or_insert_with(batch_aggregation_fn);
         rslt
     }
 
@@ -101,13 +103,39 @@ where
             {
                 Some(batch_aggregation) => {
                     tx.update_batch_aggregation(&batch_aggregation.merged_with(agg)?)
-                        .await?;
+                        .await
                 }
                 None => {
-                    tx.put_batch_aggregation(agg).await?;
+                    let rslt = tx.put_batch_aggregation(agg).await;
+                    if matches!(rslt, Err(datastore::Error::MutationTargetAlreadyExists)) {
+                        // This codepath can be taken due to a quirk of how the Repeatable Read
+                        // isolation level works. It cannot occur at the Serializable isolation
+                        // level.
+                        //
+                        // For this codepath to be taken, two writers must concurrently choose to
+                        // write the same batch aggregation shard (by task, batch, aggregation
+                        // parameter, and shard), and this batch aggregation shard must not already
+                        // exist in the datastore.
+                        //
+                        // Both writers will receive `None` from the `get_batch_aggregation` call,
+                        // and then both will try to `put_batch_aggregation`. One of the writers
+                        // will succeed. The other will fail with a unique constraint violation on
+                        // (task_id, batch_identifier, aggregation_param, ord), since unique
+                        // constraints are still enforced even in the presence of snapshot
+                        // isolation, which will be translated to a MutationTargetAlreadyExists
+                        // error.
+                        //
+                        // The failing writer, in this case, can't do anything about this problem
+                        // while in its current transaction: further attempts to read the batch
+                        // aggregation will continue to return `None` (since all reads in the same
+                        // transaction are from the same snapshot), so it can't update the
+                        // now-written batch aggregation. All it can do is give up on this
+                        // transaction and try again, by calling `retry` and returning an error.
+                        tx.retry();
+                    }
+                    rslt
                 }
             }
-            Ok::<(), datastore::Error>(())
         }))
         .await?;
         Ok(())

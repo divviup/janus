@@ -167,7 +167,7 @@ impl<C: Clock> Datastore<C> {
         };
         let raw_tx = match client
             .build_transaction()
-            .isolation_level(IsolationLevel::Serializable)
+            .isolation_level(IsolationLevel::RepeatableRead)
             .start()
             .await
         {
@@ -300,6 +300,16 @@ impl<C: Clock> Transaction<'_, C> {
         T: ?Sized + ToStatement,
     {
         check_error(&self.retry, self.raw_tx.query_opt(statement, params).await)
+    }
+
+    /// Calling this method will force the transaction to eventually be rolled back and retried; all
+    /// datastore writes in this try will be lost. Calling this method does not interrupt or
+    /// otherwise directly affect the transaction-processing callback; the caller may wish to e.g.
+    /// use an error or some other signalling method to cause the callback to terminate.
+    ///
+    /// There is no upper limit on the number of retries a single transaction may incur.
+    pub fn retry(&self) {
+        self.retry.store(true, Ordering::Relaxed);
     }
 
     /// Writes a task into the datastore.
@@ -1287,7 +1297,7 @@ impl<C: Clock> Transaction<'_, C> {
         // If the existing report does not match the new report, then someone is trying to mutate an
         // existing report, which is forbidden.
         if !existing_report.eq(new_report) {
-            return Err(Error::MutationTargetAlreadyExisted);
+            return Err(Error::MutationTargetAlreadyExists);
         }
 
         // If the existing report does match the new one, then there is no error (PUTting a report
@@ -1302,7 +1312,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// for the helper workflow (and the helper never observes the entire set of encrypted input
     /// shares, so it could not record the full client report in any case).
     ///
-    /// Returns `Err(Error::MutationTargetAlreadyExisted)` if an attempt to mutate an existing row
+    /// Returns `Err(Error::MutationTargetAlreadyExists)` if an attempt to mutate an existing row
     /// (e.g., changing the timestamp for a known report ID) is detected.
     #[tracing::instrument(skip(self), err)]
     pub async fn put_report_share(
@@ -1335,7 +1345,7 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
 
         if rows_modified == 0 {
-            Err(Error::MutationTargetAlreadyExisted)
+            Err(Error::MutationTargetAlreadyExists)
         } else {
             Ok(())
         }
@@ -1566,7 +1576,7 @@ impl<C: Clock> Transaction<'_, C> {
             .await?;
 
         if rows_affected == 0 {
-            return Err(Error::MutationTargetAlreadyExisted);
+            return Err(Error::MutationTargetAlreadyExists);
         }
 
         Ok(())
@@ -2718,27 +2728,32 @@ ORDER BY id DESC
                 "INSERT INTO batch_aggregations (
                     task_id, batch_identifier, batch_interval, aggregation_param, ord,
                     aggregate_share, report_count, checksum
-                ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8)",
+                ) VALUES ((SELECT id FROM tasks WHERE task_id = $1), $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT DO NOTHING",
             )
             .await?;
-        self.execute(
-            &stmt,
-            &[
-                /* task_id */ &batch_aggregation.task_id().as_ref(),
-                /* batch_identifier */
-                &batch_aggregation.batch_identifier().get_encoded(),
-                /* batch_interval */ &batch_interval,
-                /* aggregation_param */
-                &batch_aggregation.aggregation_parameter().get_encoded(),
-                /* ord */ &TryInto::<i64>::try_into(batch_aggregation.ord())?,
-                /* aggregate_share */ &batch_aggregation.aggregate_share().into(),
-                /* report_count */
-                &i64::try_from(batch_aggregation.report_count())?,
-                /* checksum */ &batch_aggregation.checksum().get_encoded(),
-            ],
-        )
-        .await?;
+        let rows_affected = self
+            .execute(
+                &stmt,
+                &[
+                    /* task_id */ &batch_aggregation.task_id().as_ref(),
+                    /* batch_identifier */
+                    &batch_aggregation.batch_identifier().get_encoded(),
+                    /* batch_interval */ &batch_interval,
+                    /* aggregation_param */
+                    &batch_aggregation.aggregation_parameter().get_encoded(),
+                    /* ord */ &TryInto::<i64>::try_into(batch_aggregation.ord())?,
+                    /* aggregate_share */ &batch_aggregation.aggregate_share().into(),
+                    /* report_count */
+                    &i64::try_from(batch_aggregation.report_count())?,
+                    /* checksum */ &batch_aggregation.checksum().get_encoded(),
+                ],
+            )
+            .await?;
 
+        if rows_affected == 0 {
+            return Err(Error::MutationTargetAlreadyExists);
+        }
         Ok(())
     }
 
@@ -3645,9 +3660,9 @@ pub enum Error {
     /// An attempt was made to mutate an entity that does not exist.
     #[error("not found in datastore")]
     MutationTargetNotFound,
-    /// An attempt was made to insert an entity that already existed.
+    /// An attempt was made to insert an entity that already exists.
     #[error("already in datastore")]
-    MutationTargetAlreadyExisted,
+    MutationTargetAlreadyExists,
     /// The database was in an unexpected state.
     #[error("inconsistent database state: {0}")]
     DbState(String),
@@ -5355,7 +5370,7 @@ mod tests {
                 })
             })
             .await;
-        assert_matches!(result, Err(Error::MutationTargetAlreadyExisted));
+        assert_matches!(result, Err(Error::MutationTargetAlreadyExists));
     }
 
     #[tokio::test]
@@ -6270,7 +6285,7 @@ mod tests {
                     .put_aggregation_job(&new_leader_aggregation_job)
                     .await
                     .unwrap_err();
-                assert_matches!(error, Error::MutationTargetAlreadyExisted);
+                assert_matches!(error, Error::MutationTargetAlreadyExists);
 
                 Ok(())
             })
@@ -8448,6 +8463,11 @@ mod tests {
                 tx.put_batch_aggregation(&second_batch_aggregation).await?;
                 tx.put_batch_aggregation(&third_batch_aggregation).await?;
 
+                assert_matches!(
+                    tx.put_batch_aggregation(&first_batch_aggregation).await,
+                    Err(Error::MutationTargetAlreadyExists)
+                );
+
                 // Aggregation parameter differs from the one queried below.
                 tx.put_batch_aggregation(
                     &BatchAggregation::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
@@ -8608,6 +8628,11 @@ mod tests {
 
                 // Following batch aggregations have the batch ID queried below.
                 tx.put_batch_aggregation(&batch_aggregation).await?;
+
+                assert_matches!(
+                    tx.put_batch_aggregation(&batch_aggregation).await,
+                    Err(Error::MutationTargetAlreadyExists)
+                );
 
                 // Wrong batch ID.
                 tx.put_batch_aggregation(&BatchAggregation::<0, FixedSize, dummy_vdaf::Vdaf>::new(
