@@ -46,7 +46,7 @@ use std::{
 use tokio::{
     select,
     sync::oneshot::{self, Receiver, Sender},
-    time::{self, Instant, MissedTickBehavior},
+    time::{self, sleep_until, Instant, MissedTickBehavior},
     try_join,
 };
 use tracing::{debug, error, info};
@@ -207,21 +207,28 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         task: Arc<Task>,
     ) {
         debug!(task_id = %task.id(), "Job creation worker started");
-        let first_tick_instant = Instant::now()
-            + Duration::from_secs(
-                thread_rng().gen_range(0..self.aggregation_job_creation_interval.as_secs()),
-            );
-        let mut aggregation_job_creation_ticker =
-            time::interval_at(first_tick_instant, self.aggregation_job_creation_interval);
+        let mut next_run_instant = Instant::now();
+        if !self.aggregation_job_creation_interval.is_zero() {
+            next_run_instant +=
+                thread_rng().gen_range(Duration::ZERO..self.aggregation_job_creation_interval);
+        }
 
         loop {
             select! {
-                _ = aggregation_job_creation_ticker.tick() => {
+                _ = sleep_until(next_run_instant) => {
                     debug!(task_id = %task.id(), "Creating aggregation jobs for task");
                     let (start, mut status) = (Instant::now(), "success");
-                    if let Err(error) = Arc::clone(&self).create_aggregation_jobs_for_task(Arc::clone(&task)).await {
-                        error!(task_id = %task.id(), %error, "Couldn't create aggregation jobs for task");
-                        status = "error";
+                    match Arc::clone(&self).create_aggregation_jobs_for_task(Arc::clone(&task)).await {
+                        Ok(true) => next_run_instant = Instant::now(),
+
+                        Ok(false) =>
+                            next_run_instant = Instant::now() + self.aggregation_job_creation_interval,
+
+                        Err(err) => {
+                            error!(task_id = %task.id(), %err, "Couldn't create aggregation jobs for task");
+                            status = "error";
+                            next_run_instant = Instant::now() + self.aggregation_job_creation_interval;
+                        }
                     }
                     job_creation_time_histogram.record(&Context::current(), start.elapsed().as_secs_f64(), &[KeyValue::new("status", status)]);
                 }
@@ -234,11 +241,12 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         }
     }
 
+    // Returns true if at least one aggregation job was created.
     #[tracing::instrument(skip(self, task), fields(task_id = ?task.id()), err)]
     async fn create_aggregation_jobs_for_task(
         self: Arc<Self>,
         task: Arc<Task>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         match (task.query_type(), task.vdaf()) {
             (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Count) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
@@ -341,7 +349,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     >(
         self: Arc<Self>,
         task: Arc<Task>,
-    ) -> anyhow::Result<()>
+    ) -> anyhow::Result<bool>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
@@ -430,7 +438,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     )
                     .await?;
 
-                    Ok(())
+                    Ok(!agg_jobs.is_empty())
                 })
             })
             .await?)
@@ -444,7 +452,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         self: Arc<Self>,
         task: Arc<Task>,
         task_max_batch_size: u64,
-    ) -> anyhow::Result<()>
+    ) -> anyhow::Result<bool>
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
@@ -627,7 +635,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                     )
                     .await?;
 
-                    Ok(())
+                    Ok(!aggregation_jobs.is_empty())
                 })
             })
             .await?)
@@ -642,7 +650,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     async fn create_aggregation_jobs_for_task_with_param<const L: usize, A>(
         self: Arc<Self>,
         task: Arc<Task>,
-    ) -> anyhow::Result<()>
+    ) -> anyhow::Result<bool>
     where
         A: vdaf::Aggregator<L> + VdafHasAggregationParameter,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
@@ -655,7 +663,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         use itertools::Itertools;
         let max_aggregation_job_size = self.max_aggregation_job_size;
 
-        self.datastore
+        Ok(self
+            .datastore
             .run_tx_with_name("aggregation_job_creator_time_with_param", |tx| {
                 let (this, task) = (Arc::clone(&self), Arc::clone(&task));
                 Box::pin(async move {
@@ -743,12 +752,10 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
                             .map(|report_agg| tx.put_report_aggregation(report_agg)),
                     )
                     .await?;
-                    Ok(())
+                    Ok(!agg_jobs.is_empty())
                 })
             })
-            .await?;
-
-        Ok(())
+            .await?)
     }
 }
 
