@@ -501,6 +501,11 @@ where
         );
     }
     println!("Number of reports: {}", collection.report_count());
+    println!(
+        "Spanned interval: start: {} length: {}",
+        collection.interval().0,
+        collection.interval().1
+    );
     println!("Aggregation result: {:?}", collection.aggregate_result());
     Ok(())
 }

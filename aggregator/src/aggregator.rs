@@ -22,8 +22,9 @@ use janus_aggregator_core::{
     datastore::{
         self,
         models::{
-            AggregateShareJob, AggregationJob, AggregationJobState, CollectionJob,
-            CollectionJobState, LeaderStoredReport, ReportAggregation, ReportAggregationState,
+            AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
+            CollectionJob, CollectionJobState, LeaderStoredReport, ReportAggregation,
+            ReportAggregationState,
         },
         Datastore, Transaction,
     },
@@ -3211,7 +3212,7 @@ impl VdafOps {
         Vec<u8>: for<'a> From<&'a A::AggregateShare>,
         for<'a> <A::AggregateShare as TryFrom<&'a [u8]>>::Error: Debug,
     {
-        let collection_job = datastore
+        let (collection_job, spanned_interval) = datastore
             .run_tx_with_name("get_collection_job", |tx| {
                 let (task, collection_job_id) = (Arc::clone(&task), *collection_job_id);
                 Box::pin(async move {
@@ -3223,9 +3224,31 @@ impl VdafOps {
                                 Error::UnrecognizedCollectionJob(collection_job_id).into(),
                             )
                         })?;
-                    Q::acknowledge_collection(tx, task.id(), collection_job.batch_identifier())
-                        .await?;
-                    Ok(collection_job)
+
+                    let (batch_aggregations, _) = try_join!(
+                        Q::get_batch_aggregations_for_collect_identifier(
+                            tx,
+                            &task,
+                            collection_job.batch_identifier(),
+                            collection_job.aggregation_parameter()
+                        ),
+                        Q::acknowledge_collection(tx, task.id(), collection_job.batch_identifier()),
+                    )?;
+
+                    // Merge the intervals spanned by the constituent batch aggregations into the
+                    // interval spanned by the collection.
+                    let mut spanned_interval: Option<Interval> = None;
+                    for interval in batch_aggregations
+                        .iter()
+                        .map(BatchAggregation::<L, Q, A>::client_timestamp_interval)
+                    {
+                        match spanned_interval {
+                            Some(m) => spanned_interval = Some(m.merge(interval)?),
+                            None => spanned_interval = Some(*interval),
+                        }
+                    }
+
+                    Ok((collection_job, spanned_interval))
                 })
             })
             .await?;
@@ -3241,6 +3264,14 @@ impl VdafOps {
                 encrypted_helper_aggregate_share,
                 leader_aggregate_share,
             } => {
+                let spanned_interval = spanned_interval
+                        .ok_or_else(|| {
+                            datastore::Error::User(
+                                Error::Internal(format!("collection job {collection_job_id} is finished but spans no time interval")).into(),
+                            )
+                        })?
+                        .align_to_time_precision(task.time_precision())?;
+
                 // §4.4.4.3: HPKE encrypt aggregate share to the collector. We store the leader
                 // aggregate share *unencrypted* in the datastore so that we can encrypt cached
                 // results to the collector HPKE config valid when the current collection job request
@@ -3277,6 +3308,7 @@ impl VdafOps {
                             Q::partial_batch_identifier(collection_job.batch_identifier()).clone(),
                         ),
                         *report_count,
+                        spanned_interval,
                         Vec::<HpkeCiphertext>::from([
                             encrypted_leader_aggregate_share,
                             encrypted_helper_aggregate_share.clone(),
@@ -4625,7 +4657,7 @@ mod tests {
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
-        time::{Clock, DurationExt, MockClock, RealClock, TimeExt},
+        time::{Clock, DurationExt, IntervalExt, MockClock, RealClock, TimeExt},
     };
     use janus_messages::{
         problem_type::{DapProblemType, DapProblemTypeParseError},
@@ -6086,7 +6118,6 @@ mod tests {
         let aggregation_job_id: AggregationJobId = random();
 
         for _ in 0..2 {
-            tracing::error!("PUT agg job {aggregation_job_id}");
             let mut response =
                 put_aggregation_job(&task, &aggregation_job_id, &request, &filter).await;
             assert_eq!(response.status(), StatusCode::OK);
@@ -7042,6 +7073,7 @@ mod tests {
                     0,
                     agg.aggregate_share().clone(),
                     agg.report_count(),
+                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -7070,6 +7102,7 @@ mod tests {
                     0,
                     aggregate_share,
                     2,
+                    Interval::from_time(report_metadata_0.time()).unwrap(),
                     checksum,
                 ),
                 BatchAggregation::new(
@@ -7086,6 +7119,7 @@ mod tests {
                     0,
                     AggregateShare::from(out_share_2.clone()),
                     1,
+                    Interval::from_time(report_metadata_2.time()).unwrap(),
                     ReportIdChecksum::for_report_id(report_metadata_2.id()),
                 ),
             ])
@@ -7341,6 +7375,7 @@ mod tests {
                     0,
                     agg.aggregate_share().clone(),
                     agg.report_count(),
+                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -7387,6 +7422,7 @@ mod tests {
                     0,
                     first_aggregate_share,
                     3,
+                    Interval::from_time(report_metadata_0.time()).unwrap(),
                     first_checksum,
                 ),
                 BatchAggregation::new(
@@ -7403,6 +7439,7 @@ mod tests {
                     0,
                     second_aggregate_share,
                     3,
+                    Interval::from_time(report_metadata_2.time()).unwrap(),
                     second_checksum,
                 ),
             ])
@@ -8423,14 +8460,61 @@ mod tests {
         let collection_job_response = test_case.post_collection_job(&collection_job_id).await;
         assert_eq!(collection_job_response.status(), StatusCode::ACCEPTED);
 
-        // Update the collection job with the aggregate shares. collection job should now be complete.
+        // Update the collection job with the aggregate shares and some aggregation jobs. collection
+        // job should now be complete.
         test_case
             .datastore
             .run_tx(|tx| {
                 let task = test_case.task.clone();
                 let helper_aggregate_share_bytes: Vec<u8> = (&helper_aggregate_share).into();
-                let leader_aggregate_share = leader_aggregate_share.clone();
                 Box::pin(async move {
+                    for (ord, spanned_interval) in [
+                        // These intervals fall into the first and second time-precision-length
+                        // intervals, so we expect the spanned interval in the collect result to
+                        // contain both of them.
+                        Interval::new(
+                            Time::from_seconds_since_epoch(1000),
+                            Duration::from_seconds(1000),
+                        )
+                        .unwrap(),
+                        Interval::new(
+                            Time::from_seconds_since_epoch(task.time_precision().as_seconds()),
+                            Duration::from_seconds(2000),
+                        )
+                        .unwrap(),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        tx.put_aggregation_job::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &AggregationJob::new(
+                                *task.id(),
+                                random(),
+                                dummy_vdaf::AggregationParam::default(),
+                                (),
+                                spanned_interval,
+                                AggregationJobState::Finished,
+                            ),
+                        )
+                        .await
+                        .unwrap();
+
+                        tx.put_batch_aggregation::<0, TimeInterval, dummy_vdaf::Vdaf>(
+                            &BatchAggregation::new(
+                                *task.id(),
+                                batch_interval,
+                                dummy_vdaf::AggregationParam::default(),
+                                ord as u64,
+                                leader_aggregate_share,
+                                6,
+                                spanned_interval,
+                                ReportIdChecksum::default(),
+                            ),
+                        )
+                        .await
+                        .unwrap();
+                    }
+
                     let encrypted_helper_aggregate_share = hpke::seal(
                         task.collector_hpke_config(),
                         &HpkeApplicationInfo::new(
@@ -8479,6 +8563,16 @@ mod tests {
         );
         let body_bytes = body::to_bytes(body).await.unwrap();
         let collect_resp = Collection::<TimeInterval>::get_decoded(body_bytes.as_ref()).unwrap();
+
+        assert_eq!(collect_resp.report_count(), 12);
+        assert_eq!(
+            collect_resp.interval(),
+            &Interval::new(
+                Time::from_seconds_since_epoch(0),
+                Duration::from_seconds(test_case.task.time_precision().as_seconds() * 2),
+            )
+            .unwrap()
+        );
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
@@ -8544,6 +8638,11 @@ mod tests {
     #[tokio::test]
     async fn collection_job_put_request_batch_queried_too_many_times() {
         let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+        let interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            *test_case.task.time_precision(),
+        )
+        .unwrap();
 
         test_case
             .datastore
@@ -8562,6 +8661,7 @@ mod tests {
                         0,
                         dummy_vdaf::AggregateShare(0),
                         10,
+                        interval,
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ))
                     .await
@@ -8572,13 +8672,7 @@ mod tests {
 
         // Sending this request will consume a query for [0, time_precision).
         let request = CollectionReq::new(
-            Query::new_time_interval(
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    *test_case.task.time_precision(),
-                )
-                .unwrap(),
-            ),
+            Query::new_time_interval(interval),
             dummy_vdaf::AggregationParam(0).get_encoded(),
         );
 
@@ -8588,13 +8682,7 @@ mod tests {
 
         // This request will not be allowed due to the query count already being consumed.
         let invalid_request = CollectionReq::new(
-            Query::new_time_interval(
-                Interval::new(
-                    Time::from_seconds_since_epoch(0),
-                    *test_case.task.time_precision(),
-                )
-                .unwrap(),
-            ),
+            Query::new_time_interval(interval),
             dummy_vdaf::AggregationParam(1).get_encoded(),
         );
 
@@ -8619,6 +8707,11 @@ mod tests {
     #[tokio::test]
     async fn collection_job_put_request_batch_overlap() {
         let test_case = setup_collection_job_test_case(Role::Leader, QueryType::TimeInterval).await;
+        let interval = Interval::new(
+            Time::from_seconds_since_epoch(0),
+            *test_case.task.time_precision(),
+        )
+        .unwrap();
 
         test_case
             .datastore
@@ -8631,12 +8724,12 @@ mod tests {
                         dummy_vdaf::Vdaf,
                     >::new(
                         *task.id(),
-                        Interval::new(Time::from_seconds_since_epoch(0), *task.time_precision())
-                            .unwrap(),
+                        interval,
                         dummy_vdaf::AggregationParam(0),
                         0,
                         dummy_vdaf::AggregateShare(0),
                         10,
+                        interval,
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ))
                     .await
@@ -8665,15 +8758,7 @@ mod tests {
 
         // This request will not be allowed due to overlapping with the previous request.
         let invalid_request = CollectionReq::new(
-            Query::new_time_interval(
-                Interval::new(
-                    Time::from_seconds_since_epoch(0)
-                        .add(test_case.task.time_precision())
-                        .unwrap(),
-                    *test_case.task.time_precision(),
-                )
-                .unwrap(),
-            ),
+            Query::new_time_interval(interval),
             dummy_vdaf::AggregationParam(1).get_encoded(),
         );
 
@@ -8981,78 +9066,86 @@ mod tests {
                         dummy_vdaf::AggregationParam(0),
                         dummy_vdaf::AggregationParam(1),
                     ] {
+                        let interval_1 = Interval::new(
+                            Time::from_seconds_since_epoch(500),
+                            *task.time_precision(),
+                        )
+                        .unwrap();
                         tx.put_batch_aggregation(&BatchAggregation::<
                             DUMMY_VERIFY_KEY_LENGTH,
                             TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
                             *task.id(),
-                            Interval::new(
-                                Time::from_seconds_since_epoch(500),
-                                *task.time_precision(),
-                            )
-                            .unwrap(),
+                            interval_1,
                             aggregation_param,
                             0,
                             dummy_vdaf::AggregateShare(64),
                             5,
+                            interval_1,
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                         ))
                         .await?;
 
+                        let interval_2 = Interval::new(
+                            Time::from_seconds_since_epoch(1500),
+                            *task.time_precision(),
+                        )
+                        .unwrap();
                         tx.put_batch_aggregation(&BatchAggregation::<
                             DUMMY_VERIFY_KEY_LENGTH,
                             TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
                             *task.id(),
-                            Interval::new(
-                                Time::from_seconds_since_epoch(1500),
-                                *task.time_precision(),
-                            )
-                            .unwrap(),
+                            interval_2,
                             aggregation_param,
                             0,
                             dummy_vdaf::AggregateShare(128),
                             5,
+                            interval_2,
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ))
                         .await?;
 
+                        let interval_3 = Interval::new(
+                            Time::from_seconds_since_epoch(2000),
+                            *task.time_precision(),
+                        )
+                        .unwrap();
                         tx.put_batch_aggregation(&BatchAggregation::<
                             DUMMY_VERIFY_KEY_LENGTH,
                             TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
                             *task.id(),
-                            Interval::new(
-                                Time::from_seconds_since_epoch(2000),
-                                *task.time_precision(),
-                            )
-                            .unwrap(),
+                            interval_3,
                             aggregation_param,
                             0,
                             dummy_vdaf::AggregateShare(256),
                             5,
+                            interval_3,
                             ReportIdChecksum::get_decoded(&[4; 32]).unwrap(),
                         ))
                         .await?;
 
+                        let interval_4 = Interval::new(
+                            Time::from_seconds_since_epoch(2500),
+                            *task.time_precision(),
+                        )
+                        .unwrap();
                         tx.put_batch_aggregation(&BatchAggregation::<
                             DUMMY_VERIFY_KEY_LENGTH,
                             TimeInterval,
                             dummy_vdaf::Vdaf,
                         >::new(
                             *task.id(),
-                            Interval::new(
-                                Time::from_seconds_since_epoch(2500),
-                                *task.time_precision(),
-                            )
-                            .unwrap(),
+                            interval_4,
                             aggregation_param,
                             0,
                             dummy_vdaf::AggregateShare(512),
                             5,
+                            interval_4,
                             ReportIdChecksum::get_decoded(&[8; 32]).unwrap(),
                         ))
                         .await?;

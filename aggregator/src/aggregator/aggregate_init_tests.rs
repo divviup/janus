@@ -208,7 +208,6 @@ async fn aggregation_job_mutation_report_shares() {
             PartialBatchSelector::new_time_interval(),
             mutated_report_shares,
         );
-        tracing::error!("putting {mutated_aggregation_job_init_req:?}");
         let response = put_aggregation_job(
             &test_case.task,
             &test_case.aggregation_job_id,
@@ -216,7 +215,6 @@ async fn aggregation_job_mutation_report_shares() {
             &test_case.filter,
         )
         .await;
-        tracing::error!(?response);
         assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 }

@@ -97,7 +97,7 @@ mod tests {
             dummy_vdaf::{self, AggregateShare, AggregationParam},
             install_test_trace_subscriber,
         },
-        time::{Clock, MockClock, TimeExt},
+        time::{Clock, IntervalExt, MockClock, TimeExt},
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
@@ -170,6 +170,7 @@ mod tests {
                         0,
                         AggregateShare(11),
                         1,
+                        Interval::from_time(&client_timestamp).unwrap(),
                         random(),
                     );
                     tx.put_batch_aggregation::<0, TimeInterval, dummy_vdaf::Vdaf>(
@@ -327,6 +328,7 @@ mod tests {
                         0,
                         AggregateShare(11),
                         1,
+                        Interval::from_time(&client_timestamp).unwrap(),
                         random(),
                     );
                     tx.put_batch_aggregation::<0, TimeInterval, dummy_vdaf::Vdaf>(
@@ -480,6 +482,7 @@ mod tests {
                         0,
                         AggregateShare(11),
                         1,
+                        Interval::from_time(&client_timestamp).unwrap(),
                         random(),
                     );
                     tx.put_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(&batch_aggregation)
@@ -639,6 +642,7 @@ mod tests {
                         0,
                         AggregateShare(11),
                         1,
+                        Interval::from_time(&client_timestamp).unwrap(),
                         random(),
                     );
                     tx.put_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(&batch_aggregation)

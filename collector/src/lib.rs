@@ -55,6 +55,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use backoff::{backoff::Backoff, ExponentialBackoff};
+use chrono::{DateTime, Duration, Utc};
 use derivative::Derivative;
 use http_api_problem::HttpApiProblem;
 use janus_core::{
@@ -62,6 +63,7 @@ use janus_core::{
     http::response_to_problem_details,
     retries::{http_request_exponential_backoff, retry_http_request},
     task::{url_ensure_trailing_slash, AuthenticationToken, DAP_AUTH_HEADER},
+    time::{DurationExt, TimeExt},
 };
 use janus_messages::{
     problem_type::DapProblemType,
@@ -121,6 +123,8 @@ pub enum Error {
     CollectPollTimeout,
     #[error("report count was too large")]
     ReportCountOverflow,
+    #[error("message error: {0}")]
+    Message(#[from] janus_messages::Error),
 }
 
 impl Error {
@@ -290,6 +294,7 @@ where
 {
     partial_batch_selector: PartialBatchSelector<Q>,
     report_count: u64,
+    interval: (DateTime<Utc>, Duration),
     aggregate_result: T,
 }
 
@@ -305,6 +310,11 @@ where
     /// Retrieves the number of client reports included in this collection.
     pub fn report_count(&self) -> u64 {
         self.report_count
+    }
+
+    /// Retrieves the interval of time spanned by the reports included in this collection.
+    pub fn interval(&self) -> &(DateTime<Utc>, Duration) {
+        &self.interval
     }
 
     /// Retrieves the aggregated result of the client reports included in this collection.
@@ -323,11 +333,13 @@ where
     pub fn new(
         partial_batch_selector: PartialBatchSelector<Q>,
         report_count: u64,
+        interval: (DateTime<Utc>, Duration),
         aggregate_result: T,
     ) -> Self {
         Self {
             partial_batch_selector,
             report_count,
+            interval,
             aggregate_result,
         }
     }
@@ -341,6 +353,7 @@ where
     fn eq(&self, other: &Self) -> bool {
         self.partial_batch_selector == other.partial_batch_selector
             && self.report_count == other.report_count
+            && self.interval == other.interval
             && self.aggregate_result == other.aggregate_result
     }
 }
@@ -544,6 +557,16 @@ where
         Ok(PollResult::CollectionResult(Collection {
             partial_batch_selector: collect_response.partial_batch_selector().clone(),
             report_count: collect_response.report_count(),
+            interval: (
+                DateTime::<Utc>::from_utc(
+                    collect_response.interval().start().as_naive_date_time()?,
+                    Utc,
+                ),
+                collect_response
+                    .interval()
+                    .duration()
+                    .as_chrono_duration()?,
+            ),
             aggregate_result,
         }))
     }
@@ -647,7 +670,7 @@ mod tests {
         PollResult,
     };
     use assert_matches::assert_matches;
-    use chrono::{TimeZone, Utc};
+    use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
     #[cfg(feature = "fpvec_bounded_l2")]
     use fixed_macro::fixed;
     use janus_core::{
@@ -719,6 +742,7 @@ mod tests {
         CollectionMessage::new(
             PartialBatchSelector::new_time_interval(),
             1,
+            batch_interval,
             Vec::<HpkeCiphertext>::from([
                 hpke::seal(
                     &parameters.hpke_config,
@@ -759,6 +783,7 @@ mod tests {
         CollectionMessage::new(
             PartialBatchSelector::new_fixed_size(batch_id),
             1,
+            Interval::new(Time::from_seconds_since_epoch(0), Duration::from_seconds(1)).unwrap(),
             Vec::<HpkeCiphertext>::from([
                 hpke::seal(
                     &parameters.hpke_config,
@@ -893,7 +918,18 @@ mod tests {
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(
             collection,
-            Collection::new(PartialBatchSelector::new_time_interval(), 1, 1)
+            Collection::new(
+                PartialBatchSelector::new_time_interval(),
+                1,
+                (
+                    DateTime::<Utc>::from_utc(
+                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
+                        Utc
+                    ),
+                    chrono::Duration::seconds(3600),
+                ),
+                1,
+            ),
         );
 
         mocked_collect_error.assert_async().await;
@@ -951,7 +987,18 @@ mod tests {
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(
             collection,
-            Collection::new(PartialBatchSelector::new_time_interval(), 1, 144)
+            Collection::new(
+                PartialBatchSelector::new_time_interval(),
+                1,
+                (
+                    DateTime::<Utc>::from_utc(
+                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
+                        Utc
+                    ),
+                    chrono::Duration::seconds(3600),
+                ),
+                144
+            )
         );
 
         mocked_collect_complete.assert_async().await;
@@ -1011,6 +1058,13 @@ mod tests {
             Collection::new(
                 PartialBatchSelector::new_time_interval(),
                 1,
+                (
+                    DateTime::<Utc>::from_utc(
+                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
+                        Utc
+                    ),
+                    chrono::Duration::seconds(3600),
+                ),
                 Vec::from([0, 0, 0, 1, 0])
             )
         );
@@ -1081,6 +1135,13 @@ mod tests {
             Collection::new(
                 PartialBatchSelector::new_time_interval(),
                 1,
+                (
+                    DateTime::<Utc>::from_utc(
+                        NaiveDateTime::from_timestamp_opt(1_000_000, 0).unwrap(),
+                        Utc
+                    ),
+                    chrono::Duration::seconds(3600),
+                ),
                 Vec::from([0.0625, 0.125, 0.25])
             )
         );
@@ -1141,7 +1202,18 @@ mod tests {
         let collection = collector.poll_until_complete(&job).await.unwrap();
         assert_eq!(
             collection,
-            Collection::new(PartialBatchSelector::new_fixed_size(batch_id), 1, 1)
+            Collection::new(
+                PartialBatchSelector::new_fixed_size(batch_id),
+                1,
+                (
+                    DateTime::<Utc>::from_utc(
+                        NaiveDateTime::from_timestamp_opt(0, 0).unwrap(),
+                        Utc
+                    ),
+                    chrono::Duration::seconds(1),
+                ),
+                1
+            )
         );
 
         mocked_collect_complete.assert_async().await;
@@ -1347,8 +1419,13 @@ mod tests {
                 CollectionMessage::<TimeInterval>::MEDIA_TYPE,
             )
             .with_body(
-                CollectionMessage::new(PartialBatchSelector::new_time_interval(), 0, Vec::new())
-                    .get_encoded(),
+                CollectionMessage::new(
+                    PartialBatchSelector::new_time_interval(),
+                    0,
+                    batch_interval,
+                    Vec::new(),
+                )
+                .get_encoded(),
             )
             .expect_at_least(1)
             .create_async()
@@ -1370,6 +1447,7 @@ mod tests {
                 CollectionMessage::new(
                     PartialBatchSelector::new_time_interval(),
                     1,
+                    batch_interval,
                     Vec::from([
                         HpkeCiphertext::new(
                             *collector.parameters.hpke_config.id(),
@@ -1401,6 +1479,7 @@ mod tests {
         let collect_resp = CollectionMessage::new(
             PartialBatchSelector::new_time_interval(),
             1,
+            batch_interval,
             Vec::from([
                 hpke::seal(
                     &collector.parameters.hpke_config,
@@ -1446,6 +1525,7 @@ mod tests {
         let collect_resp = CollectionMessage::new(
             PartialBatchSelector::new_time_interval(),
             1,
+            batch_interval,
             Vec::from([
                 hpke::seal(
                     &collector.parameters.hpke_config,

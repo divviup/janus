@@ -1013,7 +1013,7 @@ mod tests {
         report_id::ReportIdChecksumExt,
         task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
-        time::{Clock, MockClock, TimeExt},
+        time::{Clock, IntervalExt, MockClock, TimeExt},
         Runtime,
     };
     use janus_messages::{
@@ -1970,6 +1970,7 @@ mod tests {
             0,
             leader_aggregate_share,
             1,
+            Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
 
@@ -2019,6 +2020,7 @@ mod tests {
                     0,
                     agg.aggregate_share().clone(),
                     agg.report_count(),
+                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })
@@ -2236,6 +2238,7 @@ mod tests {
             0,
             leader_aggregate_share,
             1,
+            Interval::from_time(report.metadata().time()).unwrap(),
             ReportIdChecksum::for_report_id(report.metadata().id()),
         )]);
 
@@ -2283,6 +2286,7 @@ mod tests {
                     0,
                     agg.aggregate_share().clone(),
                     agg.report_count(),
+                    *agg.client_timestamp_interval(),
                     *agg.checksum(),
                 )
             })

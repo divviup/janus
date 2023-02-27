@@ -158,6 +158,7 @@ CREATE TABLE batch_aggregations(
     ord                   BIGINT NOT NULL,     -- the index of this batch aggregation shard, over (task ID, batch_identifier, aggregation_param).
     aggregate_share       BYTEA NOT NULL,      -- the (possibly-incremental) aggregate share
     report_count          BIGINT NOT NULL,     -- the (possibly-incremental) client report count
+    client_timestamp_interval TSRANGE NOT NULL, -- the minimal interval containing all of client timestamps included in this batch aggregation
     checksum              BYTEA NOT NULL,      -- the (possibly-incremental) checksum
 
     CONSTRAINT batch_aggregations_unique_task_id_batch_id_aggregation_param UNIQUE(task_id, batch_identifier, aggregation_param, ord),

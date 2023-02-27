@@ -82,6 +82,9 @@ const USEC_PER_SEC: u64 = 1_000_000;
 
 /// Extension methods on [`Duration`].
 pub trait DurationExt: Sized {
+    /// Convert this [`Duration`] into a [`chrono::Duration`].
+    fn as_chrono_duration(&self) -> Result<chrono::Duration, Error>;
+
     /// Add this duration with another duration.
     fn add(&self, duration: &Duration) -> Result<Self, Error>;
 
@@ -98,9 +101,21 @@ pub trait DurationExt: Sized {
 
     /// Create a duration representing the provided number of hours.
     fn from_hours(hours: u64) -> Result<Self, Error>;
+
+    /// Return a duration representing this duration rounded up to the next largest multiple of
+    /// `time_precision`, or the same duration if it already a multiple.
+    fn round_up(&self, time_precision: &Duration) -> Result<Self, Error>;
 }
 
 impl DurationExt for Duration {
+    fn as_chrono_duration(&self) -> Result<chrono::Duration, Error> {
+        Ok(chrono::Duration::seconds(
+            self.as_seconds()
+                .try_into()
+                .map_err(|_| Error::IllegalTimeArithmetic("number of seconds too big for i64"))?,
+        ))
+    }
+
     fn add(&self, other: &Duration) -> Result<Self, Error> {
         self.as_seconds()
             .checked_add(other.as_seconds())
@@ -124,11 +139,32 @@ impl DurationExt for Duration {
             .map(Self::from_seconds)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
     }
+
     fn from_hours(hours: u64) -> Result<Self, Error> {
         3600u64
             .checked_mul(hours)
             .map(Self::from_seconds)
             .ok_or(Error::IllegalTimeArithmetic("operation would overflow"))
+    }
+
+    fn round_up(&self, time_precision: &Duration) -> Result<Self, Error> {
+        let rem = self
+            .as_seconds()
+            .checked_rem(time_precision.as_seconds())
+            .ok_or(janus_messages::Error::IllegalTimeArithmetic(
+                "remainder would overflow/underflow",
+            ))?;
+
+        // self is already aligned
+        if rem == 0 {
+            return Ok(*self);
+        }
+
+        let rem_inv = Self::from_seconds(time_precision.as_seconds().checked_sub(rem).ok_or(
+            Error::IllegalTimeArithmetic("difference cannot be represented as u64"),
+        )?);
+
+        self.add(&rem_inv)
     }
 }
 
@@ -221,14 +257,157 @@ impl TimeExt for Time {
 }
 
 /// Extension methods on [`Interval`].
-pub trait IntervalExt {
+pub trait IntervalExt: Sized {
     /// Returns a [`Time`] representing the excluded end of this interval.
     fn end(&self) -> Time;
+
+    /// Returns a new minimal [`Interval`] that contains both this interval and `other`.
+    fn merge(&self, other: &Self) -> Result<Self, Error>;
+
+    /// Returns a 0-length `[Interval]` that contains exactly the provided [`Time`].
+    fn from_time(time: &Time) -> Result<Self, Error>;
+
+    /// Returns the smallest [`Interval`] that contains this interval and whose start and duration
+    /// are multiples of `time_precision`.
+    fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error>;
 }
 
 impl IntervalExt for Interval {
     fn end(&self) -> Time {
         // [`Self::new`] verified that this addition doesn't overflow.
         self.start().add(self.duration()).unwrap()
+    }
+
+    fn merge(&self, other: &Self) -> Result<Self, Error> {
+        let max_time = std::cmp::max(self.end(), other.end());
+        let min_time = std::cmp::min(self.start(), other.start());
+
+        // This can't actually fail for any valid Intervals
+        Self::new(*min_time, max_time.difference(min_time)?)
+    }
+
+    fn from_time(time: &Time) -> Result<Self, Error> {
+        // Recall that Interval is defined to exclude the end of the interval, so an interval of
+        // length 1 only contains its start.
+        Self::new(*time, Duration::from_seconds(1))
+    }
+
+    fn align_to_time_precision(&self, time_precision: &Duration) -> Result<Self, Error> {
+        // Round the interval start *down* to the time precision
+        let aligned_start = self.start().to_batch_interval_start(time_precision)?;
+        // Round the interval duration *up* to the time precision
+        let aligned_duration = self.duration().round_up(time_precision)?;
+
+        let aligned_interval = Self::new(aligned_start, aligned_duration)?;
+
+        // Rounding the start down may have shifted the interval far enough to exclude the previous
+        // interval's end. Extend the duration by time_precision if necessary.
+        if self.end().is_after(&aligned_interval.end()) {
+            let padded_duration = aligned_duration.add(time_precision)?;
+            Self::new(aligned_start, padded_duration)
+        } else {
+            Ok(aligned_interval)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::time::{DurationExt, IntervalExt};
+    use janus_messages::{Duration, Interval, Time};
+
+    #[test]
+    fn round_up_duration() {
+        for (label, duration, time_precision, expected) in [
+            ("already a multiple", 100, 10, Some(100)),
+            ("zero time precision", 100, 0, None),
+            ("rounded up", 50, 100, Some(100)),
+        ] {
+            let result =
+                Duration::from_seconds(duration).round_up(&Duration::from_seconds(time_precision));
+            match expected {
+                Some(expected) => {
+                    assert_eq!(Duration::from_seconds(expected), result.unwrap(), "{label}",)
+                }
+                None => assert!(result.is_err(), "{label}"),
+            }
+        }
+    }
+
+    #[test]
+    fn merge_interval() {
+        for (
+            label,
+            lhs_start,
+            lhs_duration,
+            rhs_start,
+            rhs_duration,
+            expected_start,
+            expected_duration,
+        ) in [
+            ("non-overlapping intervals", 0, 10, 20, 10, 0, 30),
+            ("overlapping intervals", 0, 10, 5, 10, 0, 15),
+            ("one interval contains the other", 0, 10, 2, 8, 0, 10),
+            ("equal intervals", 0, 10, 0, 10, 0, 10),
+        ] {
+            let lhs = Interval::new(
+                Time::from_seconds_since_epoch(lhs_start),
+                Duration::from_seconds(lhs_duration),
+            )
+            .unwrap();
+            let rhs = Interval::new(
+                Time::from_seconds_since_epoch(rhs_start),
+                Duration::from_seconds(rhs_duration),
+            )
+            .unwrap();
+            let expected = Interval::new(
+                Time::from_seconds_since_epoch(expected_start),
+                Duration::from_seconds(expected_duration),
+            )
+            .unwrap();
+            assert_eq!(expected, lhs.merge(&rhs).unwrap(), "{label}");
+        }
+    }
+
+    #[test]
+    fn interval_align_to_time_precision() {
+        for (label, interval_start, interval_duration, time_precision, expected) in [
+            ("already aligned", 0, 100, 100, Some((0, 100))),
+            ("round duration", 0, 75, 100, Some((0, 100))),
+            ("round both", 25, 75, 100, Some((0, 100))),
+            ("round start, pad duration", 25, 100, 100, Some((0, 200))),
+        ] {
+            let interval = Interval::new(
+                Time::from_seconds_since_epoch(interval_start),
+                Duration::from_seconds(interval_duration),
+            )
+            .unwrap();
+            let time_precision = Duration::from_seconds(time_precision);
+
+            let result = interval.align_to_time_precision(&time_precision);
+
+            match expected {
+                Some((expected_start, expected_duration)) => {
+                    let result = result.unwrap();
+                    let expected = Interval::new(
+                        Time::from_seconds_since_epoch(expected_start),
+                        Duration::from_seconds(expected_duration),
+                    )
+                    .unwrap();
+                    assert_eq!(result, expected, "{label}");
+                    assert!(
+                        result.start().as_seconds_since_epoch()
+                            <= interval.start().as_seconds_since_epoch(),
+                        "{label}"
+                    );
+                    assert!(
+                        result.end().as_seconds_since_epoch()
+                            >= interval.end().as_seconds_since_epoch(),
+                        "{label}"
+                    );
+                }
+                None => assert!(result.is_err(), "{label}"),
+            }
+        }
     }
 }
