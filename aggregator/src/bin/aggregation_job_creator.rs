@@ -131,4 +131,12 @@ mod tests {
             max_aggregation_job_size: 500,
         })
     }
+
+    #[test]
+    fn documentation_config_example() {
+        serde_yaml::from_str::<Config>(include_str!(
+            "../../../docs/samples/aggregation_job_creator_config.yaml"
+        ))
+        .unwrap();
+    }
 }

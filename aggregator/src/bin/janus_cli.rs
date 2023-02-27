@@ -905,4 +905,12 @@ mod tests {
             },
         })
     }
+
+    #[test]
+    fn documentation_config_example() {
+        serde_yaml::from_str::<ConfigFile>(include_str!(
+            "../../../docs/samples/janus_cli_config.yaml"
+        ))
+        .unwrap();
+    }
 }

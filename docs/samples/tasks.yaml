@@ -1,0 +1,132 @@
+# This file defines a list of tasks to be provisioned.
+
+-
+  # The DAP task ID is provided in base64url-encoded form, much like in request
+  # paths. IDs are 32 bytes long, and they should be randomly generated, per
+  # DAP's recommendation.
+  task_id: "G9YKXjoEjfoU7M_fi_o2H0wmzavRb2sBFHeykeRhDMk"
+
+  # HTTPS endpoints of the leader and helper aggregators, in a list.
+  aggregator_endpoints:
+  - "https://example.com/"
+  - "https://example.net/"
+
+  # The DAP query type. See below for an example of a fixed-size task
+  query_type: TimeInterval
+
+  # The task's VDAF. Each VDAF requires its own set of parameters.
+  vdaf: !Prio3Aes128Sum
+    bits: 16
+
+  # The DAP role of this Janus instance in this task. Either "Leader" or
+  # "Helper".
+  role: Leader
+
+  # The VDAF verify key, in base64url-encoded form. The key's length is
+  # determined by the task's VDAF.
+  vdaf_verify_keys:
+  - "1CmuYNtBLYIoXN8bU0T_XA"
+
+  # The maximum number of times any report can be collected.
+  max_batch_query_count: 1
+
+  # The task's expiration time, as a number of seconds after the Unix epoch.
+  task_expiration: 1704088800
+
+  # Time in seconds after which reports expire and may be garbage collected.
+  # This is a Janus-specific parameter. Garbage collection for a task may
+  # be disabled by setting this to `null`.
+  report_expiry_age: 7776000
+
+  # Minimum number of reports that a batch must contain before the batch may be
+  # collected.
+  min_batch_size: 100
+
+  # The DAP task's time precision. This determines how clients round report
+  # timestamps, and sets the minimum duration of any batch interval for time
+  # interval queries.
+  time_precision: 1800
+
+  # This determines the maximum allowable clock skew between clients and the
+  # aggregator, in seconds. If a report is received that has a timestamp further
+  # in the future than this amount, it will be rejected. This is a
+  # Janus-specific parameter.
+  tolerable_clock_skew: 60
+
+  # The collector's HPKE configuration. The public key is encoded in base64url.
+  collector_hpke_config:
+    id: 183
+    kem_id: X25519HkdfSha256
+    kdf_id: HkdfSha256
+    aead_id: Aes128Gcm
+    public_key: 4qiv6IY5jrjCV3xbaQXULmPIpvoIml1oJmeXm-yOuAo
+
+  # Authentication tokens shared beteween the aggregators, and used to
+  # authenticate leader-to-helper requests. In the case of a leader-role task,
+  # the leader will include the first token in a header when making requests to
+  # the helper. In the case of a helper-role task, the helper will accept
+  # requests with any of the listed authentication tokens. Each token is encoded
+  # in base64url, and the decoded value is sent as an HTTP header value. For
+  # example, this value decodes to
+  # "aggregator-235242f99406c4fd28b820c32eab0f68".
+  aggregator_auth_tokens:
+  - "YWdncmVnYXRvci0yMzUyNDJmOTk0MDZjNGZkMjhiODIwYzMyZWFiMGY2OA"
+
+  # Authentication tokens shared between the leader and the collector, and used
+  # to authenticate collector-to-leader requests. For leader tasks, this has the
+  # same format as `aggregator_auth_tokens` above. For helper tasks, this will
+  # be an empty list instead. This example decodes to
+  # "collector-abf5408e2b1601831625af3959106458".
+  collector_auth_tokens:
+  - "Y29sbGVjdG9yLWFiZjU0MDhlMmIxNjAxODMxNjI1YWYzOTU5MTA2NDU4"
+
+  # This aggregator's HPKE keypairs. The first keypair's HPKE configuration will
+  # be served via the `hpke_config` DAP endpoint. All keypairs will be tried
+  # when decrypting report shares. Both the public key and private key fields
+  # are encoded in base64url.
+  hpke_keys:
+  - config:
+      id: 164
+      kem_id: X25519HkdfSha256
+      kdf_id: HkdfSha256
+      aead_id: Aes128Gcm
+      public_key: bK5esYAgvRb7eWto4IlzDV5fMpmdTeO0K56sV-rf9xo
+    private_key: wFRYwiypcHC-mkGP1u3XQgIvtnlkQlUfZjgtM_zRsnI
+
+- task_id: "D-hCKPuqL2oTf7ZVRVyMP5VGt43EAEA8q34mDf6p1JE"
+  aggregator_endpoints:
+  - "https://example.org/"
+  - "https://example.com/"
+  # For tasks using the fixed size query type, an additional `max_batch_size`
+  # parameter must be provided.
+  query_type: !FixedSize
+    max_batch_size: 100
+  vdaf: Prio3Aes128Count
+  role: Helper
+  vdaf_verify_keys:
+  - "ZXtE4kLqtsCOr8h_pNUeoQ"
+  max_batch_query_count: 1
+  task_expiration: 1704088800
+  report_expiry_age: null
+  min_batch_size: 100
+  time_precision: 300
+  tolerable_clock_skew: 60
+  collector_hpke_config:
+    id: 80
+    kem_id: X25519HkdfSha256
+    kdf_id: HkdfSha256
+    aead_id: Aes128Gcm
+    public_key: KHRLcWgfWxli8cdOLPsgsZPttHXh0ho3vLVLrW-63lE
+  aggregator_auth_tokens:
+  - "YWdncmVnYXRvci1jZmE4NDMyZjdkMzllMjZiYjU3OGUzMzY5Mzk1MWQzNQ"
+  # Note that this task does not have any collector authentication tokens, since
+  # it is a helper role task.
+  collector_auth_tokens: []
+  hpke_keys:
+  - config:
+      id: 37
+      kem_id: X25519HkdfSha256
+      kdf_id: HkdfSha256
+      aead_id: Aes128Gcm
+      public_key: nvoVceq50ScadLoeE3E4tgFkzF85UfdiEQOPZSKVx0Y
+    private_key: oA38bVlfuTvi_rg6ciYI1S0tWQuwwDhBDzHSBXKCYVc

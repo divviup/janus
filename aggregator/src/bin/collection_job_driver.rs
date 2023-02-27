@@ -159,4 +159,12 @@ mod tests {
             },
         })
     }
+
+    #[test]
+    fn documentation_config_example() {
+        serde_yaml::from_str::<Config>(include_str!(
+            "../../../docs/samples/collection_job_driver_config.yaml"
+        ))
+        .unwrap();
+    }
 }
