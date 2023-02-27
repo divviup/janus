@@ -30,6 +30,7 @@ janus_interop_binaries = { version = "0.3", path = "interop_binaries" }
 janus_messages = { version = "0.3", path = "messages" }
 k8s-openapi = { version = "0.16.0", features = ["v1_24"] }  # keep this version in sync with what is referenced by the indirect dependency via `kube`
 kube = { version = "0.75.0", default-features = false, features = ["client"] }
+prio = { version = "0.10.0", features = ["multithreaded"] }
 
 [profile.dev]
 # Disabling debug info improves build speeds & reduces build artifact sizes, which helps CI caching.

@@ -67,7 +67,7 @@ opentelemetry-prometheus = { version = "0.11", optional = true }
 opentelemetry-semantic-conventions = { version = "0.10", optional = true }
 postgres-protocol = "0.6.4"
 postgres-types = { version = "0.2.4", features = ["derive", "array-impls"] }
-prio = { version = "0.10.0", features = ["multithreaded"] }
+prio.workspace = true
 prometheus = { version = "0.13.3", optional = true }
 rand = { version = "0.8", features = ["min_const_gen"] }
 regex = "1"
