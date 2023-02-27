@@ -18,7 +18,7 @@ use tokio::{
     sync::Semaphore,
     time::{self, Instant},
 };
-use tracing::{debug, error, info, info_span, Instrument};
+use tracing::{debug, error, info_span, Instrument};
 
 /// Periodically seeks incomplete jobs in the datastore and drives them concurrently.
 pub struct JobDriver<C: Clock, R, JobAcquirer, JobStepper> {
@@ -134,7 +134,7 @@ where
             // (we'll pick up any additional jobs on the next iteration of this loop). We can't
             // overestimate since this task is the only place that permits are acquired.
             let max_acquire_count = sem.available_permits();
-            info!(%max_acquire_count, "Acquiring jobs");
+            debug!(%max_acquire_count, "Acquiring jobs");
             let start = Instant::now();
             let leases = (self.incomplete_job_acquirer)(max_acquire_count).await;
             let leases = match leases {
@@ -169,7 +169,7 @@ where
                 leases.len(),
                 max_acquire_count
             );
-            info!(acquired_job_count = leases.len(), "Acquired jobs");
+            debug!(acquired_job_count = leases.len(), "Acquired jobs");
 
             // Start up tasks for each acquired job.
             job_discovery_delay = Duration::ZERO;
@@ -191,7 +191,7 @@ where
                     );
 
                     async move {
-                        info!(lease_expiry = %lease.lease_expiry_time(), "Stepping job");
+                        debug!(lease_expiry = %lease.lease_expiry_time(), "Stepping job");
                         let (start, mut status) = (Instant::now(), "success");
                         match time::timeout(
                             this.effective_lease_duration(lease.lease_expiry_time()),

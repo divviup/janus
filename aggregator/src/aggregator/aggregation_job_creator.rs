@@ -134,7 +134,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 
         loop {
             tasks_update_ticker.tick().await;
-            info!("Updating tasks");
+            debug!("Updating tasks");
             let start = Instant::now();
             let tasks = self
                 .datastore
@@ -216,7 +216,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         loop {
             select! {
                 _ = sleep_until(next_run_instant) => {
-                    info!(task_id = %task.id(), "Creating aggregation jobs for task");
+                    debug!(task_id = %task.id(), "Creating aggregation jobs for task");
                     let (start, mut status) = (Instant::now(), "success");
                     match Arc::clone(&self).create_aggregation_jobs_for_task(Arc::clone(&task)).await {
                         Ok(true) => next_run_instant = Instant::now(),

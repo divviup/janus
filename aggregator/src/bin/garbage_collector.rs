@@ -66,3 +66,16 @@ impl BinaryConfig for Config {
         &mut self.common_config
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn documentation_config_example() {
+        serde_yaml::from_str::<Config>(include_str!(
+            "../../../docs/samples/garbage_collector_config.yaml"
+        ))
+        .unwrap();
+    }
+}
