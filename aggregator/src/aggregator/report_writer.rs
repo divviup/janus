@@ -10,6 +10,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::{sleep_until, Instant},
 };
+use tracing::debug;
 
 type ReportWriteBatcherSender<C> = mpsc::Sender<(
     Box<dyn ReportWriter<C>>,
@@ -69,8 +70,8 @@ impl<C: Clock> ReportWriteBatcher<C> {
         while !is_done {
             // Wait for an event of interest.
             let write_batch = select! {
-                // Wait until we receive a report to be written (or the channel is closed due to the
-                // ReportWriteBatcher being dropped)...
+                // Wait until we receive a report to be written, or the channel is closed due to the
+                // ReportWriteBatcher being dropped...
                 item = report_rx.recv() => {
                     match item {
                         // We got an item. Add it to the current batch of reports to be written.
@@ -92,7 +93,7 @@ impl<C: Clock> ReportWriteBatcher<C> {
                     }
                 },
 
-                // ... or the current batch times out.
+                // ... or the current batch, if there is one, times out.
                 _ = sleep_until(batch_expiry), if !report_writers.is_empty() => true,
             };
 
@@ -133,14 +134,25 @@ impl<C: Clock> ReportWriteBatcher<C> {
                 // Individual, per-request results.
                 assert_eq!(result_txs.len(), rslts.len()); // sanity check: should be guaranteed.
                 for (rslt_tx, rslt) in result_txs.into_iter().zip(rslts.into_iter()) {
-                    let _ = rslt_tx.send(rslt.map_err(|err| Arc::new(Error::from(err))));
+                    if rslt_tx
+                        .send(rslt.map_err(|err| Arc::new(Error::from(err))))
+                        .is_err()
+                    {
+                        debug!(
+                            "ReportWriter couldn't send result to requester (request cancelled?)"
+                        );
+                    }
                 }
             }
             Err(err) => {
                 // Total-transaction failures are given to all waiting report uploaders.
                 let err = Arc::new(Error::from(err));
                 for rslt_tx in result_txs.into_iter() {
-                    let _ = rslt_tx.send(Err(Arc::clone(&err)));
+                    if rslt_tx.send(Err(Arc::clone(&err))).is_err() {
+                        debug!(
+                            "ReportWriter couldn't send result to requester (request cancelled?)"
+                        );
+                    };
                 }
             }
         };
