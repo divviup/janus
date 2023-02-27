@@ -209,8 +209,8 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         debug!(task_id = %task.id(), "Job creation worker started");
         let mut next_run_instant = Instant::now();
         if !self.aggregation_job_creation_interval.is_zero() {
-            next_run_instant = next_run_instant
-                + thread_rng().gen_range(Duration::ZERO..self.aggregation_job_creation_interval);
+            next_run_instant +=
+                thread_rng().gen_range(Duration::ZERO..self.aggregation_job_creation_interval);
         }
 
         loop {
