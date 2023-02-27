@@ -838,6 +838,11 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_docs_sample_tasks() {
+        serde_yaml::from_str::<Vec<Task>>(include_str!("../../docs/samples/tasks.yaml")).unwrap();
+    }
+
+    #[test]
     fn collector_auth_tokens() {
         // As leader, we receive an error if no collector auth token is specified.
         Task::new(

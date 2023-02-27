@@ -167,4 +167,12 @@ mod tests {
             batch_aggregation_shard_count: 32,
         })
     }
+
+    #[test]
+    fn documentation_config_example() {
+        serde_yaml::from_str::<Config>(include_str!(
+            "../../../docs/samples/aggregation_job_driver_config.yaml"
+        ))
+        .unwrap();
+    }
 }

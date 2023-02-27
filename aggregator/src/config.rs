@@ -186,6 +186,8 @@ mod tests {
         },
         CommonConfig, DbConfig, JobDriverConfig,
     };
+    use crate::{metrics::MetricsExporterConfiguration, trace::OpenTelemetryTraceConfiguration};
+    use assert_matches::assert_matches;
     use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]
@@ -221,5 +223,42 @@ mod tests {
             worker_lease_clock_skew_allowance_secs: 60,
             maximum_attempts_before_failure: 5,
         })
+    }
+
+    #[test]
+    fn otlp_config() {
+        let input = concat!(
+            "database:\n",
+            "  url: \"postgres://postgres@localhost/postgres\"\n",
+            "logging_config:\n",
+            "  open_telemetry_config:\n",
+            "    otlp:\n",
+            "      endpoint: \"https://example.com/\"\n",
+            "      metadata:\n",
+            "        key: \"value\"\n",
+            "metrics_config:\n",
+            "  exporter:\n",
+            "    otlp:\n",
+            "      endpoint: \"https://example.com/\"\n",
+            "      metadata:\n",
+            "        key: \"value\"\n",
+        );
+        let config: CommonConfig = serde_yaml::from_str(input).unwrap();
+        assert_matches!(
+            config.logging_config.open_telemetry_config.unwrap(),
+            OpenTelemetryTraceConfiguration::Otlp(otlp_config) => {
+                assert_eq!(otlp_config.endpoint, "https://example.com/");
+                assert_eq!(otlp_config.metadata.len(), 1);
+                assert_eq!(otlp_config.metadata.get("key").unwrap(), "value");
+            }
+        );
+        assert_matches!(
+            config.metrics_config.exporter.unwrap(),
+            MetricsExporterConfiguration::Otlp(otlp_config) => {
+                assert_eq!(otlp_config.endpoint, "https://example.com/");
+                assert_eq!(otlp_config.metadata.len(), 1);
+                assert_eq!(otlp_config.metadata.get("key").unwrap(), "value");
+            }
+        )
     }
 }
