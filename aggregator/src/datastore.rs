@@ -1025,6 +1025,7 @@ impl<C: Clock> Transaction<'_, C> {
                     SELECT id FROM client_reports
                     WHERE task_id = (SELECT id FROM tasks WHERE task_id = $1)
                       AND aggregation_started = FALSE
+                    FOR UPDATE SKIP LOCKED
                     LIMIT 5000
                 )
                 RETURNING report_id, client_timestamp",
@@ -1062,6 +1063,7 @@ impl<C: Clock> Transaction<'_, C> {
         A: vdaf::Aggregator<L> + VdafHasAggregationParameter,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
+        // TODO(#224): lock retrieved client_reports rows
         // TODO(#269): allow the number of returned results to be controlled?
         let stmt = self
             .prepare_cached(
