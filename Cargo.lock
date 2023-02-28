@@ -1689,12 +1689,9 @@ dependencies = [
 name = "janus_collector"
 version = "0.3.0"
 dependencies = [
- "anyhow",
  "assert_matches",
  "backoff",
- "base64 0.21.0",
  "chrono",
- "clap",
  "derivative",
  "fixed",
  "fixed-macro",
@@ -1710,8 +1707,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "tracing-log",
- "tracing-subscriber",
  "url",
 ]
 
@@ -1827,7 +1822,6 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "base64 0.21.0",
- "clap",
  "derivative",
  "hex",
  "num_enum",
@@ -1836,9 +1830,32 @@ dependencies = [
  "serde",
  "serde_test",
  "thiserror",
+ "trycmd",
+]
+
+[[package]]
+name = "janus_tools"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "assert_matches",
+ "base64 0.21.0",
+ "cfg-if",
+ "clap",
+ "derivative",
+ "fixed",
+ "janus_collector",
+ "janus_core",
+ "janus_messages",
+ "prio",
+ "rand",
+ "reqwest",
+ "tokio",
+ "tracing",
  "tracing-log",
  "tracing-subscriber",
  "trycmd",
+ "url",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@ members = [
     "integration_tests",
     "interop_binaries",
     "messages",
+    "tools",
 ]
 resolver = "2"
 

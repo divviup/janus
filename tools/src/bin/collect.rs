@@ -615,15 +615,14 @@ mod tests {
             ErrorKind::MissingRequiredArgument,
         );
 
-        let mut bad_arguments = correct_arguments.clone();
-        let bad_argument = format!("--task-id=not valid base64");
-        bad_arguments[1] = &bad_argument;
+        let mut bad_arguments = correct_arguments;
+        bad_arguments[1] = "--task-id=not valid base64";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
-        let mut bad_arguments = correct_arguments.clone();
+        let mut bad_arguments = correct_arguments;
         let short_encoded = URL_SAFE_NO_PAD.encode("too short");
         let bad_argument = format!("--task-id={short_encoded}");
         bad_arguments[1] = &bad_argument;
@@ -632,24 +631,22 @@ mod tests {
             ErrorKind::ValueValidation,
         );
 
-        let mut bad_arguments = correct_arguments.clone();
+        let mut bad_arguments = correct_arguments;
         bad_arguments[3] = "http:bad:url:///dap@";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
-        let mut bad_arguments = correct_arguments.clone();
-        let bad_argument = format!("--hpke-config=not valid base64");
-        bad_arguments[6] = &bad_argument;
+        let mut bad_arguments = correct_arguments;
+        bad_arguments[6] = "--hpke-config=not valid base64";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
         );
 
-        let mut bad_arguments = correct_arguments.clone();
-        let bad_argument = format!("--hpke-private-key=not valid base64");
-        bad_arguments[7] = &bad_argument;
+        let mut bad_arguments = correct_arguments;
+        bad_arguments[7] = "--hpke-private-key=not valid base64";
         assert_eq!(
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ValueValidation,
@@ -705,38 +702,41 @@ mod tests {
             Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
         );
 
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
-            "--bits=3".to_string(),
-        ]);
-        let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-        assert_matches!(
-            run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-        );
+        #[cfg(feature = "fpvec_bounded_l2")]
+        {
+            let mut bad_arguments = base_arguments.clone();
+            bad_arguments.extend([
+                "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
+                "--bits=3".to_string(),
+            ]);
+            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
+            assert_matches!(
+                run(bad_options).await.unwrap_err(),
+                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
+            );
 
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
-            "--bits=3".to_string(),
-        ]);
-        let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-        assert_matches!(
-            run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-        );
+            let mut bad_arguments = base_arguments.clone();
+            bad_arguments.extend([
+                "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
+                "--bits=3".to_string(),
+            ]);
+            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
+            assert_matches!(
+                run(bad_options).await.unwrap_err(),
+                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
+            );
 
-        let mut bad_arguments = base_arguments.clone();
-        bad_arguments.extend([
-            "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
-            "--bits=3".to_string(),
-        ]);
-        let bad_options = Options::try_parse_from(bad_arguments).unwrap();
-        assert_matches!(
-            run(bad_options).await.unwrap_err(),
-            Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
-        );
+            let mut bad_arguments = base_arguments.clone();
+            bad_arguments.extend([
+                "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
+                "--bits=3".to_string(),
+            ]);
+            let bad_options = Options::try_parse_from(bad_arguments).unwrap();
+            assert_matches!(
+                run(bad_options).await.unwrap_err(),
+                Error::Clap(err) => assert_eq!(err.kind(), ErrorKind::ArgumentConflict)
+            );
+        }
 
         let mut bad_arguments = base_arguments.clone();
         bad_arguments.extend([
@@ -779,26 +779,29 @@ mod tests {
         ]);
         Options::try_parse_from(good_arguments).unwrap();
 
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.extend([
-            "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
-            "--length=10".to_string(),
-        ]);
-        Options::try_parse_from(good_arguments).unwrap();
+        #[cfg(feature = "fpvec_bounded_l2")]
+        {
+            let mut good_arguments = base_arguments.clone();
+            good_arguments.extend([
+                "--vdaf=fixedpoint16bitboundedl2vecsum".to_string(),
+                "--length=10".to_string(),
+            ]);
+            Options::try_parse_from(good_arguments).unwrap();
 
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.extend([
-            "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
-            "--length=10".to_string(),
-        ]);
-        Options::try_parse_from(good_arguments).unwrap();
+            let mut good_arguments = base_arguments.clone();
+            good_arguments.extend([
+                "--vdaf=fixedpoint32bitboundedl2vecsum".to_string(),
+                "--length=10".to_string(),
+            ]);
+            Options::try_parse_from(good_arguments).unwrap();
 
-        let mut good_arguments = base_arguments.clone();
-        good_arguments.extend([
-            "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
-            "--length=10".to_string(),
-        ]);
-        Options::try_parse_from(good_arguments).unwrap();
+            let mut good_arguments = base_arguments.clone();
+            good_arguments.extend([
+                "--vdaf=fixedpoint64bitboundedl2vecsum".to_string(),
+                "--length=10".to_string(),
+            ]);
+            Options::try_parse_from(good_arguments).unwrap();
+        }
 
         // Check parsing arguments for a current batch query.
         let expected = Options {
@@ -946,7 +949,7 @@ mod tests {
             Options::try_parse_from(bad_arguments).unwrap_err().kind(),
             ErrorKind::ArgumentConflict
         );
-        let mut bad_arguments = base_arguments.clone();
+        let mut bad_arguments = base_arguments;
         bad_arguments.extend([
             "--batch-id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
             "--current-batch".to_string(),

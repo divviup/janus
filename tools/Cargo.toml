@@ -1,0 +1,36 @@
+[package]
+name = "janus_tools"
+description = "Command line tools associated with Janus, the server powering ISRG's Divvi Up."
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+fpvec_bounded_l2 = ["dep:fixed", "janus_collector/fpvec_bounded_l2"]
+
+[dependencies]
+anyhow = "1"
+base64 = "0.21.0"
+clap = { version = "4.1.8", features = ["cargo", "derive", "env"] }
+derivative = "2.2.0"
+fixed = { version = "1.23", optional = true }
+janus_collector.workspace = true
+janus_core.workspace = true
+janus_messages.workspace = true
+prio.workspace = true
+reqwest = { version = "0.11.14", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "1.25", features = ["full"] }
+tracing = "0.1.37"
+tracing-log = "0.1.3"
+tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }
+url = "2.3.1"
+
+[dev-dependencies]
+assert_matches = "1"
+cfg-if = "1.0.0"
+janus_core = { workspace = true, features = ["test-util"] }
+rand = "0.8"
+trycmd = "0.14.12"
