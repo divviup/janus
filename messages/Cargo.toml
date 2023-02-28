@@ -19,7 +19,7 @@ base64 = "0.21.0"
 clap = { version = "4.1.8", features = ["cargo", "derive"], optional = true }
 derivative = "2.2.0"
 hex = "0.4"
-num_enum = "0.5.10"
+num_enum = "0.5.11"
 # We can't pull prio in from the workspace because that would enable default features, and we do not
 # want prio/crypto-dependencies
 prio = { version = "0.10.0", default-features = false }
