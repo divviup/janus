@@ -16,7 +16,7 @@ test-util = []
 [dependencies]
 anyhow = "1"
 base64 = "0.21.0"
-clap = { version = "4.1.6", features = ["cargo", "derive"], optional = true }
+clap = { version = "4.1.8", features = ["cargo", "derive"], optional = true }
 derivative = "2.2.0"
 hex = "0.4"
 num_enum = "0.5.10"
