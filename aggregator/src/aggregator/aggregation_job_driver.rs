@@ -1,8 +1,15 @@
-use crate::{
-    aggregator::{
-        accumulator::Accumulator, aggregate_step_failure_counter, query_type::AccumulableQueryType,
-        send_request_to_helper,
-    },
+use crate::aggregator::{
+    accumulator::Accumulator, aggregate_step_failure_counter, send_request_to_helper,
+};
+use anyhow::{anyhow, Context as _, Result};
+use derivative::Derivative;
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::{
+    types::extra::{U15, U31, U63},
+    FixedI16, FixedI32, FixedI64,
+};
+use futures::future::{try_join_all, BoxFuture, FutureExt};
+use janus_aggregator_core::{
     datastore::{
         self,
         models::{
@@ -11,16 +18,13 @@ use crate::{
         },
         Datastore,
     },
-    task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    query_type::AccumulableQueryType,
+    task::{self, Task, VerifyKey},
 };
-use anyhow::{anyhow, Context as _, Result};
-use derivative::Derivative;
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::types::extra::{U15, U31, U63};
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{FixedI16, FixedI32, FixedI64};
-use futures::future::{try_join_all, BoxFuture, FutureExt};
-use janus_core::{task::VdafInstance, time::Clock};
+use janus_core::{
+    task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    time::Clock,
+};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     AggregationJobContinueReq, AggregationJobInitializeReq, AggregationJobResp,
@@ -984,10 +988,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::AggregationJobDriver;
     use crate::{
-        aggregator::{CollectableQueryType, DapProblemType, Error},
+        aggregator::{aggregation_job_driver::AggregationJobDriver, DapProblemType, Error},
         binary_utils::job_driver::JobDriver,
+    };
+    use assert_matches::assert_matches;
+    use futures::future::join_all;
+    use http::{header::CONTENT_TYPE, StatusCode};
+    use janus_aggregator_core::{
         datastore::{
             models::{
                 AggregationJob, AggregationJobState, BatchAggregation, LeaderStoredReport,
@@ -995,17 +1003,15 @@ mod tests {
             },
             test_util::ephemeral_datastore,
         },
-        task::{test_util::TaskBuilder, QueryType, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        query_type::CollectableQueryType,
+        task::{test_util::TaskBuilder, QueryType, VerifyKey},
     };
-    use assert_matches::assert_matches;
-    use futures::future::join_all;
-    use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         hpke::{
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         report_id::ReportIdChecksumExt,
-        task::VdafInstance,
+        task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
         test_util::{install_test_trace_subscriber, run_vdaf, runtime::TestRuntimeManager},
         time::{Clock, MockClock, TimeExt},
         Runtime,

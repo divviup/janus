@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "aggregator",
+    "aggregator_core",
     "build_script_utils",
     "client",
     "collector",
@@ -21,6 +22,7 @@ version = "0.3.0"
 
 [workspace.dependencies]
 janus_aggregator = { version = "0.3", path = "aggregator" }
+janus_aggregator_core = { version = "0.3", path = "aggregator_core" }
 janus_build_script_utils = { version = "0.3", path = "build_script_utils" }
 janus_client = { version = "0.3", path = "client" }
 janus_collector = { version = "0.3", path = "collector" }

@@ -1,8 +1,8 @@
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures::future::join_all;
-use janus_aggregator::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use janus_core::{
+    task::PRIO3_AES128_VERIFY_KEY_LENGTH,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},
     time::{Clock, RealClock, TimeExt},
 };

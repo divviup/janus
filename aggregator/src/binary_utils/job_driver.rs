@@ -1,7 +1,7 @@
 //! Discovery and driving of jobs scheduled elsewhere.
 
-use crate::datastore::{self, models::Lease};
 use chrono::NaiveDateTime;
+use janus_aggregator_core::datastore::{self, models::Lease};
 use janus_core::{time::Clock, Runtime};
 use opentelemetry::{
     metrics::{Meter, Unit},
@@ -255,8 +255,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::JobDriver;
-    use crate::datastore::{self, models::Lease};
     use chrono::NaiveDateTime;
+    use janus_aggregator_core::datastore::{self, models::Lease};
     use janus_core::{
         task::VdafInstance,
         test_util::{install_test_trace_subscriber, runtime::TestRuntimeManager},

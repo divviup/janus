@@ -1,7 +1,7 @@
 #![cfg(feature = "daphne")]
 
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
-use janus_aggregator::task::Task;
+use janus_aggregator_core::task::Task;
 use janus_core::{
     task::VdafInstance,
     test_util::{install_test_trace_subscriber, testcontainers::container_client},

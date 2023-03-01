@@ -18,6 +18,7 @@ base64 = "0.21.0"
 futures = "0.3.26"
 hex = "0.4"
 janus_aggregator = { workspace = true, features = ["test-util"] }
+janus_aggregator_core = { workspace = true, features = ["test-util"] }
 janus_client.workspace = true
 janus_core = { workspace = true, features = ["test-util"] }
 janus_interop_binaries = { workspace = true, features = ["testcontainer"] }

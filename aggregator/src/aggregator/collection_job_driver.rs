@@ -1,17 +1,8 @@
 //! Implements portions of collect sub-protocol for DAP leader and helper.
 
-use crate::{
-    aggregator::{
-        aggregate_share::compute_aggregate_share, query_type::CollectableQueryType,
-        send_request_to_helper, Error,
-    },
-    datastore::{
-        self,
-        models::AcquiredCollectionJob,
-        models::{CollectionJobState, Lease},
-        Datastore,
-    },
-    task::{self, PRIO3_AES128_VERIFY_KEY_LENGTH},
+use crate::aggregator::{
+    aggregate_share::compute_aggregate_share, query_type::CollectableQueryType,
+    send_request_to_helper, Error,
 };
 use derivative::Derivative;
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -19,6 +10,16 @@ use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
 use futures::future::BoxFuture;
+use janus_aggregator_core::{
+    datastore::{
+        self,
+        models::AcquiredCollectionJob,
+        models::{CollectionJobState, Lease},
+        Datastore,
+    },
+    task,
+};
+use janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 #[cfg(feature = "test-util")]
 use janus_core::test_util::dummy_vdaf;
 use janus_core::{task::VdafInstance, time::Clock};
@@ -704,6 +705,10 @@ mod tests {
     use crate::{
         aggregator::{collection_job_driver::CollectionJobDriver, DapProblemType, Error},
         binary_utils::job_driver::JobDriver,
+    };
+    use assert_matches::assert_matches;
+    use http::{header::CONTENT_TYPE, StatusCode};
+    use janus_aggregator_core::{
         datastore::{
             models::{
                 AcquiredCollectionJob, AggregationJob, AggregationJobState, BatchAggregation,
@@ -716,8 +721,6 @@ mod tests {
         messages::TimeExt,
         task::{test_util::TaskBuilder, QueryType, Task},
     };
-    use assert_matches::assert_matches;
-    use http::{header::CONTENT_TYPE, StatusCode};
     use janus_core::{
         task::VdafInstance,
         test_util::{

@@ -1,12 +1,12 @@
 //! In-memory accumulation of output shares.
 
-use super::query_type::AccumulableQueryType;
-use crate::{
-    datastore::{self, models::BatchAggregation, Transaction},
-    task::Task,
-};
 use derivative::Derivative;
 use futures::future::try_join_all;
+use janus_aggregator_core::{
+    datastore::{self, models::BatchAggregation, Transaction},
+    query_type::AccumulableQueryType,
+    task::Task,
+};
 use janus_core::{report_id::ReportIdChecksumExt, time::Clock};
 use janus_messages::{ReportId, ReportIdChecksum, Time};
 use prio::vdaf::{self};

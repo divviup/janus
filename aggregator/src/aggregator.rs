@@ -1,12 +1,24 @@
 //! Common functionality for DAP aggregators.
 
-use crate::{
-    aggregator::{
-        accumulator::Accumulator,
-        aggregate_share::compute_aggregate_share,
-        query_type::{AccumulableQueryType, CollectableQueryType, UploadableQueryType},
-        report_writer::{ReportWriteBatcher, WritableReport},
-    },
+use crate::aggregator::{
+    accumulator::Accumulator,
+    aggregate_share::compute_aggregate_share,
+    query_type::{CollectableQueryType, UploadableQueryType},
+    report_writer::{ReportWriteBatcher, WritableReport},
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use bytes::Bytes;
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::{
+    types::extra::{U15, U31, U63},
+    FixedI16, FixedI32, FixedI64,
+};
+use http::{
+    header::{CACHE_CONTROL, CONTENT_TYPE},
+    HeaderMap, Method, StatusCode,
+};
+use http_api_problem::HttpApiProblem;
+use janus_aggregator_core::{
     datastore::{
         self,
         models::{
@@ -16,19 +28,15 @@ use crate::{
         Datastore, Transaction,
     },
     messages::{DurationExt, IntervalExt, TimeExt},
-    task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    query_type::AccumulableQueryType,
+    task::{self, Task, VerifyKey},
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use bytes::Bytes;
-use http::{
-    header::{CACHE_CONTROL, CONTENT_TYPE},
-    HeaderMap, Method, StatusCode,
-};
-use http_api_problem::HttpApiProblem;
+#[cfg(feature = "test-util")]
+use janus_core::test_util::dummy_vdaf;
 use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::response_to_problem_details,
-    task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER},
+    task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER, PRIO3_AES128_VERIFY_KEY_LENGTH},
     time::Clock,
 };
 use janus_messages::{
@@ -76,15 +84,6 @@ use tokio::{sync::Mutex, try_join};
 use tracing::{debug, error, info, warn};
 use url::Url;
 use warp::{cors::Cors, filters::BoxedFilter, reply::Response, trace, Filter, Rejection, Reply};
-
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{
-    types::extra::{U15, U31, U63},
-    FixedI16, FixedI32, FixedI64,
-};
-
-#[cfg(feature = "test-util")]
-use janus_core::test_util::dummy_vdaf;
 
 pub mod accumulator;
 #[cfg(test)]
@@ -174,7 +173,7 @@ pub enum Error {
     Hpke(#[from] janus_core::hpke::Error),
     /// Error handling task parameters.
     #[error("invalid task parameters: {0}")]
-    TaskParameters(#[from] crate::task::Error),
+    TaskParameters(#[from] task::Error),
     /// Error making an HTTP request.
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
@@ -4594,26 +4593,11 @@ async fn send_request_to_helper<T: Encode>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        aggregator::{
-            aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
-            aggregator_filter,
-            collection_job_tests::setup_collection_job_test_case,
-            error_handler, send_request_to_helper, Aggregator, BatchMismatch, CollectableQueryType,
-            Config, Error,
-        },
-        datastore::{
-            models::{
-                AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
-                CollectionJob, CollectionJobState, ReportAggregation, ReportAggregationState,
-            },
-            test_util::{ephemeral_datastore, EphemeralDatastore},
-            Datastore,
-        },
-        messages::{DurationExt, TimeExt},
-        task::{
-            test_util::TaskBuilder, QueryType, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH,
-        },
+    use crate::aggregator::{
+        aggregate_init_tests::{put_aggregation_job, setup_aggregate_init_test},
+        aggregator_filter,
+        collection_job_tests::setup_collection_job_test_case,
+        error_handler, send_request_to_helper, Aggregator, BatchMismatch, Config, Error,
     };
     use assert_matches::assert_matches;
     use futures::future::{join_all, try_join_all};
@@ -4623,12 +4607,25 @@ mod tests {
     };
     use hyper::body;
     use itertools::Itertools;
+    use janus_aggregator_core::{
+        datastore::{
+            models::{
+                AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,
+                CollectionJob, CollectionJobState, ReportAggregation, ReportAggregationState,
+            },
+            test_util::{ephemeral_datastore, EphemeralDatastore},
+            Datastore,
+        },
+        messages::{DurationExt, TimeExt},
+        query_type::CollectableQueryType,
+        task::{test_util::TaskBuilder, QueryType, Task, VerifyKey},
+    };
     use janus_core::{
         hpke::{
             self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo, Label,
         },
         report_id::ReportIdChecksumExt,
-        task::{AuthenticationToken, VdafInstance},
+        task::{AuthenticationToken, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
         time::{Clock, MockClock, RealClock, TimeExt as _},
     };

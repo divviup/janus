@@ -128,7 +128,7 @@ impl TimeExt for Time {
 }
 
 /// Extension methods on [`Interval`].
-pub(crate) trait IntervalExt {
+pub trait IntervalExt {
     /// Returns a [`Time`] representing the excluded end of this interval.
     fn end(&self) -> Time;
 }

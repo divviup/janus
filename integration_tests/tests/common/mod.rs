@@ -1,6 +1,6 @@
 use backoff::{future::retry, ExponentialBackoffBuilder};
 use itertools::Itertools;
-use janus_aggregator::task::{test_util::TaskBuilder, QueryType, Task};
+use janus_aggregator_core::task::{test_util::TaskBuilder, QueryType, Task};
 use janus_collector::{
     test_util::collect_with_rewritten_url, Collection, Collector, CollectorParameters,
 };

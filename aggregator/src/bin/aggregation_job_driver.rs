@@ -135,11 +135,10 @@ mod tests {
     use super::{Config, Options};
     use clap::CommandFactory;
     use janus_aggregator::config::{
-        test_util::{
-            generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
-        },
+        test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
         CommonConfig, JobDriverConfig,
     };
+    use janus_core::test_util::roundtrip_encoding;
     use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]

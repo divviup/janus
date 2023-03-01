@@ -1,4 +1,4 @@
-use super::{Crypter, Datastore};
+use crate::datastore::{Crypter, Datastore};
 use deadpool_postgres::{Manager, Pool};
 use janus_core::time::Clock;
 use lazy_static::lazy_static;

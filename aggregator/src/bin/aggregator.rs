@@ -152,10 +152,7 @@ mod tests {
     use janus_aggregator::{
         aggregator,
         config::{
-            test_util::{
-                generate_db_config, generate_metrics_config, generate_trace_config,
-                roundtrip_encoding,
-            },
+            test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
             BinaryConfig, CommonConfig,
         },
         metrics::{MetricsExporterConfiguration, OtlpExporterConfiguration},
@@ -163,6 +160,7 @@ mod tests {
             OpenTelemetryTraceConfiguration, OtlpTraceConfiguration, TokioConsoleConfiguration,
         },
     };
+    use janus_core::test_util::roundtrip_encoding;
     use std::{
         collections::HashMap,
         net::{IpAddr, Ipv4Addr, SocketAddr},

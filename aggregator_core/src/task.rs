@@ -4,7 +4,6 @@ use crate::SecretBytes;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use derivative::Derivative;
 use http::HeaderValue;
-pub use janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
 use janus_core::{
     hpke::{generate_hpke_config_and_private_key, HpkeKeypair},
     task::{url_ensure_trailing_slash, AuthenticationToken, VdafInstance},
@@ -120,6 +119,7 @@ pub struct Task {
 
 impl Task {
     /// Create a new [`Task`] from the provided values
+    #[allow(clippy::too_many_arguments)]
     pub fn new<I: IntoIterator<Item = HpkeKeypair>>(
         task_id: TaskId,
         mut aggregator_endpoints: Vec<Url>,
@@ -279,8 +279,8 @@ impl Task {
     }
 
     /// Retrieve the "current" HPKE in use for this task.
-    #[cfg(test)]
-    pub(crate) fn current_hpke_key(&self) -> &HpkeKeypair {
+    #[cfg(feature = "test-util")]
+    pub fn current_hpke_key(&self) -> &HpkeKeypair {
         self.hpke_keys
             .values()
             .max_by_key(|keypair| u8::from(*keypair.config().id()))
@@ -290,7 +290,7 @@ impl Task {
     /// Returns true if the `batch_size` is valid given this task's query type and batch size
     /// parameters, per
     /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
-    pub(crate) fn validate_batch_size(&self, batch_size: u64) -> bool {
+    pub fn validate_batch_size(&self, batch_size: u64) -> bool {
         match self.query_type {
             QueryType::TimeInterval => {
                 // https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6.1.2
@@ -317,7 +317,7 @@ impl Task {
 
     /// Checks if the given aggregator authentication token is valid (i.e. matches with an
     /// authentication token recognized by this task).
-    pub(crate) fn check_aggregator_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
+    pub fn check_aggregator_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
         self.aggregator_auth_tokens
             .iter()
             .rev()
@@ -332,7 +332,7 @@ impl Task {
 
     /// Checks if the given collector authentication token is valid (i.e. matches with an
     /// authentication token recognized by this task).
-    pub(crate) fn check_collector_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
+    pub fn check_collector_auth_token(&self, auth_token: &AuthenticationToken) -> bool {
         self.collector_auth_tokens
             .iter()
             .rev()
@@ -596,12 +596,15 @@ impl<'de> Deserialize<'de> for Task {
 #[cfg(feature = "test-util")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
-    use super::{
-        AuthenticationToken, QueryType, SecretBytes, Task, VdafInstance,
-        PRIO3_AES128_VERIFY_KEY_LENGTH,
+    use crate::{
+        messages::DurationExt,
+        task::{QueryType, Task},
+        SecretBytes,
     };
-    use crate::messages::DurationExt;
-    use janus_core::hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair};
+    use janus_core::{
+        hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair},
+        task::{AuthenticationToken, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    };
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use url::Url;
@@ -805,17 +808,17 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::{SecretBytes, SerializedTask, Task, PRIO3_AES128_VERIFY_KEY_LENGTH};
     use crate::{
-        config::test_util::roundtrip_encoding,
         messages::DurationExt,
-        task::{test_util::TaskBuilder, Error, QueryType, VdafInstance},
+        task::{test_util::TaskBuilder, Error, QueryType, SerializedTask, Task, VdafInstance},
+        SecretBytes,
     };
     use assert_matches::assert_matches;
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
-        task::AuthenticationToken,
+        task::{AuthenticationToken, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        test_util::roundtrip_encoding,
     };
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,
