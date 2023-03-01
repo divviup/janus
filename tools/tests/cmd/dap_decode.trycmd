@@ -1,8 +1,8 @@
 ```
-$ dap-decode --help
+$ dap_decode --help
 Distributed Aggregation Protocol message decoder
 
-Usage: dap-decode --media-type <MEDIA_TYPE> <MESSAGE_FILE>
+Usage: dap_decode --media-type <MEDIA_TYPE> <MESSAGE_FILE>
 
 Arguments:
   <MESSAGE_FILE>  Path to file containing message to decode. Pass "-" to read from stdin

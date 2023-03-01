@@ -10,13 +10,11 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-dap-decode-bin = ["dep:clap"]
 test-util = []
 
 [dependencies]
 anyhow = "1"
 base64 = "0.21.0"
-clap = { version = "4.1.8", features = ["cargo", "derive"], optional = true }
 derivative = "2.2.0"
 hex = "0.4"
 num_enum = "0.5.11"
@@ -30,11 +28,4 @@ thiserror = "1.0"
 [dev-dependencies]
 assert_matches = "1"
 serde_test = "1.0.152"
-tracing-log = "0.1.3"
-tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"] }
 trycmd = "0.14.12"
-
-[[bin]]
-name = "dap-decode"
-path = "src/bin/dap_decode.rs"
-required-features = ["dap-decode-bin"]
