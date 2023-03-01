@@ -32,7 +32,7 @@ test-util = [
 [dependencies]
 backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.21.0"
-chrono.workspace = true
+chrono = { workspace = true, features = ["clock"] }
 derivative = "2.2.0"
 futures = "0.3.26"
 hex = "0.4"
