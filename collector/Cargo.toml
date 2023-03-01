@@ -36,7 +36,7 @@ url = "2.3.1"
 
 [dev-dependencies]
 assert_matches = "1"
-chrono = "0.4"
+chrono.workspace = true
 janus_collector = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
 mockito = "0.32.3"

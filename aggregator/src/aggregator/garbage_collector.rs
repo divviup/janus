@@ -1,7 +1,7 @@
-use crate::{datastore::Datastore, messages::TimeExt, task::Task};
+use crate::{datastore::Datastore, task::Task};
 use anyhow::{Context, Result};
 use futures::future::join_all;
-use janus_core::time::Clock;
+use janus_core::time::{Clock, TimeExt};
 use std::sync::Arc;
 use tracing::error;
 
@@ -89,7 +89,6 @@ mod tests {
             },
             test_util::ephemeral_datastore,
         },
-        messages::TimeExt,
         task::{self, test_util::TaskBuilder},
     };
     use janus_core::{
@@ -98,7 +97,7 @@ mod tests {
             dummy_vdaf::{self, AggregateShare, AggregationParam},
             install_test_trace_subscriber,
         },
-        time::{Clock, MockClock},
+        time::{Clock, MockClock, TimeExt},
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},

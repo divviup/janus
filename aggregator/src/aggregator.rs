@@ -15,7 +15,6 @@ use crate::{
         },
         Datastore, Transaction,
     },
-    messages::{DurationExt, IntervalExt, TimeExt},
     task::{self, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -29,7 +28,7 @@ use janus_core::{
     hpke::{self, HpkeApplicationInfo, Label},
     http::response_to_problem_details,
     task::{AuthenticationToken, VdafInstance, DAP_AUTH_HEADER},
-    time::Clock,
+    time::{Clock, DurationExt, IntervalExt, TimeExt},
 };
 use janus_messages::{
     problem_type::DapProblemType,
@@ -4610,7 +4609,6 @@ mod tests {
             test_util::{ephemeral_datastore, EphemeralDatastore},
             Datastore,
         },
-        messages::{DurationExt, TimeExt},
         task::{
             test_util::TaskBuilder, QueryType, Task, VerifyKey, PRIO3_AES128_VERIFY_KEY_LENGTH,
         },
@@ -4630,7 +4628,7 @@ mod tests {
         report_id::ReportIdChecksumExt,
         task::{AuthenticationToken, VdafInstance},
         test_util::{dummy_vdaf, install_test_trace_subscriber, run_vdaf},
-        time::{Clock, MockClock, RealClock, TimeExt as _},
+        time::{Clock, DurationExt, MockClock, RealClock, TimeExt},
     };
     use janus_messages::{
         problem_type::{DapProblemType, DapProblemTypeParseError},
