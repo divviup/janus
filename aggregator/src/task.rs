@@ -600,8 +600,10 @@ pub mod test_util {
         AuthenticationToken, QueryType, SecretBytes, Task, VdafInstance,
         PRIO3_AES128_VERIFY_KEY_LENGTH,
     };
-    use crate::messages::DurationExt;
-    use janus_core::hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair};
+    use janus_core::{
+        hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair},
+        time::DurationExt,
+    };
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
     use rand::{distributions::Standard, random, thread_rng, Rng};
     use url::Url;
@@ -808,7 +810,6 @@ mod tests {
     use super::{SecretBytes, SerializedTask, Task, PRIO3_AES128_VERIFY_KEY_LENGTH};
     use crate::{
         config::test_util::roundtrip_encoding,
-        messages::DurationExt,
         task::{test_util::TaskBuilder, Error, QueryType, VdafInstance},
     };
     use assert_matches::assert_matches;
@@ -816,6 +817,7 @@ mod tests {
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
         task::AuthenticationToken,
+        time::DurationExt,
     };
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,

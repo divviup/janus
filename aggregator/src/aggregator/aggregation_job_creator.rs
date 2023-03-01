@@ -3,7 +3,6 @@ use crate::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
     datastore::{models::OutstandingBatch, Datastore},
-    messages::{DurationExt as _, TimeExt as _},
     task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
 };
 #[cfg(feature = "fpvec_bounded_l2")]
@@ -11,7 +10,10 @@ use fixed::types::extra::{U15, U31, U63};
 #[cfg(feature = "fpvec_bounded_l2")]
 use fixed::{FixedI16, FixedI32, FixedI64};
 use futures::future::try_join_all;
-use janus_core::{task::VdafInstance, time::Clock};
+use janus_core::{
+    task::VdafInstance,
+    time::{Clock, DurationExt as _, TimeExt as _},
+};
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
     Duration as DurationMsg, Interval, Role, TaskId,
@@ -769,7 +771,6 @@ mod tests {
             test_util::ephemeral_datastore,
             Transaction,
         },
-        messages::TimeExt,
         task::{
             test_util::TaskBuilder, QueryType as TaskQueryType, PRIO3_AES128_VERIFY_KEY_LENGTH,
         },
@@ -781,7 +782,7 @@ mod tests {
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
         },
-        time::{Clock, MockClock},
+        time::{Clock, MockClock, TimeExt},
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},

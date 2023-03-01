@@ -6,7 +6,6 @@ pub mod binary_utils;
 pub mod config;
 #[macro_use]
 pub mod datastore;
-pub mod messages;
 pub mod metrics;
 pub mod task;
 pub mod trace;
