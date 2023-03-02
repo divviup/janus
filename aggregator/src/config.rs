@@ -131,14 +131,7 @@ pub mod test_util {
         },
     };
     use reqwest::Url;
-    use serde::{de::DeserializeOwned, Serialize};
-    use std::{collections::HashMap, fmt::Debug};
-
-    pub fn roundtrip_encoding<T: Serialize + DeserializeOwned + Debug + Eq>(value: T) {
-        let encoded = serde_yaml::to_string(&value).unwrap();
-        let decoded = serde_yaml::from_str(&encoded).unwrap();
-        assert_eq!(value, decoded);
-    }
+    use std::collections::HashMap;
 
     pub fn generate_db_config() -> DbConfig {
         DbConfig {
@@ -180,14 +173,16 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        test_util::{
-            generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
+    use crate::{
+        config::{
+            test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
+            CommonConfig, DbConfig, JobDriverConfig,
         },
-        CommonConfig, DbConfig, JobDriverConfig,
+        metrics::MetricsExporterConfiguration,
+        trace::OpenTelemetryTraceConfiguration,
     };
-    use crate::{metrics::MetricsExporterConfiguration, trace::OpenTelemetryTraceConfiguration};
     use assert_matches::assert_matches;
+    use janus_core::test_util::roundtrip_encoding;
     use std::net::{Ipv4Addr, SocketAddr};
 
     #[test]

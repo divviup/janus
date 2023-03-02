@@ -1,6 +1,6 @@
-use crate::{datastore::Datastore, task::Task};
 use anyhow::{Context, Result};
 use futures::future::join_all;
+use janus_aggregator_core::{datastore::Datastore, task::Task};
 use janus_core::time::{Clock, TimeExt};
 use std::sync::Arc;
 use tracing::error;
@@ -79,8 +79,8 @@ impl<C: Clock> GarbageCollector<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::GarbageCollector;
-    use crate::{
+    use crate::aggregator::garbage_collector::GarbageCollector;
+    use janus_aggregator_core::{
         datastore::{
             models::{
                 AggregateShareJob, AggregationJob, AggregationJobState, BatchAggregation,

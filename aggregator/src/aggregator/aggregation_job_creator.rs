@@ -1,17 +1,18 @@
-use crate::{
+#[cfg(feature = "fpvec_bounded_l2")]
+use fixed::{
+    types::extra::{U15, U31, U63},
+    FixedI16, FixedI32, FixedI64,
+};
+use futures::future::try_join_all;
+use janus_aggregator_core::{
     datastore::models::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
     datastore::{models::OutstandingBatch, Datastore},
-    task::{self, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{self, Task},
 };
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::types::extra::{U15, U31, U63};
-#[cfg(feature = "fpvec_bounded_l2")]
-use fixed::{FixedI16, FixedI32, FixedI64};
-use futures::future::try_join_all;
 use janus_core::{
-    task::VdafInstance,
+    task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt as _, TimeExt as _},
 };
 use janus_messages::{
@@ -52,23 +53,6 @@ use tokio::{
     try_join,
 };
 use tracing::{debug, error, info};
-
-/// A marker trait for VDAFs that have an aggregation parameter other than the unit type.
-pub trait VdafHasAggregationParameter: private::Sealed {}
-
-impl<I, P, const L: usize> VdafHasAggregationParameter for prio::vdaf::poplar1::Poplar1<I, P, L> {}
-
-#[cfg(test)]
-impl VdafHasAggregationParameter for janus_core::test_util::dummy_vdaf::Vdaf {}
-
-mod private {
-    pub trait Sealed {}
-
-    impl<I, P, const L: usize> Sealed for prio::vdaf::poplar1::Poplar1<I, P, L> {}
-
-    #[cfg(test)]
-    impl Sealed for janus_core::test_util::dummy_vdaf::Vdaf {}
-}
 
 // TODO(#680): add metrics to aggregation job creator.
 pub struct AggregationJobCreator<C: Clock> {
@@ -654,7 +638,7 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
         task: Arc<Task>,
     ) -> anyhow::Result<bool>
     where
-        A: vdaf::Aggregator<L> + VdafHasAggregationParameter,
+        A: vdaf::Aggregator<L> + janus_aggregator_core::VdafHasAggregationParameter,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
         A::PrepareMessage: Send + Sync,
         A::PrepareState: Send + Sync + Encode,
@@ -764,20 +748,18 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
 #[cfg(test)]
 mod tests {
     use super::AggregationJobCreator;
-    use crate::{
-        aggregator::query_type::AccumulableQueryType,
+    use futures::{future::try_join_all, TryFutureExt};
+    use janus_aggregator_core::{
         datastore::{
             models::{AggregationJob, CollectionJob, CollectionJobState, LeaderStoredReport},
             test_util::ephemeral_datastore,
             Transaction,
         },
-        task::{
-            test_util::TaskBuilder, QueryType as TaskQueryType, PRIO3_AES128_VERIFY_KEY_LENGTH,
-        },
+        query_type::AccumulableQueryType,
+        task::{test_util::TaskBuilder, QueryType as TaskQueryType},
     };
-    use futures::{future::try_join_all, TryFutureExt};
     use janus_core::{
-        task::VdafInstance,
+        task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,

@@ -54,6 +54,7 @@ hex = { version = "0.4.3", features = ["serde"], optional = true }
 http = "0.2.9"
 http-api-problem = "0.56.0"
 hyper = "0.14.24"
+janus_aggregator_core.workspace = true
 janus_core.workspace = true
 janus_messages.workspace = true
 k8s-openapi.workspace = true
@@ -101,8 +102,8 @@ itertools = "0.10.5"
 # Kubernetes clusters. Enable the `test-util` feature for various utilities
 # used in unit tests.
 janus_aggregator = { workspace = true, features = ["fpvec_bounded_l2", "kube-openssl", "test-util"] }
+janus_aggregator_core = { workspace = true, features = ["test-util"] }
 mockito = "0.32.3"
-serde_test = "1.0.152"
 tempfile = "3.4.0"
 tokio = { version = "1", features = ["test-util"] }  # ensure this remains compatible with the non-dev dependency
 trycmd = "0.14.12"

@@ -5,10 +5,12 @@ use deadpool_postgres::Pool;
 use janus_aggregator::{
     binary_utils::{database_pool, datastore, read_config, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
-    datastore::{self, Datastore},
     metrics::install_metrics_exporter,
-    task::{SerializedTask, Task},
     trace::install_trace_subscriber,
+};
+use janus_aggregator_core::{
+    datastore::{self, Datastore},
+    task::{SerializedTask, Task},
 };
 use janus_core::time::{Clock, RealClock};
 use k8s_openapi::api::core::v1::Secret;
@@ -449,17 +451,21 @@ mod tests {
     use clap::CommandFactory;
     use janus_aggregator::{
         binary_utils::CommonBinaryOptions,
-        config::test_util::{
-            generate_db_config, generate_metrics_config, generate_trace_config, roundtrip_encoding,
-        },
+        config::test_util::{generate_db_config, generate_metrics_config, generate_trace_config},
         config::CommonConfig,
+    };
+    use janus_aggregator_core::{
         datastore::{
             test_util::{ephemeral_datastore, ephemeral_datastore_no_schema},
             Datastore,
         },
         task::{test_util::TaskBuilder, QueryType, Task},
     };
-    use janus_core::{task::VdafInstance, test_util::kubernetes, time::RealClock};
+    use janus_core::{
+        task::VdafInstance,
+        test_util::{kubernetes, roundtrip_encoding},
+        time::RealClock,
+    };
     use janus_messages::{Role, TaskId};
     use ring::aead::{UnboundKey, AES_128_GCM};
     use std::{

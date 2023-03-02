@@ -1,5 +1,5 @@
 use common::{submit_measurements_and_verify_aggregate, test_task_builders};
-use janus_aggregator::task::{QueryType, Task};
+use janus_aggregator_core::task::{QueryType, Task};
 use janus_core::{
     hpke::HpkePrivateKey,
     task::VdafInstance,

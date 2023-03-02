@@ -4,7 +4,7 @@
 //! it times out waiting for the process to do so.
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
-use janus_aggregator::{
+use janus_aggregator_core::{
     datastore::test_util::ephemeral_datastore,
     task::{test_util::TaskBuilder, QueryType},
 };

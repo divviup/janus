@@ -3,8 +3,8 @@
 use janus_aggregator::{
     binary_utils::{database_pool, datastore},
     config::DbConfig,
-    task::Task,
 };
+use janus_aggregator_core::task::Task;
 use janus_core::{
     test_util::kubernetes::{Cluster, PortForward},
     time::RealClock,

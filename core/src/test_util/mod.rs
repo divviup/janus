@@ -4,7 +4,8 @@ use prio::{
     codec::Encode,
     vdaf::{self, PrepareTransition, VdafError},
 };
-use std::sync::Once;
+use serde::{de::DeserializeOwned, Serialize};
+use std::{fmt::Debug, sync::Once};
 use tracing_log::LogTracer;
 use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 
@@ -137,6 +138,14 @@ where
             pts.push(vdaf.prepare_step(prep_state, prep_msg.clone()).unwrap());
         }
     }
+}
+
+/// Encodes the given value to YAML, then decodes it again, and checks that the
+/// resulting value is equal to the given value.
+pub fn roundtrip_encoding<T: Serialize + DeserializeOwned + Debug + Eq>(value: T) {
+    let encoded = serde_yaml::to_string(&value).unwrap();
+    let decoded = serde_yaml::from_str(&encoded).unwrap();
+    assert_eq!(value, decoded);
 }
 
 /// Install a tracing subscriber for use in tests. This should be called at the beginning of any

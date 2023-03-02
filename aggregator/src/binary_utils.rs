@@ -4,7 +4,6 @@ pub mod job_driver;
 
 use crate::{
     config::{BinaryConfig, DbConfig},
-    datastore::{Crypter, Datastore},
     metrics::{install_metrics_exporter, MetricsExporterConfiguration},
     trace::{cleanup_trace_subscriber, install_trace_subscriber, OpenTelemetryTraceConfiguration},
 };
@@ -17,6 +16,7 @@ use deadpool_postgres::{Manager, Pool, PoolError, Runtime, Timeouts};
 use futures::StreamExt;
 use git_version::git_version;
 use http::StatusCode;
+use janus_aggregator_core::datastore::{Crypter, Datastore};
 use janus_core::time::Clock;
 use opentelemetry::{Context, KeyValue};
 use ring::aead::{LessSafeKey, UnboundKey, AES_128_GCM};

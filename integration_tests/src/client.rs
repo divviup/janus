@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use janus_aggregator::task::Task;
+use janus_aggregator_core::task::Task;
 use janus_client::{aggregator_hpke_config, default_http_client, Client, ClientParameters};
 use janus_core::{task::VdafInstance, time::RealClock};
 use janus_interop_binaries::ContainerLogsDropGuard;

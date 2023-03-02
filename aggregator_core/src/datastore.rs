@@ -6,10 +6,10 @@ use self::models::{
     LeaderStoredReport, Lease, LeaseToken, OutstandingBatch, ReportAggregation,
     ReportAggregationState, ReportAggregationStateCode, SqlInterval,
 };
-#[cfg(test)]
-use crate::aggregator::aggregation_job_creator::VdafHasAggregationParameter;
+#[cfg(feature = "test-util")]
+use crate::VdafHasAggregationParameter;
 use crate::{
-    aggregator::query_type::{AccumulableQueryType, CollectableQueryType},
+    query_type::{AccumulableQueryType, CollectableQueryType},
     task::{self, Task},
     SecretBytes,
 };
@@ -1052,7 +1052,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// has the unit type as its aggregation parameter, then
     /// `get_unaggregated_client_report_ids_for_task` should be used instead. In such cases, it is
     /// not necessary to wait for a collection job to arrive before preparing reports.
-    #[cfg(test)]
+    #[cfg(feature = "test-util")]
     #[tracing::instrument(skip(self), err)]
     pub async fn get_unaggregated_client_report_ids_by_collect_for_task<const L: usize, A>(
         &self,
@@ -1213,7 +1213,7 @@ impl<C: Clock> Transaction<'_, C> {
     /// was already a row in the table matching `new_report`. Returns an error if something goes
     /// wrong or if the report ID is already in use with different values.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn put_client_report<const L: usize, A>(
+    pub async fn put_client_report<const L: usize, A>(
         &self,
         vdaf: &A,
         new_report: &LeaderStoredReport<L, A>,
@@ -2250,7 +2250,7 @@ impl<C: Clock> Transaction<'_, C> {
 
     /// Stores a new collection job.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn put_collection_job<
+    pub async fn put_collection_job<
         const L: usize,
         Q: CollectableQueryType,
         A: vdaf::Aggregator<L>,
@@ -2481,11 +2481,7 @@ ORDER BY id DESC
 
     /// Updates an existing collection job.
     #[tracing::instrument(skip(self), err)]
-    pub(crate) async fn update_collection_job<
-        const L: usize,
-        Q: QueryType,
-        A: vdaf::Aggregator<L>,
-    >(
+    pub async fn update_collection_job<const L: usize, Q: QueryType, A: vdaf::Aggregator<L>>(
         &self,
         collection_job: &CollectionJob<L, Q, A>,
     ) -> Result<(), Error>
@@ -3700,8 +3696,7 @@ impl From<ring::error::Unspecified> for Error {
 
 /// This module contains models used by the datastore that are not DAP messages.
 pub mod models {
-    use super::Error;
-    use crate::task;
+    use crate::{datastore::Error, task};
     use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::NaiveDateTime;
     use derivative::Derivative;
@@ -3826,7 +3821,7 @@ pub mod models {
     {
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-util")]
     impl LeaderStoredReport<0, janus_core::test_util::dummy_vdaf::Vdaf> {
         pub fn new_dummy(task_id: TaskId, when: Time) -> Self {
             use janus_messages::HpkeConfigId;
@@ -3860,7 +3855,7 @@ pub mod models {
     impl AggregatorRole {
         /// If the provided [`Role`] is an aggregator, returns the corresponding
         /// [`AggregatorRole`], or `None` otherwise.
-        pub(super) fn from_role(role: Role) -> Result<Self, Error> {
+        pub fn from_role(role: Role) -> Result<Self, Error> {
             match role {
                 Role::Leader => Ok(Self::Leader),
                 Role::Helper => Ok(Self::Helper),
@@ -3871,7 +3866,7 @@ pub mod models {
         }
 
         /// Returns the [`Role`] corresponding to this value.
-        pub(super) fn as_role(&self) -> Role {
+        pub fn as_role(&self) -> Role {
             match self {
                 Self::Leader => Role::Leader,
                 Self::Helper => Role::Helper,
@@ -4064,7 +4059,7 @@ pub mod models {
 
     impl<T> Lease<T> {
         /// Creates a new [`Lease`].
-        pub(super) fn new(
+        pub fn new(
             leased: T,
             lease_expiry_time: NaiveDateTime,
             lease_token: LeaseToken,
@@ -4080,7 +4075,7 @@ pub mod models {
 
         /// Create a new artificial lease with a random lease token, acquired for the first time;
         /// intended for use in unit tests.
-        #[cfg(test)]
+        #[cfg(feature = "test-util")]
         pub fn new_dummy(leased: T, lease_expiry_time: NaiveDateTime) -> Self {
             use rand::random;
             Self {
@@ -4332,7 +4327,7 @@ pub mod models {
     where
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        pub(super) fn state_code(&self) -> ReportAggregationStateCode {
+        pub fn state_code(&self) -> ReportAggregationStateCode {
             match self {
                 ReportAggregationState::Start => ReportAggregationStateCode::Start,
                 ReportAggregationState::Waiting(_, _) => ReportAggregationStateCode::Waiting,
@@ -4389,7 +4384,7 @@ pub mod models {
     // non-C-style enum.
     #[derive(Debug, FromSql, ToSql)]
     #[postgres(name = "report_aggregation_state")]
-    pub(super) enum ReportAggregationStateCode {
+    pub enum ReportAggregationStateCode {
         #[postgres(name = "START")]
         Start,
         #[postgres(name = "WAITING")]
@@ -4739,7 +4734,7 @@ pub mod models {
         A: vdaf::Aggregator<L>,
         for<'a> &'a A::AggregateShare: Into<Vec<u8>>,
     {
-        pub(super) fn collection_job_state_code(&self) -> CollectionJobStateCode {
+        pub fn collection_job_state_code(&self) -> CollectionJobStateCode {
             match self {
                 Self::Start => CollectionJobStateCode::Start,
                 Self::Finished { .. } => CollectionJobStateCode::Finished,
@@ -4805,7 +4800,7 @@ pub mod models {
 
     #[derive(Debug, FromSql, ToSql)]
     #[postgres(name = "collection_job_state")]
-    pub(super) enum CollectionJobStateCode {
+    pub enum CollectionJobStateCode {
         #[postgres(name = "START")]
         Start,
         #[postgres(name = "FINISHED")]
@@ -5108,17 +5103,18 @@ pub mod models {
 #[cfg(test)]
 mod tests {
     use crate::{
-        aggregator::query_type::CollectableQueryType,
         datastore::{
             models::{
-                AcquiredAggregationJob, AggregateShareJob, AggregationJob, AggregationJobState,
-                BatchAggregation, CollectionJob, CollectionJobState, LeaderStoredReport, Lease,
-                OutstandingBatch, ReportAggregation, ReportAggregationState, SqlInterval,
+                AcquiredAggregationJob, AcquiredCollectionJob, AggregateShareJob, AggregationJob,
+                AggregationJobState, BatchAggregation, CollectionJob, CollectionJobState,
+                LeaderStoredReport, Lease, OutstandingBatch, ReportAggregation,
+                ReportAggregationState, SqlInterval,
             },
             test_util::{ephemeral_datastore, generate_aead_key},
-            Crypter, Error, Transaction,
+            Crypter, Datastore, Error, Transaction,
         },
-        task::{self, test_util::TaskBuilder, Task, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        query_type::CollectableQueryType,
+        task::{self, test_util::TaskBuilder, Task},
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
@@ -5126,7 +5122,7 @@ mod tests {
     use futures::future::try_join_all;
     use janus_core::{
         hpke::{self, HpkeApplicationInfo, Label},
-        task::VdafInstance,
+        task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
         test_util::{
             dummy_vdaf::{self, AggregateShare, AggregationParam},
             install_test_trace_subscriber, run_vdaf,
@@ -5151,8 +5147,6 @@ mod tests {
         sync::Arc,
         time::Duration as StdDuration,
     };
-
-    use super::{models::AcquiredCollectionJob, Datastore};
 
     #[tokio::test]
     async fn roundtrip_task() {

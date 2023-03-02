@@ -28,4 +28,3 @@ thiserror = "1.0"
 [dev-dependencies]
 assert_matches = "1"
 serde_test = "1.0.152"
-trycmd = "0.14.12"

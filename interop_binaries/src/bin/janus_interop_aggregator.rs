@@ -5,8 +5,10 @@ use janus_aggregator::{
     aggregator::{self, aggregator_filter},
     binary_utils::{janus_main, BinaryOptions, CommonBinaryOptions},
     config::{BinaryConfig, CommonConfig},
+};
+use janus_aggregator_core::{
     datastore::Datastore,
-    task::Task,
+    task::{self, Task},
     SecretBytes,
 };
 use janus_core::{task::AuthenticationToken, time::RealClock};
@@ -63,8 +65,8 @@ async fn handle_add_task(
     let hpke_keypair = keyring.lock().await.get_random_keypair();
 
     let query_type = match request.query_type {
-        1 => janus_aggregator::task::QueryType::TimeInterval,
-        2 => janus_aggregator::task::QueryType::FixedSize {
+        1 => task::QueryType::TimeInterval,
+        2 => task::QueryType::FixedSize {
             max_batch_size: request
                 .max_batch_size
                 .ok_or_else(|| anyhow::anyhow!("\"max_batch_size\" is missing"))?,

@@ -1,7 +1,7 @@
 //! Implements functionality for computing & validating aggregate shares.
 
 use super::Error;
-use crate::{datastore::models::BatchAggregation, task::Task};
+use janus_aggregator_core::{datastore::models::BatchAggregation, task::Task};
 use janus_core::report_id::ReportIdChecksumExt;
 use janus_messages::{query_type::QueryType, ReportIdChecksum};
 use prio::vdaf::{self, Aggregatable};

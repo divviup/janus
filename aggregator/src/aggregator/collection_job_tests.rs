@@ -1,5 +1,7 @@
-use crate::{
-    aggregator::{aggregator_filter, Config},
+use crate::aggregator::{aggregator_filter, Config};
+use http::{header::CONTENT_TYPE, StatusCode};
+use hyper::body;
+use janus_aggregator_core::{
     datastore::{
         models::{
             AggregationJob, AggregationJobState, CollectionJobState, LeaderStoredReport,
@@ -10,8 +12,6 @@ use crate::{
     },
     task::{test_util::TaskBuilder, QueryType, Task},
 };
-use http::{header::CONTENT_TYPE, StatusCode};
-use hyper::body;
 use janus_core::{
     hpke::{
         self, test_util::generate_test_hpke_config_and_private_key, HpkeApplicationInfo,
