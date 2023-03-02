@@ -718,7 +718,6 @@ mod tests {
             test_util::ephemeral_datastore,
             Datastore,
         },
-        messages::TimeExt,
         task::{test_util::TaskBuilder, QueryType, Task},
     };
     use janus_core::{
@@ -728,7 +727,7 @@ mod tests {
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
         },
-        time::{Clock, MockClock, TimeExt as CoreTimeExt},
+        time::{Clock, MockClock, TimeExt},
         Runtime,
     };
     use janus_messages::{

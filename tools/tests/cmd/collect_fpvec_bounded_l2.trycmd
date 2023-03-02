@@ -1,0 +1,70 @@
+```
+$ collect --help
+Command-line DAP-PPM collector from ISRG's Divvi Up
+
+Usage: collect [OPTIONS] --task-id <TASK_ID> --leader <LEADER> --auth-token <AUTH_TOKEN> --hpke-config <HPKE_CONFIG> --hpke-private-key <HPKE_PRIVATE_KEY> --vdaf <VDAF>
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+DAP Task Parameters:
+      --task-id <TASK_ID>
+          DAP task identifier, encoded with base64url
+
+      --leader <LEADER>
+          The leader aggregator's endpoint URL
+
+      --auth-token <AUTH_TOKEN>
+          Authentication token for the DAP-Auth-Token HTTP header
+          
+          [env: AUTH_TOKEN=]
+
+      --hpke-config <HPKE_CONFIG>
+          DAP message for the collector's HPKE configuration, encoded with base64url
+
+      --hpke-private-key <HPKE_PRIVATE_KEY>
+          The collector's HPKE private key, encoded with base64url
+          
+          [env: HPKE_PRIVATE_KEY=]
+
+VDAF Algorithm and Parameters:
+      --vdaf <VDAF>
+          VDAF algorithm
+
+          Possible values:
+          - count:                          Prio3Aes128Count
+          - countvec:                       Prio3Aes128CountVec
+          - sum:                            Prio3Aes128Sum
+          - histogram:                      Prio3Aes128Histogram
+          - fixedpoint16bitboundedl2vecsum: Prio3FixedPoint16BitBoundedL2VecSum
+          - fixedpoint32bitboundedl2vecsum: Prio3FixedPoint32BitBoundedL2VecSum
+          - fixedpoint64bitboundedl2vecsum: Prio3FixedPoint64BitBoundedL2VecSum
+
+      --length <LENGTH>
+          Number of vector elements, for use with --vdaf=countvec
+
+      --bits <BITS>
+          Bit length of measurements, for use with --vdaf=sum
+
+      --buckets <BUCKETS>
+          Comma-separated list of bucket boundaries, for use with --vdaf=histogram
+
+Collect Request Parameters (Time Interval):
+      --batch-interval-start <BATCH_INTERVAL_START>
+          Start of the collection batch interval, as the number of seconds since the Unix epoch
+
+      --batch-interval-duration <BATCH_INTERVAL_DURATION>
+          Duration of the collection batch interval, in seconds
+
+Collect Request Parameters (Fixed Size):
+      --batch-id <BATCH_ID>
+          Batch identifier, encoded with base64url
+
+      --current-batch
+          Have the aggregator select a batch that has not yet been collected
+
+```

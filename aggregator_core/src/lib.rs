@@ -4,7 +4,6 @@
 use janus_core::test_util::dummy_vdaf;
 
 pub mod datastore;
-pub mod messages;
 pub mod query_type;
 pub mod task;
 

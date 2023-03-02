@@ -9,7 +9,6 @@ use self::models::{
 #[cfg(feature = "test-util")]
 use crate::VdafHasAggregationParameter;
 use crate::{
-    messages::TimeExt,
     query_type::{AccumulableQueryType, CollectableQueryType},
     task::{self, Task},
     SecretBytes,
@@ -20,7 +19,7 @@ use futures::future::try_join_all;
 use janus_core::{
     hpke::{HpkeKeypair, HpkePrivateKey},
     task::{AuthenticationToken, VdafInstance},
-    time::Clock,
+    time::{Clock, TimeExt},
 };
 use janus_messages::{
     query_type::{QueryType, TimeInterval},
@@ -3697,15 +3696,15 @@ impl From<ring::error::Unspecified> for Error {
 
 /// This module contains models used by the datastore that are not DAP messages.
 pub mod models {
-    use crate::{
-        datastore::Error,
-        messages::{DurationExt, IntervalExt, TimeExt},
-        task,
-    };
+    use crate::{datastore::Error, task};
     use base64::{display::Base64Display, engine::general_purpose::URL_SAFE_NO_PAD};
     use chrono::NaiveDateTime;
     use derivative::Derivative;
-    use janus_core::{report_id::ReportIdChecksumExt, task::VdafInstance};
+    use janus_core::{
+        report_id::ReportIdChecksumExt,
+        task::VdafInstance,
+        time::{DurationExt, IntervalExt, TimeExt},
+    };
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},
         AggregationJobId, BatchId, CollectionJobId, Duration, Extension, HpkeCiphertext, Interval,
@@ -5114,7 +5113,6 @@ mod tests {
             test_util::{ephemeral_datastore, generate_aead_key},
             Crypter, Datastore, Error, Transaction,
         },
-        messages::{DurationExt, TimeExt},
         query_type::CollectableQueryType,
         task::{self, test_util::TaskBuilder, Task},
     };
@@ -5129,7 +5127,7 @@ mod tests {
             dummy_vdaf::{self, AggregateShare, AggregationParam},
             install_test_trace_subscriber, run_vdaf,
         },
-        time::{Clock, MockClock, TimeExt as CoreTimeExt},
+        time::{Clock, DurationExt, MockClock, TimeExt},
     };
     use janus_messages::{
         query_type::{FixedSize, QueryType, TimeInterval},

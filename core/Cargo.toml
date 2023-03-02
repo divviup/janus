@@ -33,7 +33,7 @@ test-util = [
 assert_matches = { version = "1", optional = true }
 backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.21.0"
-chrono = "0.4"
+chrono.workspace = true
 derivative = "2.2.0"
 futures = "0.3.26"
 hex = "0.4"

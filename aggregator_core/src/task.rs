@@ -597,13 +597,13 @@ impl<'de> Deserialize<'de> for Task {
 #[cfg_attr(docsrs, doc(cfg(feature = "test-util")))]
 pub mod test_util {
     use crate::{
-        messages::DurationExt,
         task::{QueryType, Task},
         SecretBytes,
     };
     use janus_core::{
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair},
         task::{AuthenticationToken, VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        time::DurationExt,
     };
     use janus_messages::{Duration, HpkeConfig, HpkeConfigId, Role, TaskId, Time};
     use rand::{distributions::Standard, random, thread_rng, Rng};
@@ -809,7 +809,6 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::{
-        messages::DurationExt,
         task::{test_util::TaskBuilder, Error, QueryType, SerializedTask, Task, VdafInstance},
         SecretBytes,
     };
@@ -819,6 +818,7 @@ mod tests {
         hpke::{test_util::generate_test_hpke_config_and_private_key, HpkeKeypair, HpkePrivateKey},
         task::{AuthenticationToken, PRIO3_AES128_VERIFY_KEY_LENGTH},
         test_util::roundtrip_encoding,
+        time::DurationExt,
     };
     use janus_messages::{
         Duration, HpkeAeadId, HpkeConfig, HpkeConfigId, HpkeKdfId, HpkeKemId, HpkePublicKey, Role,

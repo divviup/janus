@@ -9,12 +9,11 @@ use janus_aggregator_core::{
         AggregationJob, AggregationJobState, ReportAggregation, ReportAggregationState,
     },
     datastore::{models::OutstandingBatch, Datastore},
-    messages::{DurationExt as _, TimeExt as _},
     task::{self, Task},
 };
 use janus_core::{
     task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
-    time::Clock,
+    time::{Clock, DurationExt as _, TimeExt as _},
 };
 use janus_messages::{
     query_type::{FixedSize, TimeInterval},
@@ -756,7 +755,6 @@ mod tests {
             test_util::ephemeral_datastore,
             Transaction,
         },
-        messages::TimeExt,
         query_type::AccumulableQueryType,
         task::{test_util::TaskBuilder, QueryType as TaskQueryType},
     };
@@ -766,7 +764,7 @@ mod tests {
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
         },
-        time::{Clock, MockClock},
+        time::{Clock, MockClock, TimeExt},
     };
     use janus_messages::{
         query_type::{FixedSize, TimeInterval},
