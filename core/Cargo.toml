@@ -60,6 +60,7 @@ tracing-subscriber = { version = "0.3", features = ["std", "env-filter", "fmt"],
 
 [dev-dependencies]
 hex = { version = "0.4", features = ["serde"] }  # ensure this remains compatible with the non-dev dependency
+janus_core = { workspace = true, features = ["test-util"] }
 # Enable `kube`'s `openssl-tls` feature (which takes precedence over the
 # `rustls-tls` feature when creating a default client) to work around rustls's
 # lack of support for connecting to servers by IP addresses, which affects many
