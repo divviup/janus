@@ -289,7 +289,7 @@ impl Task {
 
     /// Returns true if the `batch_size` is valid given this task's query type and batch size
     /// parameters, per
-    /// https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6
+    /// <https://www.ietf.org/archive/id/draft-ietf-ppm-dap-02.html#section-4.5.6>
     pub fn validate_batch_size(&self, batch_size: u64) -> bool {
         match self.query_type {
             QueryType::TimeInterval => {
