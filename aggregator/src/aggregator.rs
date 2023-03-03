@@ -1048,7 +1048,8 @@ impl VdafOps {
                         task,
                         report_writer,
                         report,
-                    ).await
+                    )
+                    .await
                 })
             }
         }
@@ -1065,325 +1066,36 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
         req_bytes: &[u8],
     ) -> Result<AggregationJobResp, Error> {
-        match (task.query_type(), self) {
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(vdaf, verify_key)) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Count,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
+        match task.query_type() {
+            task::QueryType::TimeInterval => {
+                vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                        datastore,
+                        vdaf,
+                        aggregate_step_failure_counter,
+                        task,
+                        batch_aggregation_shard_count,
+                        aggregation_job_id,
+                        verify_key,
+                        req_bytes,
+                    )
+                    .await
+                })
             }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(vdaf, verify_key)) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(vdaf, verify_key)) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Sum,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(vdaf, verify_key)) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Histogram,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(vdaf, verify_key),
-            ) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(vdaf, verify_key),
-            ) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(vdaf, verify_key),
-            ) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::TimeInterval, VdafOps::Fake(vdaf)) => {
-                Self::handle_aggregate_init_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    &VerifyKey::new([]),
-                    req_bytes,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(vdaf, verify_key)) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Count,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(vdaf, verify_key)) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(vdaf, verify_key)) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Sum,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128Histogram(vdaf, verify_key),
-            ) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Histogram,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(vdaf, verify_key),
-            ) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(vdaf, verify_key),
-            ) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(vdaf, verify_key),
-            ) => {
-                Self::handle_aggregate_init_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    verify_key,
-                    req_bytes,
-                )
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::FixedSize { .. }, VdafOps::Fake(vdaf)) => {
-                Self::handle_aggregate_init_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    vdaf,
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    &VerifyKey::new([]),
-                    req_bytes,
-                )
-                .await
+            task::QueryType::FixedSize { .. } => {
+                vdaf_ops_dispatch!(self, (vdaf, verify_key, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_aggregate_init_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
+                        datastore,
+                        vdaf,
+                        aggregate_step_failure_counter,
+                        task,
+                        batch_aggregation_shard_count,
+                        aggregation_job_id,
+                        verify_key,
+                        req_bytes,
+                    )
+                    .await
+                })
             }
         }
     }
@@ -1397,309 +1109,34 @@ impl VdafOps {
         aggregation_job_id: &AggregationJobId,
         req: Arc<AggregationJobContinueReq>,
     ) -> Result<AggregationJobResp, Error> {
-        match (task.query_type(), self) {
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(vdaf, _)) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Count,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
+        match task.query_type() {
+            task::QueryType::TimeInterval => {
+                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                        datastore,
+                        Arc::clone(vdaf),
+                        aggregate_step_failure_counter,
+                        task,
+                        batch_aggregation_shard_count,
+                        aggregation_job_id,
+                        req,
+                    )
+                    .await
+                })
             }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(vdaf, _)) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(vdaf, _)) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Sum,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(vdaf, _)) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Histogram,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::TimeInterval, VdafOps::Fake(vdaf)) => {
-                Self::handle_aggregate_continue_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(vdaf, _)) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Count,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(vdaf, _)) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(vdaf, _)) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Sum,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(vdaf, _)) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Histogram,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_aggregate_continue_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::FixedSize { .. }, VdafOps::Fake(vdaf)) => {
-                Self::handle_aggregate_continue_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    Arc::clone(vdaf),
-                    aggregate_step_failure_counter,
-                    task,
-                    batch_aggregation_shard_count,
-                    aggregation_job_id,
-                    req,
-                )
-                .await
+            task::QueryType::FixedSize { .. } => {
+                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_aggregate_continue_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
+                        datastore,
+                        Arc::clone(vdaf),
+                        aggregate_step_failure_counter,
+                        task,
+                        batch_aggregation_shard_count,
+                        aggregation_job_id,
+                        req,
+                    )
+                    .await
+                })
             }
         }
     }
@@ -2537,191 +1974,28 @@ impl VdafOps {
         collection_job_id: &CollectionJobId,
         collect_req_bytes: &[u8],
     ) -> Result<(), Error> {
-        match (task.query_type(), self) {
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Count,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
+        match task.query_type() {
+            task::QueryType::TimeInterval => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_create_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        VdafType,
+                        _,
+                    >(datastore, task, collection_job_id, collect_req_bytes)
+                    .await
+                })
             }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Sum,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Histogram,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
-                Self::handle_create_collection_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    task,
-                    collection_job_id,
-                    collect_req_bytes,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Count,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Sum,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Histogram,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_create_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(datastore, task, collection_job_id, collect_req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
-                Self::handle_create_collection_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    task,
-                    collection_job_id,
-                    collect_req_bytes,
-                )
-                .await
+            task::QueryType::FixedSize { .. } => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_create_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        FixedSize,
+                        VdafType,
+                        _,
+                    >(datastore, task, collection_job_id, collect_req_bytes)
+                    .await
+                })
             }
         }
     }
@@ -2841,189 +2115,28 @@ impl VdafOps {
         task: Arc<Task>,
         collection_job_id: &CollectionJobId,
     ) -> Result<Option<Vec<u8>>, Error> {
-        match (task.query_type(), self) {
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Count,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
+        match task.query_type() {
+            task::QueryType::TimeInterval => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_get_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        VdafType,
+                        _,
+                    >(datastore, task, collection_job_id)
+                    .await
+                })
             }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Sum,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Histogram,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
-                Self::handle_get_collection_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    task,
-                    collection_job_id,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Count,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Sum,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Histogram,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_get_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
-                Self::handle_get_collection_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    task,
-                    collection_job_id,
-                )
-                .await
+            task::QueryType::FixedSize { .. } => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_get_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        FixedSize,
+                        VdafType,
+                        _,
+                    >(datastore, task, collection_job_id)
+                    .await
+                })
             }
         }
     }
@@ -3140,189 +2253,28 @@ impl VdafOps {
         task: Arc<Task>,
         collection_job_id: &CollectionJobId,
     ) -> Result<(), Error> {
-        match (task.query_type(), self) {
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Count,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
+        match task.query_type() {
+            task::QueryType::TimeInterval => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_delete_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        VdafType,
+                        _,
+                    >(datastore, task, collection_job_id)
+                    .await
+                })
             }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Sum,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Histogram,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
-                Self::handle_delete_collection_job_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    task,
-                    collection_job_id,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Count,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Sum,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Histogram,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_delete_collection_job_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(datastore, task, collection_job_id)
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
-                Self::handle_delete_collection_job_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
-                    datastore,
-                    task,
-                    collection_job_id,
-                )
-                .await
+            task::QueryType::FixedSize { .. } => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_delete_collection_job_generic::<
+                        VERIFY_KEY_LENGTH,
+                        FixedSize,
+                        VdafType,
+                        _,
+                    >(datastore, task, collection_job_id)
+                    .await
+                })
             }
         }
     }
@@ -3378,185 +2330,28 @@ impl VdafOps {
         task: Arc<Task>,
         req_bytes: &[u8],
     ) -> Result<AggregateShare, Error> {
-        match (task.query_type(), self) {
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Count,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
+        match task.query_type() {
+            task::QueryType::TimeInterval => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_aggregate_share_generic::<
+                        VERIFY_KEY_LENGTH,
+                        TimeInterval,
+                        VdafType,
+                        _,
+                    >(datastore, clock, task, req_bytes)
+                    .await
+                })
             }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Sum,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Histogram,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::TimeInterval, VdafOps::Fake(_)) => {
-                Self::handle_aggregate_share_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
-                    datastore, clock, task, req_bytes,
-                )
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(_, _)) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Count,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(_, _)) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(_, _)) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Sum,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(_, _)) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Histogram,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(_, _),
-            ) => {
-                Self::handle_aggregate_share_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(datastore, clock, task, req_bytes)
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::FixedSize { .. }, VdafOps::Fake(_)) => {
-                Self::handle_aggregate_share_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
-                    datastore, clock, task, req_bytes,
-                )
-                .await
+            task::QueryType::FixedSize { .. } => {
+                vdaf_ops_dispatch!(self, (_, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_aggregate_share_generic::<
+                        VERIFY_KEY_LENGTH,
+                        FixedSize,
+                        VdafType,
+                        _,
+                    >(datastore, clock, task, req_bytes)
+                    .await
+                })
             }
         }
     }
