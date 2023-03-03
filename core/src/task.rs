@@ -70,6 +70,120 @@ impl VdafInstance {
     }
 }
 
+/// Writes a match block dispatching on a [`VdafInstance`]. This must be called inside a method that
+/// returns a result, with an error type that [`prio::vdaf::VdafError`] can be converted into. Takes
+/// a `&VdafInstance` as the first argument, followed by a pseudo-pattern and body. The
+/// pseudo-pattern takes a variable name for the constructed VDAF, a type alias name that the block
+/// can use to explicitly specify the VDAF's type, and the name of a const that will be set to the
+/// VDAF's verify key length, also for explicitly specifying type parameters.
+///
+/// # Example:
+///
+/// ```
+/// # use janus_core::vdaf_dispatch;
+/// # fn handle_request_generic<A, const L: usize>(_vdaf: &A) -> Result<(), prio::vdaf::VdafError>
+/// # where
+/// #     A: prio::vdaf::Aggregator<L>,
+/// #     Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+/// # {
+/// #     Ok(())
+/// # }
+/// # fn test() -> Result<(), prio::vdaf::VdafError> {
+/// #     let vdaf = janus_core::task::VdafInstance::Prio3Aes128Count;
+/// vdaf_dispatch!(&vdaf, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+///     handle_request_generic::<VdafType, VERIFY_KEY_LENGTH>(&vdaf)
+/// })
+/// # }
+/// ```
+#[macro_export]
+macro_rules! vdaf_dispatch {
+    // TODO: check if the type can be inferred, and the type argument and type alias can be dropped,
+    // after upgrading to prio 0.11 and getting rid of `TryFrom<&'a [u8]>::Error: Debug` bounds.
+    ($vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+        match $vdaf_instance {
+            ::janus_core::task::VdafInstance::Prio3Aes128Count => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_count(2)?;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Count;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            ::janus_core::task::VdafInstance::Prio3Aes128CountVec { length } => {
+                let $vdaf =
+                    ::prio::vdaf::prio3::Prio3::new_aes128_count_vec_multithreaded(2, *length)?;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128CountVecMultithreaded;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            ::janus_core::task::VdafInstance::Prio3Aes128Sum { bits } => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_sum(2, *bits)?;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Sum;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            ::janus_core::task::VdafInstance::Prio3Aes128Histogram { buckets } => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_histogram(2, buckets)?;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Histogram;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum {
+                length,
+            } => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_fixedpoint_boundedl2_vec_sum_multithreaded(
+                    2, *length,
+                )?;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSumMultithreaded<
+                    ::fixed::FixedI16<::fixed::types::extra::U15>,
+                >;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum {
+                length,
+            } => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_fixedpoint_boundedl2_vec_sum_multithreaded(
+                    2, *length,
+                )?;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSumMultithreaded<
+                    ::fixed::FixedI32<::fixed::types::extra::U31>,
+                >;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum {
+                length,
+            } => {
+                let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_fixedpoint_boundedl2_vec_sum_multithreaded(
+                    2, *length,
+                )?;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSumMultithreaded<
+                    ::fixed::FixedI64<::fixed::types::extra::U63>,
+                >;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            _ => panic!("VDAF {:?} is not yet supported", $vdaf_instance),
+        }
+    };
+}
+
 /// An authentication (bearer) token used by aggregators for aggregator-to-aggregator and
 /// collector-to-aggregator authentication.
 #[derive(Clone)]
