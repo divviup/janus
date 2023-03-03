@@ -879,7 +879,6 @@ impl<C: Clock> TaskAggregator<C> {
 /// VdafOps stores VDAF-specific operations for a TaskAggregator in a non-generic way.
 #[allow(clippy::enum_variant_names)]
 enum VdafOps {
-    // For the Prio3 VdafOps, the second parameter is the verify_key.
     Prio3Aes128Count(
         Arc<Prio3Aes128Count>,
         VerifyKey<PRIO3_AES128_VERIFY_KEY_LENGTH>,
@@ -916,6 +915,104 @@ enum VdafOps {
     Fake(Arc<dummy_vdaf::Vdaf>),
 }
 
+/// Emits a match block dispatching on a [`VdafOps`] object. Takes a `&VdafOps` as the first
+/// argument, followed by a pseudo-pattern and body. The pseudo-pattern takes variable names for the
+/// constructed VDAF and the verify key, a type alias name that the block can use to explicitly
+/// specify the VDAF's type, and the name of a const that will be set to the VDAF's verify key
+/// length, also for explicitly specifying type parameters.
+macro_rules! vdaf_ops_dispatch {
+    ($vdaf_ops:expr, ($vdaf:pat_param, $verify_key:pat_param, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+        match $vdaf_ops {
+            crate::aggregator::VdafOps::Prio3Aes128Count(vdaf, verify_key) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Count;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            crate::aggregator::VdafOps::Prio3Aes128CountVec(vdaf, verify_key) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128CountVecMultithreaded;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            crate::aggregator::VdafOps::Prio3Aes128Sum(vdaf, verify_key) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Sum;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            crate::aggregator::VdafOps::Prio3Aes128Histogram(vdaf, verify_key) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Histogram;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            crate::aggregator::VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(
+                vdaf,
+                verify_key,
+            ) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf =
+                    ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            crate::aggregator::VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(
+                vdaf,
+                verify_key,
+            ) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf =
+                    ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            #[cfg(feature = "fpvec_bounded_l2")]
+            crate::aggregator::VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(
+                vdaf,
+                verify_key,
+            ) => {
+                let $vdaf = vdaf;
+                let $verify_key = verify_key;
+                type $Vdaf =
+                    ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>;
+                const $VERIFY_KEY_LENGTH: usize =
+                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                $body
+            }
+
+            #[cfg(feature = "test-util")]
+            crate::aggregator::VdafOps::Fake(vdaf) => {
+                let $vdaf = vdaf;
+                let $verify_key = &VerifyKey::new([]);
+                type $Vdaf = ::janus_core::test_util::dummy_vdaf::Vdaf;
+                const $VERIFY_KEY_LENGTH: usize = 0;
+                $body
+            }
+        }
+    };
+}
+
 impl VdafOps {
     async fn handle_upload<C: Clock>(
         &self,
@@ -926,296 +1023,33 @@ impl VdafOps {
         report_writer: &ReportWriteBatcher<C>,
         report: Report,
     ) -> Result<(), Arc<Error>> {
-        match (task.query_type(), self) {
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Count(vdaf, _)) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Count,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
+        match task.query_type() {
+            task::QueryType::TimeInterval => {
+                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, TimeInterval, VdafType, _>(
+                        Arc::clone(vdaf),
+                        clock,
+                        upload_decrypt_failure_counter,
+                        upload_decode_failure_counter,
+                        task,
+                        report_writer,
+                        report,
+                    )
+                    .await
+                })
             }
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128CountVec(vdaf, _)) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Sum(vdaf, _)) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Sum,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            (task::QueryType::TimeInterval, VdafOps::Prio3Aes128Histogram(vdaf, _)) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128Histogram,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::TimeInterval,
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    TimeInterval,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::TimeInterval, VdafOps::Fake(vdaf)) => {
-                Self::handle_upload_generic::<0, TimeInterval, dummy_vdaf::Vdaf, _>(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Count(vdaf, _)) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Count,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128CountVec(vdaf, _)) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128CountVecMultithreaded,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Sum(vdaf, _)) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Sum,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            (task::QueryType::FixedSize { .. }, VdafOps::Prio3Aes128Histogram(vdaf, _)) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128Histogram,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint16BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint32BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-            #[cfg(feature = "fpvec_bounded_l2")]
-            (
-                task::QueryType::FixedSize { .. },
-                VdafOps::Prio3Aes128FixedPoint64BitBoundedL2VecSum(vdaf, _),
-            ) => {
-                Self::handle_upload_generic::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
-                    FixedSize,
-                    Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>,
-                    _,
-                >(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
-            }
-
-            #[cfg(feature = "test-util")]
-            (task::QueryType::FixedSize { .. }, VdafOps::Fake(vdaf)) => {
-                Self::handle_upload_generic::<0, FixedSize, dummy_vdaf::Vdaf, _>(
-                    Arc::clone(vdaf),
-                    clock,
-                    upload_decrypt_failure_counter,
-                    upload_decode_failure_counter,
-                    task,
-                    report_writer,
-                    report,
-                )
-                .await
+            task::QueryType::FixedSize { .. } => {
+                vdaf_ops_dispatch!(self, (vdaf, _, VdafType, VERIFY_KEY_LENGTH) => {
+                    Self::handle_upload_generic::<VERIFY_KEY_LENGTH, FixedSize, VdafType, _>(
+                        Arc::clone(vdaf),
+                        clock,
+                        upload_decrypt_failure_counter,
+                        upload_decode_failure_counter,
+                        task,
+                        report_writer,
+                        report,
+                    ).await
+                })
             }
         }
     }

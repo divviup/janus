@@ -75,7 +75,7 @@ impl VdafInstance {
 macro_rules! vdaf_dispatch_impl_base {
     // TODO: check if the type can be inferred, and the type argument and type alias can be dropped,
     // after upgrading to prio 0.11 and getting rid of `TryFrom<&'a [u8]>::Error: Debug` bounds.
-    (impl match base $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+    (impl match base $vdaf_instance:expr, ($vdaf:pat_param, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::task::VdafInstance::Prio3Aes128Count => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_count(2)?;
@@ -119,7 +119,7 @@ macro_rules! vdaf_dispatch_impl_base {
 #[cfg(feature = "fpvec_bounded_l2")]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
-    (impl match fpvec_bounded_l2 $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+    (impl match fpvec_bounded_l2 $vdaf_instance:expr, ($vdaf:pat_param, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum {
                 length,
@@ -172,7 +172,7 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
 #[cfg(feature = "fpvec_bounded_l2")]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl {
-    (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+    (impl match all $vdaf_instance:expr, ($vdaf:pat_param, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::task::VdafInstance::Prio3Aes128Count
             | ::janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }
@@ -196,7 +196,7 @@ macro_rules! vdaf_dispatch_impl {
 #[cfg(not(feature = "fpvec_bounded_l2"))]
 #[macro_export]
 macro_rules! vdaf_dispatch_impl {
-    (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+    (impl match all $vdaf_instance:expr, ($vdaf:pat_param, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::task::VdafInstance::Prio3Aes128Count
             | ::janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }
@@ -237,7 +237,7 @@ macro_rules! vdaf_dispatch_impl {
 /// ```
 #[macro_export]
 macro_rules! vdaf_dispatch {
-    ($vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+    ($vdaf_instance:expr, ($vdaf:pat_param, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         ::janus_core::vdaf_dispatch_impl!(impl match all $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
     };
 }
