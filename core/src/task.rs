@@ -70,36 +70,12 @@ impl VdafInstance {
     }
 }
 
-/// Writes a match block dispatching on a [`VdafInstance`]. This must be called inside a method that
-/// returns a result, with an error type that [`prio::vdaf::VdafError`] can be converted into. Takes
-/// a `&VdafInstance` as the first argument, followed by a pseudo-pattern and body. The
-/// pseudo-pattern takes a variable name for the constructed VDAF, a type alias name that the block
-/// can use to explicitly specify the VDAF's type, and the name of a const that will be set to the
-/// VDAF's verify key length, also for explicitly specifying type parameters.
-///
-/// # Example:
-///
-/// ```
-/// # use janus_core::vdaf_dispatch;
-/// # fn handle_request_generic<A, const L: usize>(_vdaf: &A) -> Result<(), prio::vdaf::VdafError>
-/// # where
-/// #     A: prio::vdaf::Aggregator<L>,
-/// #     Vec<u8>: for<'a> From<&'a A::AggregateShare>,
-/// # {
-/// #     Ok(())
-/// # }
-/// # fn test() -> Result<(), prio::vdaf::VdafError> {
-/// #     let vdaf = janus_core::task::VdafInstance::Prio3Aes128Count;
-/// vdaf_dispatch!(&vdaf, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
-///     handle_request_generic::<VdafType, VERIFY_KEY_LENGTH>(&vdaf)
-/// })
-/// # }
-/// ```
+/// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
 #[macro_export]
-macro_rules! vdaf_dispatch {
+macro_rules! vdaf_dispatch_impl_base {
     // TODO: check if the type can be inferred, and the type argument and type alias can be dropped,
     // after upgrading to prio 0.11 and getting rid of `TryFrom<&'a [u8]>::Error: Debug` bounds.
-    ($vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+    (impl match base $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
         match $vdaf_instance {
             ::janus_core::task::VdafInstance::Prio3Aes128Count => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_count(2)?;
@@ -134,7 +110,17 @@ macro_rules! vdaf_dispatch {
                 $body
             }
 
-            #[cfg(feature = "fpvec_bounded_l2")]
+            _ => unreachable!(),
+        }
+    };
+}
+
+/// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
+#[cfg(feature = "fpvec_bounded_l2")]
+#[macro_export]
+macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
+    (impl match fpvec_bounded_l2 $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+        match $vdaf_instance {
             ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum {
                 length,
             } => {
@@ -149,7 +135,6 @@ macro_rules! vdaf_dispatch {
                 $body
             }
 
-            #[cfg(feature = "fpvec_bounded_l2")]
             ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum {
                 length,
             } => {
@@ -164,7 +149,6 @@ macro_rules! vdaf_dispatch {
                 $body
             }
 
-            #[cfg(feature = "fpvec_bounded_l2")]
             ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum {
                 length,
             } => {
@@ -179,8 +163,82 @@ macro_rules! vdaf_dispatch {
                 $body
             }
 
+            _ => unreachable!(),
+        }
+    };
+}
+
+/// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
+#[cfg(feature = "fpvec_bounded_l2")]
+#[macro_export]
+macro_rules! vdaf_dispatch_impl {
+    (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+        match $vdaf_instance {
+            ::janus_core::task::VdafInstance::Prio3Aes128Count
+            | ::janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Histogram { .. } => {
+                ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
+            }
+
+            ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { .. } => {
+                ::janus_core::vdaf_dispatch_impl_fpvec_bounded_l2!(impl match fpvec_bounded_l2 $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
+            }
+
             _ => panic!("VDAF {:?} is not yet supported", $vdaf_instance),
         }
+    };
+}
+
+/// Internal implementation details of [`vdaf_dispatch`](crate::vdaf_dispatch).
+#[cfg(not(feature = "fpvec_bounded_l2"))]
+#[macro_export]
+macro_rules! vdaf_dispatch_impl {
+    (impl match all $vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+        match $vdaf_instance {
+            ::janus_core::task::VdafInstance::Prio3Aes128Count
+            | ::janus_core::task::VdafInstance::Prio3Aes128CountVec { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Sum { .. }
+            | ::janus_core::task::VdafInstance::Prio3Aes128Histogram { .. } => {
+                ::janus_core::vdaf_dispatch_impl_base!(impl match base $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
+            }
+
+            _ => panic!("VDAF {:?} is not yet supported", $vdaf_instance),
+        }
+    };
+}
+
+/// Emits a match block dispatching on a [`VdafInstance`]. This must be called inside a method that
+/// returns a result, with an error type that [`prio::vdaf::VdafError`] can be converted into. Takes
+/// a `&VdafInstance` as the first argument, followed by a pseudo-pattern and body. The
+/// pseudo-pattern takes a variable name for the constructed VDAF, a type alias name that the block
+/// can use to explicitly specify the VDAF's type, and the name of a const that will be set to the
+/// VDAF's verify key length, also for explicitly specifying type parameters.
+///
+/// # Example:
+///
+/// ```
+/// # use janus_core::vdaf_dispatch;
+/// # fn handle_request_generic<A, const L: usize>(_vdaf: &A) -> Result<(), prio::vdaf::VdafError>
+/// # where
+/// #     A: prio::vdaf::Aggregator<L>,
+/// #     Vec<u8>: for<'a> From<&'a A::AggregateShare>,
+/// # {
+/// #     Ok(())
+/// # }
+/// # fn test() -> Result<(), prio::vdaf::VdafError> {
+/// #     let vdaf = janus_core::task::VdafInstance::Prio3Aes128Count;
+/// vdaf_dispatch!(&vdaf, (vdaf, VdafType, VERIFY_KEY_LENGTH) => {
+///     handle_request_generic::<VdafType, VERIFY_KEY_LENGTH>(&vdaf)
+/// })
+/// # }
+/// ```
+#[macro_export]
+macro_rules! vdaf_dispatch {
+    ($vdaf_instance:expr, ($vdaf:ident, $Vdaf:ident, $VERIFY_KEY_LENGTH:ident) => $body:tt) => {
+        ::janus_core::vdaf_dispatch_impl!(impl match all $vdaf_instance, ($vdaf, $Vdaf, $VERIFY_KEY_LENGTH) => $body)
     };
 }
 
