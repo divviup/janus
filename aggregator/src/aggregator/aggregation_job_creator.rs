@@ -12,7 +12,7 @@ use janus_aggregator_core::{
     task::{self, Task},
 };
 use janus_core::{
-    task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
+    task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
     time::{Clock, DurationExt as _, TimeExt as _},
 };
 use janus_messages::{
@@ -235,89 +235,89 @@ impl<C: Clock + 'static> AggregationJobCreator<C> {
     ) -> anyhow::Result<bool> {
         match (task.query_type(), task.vdaf()) {
             (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Count) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task)
                     .await
             }
 
             (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128CountVec { .. }) => {
                 self.create_aggregation_jobs_for_time_interval_task_no_param::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    PRIO3_VERIFY_KEY_LENGTH,
                     Prio3Aes128CountVecMultithreaded
                 >(task).await
             }
 
             (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Sum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task)
                     .await
             }
 
             (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128Histogram { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(task)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(task)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(task)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(task)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (task::QueryType::TimeInterval, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { .. }) => {
-                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(task)
+                self.create_aggregation_jobs_for_time_interval_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(task)
                     .await
             }
 
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128Count) => {
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Count>(task, max_batch_size)
                     .await
             }
 
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128CountVec { .. }) => {
                 let max_batch_size = *max_batch_size;
                 self.create_aggregation_jobs_for_fixed_size_task_no_param::<
-                    PRIO3_AES128_VERIFY_KEY_LENGTH,
+                    PRIO3_VERIFY_KEY_LENGTH,
                     Prio3Aes128CountVecMultithreaded
                 >(task, max_batch_size).await
             }
 
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128Sum { .. }) => {
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Sum>(task, max_batch_size)
                     .await
             }
 
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128Histogram { .. }) => {
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128Histogram>(task, max_batch_size)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128FixedPoint16BitBoundedL2VecSum { .. }) => {
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI16<U15>>>(task, max_batch_size)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128FixedPoint32BitBoundedL2VecSum { .. }) => {
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI32<U31>>>(task, max_batch_size)
                     .await
             }
 
             #[cfg(feature = "fpvec_bounded_l2")]
             (task::QueryType::FixedSize{max_batch_size}, VdafInstance::Prio3Aes128FixedPoint64BitBoundedL2VecSum { .. }) => {
                 let max_batch_size = *max_batch_size;
-                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_AES128_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(task, max_batch_size)
+                self.create_aggregation_jobs_for_fixed_size_task_no_param::<PRIO3_VERIFY_KEY_LENGTH, Prio3Aes128FixedPointBoundedL2VecSum<FixedI64<U63>>>(task, max_batch_size)
                     .await
             }
 
@@ -759,7 +759,7 @@ mod tests {
         task::{test_util::TaskBuilder, QueryType as TaskQueryType},
     };
     use janus_core::{
-        task::{VdafInstance, PRIO3_AES128_VERIFY_KEY_LENGTH},
+        task::{VdafInstance, PRIO3_VERIFY_KEY_LENGTH},
         test_util::{
             dummy_vdaf::{self, AggregationParam},
             install_test_trace_subscriber,
@@ -1460,18 +1460,14 @@ mod tests {
     ) -> HashMap<
         AggregationJobId,
         (
-            AggregationJob<PRIO3_AES128_VERIFY_KEY_LENGTH, Q, Prio3Aes128Count>,
+            AggregationJob<PRIO3_VERIFY_KEY_LENGTH, Q, Prio3Aes128Count>,
             T,
         ),
     > {
         let vdaf = Prio3::new_aes128_count(2).unwrap();
-        read_aggregate_jobs_for_task_generic::<
-            PRIO3_AES128_VERIFY_KEY_LENGTH,
-            Q,
-            Prio3Aes128Count,
-            T,
-            C,
-        >(tx, task_id, &vdaf)
+        read_aggregate_jobs_for_task_generic::<PRIO3_VERIFY_KEY_LENGTH, Q, Prio3Aes128Count, T, C>(
+            tx, task_id, &vdaf,
+        )
         .await
         .map(|(agg_job, report_id)| (*agg_job.id(), (agg_job, report_id)))
         .collect()

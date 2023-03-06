@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 /// HTTP header where auth tokens are provided in messages between participants.
 pub const DAP_AUTH_HEADER: &str = "DAP-Auth-Token";
 
-/// The length of the verify key parameter for Prio3 AES-128 VDAF instantiations.
-pub const PRIO3_AES128_VERIFY_KEY_LENGTH: usize = 16;
+/// The length of the verify key parameter for Prio3 VDAF instantiations.
+pub const PRIO3_VERIFY_KEY_LENGTH: usize = 16;
 
 /// Identifiers for supported VDAFs, corresponding to definitions in
 /// [draft-irtf-cfrg-vdaf-03][1] and implementations in [`prio::vdaf::prio3`].
@@ -65,7 +65,7 @@ impl VdafInstance {
 
             // All "real" VDAFs use a verify key of length 16 currently. (Poplar1 may not, but it's
             // not yet done being specified, so choosing 16 bytes is fine for testing.)
-            _ => PRIO3_AES128_VERIFY_KEY_LENGTH,
+            _ => PRIO3_VERIFY_KEY_LENGTH,
         }
     }
 }
@@ -78,29 +78,25 @@ macro_rules! vdaf_dispatch_impl_base {
         match $vdaf_instance {
             ::janus_core::task::VdafInstance::Prio3Aes128Count => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Count;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
             ::janus_core::task::VdafInstance::Prio3Aes128CountVec { length } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128CountVecMultithreaded;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
             ::janus_core::task::VdafInstance::Prio3Aes128Sum { bits } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Sum;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
             ::janus_core::task::VdafInstance::Prio3Aes128Histogram { buckets } => {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Histogram;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -114,8 +110,7 @@ macro_rules! vdaf_dispatch_impl_base {
             ::janus_core::task::VdafInstance::Prio3Aes128Count => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_count(2)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Count;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -123,24 +118,21 @@ macro_rules! vdaf_dispatch_impl_base {
                 let $vdaf =
                     ::prio::vdaf::prio3::Prio3::new_aes128_count_vec_multithreaded(2, *length)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128CountVecMultithreaded;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
             ::janus_core::task::VdafInstance::Prio3Aes128Sum { bits } => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_sum(2, *bits)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Sum;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
             ::janus_core::task::VdafInstance::Prio3Aes128Histogram { buckets } => {
                 let $vdaf = ::prio::vdaf::prio3::Prio3::new_aes128_histogram(2, buckets)?;
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128Histogram;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -162,8 +154,7 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI16<::fixed::types::extra::U15>,
                 >;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -173,8 +164,7 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI32<::fixed::types::extra::U31>,
                 >;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -184,8 +174,7 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI64<::fixed::types::extra::U63>,
                 >;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -205,8 +194,7 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI16<::fixed::types::extra::U15>,
                 >;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -219,8 +207,7 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI32<::fixed::types::extra::U31>,
                 >;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
@@ -233,8 +220,7 @@ macro_rules! vdaf_dispatch_impl_fpvec_bounded_l2 {
                 type $Vdaf = ::prio::vdaf::prio3::Prio3Aes128FixedPointBoundedL2VecSumMultithreaded<
                     ::fixed::FixedI64<::fixed::types::extra::U63>,
                 >;
-                const $VERIFY_KEY_LENGTH: usize =
-                    ::janus_core::task::PRIO3_AES128_VERIFY_KEY_LENGTH;
+                const $VERIFY_KEY_LENGTH: usize = ::janus_core::task::PRIO3_VERIFY_KEY_LENGTH;
                 $body
             }
 
