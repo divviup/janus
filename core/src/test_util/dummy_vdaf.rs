@@ -178,7 +178,7 @@ impl Decode for AggregationParam {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OutputShare();
 
 impl TryFrom<&[u8]> for OutputShare {
@@ -210,7 +210,7 @@ impl Decode for PrepareState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AggregateShare(pub u64);
 
 impl Aggregatable for AggregateShare {

@@ -7,9 +7,12 @@ use janus_aggregator_core::{
     query_type::AccumulableQueryType,
     task::Task,
 };
-use janus_core::{report_id::ReportIdChecksumExt, time::Clock};
-use janus_messages::{ReportId, ReportIdChecksum, Time};
-use prio::vdaf::{self};
+use janus_core::{
+    report_id::ReportIdChecksumExt,
+    time::{Clock, IntervalExt},
+};
+use janus_messages::{Interval, ReportId, ReportIdChecksum, Time};
+use prio::vdaf;
 use rand::{thread_rng, Rng};
 use std::{collections::HashMap, sync::Arc};
 
@@ -58,6 +61,8 @@ where
     ) -> Result<(), datastore::Error> {
         let batch_identifier =
             Q::to_batch_identifier(&self.task, partial_batch_identifier, client_timestamp)?;
+        let client_timestamp_interval =
+            Interval::from_time(client_timestamp).map_err(|e| datastore::Error::User(e.into()))?;
         let batch_aggregation_fn = || {
             BatchAggregation::new(
                 *self.task.id(),
@@ -66,6 +71,7 @@ where
                 thread_rng().gen_range(0..self.shard_count),
                 A::AggregateShare::from(output_share.clone()),
                 1,
+                client_timestamp_interval,
                 ReportIdChecksum::for_report_id(report_id),
             )
         };

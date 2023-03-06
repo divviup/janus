@@ -1454,6 +1454,7 @@ impl Distribution<CollectionJobId> for Standard {
 pub struct Collection<Q: QueryType> {
     partial_batch_selector: PartialBatchSelector<Q>,
     report_count: u64,
+    interval: Interval,
     encrypted_aggregate_shares: Vec<HpkeCiphertext>,
 }
 
@@ -1461,30 +1462,37 @@ impl<Q: QueryType> Collection<Q> {
     /// The media type associated with this protocol message.
     pub const MEDIA_TYPE: &'static str = "application/dap-collection";
 
-    /// Constructs a new collect response.
+    /// Constructs a new collection.
     pub fn new(
         partial_batch_selector: PartialBatchSelector<Q>,
         report_count: u64,
+        interval: Interval,
         encrypted_aggregate_shares: Vec<HpkeCiphertext>,
     ) -> Self {
         Self {
             partial_batch_selector,
             report_count,
+            interval,
             encrypted_aggregate_shares,
         }
     }
 
-    /// Gets the batch selector associated with this collect response.
+    /// Gets the batch selector associated with this collection.
     pub fn partial_batch_selector(&self) -> &PartialBatchSelector<Q> {
         &self.partial_batch_selector
     }
 
-    /// Gets the report count associated with this collect response.
+    /// Gets the number of reports that were aggregated into this collection.
     pub fn report_count(&self) -> u64 {
         self.report_count
     }
 
-    /// Gets the encrypted aggregate shares associated with this collect response.
+    /// Gets the interval spanned by the reports aggregated into this collection.
+    pub fn interval(&self) -> &Interval {
+        &self.interval
+    }
+
+    /// Gets the encrypted aggregate shares associated with this collection.
     pub fn encrypted_aggregate_shares(&self) -> &[HpkeCiphertext] {
         &self.encrypted_aggregate_shares
     }
@@ -1494,6 +1502,7 @@ impl<Q: QueryType> Encode for Collection<Q> {
     fn encode(&self, bytes: &mut Vec<u8>) {
         self.partial_batch_selector.encode(bytes);
         self.report_count.encode(bytes);
+        self.interval.encode(bytes);
         encode_u32_items(bytes, &(), &self.encrypted_aggregate_shares);
     }
 }
@@ -1502,11 +1511,13 @@ impl<Q: QueryType> Decode for Collection<Q> {
     fn decode(bytes: &mut Cursor<&[u8]>) -> Result<Self, CodecError> {
         let partial_batch_selector = PartialBatchSelector::decode(bytes)?;
         let report_count = u64::decode(bytes)?;
+        let interval = Interval::decode(bytes)?;
         let encrypted_aggregate_shares = decode_u32_items(&(), bytes)?;
 
         Ok(Self {
             partial_batch_selector,
             report_count,
+            interval,
             encrypted_aggregate_shares,
         })
     }
@@ -2996,7 +3007,7 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_collect_req() {
+    fn roundtrip_collection_req() {
         // TimeInterval.
         roundtrip_encoding(&[
             (
@@ -3139,13 +3150,18 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_collect_resp() {
+    fn roundtrip_collection() {
+        let interval = Interval {
+            start: Time::from_seconds_since_epoch(54321),
+            duration: Duration::from_seconds(12345),
+        };
         // TimeInterval.
         roundtrip_encoding(&[
             (
                 Collection {
                     partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 0,
+                    interval,
                     encrypted_aggregate_shares: Vec::new(),
                 },
                 concat!(
@@ -3154,6 +3170,11 @@ mod tests {
                         "01", // query_type
                     ),
                     "0000000000000000", // report_count
+                    concat!(
+                        // interval
+                        "000000000000D431", // start
+                        "0000000000003039", // duration
+                    ),
                     concat!(
                         // encrypted_aggregate_shares
                         "00000000", // length
@@ -3164,6 +3185,7 @@ mod tests {
                 Collection {
                     partial_batch_selector: PartialBatchSelector::new_time_interval(),
                     report_count: 23,
+                    interval,
                     encrypted_aggregate_shares: Vec::from([
                         HpkeCiphertext::new(
                             HpkeConfigId::from(10),
@@ -3183,6 +3205,11 @@ mod tests {
                         "01", // query_type
                     ),
                     "0000000000000017", // report_count
+                    concat!(
+                        // interval
+                        "000000000000D431", // start
+                        "0000000000003039", // duration
+                    ),
                     concat!(
                         // encrypted_aggregate_shares
                         "0000001E", // length
@@ -3225,6 +3252,7 @@ mod tests {
                         [3u8; 32],
                     )),
                     report_count: 0,
+                    interval,
                     encrypted_aggregate_shares: Vec::new(),
                 },
                 concat!(
@@ -3234,6 +3262,11 @@ mod tests {
                         "0303030303030303030303030303030303030303030303030303030303030303", // batch_id
                     ),
                     "0000000000000000", // report_count
+                    concat!(
+                        // interval
+                        "000000000000D431", // start
+                        "0000000000003039", // duration
+                    ),
                     concat!(
                         // encrypted_aggregate_shares
                         "00000000", // length
@@ -3246,6 +3279,7 @@ mod tests {
                         [4u8; 32],
                     )),
                     report_count: 23,
+                    interval,
                     encrypted_aggregate_shares: Vec::from([
                         HpkeCiphertext::new(
                             HpkeConfigId::from(10),
@@ -3266,6 +3300,11 @@ mod tests {
                         "0404040404040404040404040404040404040404040404040404040404040404", // batch_id
                     ),
                     "0000000000000017", // report_count
+                    concat!(
+                        // interval
+                        "000000000000D431", // start
+                        "0000000000003039", // duration
+                    ),
                     concat!(
                         // encrypted_aggregate_shares
                         "0000001E", // length

@@ -477,7 +477,7 @@ mod tests {
             install_test_trace_subscriber,
             runtime::TestRuntimeManager,
         },
-        time::{Clock, MockClock, TimeExt},
+        time::{Clock, IntervalExt, MockClock, TimeExt},
         Runtime,
     };
     use janus_messages::{
@@ -541,7 +541,7 @@ mod tests {
                             aggregation_job_id,
                             aggregation_param,
                             (),
-                            Interval::new(report_timestamp, Duration::from_seconds(1)).unwrap(),
+                            Interval::from_time(&report_timestamp).unwrap(),
                             AggregationJobState::Finished,
                         ),
                     )
@@ -570,6 +570,7 @@ mod tests {
                             0,
                             dummy_vdaf::AggregateShare(0),
                             5,
+                            Interval::from_time(&report_timestamp).unwrap(),
                             ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                         ),
                     )
@@ -586,6 +587,7 @@ mod tests {
                             0,
                             dummy_vdaf::AggregateShare(0),
                             5,
+                            Interval::from_time(&report_timestamp).unwrap(),
                             ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                         ),
                     )
@@ -636,10 +638,14 @@ mod tests {
         let agg_auth_token = task.primary_aggregator_auth_token();
         let batch_interval = Interval::new(clock.now(), Duration::from_seconds(2000)).unwrap();
         let aggregation_param = AggregationParam(0);
+        let report_timestamp = clock
+            .now()
+            .to_batch_interval_start(task.time_precision())
+            .unwrap();
 
         let (collection_job_id, lease) = ds
             .run_tx(|tx| {
-                let (clock, task) = (clock.clone(), task.clone());
+                let task = task.clone();
                 Box::pin(async move {
                     tx.put_task(&task).await?;
 
@@ -656,17 +662,13 @@ mod tests {
                     .await?;
 
                     let aggregation_job_id = random();
-                    let report_timestamp = clock
-                        .now()
-                        .to_batch_interval_start(task.time_precision())
-                        .unwrap();
                     tx.put_aggregation_job(
                         &AggregationJob::<0, TimeInterval, dummy_vdaf::Vdaf>::new(
                             *task.id(),
                             aggregation_job_id,
                             aggregation_param,
                             (),
-                            Interval::new(report_timestamp, Duration::from_seconds(1)).unwrap(),
+                            Interval::from_time(&report_timestamp).unwrap(),
                             AggregationJobState::Finished,
                         ),
                     )
@@ -730,6 +732,7 @@ mod tests {
                         0,
                         dummy_vdaf::AggregateShare(0),
                         5,
+                        Interval::from_time(&report_timestamp).unwrap(),
                         ReportIdChecksum::get_decoded(&[3; 32]).unwrap(),
                     ),
                 )
@@ -747,6 +750,7 @@ mod tests {
                         0,
                         dummy_vdaf::AggregateShare(0),
                         5,
+                        Interval::from_time(&report_timestamp).unwrap(),
                         ReportIdChecksum::get_decoded(&[2; 32]).unwrap(),
                     ),
                 )

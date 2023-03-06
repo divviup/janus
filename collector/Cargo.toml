@@ -19,6 +19,7 @@ test-util = []
 
 [dependencies]
 backoff = { version = "0.4.0", features = ["tokio"] }
+chrono.workspace = true
 derivative = "2.2.0"
 http-api-problem = "0.56.0"
 janus_core.workspace = true
@@ -36,7 +37,6 @@ url = "2.3.1"
 
 [dev-dependencies]
 assert_matches = "1"
-chrono.workspace = true
 janus_collector = { path = ".", features = ["fpvec_bounded_l2", "test-util"] }
 janus_core = { workspace = true, features = ["fpvec_bounded_l2", "test-util"] }
 mockito = "0.32.3"

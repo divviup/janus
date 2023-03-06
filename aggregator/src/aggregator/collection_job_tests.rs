@@ -4,8 +4,8 @@ use hyper::body;
 use janus_aggregator_core::{
     datastore::{
         models::{
-            AggregationJob, AggregationJobState, CollectionJobState, LeaderStoredReport,
-            ReportAggregation, ReportAggregationState,
+            AggregationJob, AggregationJobState, BatchAggregation, CollectionJobState,
+            LeaderStoredReport, ReportAggregation, ReportAggregationState,
         },
         test_util::{ephemeral_datastore, EphemeralDatastore},
         Datastore,
@@ -19,12 +19,12 @@ use janus_core::{
     },
     task::{AuthenticationToken, VdafInstance},
     test_util::{dummy_vdaf, install_test_trace_subscriber},
-    time::{Clock, MockClock},
+    time::{Clock, IntervalExt, MockClock},
 };
 use janus_messages::{
     query_type::{FixedSize, QueryType as QueryTypeTrait, TimeInterval},
     AggregateShareAad, BatchId, BatchSelector, Collection, CollectionJobId, CollectionReq,
-    FixedSizeQuery, Interval, Query, Role, Time,
+    Duration, FixedSizeQuery, Interval, Query, ReportIdChecksum, Role, Time,
 };
 use prio::codec::{Decode, Encode};
 use rand::random;
@@ -152,6 +152,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case() -> (
     CollectionJobTestCase<impl Reply + 'static>,
     BatchId,
     BatchId,
+    Interval,
 ) {
     let test_case =
         setup_collection_job_test_case(Role::Leader, QueryType::FixedSize { max_batch_size: 10 })
@@ -162,7 +163,11 @@ async fn setup_fixed_size_current_batch_collection_job_test_case() -> (
     let batch_id_1 = random();
     let batch_id_2 = random();
     let time = test_case.clock.now();
-    let interval = Interval::new(time, *test_case.task.time_precision()).unwrap();
+    let interval = Interval::new(
+        time,
+        Duration::from_seconds(test_case.task.time_precision().as_seconds() / 2),
+    )
+    .unwrap();
 
     test_case
         .datastore
@@ -200,6 +205,21 @@ async fn setup_fixed_size_current_batch_collection_job_test_case() -> (
                         .unwrap();
                     }
 
+                    tx.put_batch_aggregation::<0, FixedSize, dummy_vdaf::Vdaf>(
+                        &BatchAggregation::new(
+                            *task.id(),
+                            batch_id,
+                            dummy_vdaf::AggregationParam::default(),
+                            0,
+                            dummy_vdaf::AggregateShare(0),
+                            task.min_batch_size() + 1,
+                            interval,
+                            ReportIdChecksum::default(),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+
                     tx.put_outstanding_batch(task.id(), &batch_id)
                         .await
                         .unwrap();
@@ -211,7 +231,7 @@ async fn setup_fixed_size_current_batch_collection_job_test_case() -> (
         .await
         .unwrap();
 
-    (test_case, batch_id_1, batch_id_2)
+    (test_case, batch_id_1, batch_id_2, interval)
 }
 
 #[tokio::test]
@@ -219,7 +239,7 @@ async fn collection_job_success_fixed_size() {
     // This test drives two current batch collection jobs to completion, verifying that distinct
     // batch IDs are collected each time. Then, we attempt to collect another current batch, which
     // must fail as there are no more outstanding batches.
-    let (test_case, batch_id_1, batch_id_2) =
+    let (test_case, batch_id_1, batch_id_2, spanned_interval) =
         setup_fixed_size_current_batch_collection_job_test_case().await;
 
     let mut saw_batch_id_1 = false;
@@ -249,7 +269,6 @@ async fn collection_job_success_fixed_size() {
             .run_tx(|tx| {
                 let task = test_case.task.clone();
                 let helper_aggregate_share_bytes: Vec<u8> = (&helper_aggregate_share).into();
-                let leader_aggregate_share = leader_aggregate_share.clone();
                 Box::pin(async move {
                     let collection_job = tx
                         .get_collection_job::<0, FixedSize, dummy_vdaf::Vdaf>(&collection_job_id)
@@ -310,6 +329,17 @@ async fn collection_job_success_fixed_size() {
         );
         let body_bytes = body::to_bytes(body).await.unwrap();
         let collect_resp = Collection::<FixedSize>::get_decoded(body_bytes.as_ref()).unwrap();
+
+        assert_eq!(
+            collect_resp.report_count(),
+            test_case.task.min_batch_size() + 1
+        );
+        assert_eq!(
+            collect_resp.interval(),
+            &spanned_interval
+                .align_to_time_precision(test_case.task.time_precision())
+                .unwrap(),
+        );
         assert_eq!(collect_resp.encrypted_aggregate_shares().len(), 2);
 
         let decrypted_leader_aggregate_share = hpke::open(
@@ -494,7 +524,7 @@ async fn collection_job_put_idempotence_time_interval_mutate_aggregation_param()
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_current_batch() {
-    let (test_case, batch_id_1, batch_id_2) =
+    let (test_case, batch_id_1, batch_id_2, _) =
         setup_fixed_size_current_batch_collection_job_test_case().await;
 
     let collection_job_id = random();
@@ -543,7 +573,7 @@ async fn collection_job_put_idempotence_fixed_size_current_batch() {
 
 #[tokio::test]
 async fn collection_job_put_idempotence_fixed_size_current_batch_mutate_aggregation_param() {
-    let (test_case, _, _) = setup_fixed_size_current_batch_collection_job_test_case().await;
+    let (test_case, _, _, _) = setup_fixed_size_current_batch_collection_job_test_case().await;
 
     let collection_job_id = random();
     let request = CollectionReq::new(
